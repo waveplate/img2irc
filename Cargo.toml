@@ -1,0 +1,13 @@
+[package]
+name = "img2irc"
+version = "0.1.0"
+authors = ["anatolybazarov"]
+github = "https://github.com/anatolybazarov/img2irc"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+reqwest = "0.11.14"
+photon-rs = "0.3.2"
+clap = { version = "4.2.0", features = ["cargo", "derive"] }
+url = "2.3.1"
