@@ -1,11 +1,11 @@
-# img2irc (0.1.0)
-![EVA Loader](https://i.imgur.com/wLyj1HH.png)
+# img2irc (0.2.0)
+![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
 img2irc is a utility which converts images to halfblock irc/ansi art, with a lot of post-processing filters
 
 *halfblock* means that each row will contain two rows worth of pixels, effectively doubling the resolution
 
-the `irc` mode has 99 colours, the `ansi` mode has 256
+the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 65536
 
 ## usage
 
@@ -14,7 +14,7 @@ the `irc` mode has 99 colours, the `ansi` mode has 256
 | option | description | default value |
 | ------ | ----------- | ------------- |
 | `<IMAGE>` | image url or file path | none |
-| `-r, --render <RENDER>` | render type (irc, ansi) | irc |
+| `-r, --render <RENDER>` | render type (irc, ansi, ansi24) | irc |
 | `-w, --width <WIDTH>` | output image width in columns | 50 |
 | `-b, --brightness=<BRIGHTNESS>` | adjust brightness (-255 to 255) | 0 |
 | `-H, --hue=<HUE>` | adjust hue (-180 to 180) | 0 |

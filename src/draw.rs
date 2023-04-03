@@ -40,7 +40,7 @@ impl AnsiImage {
     pub fn new(image: PhotonImage) -> AnsiImage {
         let mut bitmap = image.get_raw_pixels()
             .chunks(4)
-            .map(|x| make_rgb(x.to_vec()))
+            .map(|x| make_rgb_u32(x.to_vec()))
             .collect::<Vec<u32>>()
             .chunks(image.get_width() as usize)
             .map(|x| x.to_vec())
@@ -60,7 +60,16 @@ impl AnsiImage {
     }
 }
 
-pub fn make_rgb(rgb: Vec<u8>) -> u32 {
+pub fn make_rgb_u8(rgb: u32) -> [u8; 3] {
+    // convert u32 to r,g,b
+    let r = (rgb >> 16) as u8;
+    let g = (rgb >> 8) as u8;
+    let b = rgb as u8;
+
+    return [r, g, b]
+}
+
+pub fn make_rgb_u32(rgb: Vec<u8>) -> u32 {
     let r = *rgb.get(0).unwrap() as u32;
     let g = *rgb.get(1).unwrap() as u32;
     let b = *rgb.get(2).unwrap() as u32;
@@ -105,12 +114,37 @@ pub fn halfblock_bitmap(bitmap: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelPair>> {
     ansi_canvas
 }
 
-pub fn ansi_draw(image: AnsiImage) -> String {
+pub fn ansi_draw_24bit(image: AnsiImage) -> String {
+    let mut out: String = String::new();
+    for row in image.halfblock {
+        for pixel_pair in row.iter() {
+            let fg = make_rgb_u8(pixel_pair.top.orig)
+                .to_vec()
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+            
+            let bg = make_rgb_u8(pixel_pair.bottom.orig)
+                .to_vec()
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>();
+
+            out.push_str(format!("\x1b[38;2;{}m\x1b[48;2;{}m{}", fg.join(";"), bg.join(";"), CHAR).as_str());
+        }
+        out.push_str("\x1b[0m");
+        out.push_str("\n");
+    }
+    return out
+}
+
+pub fn ansi_draw_8bit(image: AnsiImage) -> String {
     let mut out: String = String::new();
     for row in image.halfblock {
         for pixel_pair in row.iter() {
             let fg = pixel_pair.top.ansi;
             let bg = pixel_pair.bottom.ansi;
+
             out.push_str(format!("\x1b[38;5;{}m\x1b[48;5;{}m{}", fg, bg, CHAR).as_str());
         }
         out.push_str("\x1b[0m");

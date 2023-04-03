@@ -26,7 +26,8 @@ async fn main() {
                 None => println!("{}", draw::irc_draw(canvas).as_str()),
                 Some(ref render) => match render.as_str() {
                     "irc" => println!("{}", draw::irc_draw(canvas).as_str()),
-                    "ansi" => println!("{}", draw::ansi_draw(canvas).as_str()),
+                    "ansi" => println!("{}", draw::ansi_draw_8bit(canvas).as_str()),
+                    "ansi24" => println!("{}", draw::ansi_draw_24bit(canvas).as_str()),
                     _ => {
                         eprintln!("Error: invalid render type");
                         exit(1);
