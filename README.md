@@ -5,7 +5,7 @@ img2irc is a utility which converts images to halfblock irc/ansi art, with a lot
 
 *halfblock* means that each row will contain two rows worth of pixels, effectively doubling the resolution
 
-the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 65536
+the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
 ## usage
 
