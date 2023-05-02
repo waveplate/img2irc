@@ -1,9 +1,15 @@
 [package]
 name = "img2irc"
-version = "0.2.0"
+version = "1.0.0"
 authors = ["anatolybazarov"]
 github = "https://github.com/anatolybazarov/img2irc"
 edition = "2021"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+strip = true  # Automatically strip symbols from the binary.
 
 [dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

@@ -22,18 +22,17 @@ async fn main() {
             );
 
             let canvas = draw::AnsiImage::new(image);
-            match &args.render {
-                None => println!("{}", draw::irc_draw(canvas).as_str()),
-                Some(ref render) => match render.as_str() {
-                    "irc" => println!("{}", draw::irc_draw(canvas).as_str()),
-                    "ansi" => println!("{}", draw::ansi_draw_8bit(canvas).as_str()),
-                    "ansi24" => println!("{}", draw::ansi_draw_24bit(canvas).as_str()),
-                    _ => {
-                        eprintln!("Error: invalid render type");
-                        exit(1);
-                    }
-                },
+
+            if args.irc {
+                println!("{}", draw::irc_draw(canvas).as_str());
+            } else if args.ansi {
+                println!("{}", draw::ansi_draw_8bit(canvas).as_str());
+            } else if args.ansi24 {
+                println!("{}", draw::ansi_draw_24bit(canvas).as_str());
+            } else {
+                println!("{}", draw::irc_draw(canvas).as_str());
             }
+
         }
         Err(e) => {
             eprintln!("Error: {}", e);

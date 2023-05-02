@@ -1,5 +1,6 @@
 use crate::args;
-use photon_rs::{channels, channels::alter_channels, conv, effects, filters, monochrome, noise};
+use photon_rs::{colour_spaces};
+use photon_rs::{channels, conv, effects, filters, monochrome, noise};
 use photon_rs::transform::{resize, SamplingFilter};
 use photon_rs::PhotonImage;
 
@@ -15,33 +16,41 @@ pub fn apply_effects(
     photon_image = resize(&mut photon_image, args.width, height, SamplingFilter::Lanczos3);
 
     // Adjust brightness
-    if args.brightness != 0 {
-        alter_channels(&mut photon_image, args.brightness, args.brightness, args.brightness);
+    match args.brightness {
+        x if x > 0.0 => {
+            colour_spaces::hsv(&mut photon_image, "brighten", args.brightness/255.0);
+        }
+        x if x < 0.0 => {
+            colour_spaces::hsv(&mut photon_image, "darken", args.brightness.abs()/255.0);
+        },
+        _ => {}
     }
 
     // Adjust hue
-    if args.hue != 0 {
-        alter_channels(&mut photon_image, args.hue, args.hue, args.hue);
+    if args.hue > 0.0 {
+        colour_spaces::hsv(&mut photon_image, "shift_hue", args.hue/360.0);
     }
 
     // Adjust contrast
-    if args.contrast != 0 {
-        alter_channels(&mut photon_image, args.contrast, args.contrast, args.contrast);
+    if args.contrast != 0.0 {
+        effects::adjust_contrast(&mut photon_image, args.contrast);
     }
 
     // Adjust saturation
-    if args.saturation != 0 {
-        alter_channels(&mut photon_image, args.saturation, args.saturation, args.saturation);
-    }
-
-    // Adjust opacity
-    if args.opacity != 0 {
-        alter_channels(&mut photon_image, args.opacity, args.opacity, args.opacity);
+    match args.saturation {
+        x if x > 0.0 => {
+            colour_spaces::hsv(&mut photon_image, "saturate", args.saturation/255.0);
+        }
+        x if x < 0.0 => {
+            colour_spaces::hsv(&mut photon_image, "desaturate", args.saturation.abs()/255.0);
+        }
+        _ => {}
     }
 
     // Adjust gamma
-    if args.gamma != 0 {
-        alter_channels(&mut photon_image, args.gamma, args.gamma, args.gamma);
+    if args.gamma != 0.0 {
+        let gamma_value = 1.0 - args.gamma/255.0;
+        colour_spaces::gamma_correction(&mut photon_image, gamma_value, gamma_value, gamma_value);
     }
 
     // Adjust dither
@@ -51,7 +60,6 @@ pub fn apply_effects(
 
     // Adjust gaussian_blur
     if args.gaussian_blur > 0 {
-        
         conv::gaussian_blur(&mut photon_image, args.gaussian_blur);
     }
 

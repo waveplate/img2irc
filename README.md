@@ -1,4 +1,4 @@
-# img2irc (0.2.0)
+# img2irc (1.0.0)
 ![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
 img2irc is a utility which converts images to halfblock irc/ansi art, with a lot of post-processing filters
@@ -14,14 +14,15 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 | option | description | default value |
 | ------ | ----------- | ------------- |
 | `<IMAGE>` | image url or file path | none |
-| `-r, --render <RENDER>` | render type (irc, ansi, ansi24) | irc |
+| `--irc` | irc render type | true |
+| `--ansi` | 8-bit ansi render type | false |
+| `--ansi24` | 24-bit ansi render type | false |
 | `-w, --width <WIDTH>` | output image width in columns | 50 |
 | `-b, --brightness=<BRIGHTNESS>` | adjust brightness (-255 to 255) | 0 |
-| `-H, --hue=<HUE>` | adjust hue (-180 to 180) | 0 |
 | `-c, --contrast=<CONTRAST>` | adjust contrast (-255 to 255) | 0 |
 | `-s, --saturation=<SATURATION>` | adjust saturation (-255 to 255) | 0 |
-| `-o, --opacity=<OPACITY>` | adjust opacity (-255 to 255) | 0 |
-| `-g, --gamma=<GAMMA>` | adjust gamma (-255 to 255) | 0 |
+| `-H, --hue <HUE>` | rotate hue (0 to 360) | 0 |
+| `-g, --gamma <GAMMA>` | adjust gamma (0 to 255) | 0 |
 | `--dither <DITHER>` | dithering (1 to 8) | 0 |
 | `--pixelize <PIXELIZE>` | pixelize pixel size | 0 |
 | `--gaussian-blur <GAUSSIAN_BLUR>` | gaussian blur radius | 0 |

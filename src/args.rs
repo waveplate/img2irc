@@ -7,37 +7,41 @@ pub struct Args {
     #[arg(index = 1)]
     pub image: String,
 
-    /// render type (irc, ansi)
-    #[arg(short, long)]
-    pub render: Option<String>,
+    /// irc
+    #[arg(long, default_value_t = false)]
+    pub irc: bool,
+
+    /// 8-bit ansi
+    #[arg(long, default_value_t = false)]
+    pub ansi: bool,
+
+    /// 24-bit ansi
+    #[arg(long, default_value_t = false)]
+    pub ansi24: bool,
 
     /// image width to resize to
     #[arg(short, long, default_value_t = 50)]
     pub width: u32,
 
     /// brightness (-255 to 255)
-    #[arg(short, long, require_equals = true, default_value_t = 0)]
-    pub brightness: i16,
-
-    /// hue (-180 to 180)
-    #[arg(short = 'H', long, require_equals = true, default_value_t = 0)]
-    pub hue: i16,
+    #[arg(short, long, require_equals = true, default_value_t = 0.0)]
+    pub brightness: f32,
 
     /// contrast (-255 to 255)
-    #[arg(short, long, require_equals = true, default_value_t = 0)]
-    pub contrast: i16,
+    #[arg(short, long, require_equals = true, default_value_t = 0.0)]
+    pub contrast: f32,
 
     /// saturation (-255 to 255)
-    #[arg(short, long, require_equals = true, default_value_t = 0)]
-    pub saturation: i16,
+    #[arg(short, long, require_equals = true, default_value_t = 0.0)]
+    pub saturation: f32,
 
-    /// opacity (-255 to 255)
-    #[arg(short, long, require_equals = true, default_value_t = 0)]
-    pub opacity: i16,
+    /// hue (0 to 360)
+    #[arg(short = 'H', long, default_value_t = 0.0)]
+    pub hue: f32,
 
-    /// gamma (-255 to 255)
-    #[arg(short, long, require_equals = true, default_value_t = 0)]
-    pub gamma: i16,
+    /// gamma (0 to 255)
+    #[arg(short, long, default_value_t = 0.0)]
+    pub gamma: f32,
 
     /// dither (1 to 8)
     #[arg(long, default_value_t = 0)]
