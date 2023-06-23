@@ -1,4 +1,4 @@
-# img2irc (1.0.0)
+# img2irc (1.0.2)
 ![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
 img2irc is a utility which converts images to halfblock irc/ansi art, with a lot of post-processing filters
