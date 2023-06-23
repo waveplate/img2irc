@@ -1,8 +1,8 @@
 [package]
 name = "img2irc"
-version = "1.0.0"
-authors = ["anatolybazarov"]
-github = "https://github.com/anatolybazarov/img2irc"
+version = "1.0.2"
+authors = ["waveplate"]
+github = "https://github.com/waveplate/img2irc"
 edition = "2021"
 
 [profile.release]
