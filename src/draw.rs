@@ -116,7 +116,7 @@ pub fn halfblock_bitmap(bitmap: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelPair>> {
 
 pub fn ansi_draw_24bit(image: AnsiImage) -> String {
     let mut out: String = String::new();
-    for row in image.halfblock {
+    for (y, row) in image.halfblock.iter().enumerate() {
         for pixel_pair in row.iter() {
             let fg = make_rgb_u8(pixel_pair.top.orig)
                 .to_vec()
@@ -133,14 +133,17 @@ pub fn ansi_draw_24bit(image: AnsiImage) -> String {
             out.push_str(format!("\x1b[38;2;{}m\x1b[48;2;{}m{}", fg.join(";"), bg.join(";"), CHAR).as_str());
         }
         out.push_str("\x1b[0m");
-        out.push_str("\n");
+
+        if y != image.halfblock.len() - 1 {
+            out.push_str("\n");
+        }
     }
     return out
 }
 
 pub fn ansi_draw_8bit(image: AnsiImage) -> String {
     let mut out: String = String::new();
-    for row in image.halfblock {
+    for (y, row) in image.halfblock.iter().enumerate() {
         for pixel_pair in row.iter() {
             let fg = pixel_pair.top.ansi;
             let bg = pixel_pair.bottom.ansi;
@@ -148,32 +151,44 @@ pub fn ansi_draw_8bit(image: AnsiImage) -> String {
             out.push_str(format!("\x1b[38;5;{}m\x1b[48;5;{}m{}", fg, bg, CHAR).as_str());
         }
         out.push_str("\x1b[0m");
-        out.push_str("\n");
+
+        if y != image.halfblock.len() - 1 {
+            out.push_str("\n");
+        }
     }
     return out
 }
 
 pub fn irc_draw(image: AnsiImage) -> String {
     let mut out: String = String::new();
-    for row in image.halfblock {
+    for (y, row) in image.halfblock.iter().enumerate() {
         let mut last_fg: u8 = 0;
         let mut last_bg: u8 = 0;
-        for pixel_pair in row.iter() {
+        for (x, pixel_pair) in row.iter().enumerate() {
             let fg = pixel_pair.top.irc;
             let bg = pixel_pair.bottom.irc;
 
-            if fg == last_fg && bg == last_bg {
-                out.push_str(format!("{}", CHAR).as_str());
-            } else if bg == last_bg {
-                out.push_str(format!("\x03{}{}", fg, CHAR).as_str());
+            if x != 0 {
+                if fg == last_fg && bg == last_bg {
+                    out.push_str(&format!("{}", CHAR));
+                } else if bg == last_bg {
+                    out.push_str(&format!("\x03{}{}", fg, CHAR));
+                } else {
+                    out.push_str(&format!("\x03{},{}{}", fg, bg, CHAR));
+                }
             } else {
-                out.push_str(format!("\x03{},{}{}", fg, bg, CHAR).as_str());
+                out.push_str(&format!("\x03{},{}{}", fg, bg, CHAR));
             }
 
             last_fg = fg;
             last_bg = bg;
         }
-        out.push_str("\n");
+
+        out.push_str("\x0f");
+
+        if y != image.halfblock.len() - 1 {
+            out.push_str("\n");
+        }
     }
     return out
 }
