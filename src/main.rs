@@ -23,15 +23,16 @@ async fn main() {
 
             let canvas = draw::AnsiImage::new(image);
 
-            if args.irc {
-                println!("{}", draw::irc_draw(canvas).as_str());
-            } else if args.ansi {
-                println!("{}", draw::ansi_draw_8bit(canvas).as_str());
-            } else if args.ansi24 {
-                println!("{}", draw::ansi_draw_24bit(canvas).as_str());
-            } else {
-                println!("{}", draw::irc_draw(canvas).as_str());
-            }
+            match (args.irc, args.ansi, args.ansi24, args.qb) {
+                (true, _, _, true) => println!("{}", draw::irc_draw_qb(canvas, &args).as_str()),
+                (true, _, _, false) => println!("{}", draw::irc_draw(canvas, &args).as_str()),
+                (_, true, _, true) => println!("{}", draw::ansi_draw_8bit_qb(canvas, &args).as_str()),
+                (_, true, _, false) => println!("{}", draw::ansi_draw_8bit(canvas, &args).as_str()),
+                (_, _, true, true) => println!("{}", draw::ansi_draw_24bit_qb(canvas).as_str()),
+                (_, _, true, false) => println!("{}", draw::ansi_draw_24bit(canvas).as_str()),
+                (_, _, _, true) => println!("{}", draw::irc_draw_qb(canvas, &args).as_str()),
+                _ => println!("{}", draw::irc_draw(canvas, &args).as_str()),
+            }            
 
         }
         Err(e) => {

@@ -13,7 +13,15 @@ pub fn apply_effects(
     let height =
         (args.width as f32 / photon_image.get_width() as f32 * photon_image.get_height() as f32) as u32;
 
-    photon_image = resize(&mut photon_image, args.width, height, SamplingFilter::Lanczos3);
+    let width = match args.qb {
+        true => args.width * 2,
+        _ => args.width,
+    };
+
+    photon_image = match args.qb {
+        true => resize(&photon_image, width, height, SamplingFilter::Lanczos3),
+        _ => resize(&mut photon_image, width, height, SamplingFilter::Lanczos3),
+    };
 
     // Adjust brightness
     match args.brightness {

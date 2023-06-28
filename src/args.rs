@@ -19,6 +19,10 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub ansi24: bool,
 
+    /// quarterblock
+    #[arg(long, default_value_t = false)]
+    pub qb: bool,  
+
     /// image width to resize to
     #[arg(short, long, default_value_t = 50)]
     pub width: u32,
@@ -62,6 +66,10 @@ pub struct Args {
     /// grayscale
     #[arg(long, default_value_t = false)]
     pub grayscale: bool,
+
+    /// no grayscale
+    #[arg(long, default_value_t = false)]
+    pub nograyscale: bool,
 
     /// halftone
     #[arg(long, default_value_t = false)]

@@ -1,9 +1,11 @@
-# img2irc (1.0.2)
+# img2irc (1.0.4)
 ![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
-img2irc is a utility which converts images to halfblock irc/ansi art, with a lot of post-processing filters
+img2irc is a utility which converts images to half or quarterblock irc/ansi art, with a lot of post-processing filters
 
-*halfblock* means that each row will contain two rows worth of pixels, effectively doubling the resolution
+*halfblock* means that each row will contain two rows worth of pixels, effectively doubling the vertical resolution
+
+*quarterblock* (experimental) means that each row will contain two rows worth of pixels, and each column will contain two columns worth of pixels, quadrupling the resolution
 
 the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
@@ -17,6 +19,7 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 | `--irc` | irc render type | true |
 | `--ansi` | 8-bit ansi render type | false |
 | `--ansi24` | 24-bit ansi render type | false |
+| `--qb` | use quarterblocks | false |
 | `-w, --width <WIDTH>` | output image width in columns | 50 |
 | `-b, --brightness=<BRIGHTNESS>` | adjust brightness (-255 to 255) | 0 |
 | `-c, --contrast=<CONTRAST>` | adjust contrast (-255 to 255) | 0 |
@@ -28,6 +31,7 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 | `--gaussian-blur <GAUSSIAN_BLUR>` | gaussian blur radius | 0 |
 | `--oil <OIL>` | oil ("[RADIUS],[INTENSITY]") | |
 | `--grayscale` | converts image to black and white |
+| `--nograyscale` | exclude grayscale colours from the palette |
 | `--halftone` | made up of small dots creating a continuous-tone illusion |
 | `--sepia` | brownish, aged appearance like old photographs |
 | `--normalize` | adjusts brightness and contrast for better image quality |
