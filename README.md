@@ -24,11 +24,11 @@ sudo cp img2irc-1.0.4/img2irc /usr/local/bin
 rm -rf img2irc-1.0.4
 ```
 
-#### arch linux
-
-if you use arch, i suggest installing with `yay`
+#### arch linux ([aur](https://aur.archlinux.org/packages/img2irc))
 
 `yay -S img2irc`
+
+>if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
 
 ## usage
 
