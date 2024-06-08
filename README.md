@@ -11,6 +11,10 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
 ## quick install
 
+
+
+#### linux binary (universal x86_64)
+
 statically built releases for the x86_64 platform are available
 
 ```
@@ -19,6 +23,12 @@ wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4
 sudo cp img2irc-1.0.4/img2irc /usr/local/bin
 rm -rf img2irc-1.0.4
 ```
+
+#### arch linux
+
+if you use arch, i suggest installing with `yay`
+
+`yay -S img2irc`
 
 ## usage
 
