@@ -9,6 +9,17 @@ img2irc is a utility which converts images to half or quarterblock irc/ansi art,
 
 the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
+## quick install
+
+statically built releases for the x86_64 platform are available
+
+```
+cd /tmp
+wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
+sudo cp img2irc-1.0.4/img2irc /usr/local/bin
+rm -rf img2irc-1.0.4
+```
+
 ## usage
 
 `./img2ansi <URL or PATH> [OPTIONS]`
@@ -19,7 +30,7 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 | `--irc` | irc render type | true |
 | `--ansi` | 8-bit ansi render type | false |
 | `--ansi24` | 24-bit ansi render type | false |
-| `--qb` | use quarterblocks | false |
+| `--qb` | use quarterblocks (experimental) | false |
 | `-w, --width <WIDTH>` | output image width in columns | 50 |
 | `-b, --brightness=<BRIGHTNESS>` | adjust brightness (-255 to 255) | 0 |
 | `-c, --contrast=<CONTRAST>` | adjust contrast (-255 to 255) | 0 |
