@@ -3,6 +3,10 @@ name = "img2irc"
 version = "1.0.4"
 authors = ["waveplate"]
 github = "https://github.com/waveplate/img2irc"
+homepage = "https://github.com/waveplate/img2irc"
+description = "CLI utility to convert images to halfblock ANSI or IRC art with various optional post-processing filters"
+license = "GPL-3.0-only"
+readme = "README.md"
 edition = "2021"
 
 [profile.release]
@@ -11,9 +15,15 @@ codegen-units = 1
 opt-level = "z"
 strip = true  # Automatically strip symbols from the binary.
 
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+
 [dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 reqwest = "0.11.14"
 photon-rs = "0.3.2"
 clap = { version = "4.2.0", features = ["cargo", "derive"] }
 url = "2.3.1"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl-sys = "0.9.102"
