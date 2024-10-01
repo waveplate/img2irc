@@ -18,6 +18,10 @@ strip = true  # Automatically strip symbols from the binary.
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
 
+[[bin]]
+name = "img2irc"
+path = "src/main.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 reqwest = "0.11.14"
