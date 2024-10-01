@@ -1,4 +1,4 @@
-# img2irc (1.0.4)
+# img2irc (1.0.5)
 ![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
 img2irc is a utility which converts images to half or quarterblock irc/ansi art, with a lot of post-processing filters
@@ -9,31 +9,31 @@ img2irc is a utility which converts images to half or quarterblock irc/ansi art,
 
 the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
-## quick install
+# how to install
 
-#### cargo install
+- ### download the linux binary
 
+  statically linked with musl, works on all x86_64 linux platforms
 
-	cargo install img2irc-rs
-
-the binary will be installed to `~/.cargo/bin/img2irc`
-
-#### statically compiled linux binary (x86_64)
-
-
-        cd /tmp
-        wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
-        sudo tar -xzf img2irc-1.0.4-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.0.4/img2irc
-        rm -rf img2irc-1.0.4-linux-x86_64.tar.gz
+      cd /tmp
+      wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
+      sudo tar -xzf img2irc-1.0.4-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.0.4/img2irc
+      rm -rf img2irc-1.0.4-linux-x86_64.tar.gz
 
 
-#### arch linux ([aur](https://aur.archlinux.org/packages/img2irc))
+- ### install with `yay` (arch linux)
+  
+  >if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
+  
+      yay -S img2irc
 
-`yay -S img2irc`
+- ### install with `cargo`
+  
+      cargo install img2irc-rs
 
->if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
+  the binary will be installed to `~/.cargo/bin/img2irc`
 
-## usage
+# usage
 
 `img2irc <URL or PATH> [OPTIONS]`
 
