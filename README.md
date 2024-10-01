@@ -11,18 +11,21 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
 ## quick install
 
+#### cargo install
 
 
-#### linux binary (universal x86_64)
+	cargo install img2irc-rs
 
-statically built releases for the x86_64 platform are available
+the binary will be installed to `~/.cargo/bin/img2irc`
 
-```
-cd /tmp
-wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
-sudo cp img2irc-1.0.4/img2irc /usr/local/bin
-rm -rf img2irc-1.0.4
-```
+#### statically compiled linux binary (x86_64)
+
+
+        cd /tmp
+        wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
+        sudo tar -xzf img2irc-1.0.4-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.0.4/img2irc
+        rm -rf img2irc-1.0.4-linux-x86_64.tar.gz
+
 
 #### arch linux ([aur](https://aur.archlinux.org/packages/img2irc))
 
@@ -32,7 +35,7 @@ rm -rf img2irc-1.0.4
 
 ## usage
 
-`./img2ansi <URL or PATH> [OPTIONS]`
+`img2irc <URL or PATH> [OPTIONS]`
 
 | option | description | default value |
 | ------ | ----------- | ------------- |
