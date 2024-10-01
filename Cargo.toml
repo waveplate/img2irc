@@ -1,6 +1,6 @@
 [package]
 name = "img2irc-rs"
-version = "1.0.4"
+version = "1.0.5"
 authors = ["waveplate"]
 github = "https://github.com/waveplate/img2irc"
 repository = "https://github.com/waveplate/img2irc"
