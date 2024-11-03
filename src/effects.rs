@@ -103,7 +103,7 @@ pub fn apply_effects(
 
     // Adjust noise
     if args.noise {
-        noise::add_noise_rand(photon_image.clone());
+        noise::add_noise_rand(&mut photon_image);
     }
 
     // Adjust sharpen
