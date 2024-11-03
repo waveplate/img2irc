@@ -1,4 +1,4 @@
-# img2irc (1.0.5)
+# img2irc (1.0.6)
 ![img2irc preview](https://i.imgur.com/oetHhMB.png)
 
 img2irc is a utility which converts images to half or quarterblock irc/ansi art, with a lot of post-processing filters
@@ -23,6 +23,7 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
 - ### install with `yay` (arch linux)
   
+  >[!NOTE]
   >if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
   
       yay -S img2irc
