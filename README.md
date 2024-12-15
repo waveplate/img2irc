@@ -1,19 +1,7 @@
 # img2irc (1.1.0)
 ![img2irc preview](https://i.imgur.com/0omljq5.png)
 
-img2irc is a utility which converts images to half or quarterblock irc/ansi art, with a lot of post-processing filters
-
-`halfblock` mode increases the vertical resolution, doubling the total resolution for a given size
-
-`quarterblock` mode increases both the vertical and horizontal resolution by twofold, quadrupling the total resolution for a given size
-
-`braille` mode uses 2x4 dot patterns to represent pixels, increasing resolution eightfold
-
-`irc` mode has 99 colours, (6.62-bit)
-
-`ansi` mode has 256 colours (8-bit)
-
-`ansi24` has 16777216 colours (24-bit)
+*img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
 
 # how to install
 
@@ -56,12 +44,39 @@ img2irc is a utility which converts images to half or quarterblock irc/ansi art,
 | --rotate                               | rotate degrees                                                | 0             |
 | --fliph                                | flip horizontal                                               | false         |
 | --flipv                                | flip vertical                                                 | false         |
-| --irc                                  | use irc99 colours                                             | false         |
-| --ansi                                 | use 8-bit ansi colours                                        | false         |
-| --ansi24                               | use 24-bit ansi colours                                       | false         |
-| --braille                              | use braille pixels                                            | false         |
-| --hb, --halfblock                      | use halfblock pixels                                          | true          |
-| --qb, --quarterblock                   | use quarterblocks pixels                                      | false         |
+
+### colours rendering options (select one)
+
+`irc` mode has 99 colours, (6.62-bit)
+
+`ansi` mode has 256 colours (8-bit)
+
+`ansi24` has 16777216 colours (24-bit)
+
+| option                                 | description                                                   | 
+|----------------------------------------|---------------------------------------------------------------|
+| --irc                                  | use irc99 colours                                             |
+| --ansi                                 | use 8-bit ansi colours                                        |
+| --ansi24                               | use 24-bit ansi colours                                       |
+
+### pixel rendering options (select one)
+
+`halfblock` mode increases the vertical resolution, doubling the total resolution for a given size
+
+`quarterblock` mode increases both the vertical and horizontal resolution by twofold, quadrupling the total resolution for a given size
+
+`braille` mode uses 2x4 dot patterns to represent pixels, increasing resolution eightfold
+
+| option                                 | description                                                   |
+|----------------------------------------|---------------------------------------------------------------|
+| --braille                              | use braille pixels                                            | 
+| --hb, --halfblock                      | use halfblock pixels                                          | 
+| --qb, --quarterblock                   | use quarterblocks pixels                                      |
+
+### image processing options
+
+| option                                 | description                                                   | default value |
+|----------------------------------------|---------------------------------------------------------------|---------------|
 | -b, --brightness                       | adjust brightness (0 = no change)                             | 0.0           |
 | -c, --contrast                         | adjust contrast (0 = no change)                               | 0.0           |
 | -g, --gamma                            | adjust gamma (0 to 255)                                       | 0.0           |
