@@ -1,13 +1,19 @@
-# img2irc (1.0.6)
-![img2irc preview](https://i.imgur.com/oetHhMB.png)
+# img2irc (1.1.0)
+![img2irc preview](https://i.imgur.com/0omljq5.png)
 
 img2irc is a utility which converts images to half or quarterblock irc/ansi art, with a lot of post-processing filters
 
-*halfblock* means that each row will contain two rows worth of pixels, effectively doubling the vertical resolution
+`halfblock` mode increases the vertical resolution, doubling the total resolution for a given size
 
-*quarterblock* (experimental) means that each row will contain two rows worth of pixels, and each column will contain two columns worth of pixels, quadrupling the resolution
+`quarterblock` mode increases both the vertical and horizontal resolution by twofold, quadrupling the total resolution for a given size
 
-the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
+`braille` mode uses 2x4 dot patterns to represent pixels, increasing resolution eightfold
+
+`irc` mode has 99 colours, (6.62-bit)
+
+`ansi` mode has 256 colours (8-bit)
+
+`ansi24` has 16777216 colours (24-bit)
 
 # how to install
 
@@ -38,46 +44,62 @@ the `irc` mode has 99 colours, the `ansi` mode has 256, `ansi24` has 16777216
 
 `img2irc <URL or PATH> [OPTIONS]`
 
-| option | description | default value |
-| ------ | ----------- | ------------- |
-| `<IMAGE>` | image url or file path | none |
-| `--irc` | irc render type | true |
-| `--ansi` | 8-bit ansi render type | false |
-| `--ansi24` | 24-bit ansi render type | false |
-| `--qb` | use quarterblocks (experimental) | false |
-| `-w, --width <WIDTH>` | output image width in columns | 50 |
-| `-b, --brightness=<BRIGHTNESS>` | adjust brightness (-255 to 255) | 0 |
-| `-c, --contrast=<CONTRAST>` | adjust contrast (-255 to 255) | 0 |
-| `-s, --saturation=<SATURATION>` | adjust saturation (-255 to 255) | 0 |
-| `-H, --hue <HUE>` | rotate hue (0 to 360) | 0 |
-| `-g, --gamma <GAMMA>` | adjust gamma (0 to 255) | 0 |
-| `--dither <DITHER>` | dithering (1 to 8) | 0 |
-| `--pixelize <PIXELIZE>` | pixelize pixel size | 0 |
-| `--gaussian-blur <GAUSSIAN_BLUR>` | gaussian blur radius | 0 |
-| `--oil <OIL>` | oil ("[RADIUS],[INTENSITY]") | |
-| `--grayscale` | converts image to black and white |
-| `--nograyscale` | exclude grayscale colours from the palette |
-| `--halftone` | made up of small dots creating a continuous-tone illusion |
-| `--sepia` | brownish, aged appearance like old photographs |
-| `--normalize` | adjusts brightness and contrast for better image quality |
-| `--noise` | random variations in brightness and color like film grain |
-| `--emboss` | gives a raised, 3d appearance |
-| `--box-blur` | smoothed appearance like frosted glass |
-| `--identity` | no modifications, unchanged image |
-| `--laplace` | enhances edges and boundaries in an image |
-| `--noise-reduction` | reduces noise for a cleaner, clearer image |
-| `--sharpen` | increases clarity and definition, making edges and details more distinct |
-| `--cali` | cool blue tone with increased contrast |
-| `--dramatic` | high contrast and vivid colors for a dramatic effect |
-| `--firenze` | warm, earthy tones reminiscent of tuscan landscapes |
-| `--golden` | warm, golden glow like sunset light |
-| `--lix` | high-contrast black and white appearance with increased sharpness |
-| `--lofi` | low-fidelity, retro appearance like old photographs or film |
-| `--neue` | clean, modern appearance with neutral colors and simple design |
-| `--obsidian` | dark, monochromatic appearance with black and gray shades |
-| `--pastel-pink` | soft, delicate pink tint like pastel colors |
-| `--ryo` | bright, high-contrast appearance with vivid colors and sharp details |
-| `--invert` | colors are inverted, opposite on the color wheel |
-| `--frosted-glass` | blurred, frosted appearance as if viewed through semi-transparent surface |
-| `--solarize` | strange, otherworldly appearance with inverted colors and surreal atmosphere |
-| `--edge-detection` | highlights edges and boundaries in an image |
+| option                                 | description                                                   | default value |
+|----------------------------------------|---------------------------------------------------------------|---------------|
+| image                                  | image url or file path                                        | required      |
+| -w, --width                            | output image width in columns                                 | auto          |
+| -h, --height                           | output image height in rows                                   | auto          |
+| --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |
+| --aspect                               | final aspect ratio (x:y, e.g., "2:1")                         | none          |
+| --crop                                 | crop image ("x1,y1,x2,y2")                                    | none          |
+| --filter                               | sampling filter                                               | nearest       |
+| --rotate                               | rotate degrees                                                | 0             |
+| --fliph                                | flip horizontal                                               | false         |
+| --flipv                                | flip vertical                                                 | false         |
+| --irc                                  | use irc99 colours                                             | false         |
+| --ansi                                 | use 8-bit ansi colours                                        | false         |
+| --ansi24                               | use 24-bit ansi colours                                       | false         |
+| --braille                              | use braille pixels                                            | false         |
+| --hb, --halfblock                      | use halfblock pixels                                          | true          |
+| --qb, --quarterblock                   | use quarterblocks pixels                                      | false         |
+| -b, --brightness                       | adjust brightness (0 = no change)                             | 0.0           |
+| -c, --contrast                         | adjust contrast (0 = no change)                               | 0.0           |
+| -g, --gamma                            | adjust gamma (0 to 255)                                       | 0.0           |
+| -s, --saturation                       | adjust saturation (0 = no change)                             | 0.0           |
+| -u, --hue                              | rotate hue (0 to 360)                                         | 0.0           |
+| -i, --invert                           | colors are inverted, opposite on the color wheel              | false         |
+| -d, --dither                           | dithering (1 to 8)                                            | 0             |
+| -B, --luma-brightness                  | adjust luma brightness (braille only)                         | 0.0           |
+| -C, --luma-contrast                    | adjust luma contrast (braille only)                           | 0.0           |
+| -G, --luma-gamma                       | adjust luma gamma (braille only)                              | 0.0           |
+| -S, --luma-saturation                  | adjust luma saturation (braille only)                         | 0.0           |
+| -I, --luma-invert                      | luminance is inverted (braille only)                          | false         |
+| --colorspace                           | colourspace (hsl, hsv, hsluv, lch)                            | hsv           |
+| --grayscale                            | converts image to black and white                             | false         |
+| --nograyscale                          | exclude grayscale colours from the palette                    | false         |
+| --pixelize                             | pixelize pixel size                                           | 0             |
+| --boxblur                              | simple average of all the neighboring pixels surrounding one  | false         |
+| --gaussianblur                         | gaussian blur radius                                          | 0             |
+| --oil                                  | oil filter ("[radius],[intensity]")                           | none          |
+| --halftone                             | made up of small dots creating a continuous-tone illusion     | false         |
+| --sepia                                | brownish, aged appearance like old photographs                | false         |
+| --normalize                            | adjusts brightness and contrast for better image quality      | false         |
+| --noise                                | random variations in brightness and color like film grain     | false         |
+| --emboss                               | gives a raised, 3d appearance                                 | false         |
+| --identity                             | no modifications, unchanged image                             | false         |
+| --laplace                              | enhances edges and boundaries in an image                     | false         |
+| --denoise                              | reduces noise for a cleaner, clearer image                    | false         |
+| --sharpen                              | increases clarity and definition, making edges and details more distinct | false         |
+| --cali                                 | cool blue tone with increased contrast                        | false         |
+| --dramatic                             | high contrast and vivid colors for a dramatic effect          | false         |
+| --firenze                              | warm, earthy tones reminiscent of tuscan landscapes           | false         |
+| --golden                               | warm, golden glow like sunset light                           | false         |
+| --lix                                  | high-contrast black and white appearance with increased sharpness | false         |
+| --lofi                                 | low-fidelity, retro appearance like old photographs or film       | false         |
+| --neue                                 | clean, modern appearance with neutral colors and simple design    | false         |
+| --obsidian                             | dark, monochromatic appearance with black and gray shades         | false         |
+| --pastelpink                           | soft, delicate pink tint like pastel colors                       | false         |
+| --ryo                                  | bright, high-contrast appearance with vivid colors and sharp details | false         |
+| --frostedglass                         | blurred, frosted appearance as if viewed through semi-transparent surface | false         |
+| --solarize                             | strange, otherworldly appearance with inverted colors and surreal atmosphere | false         |
+| --edgedetection                        | highlights edges and boundaries in an image                     | false         |
