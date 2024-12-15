@@ -29,7 +29,7 @@ async fn main() {
                 (_, true, _, _, true) => println!("{}", draw::ansi_draw_braille_8bit(&canvas_luma, &canvas_chroma, &args)),
                 (_, _, true, true, false) => println!("{}", draw::ansi_draw_24bit_qb(&canvas_chroma)),
                 (_, _, true, false, false) => println!("{}", draw::ansi_draw_24bit(&canvas_chroma)),
-                (_, _, true, _, true) => println!("{}", draw::ansi_draw_braille_24bit(&canvas_luma, &canvas_chroma, &args)),
+                (_, _, true, _, true) => println!("{}", draw::ansi_draw_braille_24bit(&canvas_luma, &canvas_chroma)),
                 (_, _, _, true, false) => println!("{}", draw::irc_draw_qb(&canvas_chroma, &args)),
                 (_, _, _, _, true) => println!("{}", draw::irc_draw_braille(&canvas_luma, &canvas_chroma, &args)),
                 _ => println!("{}", draw::irc_draw(&canvas_chroma, &args)),

@@ -105,7 +105,7 @@ impl AnsiImage {
         let halfblock = halfblock_bitmap(&bitmap);
         let quarterblock = quarterblock_bitmap(&bitmap);
 
-        AnsiImage {
+        AnsiImage {                                          
             bitmap,
             halfblock,
             quarterblock,
@@ -199,44 +199,20 @@ pub fn halfblock_bitmap(bitmap: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelPair>> {
     ansi_canvas
 }
 
-fn get_qb_char(pixel_quad: &AnsiPixelQuad, fg_color: u8, args: &args::Args) -> &'static str {
-
-    let c0 = if args.nograyscale {
-        pixel_quad.top_left.irc88
-    } else {
-        pixel_quad.top_left.irc
-    }; // top-left
-    let c1 = if args.nograyscale {
-        pixel_quad.top_right.irc88
-    } else {
-        pixel_quad.top_right.irc
-    }; // top-right
-    let c2 = if args.nograyscale {
-        pixel_quad.bottom_left.irc88
-    } else {
-        pixel_quad.bottom_left.irc
-    }; // bottom-left
-    let c3 = if args.nograyscale {
-        pixel_quad.bottom_right.irc88
-    } else {
-        pixel_quad.bottom_right.irc
-    }; // bottom-right
-
+fn get_qb_char<T: PartialEq>(pixels: &[T; 4], fg_color: &T) -> &'static str {
     let mut pattern = 0;
-
-    if c2 == fg_color {
+    if pixels[2] == *fg_color {
         pattern |= 1 << 0; // bit 0 (bottom-left)
     }
-    if c3 == fg_color {
+    if pixels[3] == *fg_color {
         pattern |= 1 << 1; // bit 1 (bottom-right)
     }
-    if c0 == fg_color {
+    if pixels[0] == *fg_color {
         pattern |= 1 << 2; // bit 2 (top-left)
     }
-    if c1 == fg_color {
+    if pixels[1] == *fg_color {
         pattern |= 1 << 3; // bit 3 (top-right)
     }
-
     QUARTER_BLOCKS[pattern as usize]
 }
 
@@ -248,26 +224,26 @@ pub fn irc_draw_qb(image: &AnsiImage, args: &args::Args) -> String {
         for (x, pixel_quad) in row.iter().enumerate() {
 
             let c0 = if args.nograyscale {
-                pixel_quad.top_left.irc88
-            } else {
-                pixel_quad.top_left.irc
-            };
-            let c1 = if args.nograyscale {
                 pixel_quad.top_right.irc88
             } else {
                 pixel_quad.top_right.irc
             };
-
-            let c2 = if args.nograyscale {
-                pixel_quad.bottom_left.irc88
+            let c1 = if args.nograyscale {
+                pixel_quad.top_left.irc88
             } else {
-                pixel_quad.bottom_left.irc
+                pixel_quad.top_left.irc
             };
 
-            let c3 = if args.nograyscale {
+            let c2 = if args.nograyscale {
                 pixel_quad.bottom_right.irc88
             } else {
                 pixel_quad.bottom_right.irc
+            };
+
+            let c3 = if args.nograyscale {
+                pixel_quad.bottom_left.irc88
+            } else {
+                pixel_quad.bottom_left.irc
             };
 
             let mut color_counts = HashMap::new();
@@ -287,7 +263,8 @@ pub fn irc_draw_qb(image: &AnsiImage, args: &args::Args) -> String {
                 .next()
                 .unwrap_or(&bg_color);
 
-            let char = get_qb_char(pixel_quad, fg_color, args);
+            let pixels = [c0, c1, c2, c3];
+            let char = get_qb_char(&pixels, &fg_color);
 
             if x == 0 || fg_color != last_fg || bg_color != last_bg {
                 if fg_color == bg_color {
@@ -339,22 +316,8 @@ pub fn ansi_draw_24bit_qb(image: &AnsiImage) -> String {
                 .next()
                 .unwrap_or(&bg_color);
 
-            let char = {
-                let mut pattern = 0;
-                if c2_rgb == fg_color {
-                    pattern |= 1 << 0; // bit 0 (bottom-left)
-                }
-                if c3_rgb == fg_color {
-                    pattern |= 1 << 1; // bit 1 (bottom-right)
-                }
-                if c0_rgb == fg_color {
-                    pattern |= 1 << 2; // bit 2 (top-left)
-                }
-                if c1_rgb == fg_color {
-                    pattern |= 1 << 3; // bit 3 (top-right)
-                }
-                QUARTER_BLOCKS[pattern as usize]
-            };
+            let pixels = [c0_rgb, c1_rgb, c2_rgb, c3_rgb];
+            let char = get_qb_char(&pixels, &fg_color);
 
             out.push_str(&format!(
                 "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m{}",
@@ -415,22 +378,8 @@ pub fn ansi_draw_8bit_qb(image: &AnsiImage, args: &args::Args) -> String {
                 .next()
                 .unwrap_or(&bg_color);
 
-            let char = {
-                let mut pattern = 0;
-                if c2 == fg_color {
-                    pattern |= 1 << 0; // bit 0 (bottom-left)
-                }
-                if c3 == fg_color {
-                    pattern |= 1 << 1; // bit 1 (bottom-right)
-                }
-                if c0 == fg_color {
-                    pattern |= 1 << 2; // bit 2 (top-left)
-                }
-                if c1 == fg_color {
-                    pattern |= 1 << 3; // bit 3 (top-right)
-                }
-                QUARTER_BLOCKS[pattern as usize]
-            };
+            let pixels = [c0, c1, c2, c3];
+            let char = get_qb_char(&pixels, &fg_color);
 
             out.push_str(&format!(
                 "\x1b[38;5;{}m\x1b[48;5;{}m{}",
@@ -479,6 +428,7 @@ pub fn ansi_draw_8bit(image: &AnsiImage, args: &args::Args) -> String {
     let mut out: String = String::new();
     for row in &image.halfblock {
         for pixel_pair in row.iter() {
+
             let fg = if args.nograyscale {
                 pixel_pair.top.ansi232
             } else {
@@ -543,7 +493,7 @@ pub fn luma(rgb: &[u8; 3]) -> u8 {
     ((0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round()) as u8
 }
 
-pub fn ansi_draw_braille_24bit(image_luma: &AnsiImage, image_chroma: &AnsiImage, args: &args::Args) -> String {
+pub fn ansi_draw_braille_24bit(image_luma: &AnsiImage, image_chroma: &AnsiImage) -> String {
     let mut out: String = String::new();
     let bitmap_luma = &image_luma.bitmap;
     let bitmap_chroma = &image_chroma.bitmap;
