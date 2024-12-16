@@ -10,9 +10,9 @@
   statically linked with musl, works on all x86_64 linux platforms
 
       cd /tmp
-      wget https://github.com/waveplate/img2irc/releases/download/v1.0.4/img2irc-1.0.4-linux-x86_64.tar.gz
-      sudo tar -xzf img2irc-1.0.4-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.0.4/img2irc
-      rm -rf img2irc-1.0.4-linux-x86_64.tar.gz
+      wget https://github.com/waveplate/img2irc/releases/download/v1.1.0/img2irc-1.1.0-linux-x86_64.tar.gz
+      sudo tar -xzf img2irc-1.1.0-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.1.0/img2irc
+      rm -rf img2irc-1.1.0-linux-x86_64.tar.gz
 
 
 - ### install with `yay` (arch linux)
