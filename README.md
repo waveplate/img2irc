@@ -1,4 +1,6 @@
 # img2irc (1.1.0)
+
+![img2irc braille example](https://i.imgur.com/ZEJwuOb.png)
 ![img2irc preview](https://i.imgur.com/0omljq5.png)
 
 *img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
@@ -118,3 +120,5 @@
 | --frostedglass                         | blurred, frosted appearance as if viewed through semi-transparent surface | false         |
 | --solarize                             | strange, otherworldly appearance with inverted colors and surreal atmosphere | false         |
 | --edgedetection                        | highlights edges and boundaries in an image                     | false         |
+
+![img2irc braille example](https://i.imgur.com/MxroWUb.png)
