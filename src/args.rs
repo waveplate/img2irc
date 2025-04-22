@@ -25,11 +25,11 @@ pub struct Args {
     pub image: String,
 
     /// output image width in columns
-    #[arg(short, long)]
+    #[arg(short = 'w', long)]
     pub width: Option<u32>,
 
     /// output image height in rows
-    #[arg(short, long)]
+    #[arg(short = 'H', long)]
     pub height: Option<u32>,
 
     /// scaling factors (x:y, e.g., "2:2")
