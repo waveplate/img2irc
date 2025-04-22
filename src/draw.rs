@@ -715,7 +715,7 @@ pub fn irc_draw_braille(image_luma: &AnsiImage, image_chroma: &AnsiImage, args: 
     let scaled_threshold = min_luma + (luma_range / 2);
 
     for y in (0..height).step_by(4) {
-        let mut last_fg = 255u8;
+        let mut last_fg = 1u8;
         let mut first = true;
         for x in (0..width).step_by(2) {
             let mut braille_char = 0x2800;
