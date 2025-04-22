@@ -1,4 +1,4 @@
-# img2irc (1.1.0)
+# img2irc (1.1.1)
 
 ![img2irc braille example](https://i.imgur.com/ZEJwuOb.png)
 ![img2irc preview](https://i.imgur.com/0omljq5.png)
@@ -38,7 +38,7 @@
 |----------------------------------------|---------------------------------------------------------------|---------------|
 | image                                  | image url or file path                                        | required      |
 | -w, --width                            | output image width in columns                                 | auto          |
-| -h, --height                           | output image height in rows                                   | auto          |
+| -H, --height                           | output image height in rows                                   | auto          |
 | --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |
 | --aspect                               | final aspect ratio (x:y, e.g., "2:1")                         | none          |
 | --crop                                 | crop image ("x1,y1,x2,y2")                                    | none          |
