@@ -30,6 +30,13 @@ pub enum BlockKind {
     Legacy,     // U+1FB00–U+1FBFF
 }
 
+#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
+pub enum Render {
+    Irc,
+    Ansi,
+    Ansi24,
+}
+
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -69,17 +76,9 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub flipv: bool,
 
-    /// use IRC99 colours
-    #[arg(long, default_value_t = false, group = "colour", required_unless_present_any = ["ansi", "ansi24"])]
-    pub irc: bool,
-
-    /// use 8-bit ANSI colours
-    #[arg(long, default_value_t = false, group = "colour", required_unless_present_any = ["irc", "ansi24"])]
-    pub ansi: bool,
-
-    /// use 24-bit ANSI colours
-    #[arg(long, default_value_t = false, group = "colour", required_unless_present_any = ["irc", "ansi"])]
-    pub ansi24: bool,
+    /// colour mode to use
+    #[arg(long, value_enum, default_value_t = Render::Irc)]
+    pub render: Render,
 
     /// use braille pixels
     #[arg(
