@@ -17,6 +17,19 @@ pub enum ColourSpace {
     LCH,
 }
 
+#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
+pub enum BlockKind {
+    Full,       // U+2588
+    Half,       // U+2580, U+2584, U+258C, U+2590
+    Quarter,    // U+2596–U+259F
+    Eighth,     // U+2581–U+2587, U+2589–U+258F, U+2594–U+2595
+    Triangle,   // U+25B2, U+25B6, U+25BC, U+25C0
+    Corner,     // U+25E2–U+25E5
+    Geometric,  // U+25A0–U+25FF
+    Box,        // U+2500–U+257F
+    Legacy,     // U+1FB00–U+1FBFF
+}
+
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -35,10 +48,6 @@ pub struct Args {
     /// scaling factors (x:y, e.g., "2:2")
     #[arg(long, value_parser = parse_xy_pair)]
     pub scale: Option<(f32, f32)>,
-
-    /// final aspect ratio (x:y, e.g., "2:1")
-    #[arg(long, value_parser = parse_xy_pair)]
-    pub aspect: Option<(f32, f32)>,
 
     /// crop image (x1,y1,x2,y2)
     #[arg(long, value_parser = parse_crop_coordinates)]
@@ -73,16 +82,35 @@ pub struct Args {
     pub ansi24: bool,
 
     /// use braille pixels
-    #[arg(long, default_value_t = false, group = "pixel")]
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with = "block",
+        required_unless_present = "blocks"
+    )]
     pub braille: bool,
-
-    /// use halfblock pixels
-    #[arg(long, alias = "halfblock", default_value_t = true, group = "pixel")]
-    pub hb: bool,
-
-    /// use quarterblocks pixels
-    #[arg(long, alias = "quarterblock", default_value_t = false, group = "pixel")]
-    pub qb: bool,
+ 
+    /// use blocks
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        num_args = 0..,
+        default_missing_values = &[
+            "full",
+            "half",
+            "quarter",
+            "eighth",
+            "triangle",
+            "corner",
+            "geometric",
+            "box",
+            "legacy",
+        ],
+        conflicts_with = "braille",
+        required_unless_present = "braille"
+    )]
+    pub blocks: Vec<BlockKind>,
 
     /// adjust brightness (0 = no change)
     #[arg(short = 'b', long, default_value_t = 0.0, allow_hyphen_values = true)]    
@@ -136,7 +164,7 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = ColourSpace::HSV)]
     pub colorspace: ColourSpace,
 
-    /// converts image to black and white
+    /// exclude grayscale when picking nearest colour in palette (unless already grayscale)
     #[arg(long, default_value_t = false, group = "grayscale_opts")]
     pub grayscale: bool,
 
