@@ -29,7 +29,7 @@
   if you prefer to compile it yourself
 
 > [!NOTE]
-> if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
+> if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc-bin)!
 
 # usage
 
