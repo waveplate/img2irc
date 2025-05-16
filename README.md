@@ -10,19 +10,23 @@
 
 # how to install
 
-- ### download the linux binary (recommended)
+- ### one-line installer (recommended)
+
+  installs `img2irc` to `/usr/local/bin`
+
+      curl -sL https://github.com/waveplate/img2irc/releases/download/v1.3.0/img2irc-1.3.0-linux-x86_64.tar.gz | sudo tar -xzf - --strip-components=1 -C /usr/local/bin img2irc-1.3.0/img2irc
 
   statically linked with musl, works on all x86_64 linux platforms
-
-      cd /tmp
-      wget https://github.com/waveplate/img2irc/releases/download/v1.3.0/img2irc-1.3.0-linux-x86_64.tar.gz
-      sudo tar -xzf img2irc-1.3.0-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.3.0/img2irc
-      rm -rf img2irc-1.3.0-linux-x86_64.tar.gz
-
 
 - ### install with `yay` (arch linux)
   
       yay -S img2irc-bin
+
+  or
+
+      yay -S img2irc
+
+  if you prefer to compile it yourself
 
 > [!NOTE]
 > if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
