@@ -1,5 +1,6 @@
 mod args;
 mod draw;
+mod chars;
 mod palette;
 mod effects;
 
@@ -20,20 +21,23 @@ async fn main() {
             let canvas_luma = draw::AnsiImage::new(image_luma.clone());
             let canvas_chroma = draw::AnsiImage::new(image_chroma.clone());
 
-            match (args.irc, args.ansi, args.ansi24, args.qb, args.braille) {
-                (true, _, _, true, false) => println!("{}", draw::irc_draw_qb(&canvas_chroma, &args)),
-                (true, _, _, false, false) => println!("{}", draw::irc_draw(&canvas_chroma, &args)),
-                (true, _, _, _, true) => println!("{}", draw::irc_draw_braille(&canvas_luma, &canvas_chroma, &args)),
-                (_, true, _, true, false) => println!("{}", draw::ansi_draw_8bit_qb(&canvas_chroma, &args)),
-                (_, true, _, false, false) => println!("{}", draw::ansi_draw_8bit(&canvas_chroma, &args)),
-                (_, true, _, _, true) => println!("{}", draw::ansi_draw_braille_8bit(&canvas_luma, &canvas_chroma, &args)),
-                (_, _, true, true, false) => println!("{}", draw::ansi_draw_24bit_qb(&canvas_chroma)),
-                (_, _, true, false, false) => println!("{}", draw::ansi_draw_24bit(&canvas_chroma)),
-                (_, _, true, _, true) => println!("{}", draw::ansi_draw_braille_24bit(&canvas_luma, &canvas_chroma)),
-                (_, _, _, true, false) => println!("{}", draw::irc_draw_qb(&canvas_chroma, &args)),
-                (_, _, _, _, true) => println!("{}", draw::irc_draw_braille(&canvas_luma, &canvas_chroma, &args)),
-                _ => println!("{}", draw::irc_draw(&canvas_chroma, &args)),
-            }            
+            eprintln!("Render mode: {:?}", args.render);
+
+            if args.braille {
+                // Braille rendering
+                match args.render {
+                    args::Render::Irc => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Irc)),
+                    args::Render::Ansi => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Ansi)),
+                    args::Render::Ansi24 => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Ansi24)),
+                }
+            } else {
+                // Block rendering
+                match args.render {
+                    args::Render::Irc => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Irc)),
+                    args::Render::Ansi => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Ansi)),
+                    args::Render::Ansi24 => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Ansi24)),
+                }
+            }
         }
 
         Err(e) => {
