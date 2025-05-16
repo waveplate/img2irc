@@ -1,34 +1,30 @@
-# img2irc (1.1.1)
-
-![img2irc braille example](https://i.imgur.com/ZEJwuOb.png)
-![img2irc preview](https://i.imgur.com/0omljq5.png)
+### img2irc (1.3.0)
 
 *img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
 
+>`$ img2irc https://i.imgur.com/B9syzEm.png --ansi --blocks --width 132 --contrast 50 --nograyscale`
+> &nbsp;
+>![img2irc block example](https://i.imgur.com/B9syzEm.png)
+> &nbsp; 
+
 # how to install
 
-- ### download the linux binary
+- ### download the linux binary (recommended)
 
   statically linked with musl, works on all x86_64 linux platforms
 
       cd /tmp
-      wget https://github.com/waveplate/img2irc/releases/download/v1.1.1/img2irc-1.1.1-linux-x86_64.tar.gz
-      sudo tar -xzf img2irc-1.1.1-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.1.1/img2irc
-      rm -rf img2irc-1.1.1-linux-x86_64.tar.gz
+      wget https://github.com/waveplate/img2irc/releases/download/v1.3.0/img2irc-1.3.0-linux-x86_64.tar.gz
+      sudo tar -xzf img2irc-1.3.0-linux-x86_64.tar.gz -C /usr/local/bin --strip-components=1 img2irc-1.3.0/img2irc
+      rm -rf img2irc-1.3.0-linux-x86_64.tar.gz
 
 
 - ### install with `yay` (arch linux)
   
-      yay -S img2irc
+      yay -S img2irc-bin
 
 > [!NOTE]
 > if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc)!
-
-- ### install with `cargo`
-  
-      cargo install img2irc-rs
-
-  the binary will be installed to `~/.cargo/bin/img2irc`
 
 # usage
 
@@ -40,14 +36,17 @@
 | -w, --width                            | output image width in columns                                 | auto          |
 | -H, --height                           | output image height in rows                                   | auto          |
 | --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |
-| --aspect                               | final aspect ratio (x:y, e.g., "2:1")                         | none          |
 | --crop                                 | crop image ("x1,y1,x2,y2")                                    | none          |
 | --filter                               | sampling filter                                               | nearest       |
 | --rotate                               | rotate degrees                                                | 0             |
 | --fliph                                | flip horizontal                                               | false         |
 | --flipv                                | flip vertical                                                 | false         |
 
-### colours rendering options (select one)
+### colours rendering modes
+
+| option                                 | description                                                   | 
+|----------------------------------------|---------------------------------------------------------------|
+| --render                               | colour rendering mode (default: `irc`)                        |
 
 `irc` mode has 99 colours, (6.62-bit)
 
@@ -55,25 +54,50 @@
 
 `ansi24` has 16777216 colours (24-bit)
 
-| option                                 | description                                                   | 
-|----------------------------------------|---------------------------------------------------------------|
-| --irc                                  | use irc99 colours                                             |
-| --ansi                                 | use 8-bit ansi colours                                        |
-| --ansi24                               | use 24-bit ansi colours                                       |
+### pixel rendering modes (select one)
 
-### pixel rendering options (select one)
+| option        | description                   |
+|---------------|-------------------------------|
+| `--braille`   | use braille pixels            |
+| `--blocks[=types]` | use block pixels of the provided types. defaults to `full,half,quarter,eighth,triangle,corner,geometric,box,legacy` |
 
-`halfblock` mode increases the vertical resolution, doubling the total resolution for a given size
+#### braille mode
 
-`quarterblock` mode increases both the vertical and horizontal resolution by twofold, quadrupling the total resolution for a given size
+`--braille` uses 2×4 braille dot patterns, doubling horizontal and octupling vertical resolution
 
-`braille` mode uses 2x4 dot patterns to represent pixels, increasing resolution eightfold
+#### block modes
 
-| option                                 | description                                                   |
-|----------------------------------------|---------------------------------------------------------------|
-| --braille                              | use braille pixels                                            | 
-| --hb, --halfblock                      | use halfblock pixels                                          | 
-| --qb, --quarterblock                   | use quarterblocks pixels                                      |
+| type      | description          | unicode range  |
+|-----------|----------------------|----------------|
+| `full`      | full block           | 0x2588         |
+| `half`      | half block           | 0x2580-0x2590  |
+| `quarter`   | quarter block        | 0x2596-0x259F  |
+| `eighth`    | eighth block         | 0x2581-0x2595  |
+| `triangle`  | triangle shapes      | 0x25B2-0x25C0  |
+| `corner`    | corner triangles     | 0x25E2-0x25E5  |
+| `geometric` | geometric patterns   | 0x25A0-0x25FF  |
+| `box`       | box-drawing glyphs   | 0x2500-0x257F  |
+| `legacy`    | legacy block styles  | 0x1FB00-0x1FBFF|
+
+specifying `--blocks` with no value uses all available glyph types
+
+`full` only uses the fullblock glyph
+
+`half` increases the vertical resolution twofold
+
+`quarter` increases both vertical and horizontal resolution twofold
+
+`eighth` increases resolution in one axis at a time up to eightfold
+
+`triangle` uses triangle shapes
+
+`corner` uses corner triangle shapes
+
+`geometric` uses some geometric shapes
+
+`box` uses some box-drawing characters
+
+> see `src/chars.rs` for the actual glyphs and bitmaps or read `utils/README.md` for information on how to generate a custom `chars.rs` file
 
 ### image processing options
 
@@ -93,7 +117,7 @@
 | -I, --luma-invert                      | luminance is inverted (braille only)                          | false         |
 | --colorspace                           | colourspace (hsl, hsv, hsluv, lch)                            | hsv           |
 | --grayscale                            | converts image to black and white                             | false         |
-| --nograyscale                          | exclude grayscale colours from the palette                    | false         |
+| --nograyscale                          | exclude grayscale when picking nearest colour in palette (unless already grayscale)                  | false         |
 | --pixelize                             | pixelize pixel size                                           | 0             |
 | --boxblur                              | simple average of all the neighboring pixels surrounding one  | false         |
 | --gaussianblur                         | gaussian blur radius                                          | 0             |
@@ -120,5 +144,3 @@
 | --frostedglass                         | blurred, frosted appearance as if viewed through semi-transparent surface | false         |
 | --solarize                             | strange, otherworldly appearance with inverted colors and surreal atmosphere | false         |
 | --edgedetection                        | highlights edges and boundaries in an image                     | false         |
-
-![img2irc braille example](https://i.imgur.com/MxroWUb.png)
