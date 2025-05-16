@@ -1,11 +1,10 @@
-use crate::args::{Args, BlockKind};
+use crate::args::{Args, BlockKind, Render};
 use crate::chars::GLYPH_BITMAPS;
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
 
 use std::collections::HashMap;
 use std::iter::repeat;
-use std::ops::RangeInclusive;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
@@ -15,7 +14,7 @@ const POSITIONS: [(usize, usize, u32); 8] = [
     (1, 1, 0x10), (1, 2, 0x20), (0, 3, 0x40), (1, 3, 0x80),
 ];
 
-/// Max difference between R,G,B components for a color to be considered "near grayscale".
+/// Max difference between R,G,B components for a colour to be considered "near grayscale".
 const GRAYSCALE_TOLERANCE: u8 = 16;
 
 /// Cache for colour conversions: orig → (ansi_std, irc_std, ansi_ng, irc_ng)
@@ -24,7 +23,7 @@ static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
 
 /// Fast squared-distance search
 #[inline(always)]
-fn nearest_hex_color_fast(col: u32, palette: &[u32]) -> u8 {
+fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >>  8) & 0xFF) as i32;
     let pb = ((col >>  0) & 0xFF) as i32;
@@ -47,10 +46,10 @@ fn nearest_hex_color_fast(col: u32, palette: &[u32]) -> u8 {
     best_i
 }
 
-/// Fast squared-distance search for a distinctly chromatic (not near-grayscale) color in the palette.
-/// Returns None if no such color is found.
+/// Fast squared-distance search for a distinctly chromatic (not near-grayscale) colour in the palette.
+/// Returns None if no such colour is found.
 #[inline(always)]
-fn nearest_distinctly_chromatic_hex_color(col: u32, palette: &[u32], tolerance: u8) -> Option<u8> {
+fn nearest_distinctly_chromatic_hex_colour(col: u32, palette: &[u32], tolerance: u8) -> Option<u8> {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >>  8) & 0xFF) as i32;
     let pb = ((col >>  0) & 0xFF) as i32;
@@ -83,7 +82,7 @@ fn nearest_distinctly_chromatic_hex_color(col: u32, palette: &[u32], tolerance: 
     [(rgb >> 16) as u8, (rgb >> 8) as u8, (rgb >> 0) as u8]
 }
 
-/// True if the color is "near grayscale" within a given tolerance.
+/// True if the colour is "near grayscale" within a given tolerance.
 #[inline] fn is_near_grayscale(col: u32, tolerance: u8) -> bool {
     let [r,g,b] = unpack_rgb(col);
     let min_val = r.min(g.min(b));
@@ -111,9 +110,6 @@ pub struct AnsiPixelBlock {
     pub pixels: Vec<Vec<AnsiPixel>>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Renderer { Ansi8, Ansi24, Irc }
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Colour { Index(u8), RGB([u8;3]) }
 
@@ -124,17 +120,17 @@ impl AnsiPixel {
             return AnsiPixel { orig: *px, ansi_std: a, irc_std: i, ansi_ng: an, irc_ng: in_ };
         }
 
-        let ansi_std_val = nearest_hex_color_fast(*px, &ANSI256);
-        let irc_std_val  = nearest_hex_color_fast(*px, &IRC99);
+        let ansi_std_val = nearest_hex_colour_fast(*px, &ANSI256);
+        let irc_std_val  = nearest_hex_colour_fast(*px, &IRC99);
 
         let mut ansi_ng_val = ansi_std_val;
         let mut irc_ng_val  = irc_std_val;
 
         if !is_near_grayscale(*px, GRAYSCALE_TOLERANCE) {
-            if let Some(idx) = nearest_distinctly_chromatic_hex_color(*px, &ANSI256, GRAYSCALE_TOLERANCE) {
+            if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &ANSI256, GRAYSCALE_TOLERANCE) {
                 ansi_ng_val = idx;
             }
-            if let Some(idx) = nearest_distinctly_chromatic_hex_color(*px, &IRC99, GRAYSCALE_TOLERANCE) {
+            if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &IRC99, GRAYSCALE_TOLERANCE) {
                 irc_ng_val = idx;
             }
         }
@@ -203,24 +199,24 @@ fn block_bitmap(src: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelBlock>> {
     out
 }
 
-fn pick_colour(pixel: &AnsiPixel, r: Renderer, args: &Args) -> Colour {
+fn pick_colour(pixel: &AnsiPixel, r: Render, args: &Args) -> Colour {
     let distinct = !is_near_grayscale(pixel.orig, GRAYSCALE_TOLERANCE);
     match r {
-        Renderer::Ansi8 => {
+        Render::Ansi => {
             let idx = if args.nograyscale && distinct { pixel.ansi_ng } else { pixel.ansi_std };
             Colour::Index(idx)
         }
-        Renderer::Irc => {
+        Render::Irc => {
             let idx = if args.nograyscale && distinct { pixel.irc_ng } else { pixel.irc_std };
             Colour::Index(idx)
         }
-        Renderer::Ansi24 => Colour::RGB(unpack_rgb(pixel.orig)),
+        Render::Ansi24 => Colour::RGB(unpack_rgb(pixel.orig)),
     }
 }
 
-fn emit_colorized(
+fn emit_colourized(
     out: &mut String,
-    renderer: Renderer,
+    render: Render,
     fg: Colour,
     bg: Option<Colour>,
     glyph: char,
@@ -228,8 +224,8 @@ fn emit_colorized(
     last_fg: &mut Option<Colour>,
     last_bg: &mut Option<Colour>,
 ) {
-    match renderer {
-        Renderer::Ansi8 => {
+    match render {
+        Render::Ansi => {
             let fg_idx = if let Colour::Index(i) = fg { i } else { 0 };
             let bg_idx = bg.clone().and_then(|b| if let Colour::Index(i) = b { Some(i) } else { None });
             if *first || Some(fg.clone()) != *last_fg || bg != *last_bg {
@@ -243,14 +239,14 @@ fn emit_colorized(
             }
             out.push(glyph);
         }
-        Renderer::Ansi24 => {
+        Render::Ansi24 => {
             let fg_rgb = match fg {
-                Colour::RGB(c)   => c,
-                Colour::Index(i) => unpack_rgb(ANSI256[i as usize]),
+                Colour::RGB(c) => c,
+                Colour::Index(_) => panic!("Ansi24 should not use indexed colours"),
             };
             let bg_rgb = bg.map(|b| match b {
-                Colour::RGB(c)   => c,
-                Colour::Index(i) => unpack_rgb(ANSI256[i as usize]),
+                Colour::RGB(c) => c,
+                Colour::Index(_) => panic!("Ansi24 should not use indexed colours"),
             });
             let fg_col = Colour::RGB(fg_rgb);
             let bg_col = bg_rgb.map(Colour::RGB);
@@ -273,7 +269,7 @@ fn emit_colorized(
             }
             out.push(glyph);
         }
-        Renderer::Irc => {
+        Render::Irc => {
             let fg_idx = if let Colour::Index(i) = fg { i.min(98) } else { 0 }; // IRC99 indices are 0-98
             let bg_idx = bg.clone().and_then(|b| if let Colour::Index(i) = b { Some(i.min(98)) } else { None });
             if *first || Some(fg.clone()) != *last_fg || bg != *last_bg {
@@ -291,11 +287,33 @@ fn emit_colorized(
     *first = false;
 }
 
+/// Helper to calculate the average RGB color from a slice of u32 RGB values.
+#[inline]
+fn calculate_average_rgb(colors: &[u32]) -> [u8; 3] {
+    if colors.is_empty() {
+        return [0, 0, 0]; // Return black if no colors to average
+    }
+    let mut sum_r: u64 = 0;
+    let mut sum_g: u64 = 0;
+    let mut sum_b: u64 = 0;
+    for &col_u32 in colors {
+        sum_r += ((col_u32 >> 16) & 0xFF) as u64;
+        sum_g += ((col_u32 >> 8) & 0xFF) as u64;
+        sum_b += (col_u32 & 0xFF) as u64;
+    }
+    let count = colors.len() as u64;
+    [
+        (sum_r / count) as u8,
+        (sum_g / count) as u8,
+        (sum_b / count) as u8,
+    ]
+}
+
 /// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
 pub fn render_blocks(
-    image: &AnsiImage,
+    image: &AnsiImage, // Assuming AnsiImage is in parent module or use crate::image::AnsiImage
     args: &Args,
-    renderer: Renderer,
+    render: Render,
 ) -> String {
     // If no glyphs are defined at all, bail out.
     if GLYPH_BITMAPS.is_empty() {
@@ -306,47 +324,47 @@ pub fn render_blocks(
     let bmp0 = &GLYPH_BITMAPS[0].1;
     let gh = bmp0.len();
     let gw = bmp0[0].len();
-    let bp = gh * gw;
+    let bp = gh * gw; // bits per glyph pattern
 
     // 1) Build the Unicode‐codepoint ranges based on args.blocks
-    let mut ranges: Vec<RangeInclusive<u32>> = Vec::new();
+    let mut ranges: Vec<std::ops::RangeInclusive<u32>> = Vec::new();
     for kind in &args.blocks {
         match kind {
             BlockKind::Full => {
-                ranges.push(0x20..=0x20);
-                ranges.push(0x2588..=0x2588);
+                ranges.push(0x20..=0x20); // Space
+                ranges.push(0x2588..=0x2588); // Full Block
             }
             BlockKind::Half => {
-                ranges.push(0x2580..=0x2580);
-                ranges.push(0x2584..=0x2584);
-                ranges.push(0x258C..=0x258C);
-                ranges.push(0x2590..=0x2590);
+                ranges.push(0x2580..=0x2580); // Upper Half Block
+                ranges.push(0x2584..=0x2584); // Lower Half Block
+                ranges.push(0x258C..=0x258C); // Left Half Block
+                ranges.push(0x2590..=0x2590); // Right Half Block
             }
             BlockKind::Quarter => {
-                ranges.push(0x2596..=0x259F);
+                ranges.push(0x2596..=0x259F); // Quadrants
             }
             BlockKind::Eighth => {
-                ranges.push(0x2581..=0x2587);
-                ranges.push(0x2589..=0x258F);
-                ranges.push(0x2594..=0x2595);
+                ranges.push(0x2581..=0x2587); // Lower one eighth to seven eighths blocks
+                ranges.push(0x2589..=0x258F); // Left one eighth to seven eighths blocks (missing 2588)
+                ranges.push(0x2594..=0x2595); // Upper one eighth and three eighths blocks
             }
             BlockKind::Triangle => {
-                ranges.push(0x25B2..=0x25B2);
-                ranges.push(0x25B6..=0x25B6);
-                ranges.push(0x25BC..=0x25BC);
-                ranges.push(0x25C0..=0x25C0);
+                ranges.push(0x25B2..=0x25B2); // Black Up-Pointing Triangle
+                ranges.push(0x25B6..=0x25B6); // Black Right-Pointing Triangle
+                ranges.push(0x25BC..=0x25BC); // Black Down-Pointing Triangle
+                ranges.push(0x25C0..=0x25C0); // Black Left-Pointing Triangle
             }
             BlockKind::Corner => {
-                ranges.push(0x25E2..=0x25E5);
+                ranges.push(0x25E2..=0x25E5); // Triangles in corners
             }
             BlockKind::Geometric => {
-                ranges.push(0x25A0..=0x25FF);
+                ranges.push(0x25A0..=0x25FF); // Geometric Shapes
             }
             BlockKind::Box => {
-                ranges.push(0x2500..=0x257F);
+                ranges.push(0x2500..=0x257F); // Box Drawing
             }
             BlockKind::Legacy => {
-                ranges.push(0x1FB00..=0x1FBFF);
+                ranges.push(0x1FB00..=0x1FBFF); // Symbols for Legacy Computing
             }
         }
     }
@@ -368,107 +386,201 @@ pub fn render_blocks(
     // 3) If nothing matched, fall back to *all* glyphs.
     if allowed.is_empty() {
         allowed = (0..GLYPH_BITMAPS.len()).collect();
+        // Optionally, you could add a warning or info message here if no user-specified blocks were found.
+        if args.blocks.is_empty() {
+            // This means user specified no block kinds, so all glyphs is the intended fallback.
+        } else {
+            // User specified block kinds, but none of them yielded any glyphs from GLYPH_BITMAPS.
+            // This case might warrant a warning, or it implies GLYPH_BITMAPS might not cover those ranges.
+        }
     }
+     // If after fallback, 'allowed' is still empty (GLYPH_BITMAPS is empty), we already returned.
 
     // 4) Now perform the usual block‐rendering, but iterating only over `allowed`.
     let mut out = String::new();
     for block_row in &image.block {
         let mut first = true;
-        let mut last_fg: Option<Colour> = None;
+        let mut last_fg: Option<Colour> = None; // Assuming Colour is in parent or use crate::image::Colour
         let mut last_bg: Option<Colour> = None;
 
         for blk in block_row {
-            // Build a flat array of palette‐indices (one per pixel in the block).
-            let mut code = vec![0u8; bp];
-            for y in 0..gh {
-                for x in 0..gw {
-                    let p = &blk.pixels[y][x];
-                    let idx = match renderer {
-                        Renderer::Ansi8 if args.nograyscale && !is_near_grayscale(p.orig, GRAYSCALE_TOLERANCE) => p.ansi_ng,
-                        Renderer::Ansi8                                                               => p.ansi_std,
-                        Renderer::Irc  if args.nograyscale && !is_near_grayscale(p.orig, GRAYSCALE_TOLERANCE) => p.irc_ng,
-                        Renderer::Irc                                                                 => p.irc_std,
-                        Renderer::Ansi24                                                            => p.ansi_std,
-                    };
-                    code[y * gw + x] = idx;
-                }
-            }
+            let final_glyph: char;
+            let final_fg: Colour;
+            let final_bg: Option<Colour>;
 
-            // Find the glyph (and optional inversion) that best matches this block.
-            // `best` = (cost, glyph_index, fg_index, bg_index, inverted?)
-            let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
-            for &gi in &allowed {
-                let (_, bmp) = &GLYPH_BITMAPS[gi];
-                for &inv in &[false, true] {
-                    let mut fg_tot = 0;
-                    let mut bg_tot = 0;
-                    let mut fg_cnt = [0usize; 256];
-                    let mut bg_cnt = [0usize; 256];
-
-                    for i in 0..bp {
-                        let col = code[i] as usize;
-                        if bmp[i / gw][i % gw] ^ (inv as u8) == 1 {
-                            fg_tot += 1;
-                            fg_cnt[col] += 1;
-                        } else {
-                            bg_tot += 1;
-                            bg_cnt[col] += 1;
-                        }
-                    }
-
-                    let (fgi, fgm) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
-                    let (bgi, bgm) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
-                    let cost = (fg_tot - *fgm) + (bg_tot - *bgm);
-
-                    if cost < best.0 {
-                        best = (cost, gi, fgi as u8, bgi as u8, inv);
-                        if cost == 0 {
-                            break;
-                        }
+            if render == Render::Ansi24 {
+                // Ansi24 specific glyph matching using direct RGB values
+                let mut current_block_pixels_rgb: Vec<u32> = Vec::with_capacity(bp);
+                for y_idx in 0..gh {
+                    for x_idx in 0..gw {
+                        current_block_pixels_rgb.push(blk.pixels[y_idx][x_idx].orig);
                     }
                 }
-                if best.0 == 0 {
-                    break;
-                }
-            }
 
-            // Emit the chosen glyph with correct foreground/background.
-            let glyph = GLYPH_BITMAPS[best.1].0;
-            let (fg_idx, bg_idx) = if best.4 {
-                (best.3, best.2)
+                let mut best_cost = u64::MAX;
+                let mut best_glyph_idx = if allowed.is_empty() { 0 } else { allowed[0] }; // Default to first allowed if any
+                let mut best_chosen_fg_color = [0u8; 3];
+                let mut best_chosen_bg_color = [0u8; 3];
+
+                if allowed.is_empty() { // Should not happen if GLYPH_BITMAPS is not empty.
+                     final_glyph = ' ';
+                     final_fg = Colour::RGB([0,0,0]);
+                     final_bg = Some(Colour::RGB([0,0,0]));
+                } else {
+                    for &gi in &allowed {
+                        let (_, bmp) = &GLYPH_BITMAPS[gi];
+                        
+                        let mut pixels_under_glyph_ones: Vec<u32> = Vec::new();
+                        let mut pixels_under_glyph_zeros: Vec<u32> = Vec::new();
+
+                        for i in 0..bp {
+                            let pixel_original_rgb = current_block_pixels_rgb[i];
+                            if bmp[i / gw][i % gw] == 1 {
+                                pixels_under_glyph_ones.push(pixel_original_rgb);
+                            } else {
+                                pixels_under_glyph_zeros.push(pixel_original_rgb);
+                            }
+                        }
+
+                        let avg_color_at_glyph_ones = calculate_average_rgb(&pixels_under_glyph_ones);
+                        let avg_color_at_glyph_zeros = calculate_average_rgb(&pixels_under_glyph_zeros);
+
+                        // Cost for non-inverted case
+                        let mut cost_no_invert = 0u64;
+                        for i in 0..bp {
+                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[i]);
+                            let target_rgb = if bmp[i / gw][i % gw] == 1 { avg_color_at_glyph_ones } else { avg_color_at_glyph_zeros };
+                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
+                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
+                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
+                            cost_no_invert += (dr*dr + dg*dg + db*db) as u64;
+                        }
+
+                        if cost_no_invert < best_cost {
+                            best_cost = cost_no_invert;
+                            best_glyph_idx = gi;
+                            best_chosen_fg_color = avg_color_at_glyph_ones;
+                            best_chosen_bg_color = avg_color_at_glyph_zeros;
+                        }
+
+                        // Cost for inverted case
+                        let mut cost_invert = 0u64;
+                        for i in 0..bp {
+                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[i]);
+                            let target_rgb = if bmp[i / gw][i % gw] == 1 { avg_color_at_glyph_zeros } else { avg_color_at_glyph_ones };
+                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
+                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
+                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
+                            cost_invert += (dr*dr + dg*dg + db*db) as u64;
+                        }
+
+                        if cost_invert < best_cost {
+                            best_cost = cost_invert;
+                            best_glyph_idx = gi;
+                            best_chosen_fg_color = avg_color_at_glyph_zeros; 
+                            best_chosen_bg_color = avg_color_at_glyph_ones;  
+                        }
+                        
+                        if best_cost == 0 { break; } 
+                    }
+                    final_glyph = GLYPH_BITMAPS[best_glyph_idx].0;
+                    final_fg = Colour::RGB(best_chosen_fg_color);
+                    final_bg = Some(Colour::RGB(best_chosen_bg_color));
+                }
+
             } else {
-                (best.2, best.3)
-            };
-            let fg = Colour::Index(fg_idx);
-            let bg = Some(Colour::Index(bg_idx));
+                // Palette-based glyph matching logic for Render::Ansi and Render::Irc
+                let mut code = vec![0u8; bp];
+                for y_idx in 0..gh {
+                    for x_idx in 0..gw {
+                        let p = &blk.pixels[y_idx][x_idx];
+                        let distinct_orig = !is_near_grayscale(p.orig, GRAYSCALE_TOLERANCE);
+                        let idx = match render {
+                            Render::Ansi if args.nograyscale && distinct_orig => p.ansi_ng,
+                            Render::Ansi => p.ansi_std,
+                            Render::Irc if args.nograyscale && distinct_orig => p.irc_ng,
+                            Render::Irc => p.irc_std,
+                            _ => p.ansi_std, // Fallback, Ansi24 is handled above
+                        };
+                        code[y_idx * gw + x_idx] = idx;
+                    }
+                }
 
-            emit_colorized(
+                let best_default_glyph_idx = if allowed.is_empty() { 0 } else { allowed[0] };
+                let mut best = (usize::MAX, best_default_glyph_idx, 0u8, 0u8, false); 
+
+                if allowed.is_empty() { // Should not happen if GLYPH_BITMAPS is not empty
+                    final_glyph = ' ';
+                    final_fg = Colour::Index(0);
+                    final_bg = Some(Colour::Index(15)); // Default to black on white or similar
+                } else {
+                    for &gi in &allowed {
+                        let (_, bmp) = &GLYPH_BITMAPS[gi];
+                        for &inv in &[false, true] {
+                            let mut fg_tot: usize = 0; 
+                            let mut bg_tot: usize = 0;
+                            let mut fg_cnt = [0usize; 256]; 
+                            let mut bg_cnt = [0usize; 256];
+                            
+                            for i in 0..bp {
+                                let col_idx = code[i] as usize;
+                                if bmp[i / gw][i % gw] ^ (inv as u8) == 1 {
+                                    fg_tot += 1; fg_cnt[col_idx] += 1;
+                                } else {
+                                    bg_tot += 1; bg_cnt[col_idx] += 1;
+                                }
+                            }
+    
+                            let (fgi, fgm_val) = fg_cnt.iter().enumerate()
+                                               .max_by_key(|&(_, c)| c)
+                                               .map(|(i, c_ref)| (i, *c_ref)) // Get value from reference
+                                               .unwrap_or((0usize, 0_usize)); 
+                            let (bgi, bgm_val) = bg_cnt.iter().enumerate()
+                                               .max_by_key(|&(_, c)| c)
+                                               .map(|(i, c_ref)| (i, *c_ref)) // Get value from reference
+                                               .unwrap_or((0usize, 0_usize));
+                            
+                            let cost = (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_val));
+    
+                            if cost < best.0 {
+                                best = (cost, gi, fgi as u8, bgi as u8, inv);
+                                if cost == 0 { break; }
+                            }
+                        }
+                        if best.0 == 0 { break; }
+                    }
+                    final_glyph = GLYPH_BITMAPS[best.1].0;
+                    let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
+                    
+                    final_fg = Colour::Index(fg_idx);
+                    final_bg = Some(Colour::Index(bg_idx));
+                }
+            }
+
+            emit_colourized( // Assuming emit_colourized is in parent or use crate::image::emit_colourized
                 &mut out,
-                renderer,
-                fg,
-                bg,
-                glyph,
+                render,
+                final_fg,
+                final_bg,
+                final_glyph,
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
             );
         }
-
-        // Reset colors, add a newline.
-        out.push_str(match renderer {
-            Renderer::Ansi8 | Renderer::Ansi24 => "\x1b[0m\n",
-            Renderer::Irc                     => "\x0f\n",
+        out.push_str(match render {
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
+            Render::Irc => "\x0f\n", // IRC color reset
         });
     }
-
     out.trim_end_matches('\n').into()
 }
 
-fn render_braille(
+pub fn render_braille(
     image_luma: &AnsiImage,
     image_chroma: &AnsiImage,
     args: &Args,
-    renderer: Renderer,
+    render: Render,
 ) -> String {
     let h = image_luma.bitmap.len();
     let w = image_luma.bitmap[0].len();
@@ -507,7 +619,7 @@ fn render_braille(
                         braille|=bit;
                         let px_chroma_orig = image_chroma.bitmap[yy][xx];
                         let ansi_pixel_chroma = AnsiPixel::new(&px_chroma_orig);
-                        let col = pick_colour(&ansi_pixel_chroma, renderer, args);
+                        let col = pick_colour(&ansi_pixel_chroma, render, args);
                         *counts.entry(col).or_insert(0)+=1;
                     }
                 }
@@ -517,26 +629,19 @@ fn render_braille(
                 .unwrap_or_else(|| {
                     let default_px_val = image_chroma.bitmap.get(y).and_then(|r| r.get(x)).copied().unwrap_or(0);
                     let default_ansi_pixel = AnsiPixel::new(&default_px_val);
-                    pick_colour(&default_ansi_pixel, renderer, args)
+                    pick_colour(&default_ansi_pixel, render, args)
                 });
 
             let glyph = char::from_u32(braille).unwrap_or(' ');
-            emit_colorized(&mut out, renderer, fg, None, glyph, &mut first, &mut last_fg, &mut last_bg);
+            emit_colourized(&mut out, render, fg, None, glyph, &mut first, &mut last_fg, &mut last_bg);
         }
-        out.push_str(match renderer {
-            Renderer::Ansi8 | Renderer::Ansi24 => "\x1b[0m\n",
-            Renderer::Irc    => "\x0f\n",
+        out.push_str(match render {
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
+            Render::Irc    => "\x0f\n",
         });
     }
     out.trim_end_matches('\n').to_string()
 }
-
-pub fn ansi_draw_8bit_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Ansi8) }
-pub fn ansi_draw_24bit_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Ansi24) }
-pub fn irc_draw_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Irc) }
-pub fn ansi_draw_braille_8bit(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Ansi8) }
-pub fn ansi_draw_braille_24bit(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Ansi24) }
-pub fn irc_draw_braille(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Irc) }
 
 pub fn luma(rgb: &[u8;3]) -> u8 {
     let r = rgb[0] as f32; let g = rgb[1] as f32; let b = rgb[2] as f32;
