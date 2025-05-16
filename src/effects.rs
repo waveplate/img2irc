@@ -1,49 +1,71 @@
 use crate::args;
+use crate::chars::GLYPH_BITMAPS;
 use photon_rs::{colour_spaces, channels, conv, effects, filters, monochrome, noise};
 use photon_rs::transform::{SamplingFilter, resize, crop, rotate, flipv, fliph};
 use photon_rs::PhotonImage;
 
 fn calculate_dimensions(args: &args::Args, image: &PhotonImage) -> (u32, u32) {
-    let original_width = image.get_width() as f32;
-    let original_height = image.get_height() as f32;
-    let original_aspect = original_width / original_height;
+    let orig_w = image.get_width()  as f32;
+    let orig_h = image.get_height() as f32;
 
-    let base_width;
-    let base_height;
-
-    let aspect_ratio = if let Some(aspect) = args.aspect {
-        aspect.0 / aspect.1
+    // determine per‐cell pixel factor:
+    // braille cells cover 2×4 pixels; block cells use glyph bitmap size
+    let (factor_x, factor_y) = if args.braille {
+        (2.0, 4.0)
     } else {
-        original_aspect
+        let glyph = &GLYPH_BITMAPS[0].1;
+        (glyph[0].len() as f32, glyph.len() as f32)
     };
 
-    if args.width.is_none() && args.height.is_none() {
-        base_width = original_width;
-        base_height = original_height;
-    } else if args.width.is_none() {
-        let provided_height = args.height.unwrap();
-        base_height = provided_height as f32;
-        base_width = base_height * aspect_ratio;
-    } else if args.height.is_none() {
-        let provided_width = args.width.unwrap();
-        base_width = provided_width as f32;
-        base_height = base_width / aspect_ratio;
-    } else {
-        base_width = args.width.unwrap() as f32;
-        base_height = args.height.unwrap() as f32;
+    let (mut pw, mut ph) = match (args.width, args.height) {
+        (Some(wc), Some(hc)) => (
+            wc as f32 * factor_x,
+            hc as f32 * factor_y,
+        ),
+
+        // only width in characters → width*factor_x pixels, height by original aspect
+        (Some(wc), None) => {
+            let pw = wc as f32 * factor_x;
+            let ph = pw * (orig_h / orig_w);
+            (pw, ph)
+        }
+
+        // only height in characters → height*factor_y pixels, width by original aspect
+        (None, Some(hc)) => {
+            let ph = hc as f32 * factor_y;
+            let pw = ph * (orig_w / orig_h);
+            (pw, ph)
+        }
+
+        // neither specified → keep original pixel dimensions
+        (None, None) => (orig_w, orig_h),
+    };
+
+    if let Some((sx, sy)) = args.scale {
+        pw *= sx;
+        ph *= sy;
     }
 
-    let (scaled_width, scaled_height) = if let Some(scale) = args.scale {
-        (base_width * scale.0, base_height * scale.1)
-    } else {
-        (base_width, base_height)
-    };
+    // braille aspect tweak: if only one dimension was specified,
+    // shrink the other by 10% to compensate cell shape
+    if args.braille {
+        match (args.width.is_some(), args.height.is_some()) {
+            (true, false) => {
+                // width fixed → reduce height
+                ph *= 0.9;
+            }
+            (false, true) => {
+                // height fixed → reduce width
+                pw *= 1.11;
+            }
+            _ => {}
+        }
+    }
 
-    // Step 4: Round the scaled dimensions to the nearest integer and ensure a minimum size of 1.
-    let final_width = scaled_width.round().max(1.0) as u32;
-    let final_height = scaled_height.round().max(1.0) as u32;
+    let out_w = pw.round().max(1.0) as u32;
+    let out_h = ph.round().max(1.0) as u32;
 
-    (final_width, final_height)
+    (out_w, out_h)
 }
 
 pub fn apply_effects(
