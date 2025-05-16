@@ -1,789 +1,544 @@
-use crate::args;
-use crate::palette::{RGB99, RGB88, ANSI232, ANSI256, nearest_hex_color};
+use crate::args::{Args, BlockKind};
+use crate::chars::GLYPH_BITMAPS;
+use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
+
 use std::collections::HashMap;
+use std::iter::repeat;
+use std::ops::RangeInclusive;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
-const UP: &str = "\u{2580}";
-
-static QUARTER_BLOCKS: [&str; 16] = [
-    " ",          // 0b0000
-    "\u{2597}",   // ▗ Quadrant lower right
-    "\u{2596}",   // ▖ Quadrant lower left
-    "\u{2584}",   // ▄ Lower half block
-    "\u{259D}",   // ▝ Quadrant upper right
-    "\u{2590}",   // ▐ Right half block
-    "\u{259E}",   // ▞ Quadrant upper right and lower left
-    "\u{259F}",   // ▟ Quadrant upper right, lower left, lower right
-    "\u{2598}",   // ▘ Quadrant upper left
-    "\u{259A}",   // ▚ Quadrant upper left and lower right
-    "\u{258C}",   // ▌ Left half block
-    "\u{2599}",   // ▙ Quadrant upper left, lower left, lower right
-    "\u{2580}",   // ▀ Upper half block
-    "\u{259C}",   // ▜ Quadrant upper left, upper right, lower right
-    "\u{259B}",   // ▛ Quadrant upper left, upper right, lower left
-    "\u{2588}",   // █ Full block
-];
-
+/// Braille dot positions (for render_braille)
 const POSITIONS: [(usize, usize, u32); 8] = [
-    (0, 0, 0x01), // dot 1
-    (0, 1, 0x02), // dot 2
-    (0, 2, 0x04), // dot 3
-    (1, 0, 0x08), // dot 4
-    (1, 1, 0x10), // dot 5
-    (1, 2, 0x20), // dot 6
-    (0, 3, 0x40), // dot 7
-    (1, 3, 0x80), // dot 8
+    (0, 0, 0x01), (0, 1, 0x02), (0, 2, 0x04), (1, 0, 0x08),
+    (1, 1, 0x10), (1, 2, 0x20), (0, 3, 0x40), (1, 3, 0x80),
 ];
+
+/// Max difference between R,G,B components for a color to be considered "near grayscale".
+const GRAYSCALE_TOLERANCE: u8 = 16;
+
+/// Cache for colour conversions: orig → (ansi_std, irc_std, ansi_ng, irc_ng)
+static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
+    Lazy::new(|| Mutex::new(HashMap::with_capacity(8_192)));
+
+/// Fast squared-distance search
+#[inline(always)]
+fn nearest_hex_color_fast(col: u32, palette: &[u32]) -> u8 {
+    let pr = ((col >> 16) & 0xFF) as i32;
+    let pg = ((col >>  8) & 0xFF) as i32;
+    let pb = ((col >>  0) & 0xFF) as i32;
+
+    let mut best_i = 0u8;
+    let mut best_d = u32::MAX;
+    if palette.is_empty() { return 0; }
+
+    for (i, &p) in palette.iter().enumerate() {
+        let dr = pr - (((p >> 16) & 0xFF) as i32);
+        let dg = pg - (((p >>  8) & 0xFF) as i32);
+        let db = pb - (((p >>  0) & 0xFF) as i32);
+        let d  = (dr*dr + dg*dg + db*db) as u32;
+        if d < best_d {
+            best_d = d;
+            best_i = i as u8;
+            if d == 0 { break; }
+        }
+    }
+    best_i
+}
+
+/// Fast squared-distance search for a distinctly chromatic (not near-grayscale) color in the palette.
+/// Returns None if no such color is found.
+#[inline(always)]
+fn nearest_distinctly_chromatic_hex_color(col: u32, palette: &[u32], tolerance: u8) -> Option<u8> {
+    let pr = ((col >> 16) & 0xFF) as i32;
+    let pg = ((col >>  8) & 0xFF) as i32;
+    let pb = ((col >>  0) & 0xFF) as i32;
+
+    let mut best_i: Option<u8> = None;
+    let mut best_d = u32::MAX;
+
+    for (i, &p) in palette.iter().enumerate() {
+        if is_near_grayscale(p, tolerance) { continue; }
+        let dr = pr - (((p >> 16) & 0xFF) as i32);
+        let dg = pg - (((p >>  8) & 0xFF) as i32);
+        let db = pb - (((p >>  0) & 0xFF) as i32);
+        let d  = (dr*dr + dg*dg + db*db) as u32;
+        if d < best_d {
+            best_d = d;
+            best_i = Some(i as u8);
+            if d == 0 { break; }
+        }
+    }
+    best_i
+}
+
+/// Pack [R,G,B] → u32
+#[inline] fn make_rgb_u32(px: &[u8]) -> u32 {
+    if px.len() < 3 { return 0; }
+    ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32)
+}
+/// Unpack u32 → [R,G,B]
+#[inline] fn unpack_rgb(rgb: u32) -> [u8;3] {
+    [(rgb >> 16) as u8, (rgb >> 8) as u8, (rgb >> 0) as u8]
+}
+
+/// True if the color is "near grayscale" within a given tolerance.
+#[inline] fn is_near_grayscale(col: u32, tolerance: u8) -> bool {
+    let [r,g,b] = unpack_rgb(col);
+    let min_val = r.min(g.min(b));
+    let max_val = r.max(g.max(b));
+    max_val.saturating_sub(min_val) <= tolerance
+}
 
 #[derive(Debug, Clone)]
 pub struct AnsiImage {
     pub bitmap: Vec<Vec<u32>>,
-    pub halfblock: Vec<Vec<AnsiPixelPair>>,
-    pub quarterblock: Vec<Vec<AnsiPixelQuad>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct AnsiPixelPair {
-    pub top: AnsiPixel,
-    pub bottom: AnsiPixel,
+    pub block:  Vec<Vec<AnsiPixelBlock>>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnsiPixel {
-    pub orig: u32,
-    pub ansi: u8,
-    pub ansi232: u8,
-    pub irc: u8,
-    pub irc88: u8,
+    pub orig:     u32,
+    pub ansi_std: u8,
+    pub irc_std:  u8,
+    pub ansi_ng:  u8,
+    pub irc_ng:   u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnsiPixelBlock {
+    pub pixels: Vec<Vec<AnsiPixel>>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct AnsiPixelQuad {
-    pub top_left: AnsiPixel,
-    pub top_right: AnsiPixel,
-    pub bottom_left: AnsiPixel,
-    pub bottom_right: AnsiPixel,
-}
+pub enum Renderer { Ansi8, Ansi24, Irc }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Colour { Index(u8), RGB([u8;3]) }
 
 impl AnsiPixel {
-    pub fn new(pixel: &u32) -> AnsiPixel {
-        let irc = nearest_hex_color(*pixel, RGB99.to_vec());
-        let irc88 = nearest_hex_color(*pixel, RGB88.to_vec());
-        let ansi = nearest_hex_color(*pixel, ANSI256.to_vec());
-        let ansi232 = nearest_hex_color(*pixel, ANSI232.to_vec());
-        AnsiPixel {
-            orig: *pixel,
-            ansi,
-            ansi232,
-            irc,
-            irc88,
+    #[inline]
+    pub fn new(px: &u32) -> Self {
+        if let Some(&(a, i, an, in_)) = COLOR_CACHE.lock().unwrap().get(px) {
+            return AnsiPixel { orig: *px, ansi_std: a, irc_std: i, ansi_ng: an, irc_ng: in_ };
         }
+
+        let ansi_std_val = nearest_hex_color_fast(*px, &ANSI256);
+        let irc_std_val  = nearest_hex_color_fast(*px, &IRC99);
+
+        let mut ansi_ng_val = ansi_std_val;
+        let mut irc_ng_val  = irc_std_val;
+
+        if !is_near_grayscale(*px, GRAYSCALE_TOLERANCE) {
+            if let Some(idx) = nearest_distinctly_chromatic_hex_color(*px, &ANSI256, GRAYSCALE_TOLERANCE) {
+                ansi_ng_val = idx;
+            }
+            if let Some(idx) = nearest_distinctly_chromatic_hex_color(*px, &IRC99, GRAYSCALE_TOLERANCE) {
+                irc_ng_val = idx;
+            }
+        }
+
+        COLOR_CACHE.lock().unwrap().insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
+        AnsiPixel { orig: *px, ansi_std: ansi_std_val, irc_std: irc_std_val, ansi_ng: ansi_ng_val, irc_ng: irc_ng_val }
     }
 }
 
 impl AnsiImage {
-    pub fn new(image: PhotonImage) -> AnsiImage {
-        let mut bitmap = image
-            .get_raw_pixels()
-            .chunks(4)
-            .map(|x| make_rgb_u32(x.to_vec()))
-            .collect::<Vec<u32>>()
-            .chunks(image.get_width() as usize)
-            .map(|x| x.to_vec())
-            .collect::<Vec<Vec<u32>>>();
+    pub fn new(img: PhotonImage) -> Self {
+        let w = img.get_width() as usize;
+        let raw = img.get_raw_pixels();
+        let flat: Vec<u32> = raw.chunks(4).map(make_rgb_u32).collect();
+        let mut bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
 
-        if bitmap.len() % 2 != 0 {
-            bitmap.push(vec![0; image.get_width() as usize]);
-        }
-
+        if bitmap.len() % 2 != 0 { bitmap.push(vec![0; w]); }
         for row in &mut bitmap {
-            if row.len() % 2 != 0 {
-                row.push(0);
-            }
+            if row.len() % 2 != 0 { row.push(0); }
         }
 
-        let halfblock = halfblock_bitmap(&bitmap);
-        let quarterblock = quarterblock_bitmap(&bitmap);
+        let block = block_bitmap(&bitmap);
+        AnsiImage { bitmap, block }
+    }
+}
 
-        AnsiImage {                                          
-            bitmap,
-            halfblock,
-            quarterblock,
+fn block_bitmap(src: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelBlock>> {
+    if GLYPH_BITMAPS.is_empty() { return Vec::new(); }
+    let (gh, gw) = {
+        let b = &GLYPH_BITMAPS[0].1;
+        (b.len(), b[0].len())
+    };
+    if gh == 0 || gw == 0 { return Vec::new(); }
+
+    let mut px_rows: Vec<Vec<AnsiPixel>> = src.iter()
+        .map(|row| row.iter().map(AnsiPixel::new).collect())
+        .collect();
+
+    let ph = ((px_rows.len() + gh - 1) / gh) * gh;
+    let pw = if px_rows.is_empty() { 0 } else { ((px_rows[0].len() + gw - 1) / gw) * gw };
+
+    for r in &mut px_rows {
+        if r.len() < pw {
+            r.extend(repeat(AnsiPixel::new(&0)).take(pw - r.len()));
         }
     }
-}
-
-pub fn make_rgb_u8(rgb: u32) -> [u8; 3] {
-    let r = (rgb >> 16) as u8;
-    let g = (rgb >> 8) as u8;
-    let b = rgb as u8;
-
-    [r, g, b]
-}
-
-pub fn make_rgb_u32(rgb: Vec<u8>) -> u32 {
-    let r = rgb[0] as u32;
-    let g = rgb[1] as u32;
-    let b = rgb[2] as u32;
-
-    (r << 16) + (g << 8) + b
-}
-
-pub fn quarterblock_bitmap(bitmap: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelQuad>> {
-    let ansi_bitmap = bitmap
-        .iter()
-        .map(|x| x.iter().map(|y| AnsiPixel::new(y)).collect::<Vec<AnsiPixel>>())
-        .collect::<Vec<Vec<AnsiPixel>>>();
-
-    let mut ansi_canvas: Vec<Vec<AnsiPixelQuad>> = Vec::new();
-
-    for two_rows in ansi_bitmap.chunks(2) {
-        let top_row = &two_rows[0];
-        let bottom_row = &two_rows[1];
-
-        let mut ansi_row: Vec<AnsiPixelQuad> = Vec::new();
-
-        for i in (0..top_row.len()).step_by(2) {
-            let default_pixel = AnsiPixel::new(&0);
-            let top_left_pixel = top_row.get(i).unwrap_or(&default_pixel);
-            let top_right_pixel = top_row.get(i + 1).unwrap_or(&default_pixel);
-            let bottom_left_pixel = bottom_row.get(i).unwrap_or(&default_pixel);
-            let bottom_right_pixel = bottom_row.get(i + 1).unwrap_or(&default_pixel);
-
-            let pixel_quad = AnsiPixelQuad {
-                top_left: *top_left_pixel,
-                top_right: *top_right_pixel,
-                bottom_left: *bottom_left_pixel,
-                bottom_right: *bottom_right_pixel,
-            };
-
-            ansi_row.push(pixel_quad);
-        }
-
-        ansi_canvas.push(ansi_row);
+    if px_rows.len() < ph {
+        let blank = vec![AnsiPixel::new(&0); pw];
+        px_rows.extend(repeat(blank).take(ph - px_rows.len()));
     }
 
-    ansi_canvas
-}
-
-pub fn halfblock_bitmap(bitmap: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelPair>> {
-    let ansi_bitmap = bitmap
-        .iter()
-        .map(|x| x.iter().map(|y| AnsiPixel::new(y)).collect::<Vec<AnsiPixel>>())
-        .collect::<Vec<Vec<AnsiPixel>>>();
-
-    let mut ansi_canvas: Vec<Vec<AnsiPixelPair>> = Vec::new();
-
-    for two_rows in ansi_bitmap.chunks(2) {
-        let top_row = &two_rows[0];
-        let bottom_row = &two_rows[1];
-
-        let mut ansi_row: Vec<AnsiPixelPair> = Vec::new();
-
-        for i in 0..top_row.len() {
-            let default_pixel = AnsiPixel::new(&0);
-            let top_pixel = top_row.get(i).unwrap_or(&default_pixel);
-            let bottom_pixel = bottom_row.get(i).unwrap_or(&default_pixel);
-
-            let pixel_pair = AnsiPixelPair {
-                top: *top_pixel,
-                bottom: *bottom_pixel,
-            };
-
-            ansi_row.push(pixel_pair);
-        }
-
-        ansi_canvas.push(ansi_row);
-    }
-
-    ansi_canvas
-}
-
-fn get_qb_char<T: PartialEq>(pixels: &[T; 4], fg_color: &T) -> &'static str {
-    let mut pattern = 0;
-    if pixels[2] == *fg_color {
-        pattern |= 1 << 0; // bit 0 (bottom-left)
-    }
-    if pixels[3] == *fg_color {
-        pattern |= 1 << 1; // bit 1 (bottom-right)
-    }
-    if pixels[0] == *fg_color {
-        pattern |= 1 << 2; // bit 2 (top-left)
-    }
-    if pixels[1] == *fg_color {
-        pattern |= 1 << 3; // bit 3 (top-right)
-    }
-    QUARTER_BLOCKS[pattern as usize]
-}
-
-pub fn irc_draw_qb(image: &AnsiImage, args: &args::Args) -> String {
-    let mut out: String = String::new();
-    for (y, row) in image.quarterblock.iter().enumerate() {
-        let mut last_fg: u8 = 255;
-        let mut last_bg: u8 = 255;
-        for (x, pixel_quad) in row.iter().enumerate() {
-
-            let c0 = if args.nograyscale {
-                pixel_quad.top_right.irc88
-            } else {
-                pixel_quad.top_right.irc
-            };
-            let c1 = if args.nograyscale {
-                pixel_quad.top_left.irc88
-            } else {
-                pixel_quad.top_left.irc
-            };
-
-            let c2 = if args.nograyscale {
-                pixel_quad.bottom_right.irc88
-            } else {
-                pixel_quad.bottom_right.irc
-            };
-
-            let c3 = if args.nograyscale {
-                pixel_quad.bottom_left.irc88
-            } else {
-                pixel_quad.bottom_left.irc
-            };
-
-            let mut color_counts = HashMap::new();
-            for &color in &[c0, c1, c2, c3] {
-                *color_counts.entry(color).or_insert(0) += 1;
-            }
-
-            let bg_color = *color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(color, _)| color)
-                .unwrap_or(&0);
-            let fg_color = *color_counts
-                .iter()
-                .filter(|&(color, _)| color != &bg_color)
-                .map(|(color, _)| color)
-                .next()
-                .unwrap_or(&bg_color);
-
-            let pixels = [c0, c1, c2, c3];
-            let char = get_qb_char(&pixels, &fg_color);
-
-            if x == 0 || fg_color != last_fg || bg_color != last_bg {
-                if fg_color == bg_color {
-                    out.push_str(&format!("\x03{}{}", fg_color, char));
-                } else {
-                    out.push_str(&format!("\x03{},{}{}", fg_color, bg_color, char));
+    let mut out = Vec::with_capacity(ph / gh);
+    for y in (0..ph).step_by(gh) {
+        let mut row = Vec::with_capacity(pw / gw);
+        for x in (0..pw).step_by(gw) {
+            let mut block_pixels = vec![vec![AnsiPixel::new(&0); gw]; gh];
+            for j in 0..gh {
+                for i in 0..gw {
+                    block_pixels[j][i] = px_rows[y + j][x + i];
                 }
-            } else {
-                out.push_str(&char);
             }
-
-            last_fg = fg_color;
-            last_bg = bg_color;
+            row.push(AnsiPixelBlock { pixels: block_pixels });
         }
-
-        out.push_str("\x0f");
-
-        if y != image.quarterblock.len() - 1 {
-            out.push_str("\n");
-        }
+        out.push(row);
     }
-    out.trim_end().to_string()
+    out
 }
 
-pub fn ansi_draw_24bit_qb(image: &AnsiImage) -> String {
-    let mut out: String = String::new();
-    for row in &image.quarterblock {
-        for pixel_quad in row.iter() {
-
-            let c0_rgb = make_rgb_u8(pixel_quad.top_right.orig);
-            let c1_rgb = make_rgb_u8(pixel_quad.top_left.orig);
-            let c2_rgb = make_rgb_u8(pixel_quad.bottom_right.orig);
-            let c3_rgb = make_rgb_u8(pixel_quad.bottom_left.orig);
-
-            let mut color_counts = HashMap::new();
-            for &rgb in &[c0_rgb, c1_rgb, c2_rgb, c3_rgb] {
-                *color_counts.entry(rgb).or_insert(0) += 1;
-            }
-
-            let bg_color = *color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(rgb, _)| rgb)
-                .unwrap_or(&[0, 0, 0]);
-            let fg_color = *color_counts
-                .iter()
-                .filter(|&(rgb, _)| rgb != &bg_color)
-                .map(|(rgb, _)| rgb)
-                .next()
-                .unwrap_or(&bg_color);
-
-            let pixels = [c0_rgb, c1_rgb, c2_rgb, c3_rgb];
-            let char = get_qb_char(&pixels, &fg_color);
-
-            out.push_str(&format!(
-                "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m{}",
-                fg_color[0],
-                fg_color[1],
-                fg_color[2],
-                bg_color[0],
-                bg_color[1],
-                bg_color[2],
-                char
-            ));
+fn pick_colour(pixel: &AnsiPixel, r: Renderer, args: &Args) -> Colour {
+    let distinct = !is_near_grayscale(pixel.orig, GRAYSCALE_TOLERANCE);
+    match r {
+        Renderer::Ansi8 => {
+            let idx = if args.nograyscale && distinct { pixel.ansi_ng } else { pixel.ansi_std };
+            Colour::Index(idx)
         }
-        out.push_str("\x1b[0m\n");
+        Renderer::Irc => {
+            let idx = if args.nograyscale && distinct { pixel.irc_ng } else { pixel.irc_std };
+            Colour::Index(idx)
+        }
+        Renderer::Ansi24 => Colour::RGB(unpack_rgb(pixel.orig)),
     }
-    out.trim_end().to_string()
 }
 
-pub fn ansi_draw_8bit_qb(image: &AnsiImage, args: &args::Args) -> String {
-    let mut out: String = String::new();
-    for row in &image.quarterblock {
-        for pixel_quad in row.iter() {
-
-            let c0 = if args.nograyscale {
-                pixel_quad.top_right.ansi232
-            } else {
-                pixel_quad.top_right.ansi
-            };
-            let c1 = if args.nograyscale {
-                pixel_quad.top_left.ansi232
-            } else {
-                pixel_quad.top_left.ansi
-            };
-            let c2 = if args.nograyscale {
-                pixel_quad.bottom_right.ansi232
-            } else {
-                pixel_quad.bottom_right.ansi
-            };
-            let c3 = if args.nograyscale {
-                pixel_quad.bottom_left.ansi232
-            } else {
-                pixel_quad.bottom_left.ansi
-            };
-
-            let mut color_counts = HashMap::new();
-            for &color in &[c0, c1, c2, c3] {
-                *color_counts.entry(color).or_insert(0) += 1;
+fn emit_colorized(
+    out: &mut String,
+    renderer: Renderer,
+    fg: Colour,
+    bg: Option<Colour>,
+    glyph: char,
+    first: &mut bool,
+    last_fg: &mut Option<Colour>,
+    last_bg: &mut Option<Colour>,
+) {
+    match renderer {
+        Renderer::Ansi8 => {
+            let fg_idx = if let Colour::Index(i) = fg { i } else { 0 };
+            let bg_idx = bg.clone().and_then(|b| if let Colour::Index(i) = b { Some(i) } else { None });
+            if *first || Some(fg.clone()) != *last_fg || bg != *last_bg {
+                if let Some(b) = bg_idx {
+                    out.push_str(&format!("\x1b[38;5;{}m\x1b[48;5;{}m", fg_idx, b));
+                } else {
+                    out.push_str(&format!("\x1b[38;5;{}m", fg_idx));
+                }
+                *last_fg = Some(fg.clone());
+                *last_bg = bg.clone();
             }
-
-            let bg_color = *color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(color, _)| color)
-                .unwrap_or(&0);
-            let fg_color = *color_counts
-                .iter()
-                .filter(|&(color, _)| color != &bg_color)
-                .map(|(color, _)| color)
-                .next()
-                .unwrap_or(&bg_color);
-
-            let pixels = [c0, c1, c2, c3];
-            let char = get_qb_char(&pixels, &fg_color);
-
-            out.push_str(&format!(
-                "\x1b[38;5;{}m\x1b[48;5;{}m{}",
-                fg_color,
-                bg_color,
-                char
-            ));
+            out.push(glyph);
         }
-        out.push_str("\x1b[0m\n");
+        Renderer::Ansi24 => {
+            let fg_rgb = match fg {
+                Colour::RGB(c)   => c,
+                Colour::Index(i) => unpack_rgb(ANSI256[i as usize]),
+            };
+            let bg_rgb = bg.map(|b| match b {
+                Colour::RGB(c)   => c,
+                Colour::Index(i) => unpack_rgb(ANSI256[i as usize]),
+            });
+            let fg_col = Colour::RGB(fg_rgb);
+            let bg_col = bg_rgb.map(Colour::RGB);
+
+            if *first || Some(fg_col.clone()) != *last_fg || bg_col != *last_bg {
+                if let Some(bc) = bg_rgb {
+                    out.push_str(&format!(
+                        "\x1b[38;2;{};{};{}m\x1b[48;2;{};{};{}m",
+                        fg_rgb[0], fg_rgb[1], fg_rgb[2],
+                        bc[0], bc[1], bc[2]
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "\x1b[38;2;{};{};{}m",
+                        fg_rgb[0], fg_rgb[1], fg_rgb[2]
+                    ));
+                }
+                *last_fg = Some(fg_col);
+                *last_bg = bg_col;
+            }
+            out.push(glyph);
+        }
+        Renderer::Irc => {
+            let fg_idx = if let Colour::Index(i) = fg { i.min(98) } else { 0 }; // IRC99 indices are 0-98
+            let bg_idx = bg.clone().and_then(|b| if let Colour::Index(i) = b { Some(i.min(98)) } else { None });
+            if *first || Some(fg.clone()) != *last_fg || bg != *last_bg {
+                if let Some(b) = bg_idx {
+                    out.push_str(&format!("\x03{},{}", fg_idx, b));
+                } else {
+                    out.push_str(&format!("\x03{}", fg_idx));
+                }
+                *last_fg = Some(fg.clone());
+                *last_bg = bg.clone();
+            }
+            out.push(glyph);
+        }
     }
-    out.trim_end().to_string()
+    *first = false;
 }
 
-pub fn ansi_draw_24bit(image: &AnsiImage) -> String {
-    let mut out: String = String::new();
-    for row in &image.halfblock {
-        for pixel_pair in row.iter() {
-            let fg = make_rgb_u8(pixel_pair.top.orig)
-                .to_vec()
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>();
+/// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
+pub fn render_blocks(
+    image: &AnsiImage,
+    args: &Args,
+    renderer: Renderer,
+) -> String {
+    // If no glyphs are defined at all, bail out.
+    if GLYPH_BITMAPS.is_empty() {
+        return "Error: GLYPH_BITMAPS empty".into();
+    }
 
-            let bg = make_rgb_u8(pixel_pair.bottom.orig)
-                .to_vec()
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<String>>();
+    // Determine glyph dimensions (height = number of rows, width = number of cols).
+    let bmp0 = &GLYPH_BITMAPS[0].1;
+    let gh = bmp0.len();
+    let gw = bmp0[0].len();
+    let bp = gh * gw;
 
-            out.push_str(
-                format!(
-                    "\x1b[38;2;{}m\x1b[48;2;{}m{}",
-                    fg.join(";"),
-                    bg.join(";"),
-                    UP
-                )
-                .as_str(),
+    // 1) Build the Unicode‐codepoint ranges based on args.blocks
+    let mut ranges: Vec<RangeInclusive<u32>> = Vec::new();
+    for kind in &args.blocks {
+        match kind {
+            BlockKind::Full => {
+                ranges.push(0x20..=0x20);
+                ranges.push(0x2588..=0x2588);
+            }
+            BlockKind::Half => {
+                ranges.push(0x2580..=0x2580);
+                ranges.push(0x2584..=0x2584);
+                ranges.push(0x258C..=0x258C);
+                ranges.push(0x2590..=0x2590);
+            }
+            BlockKind::Quarter => {
+                ranges.push(0x2596..=0x259F);
+            }
+            BlockKind::Eighth => {
+                ranges.push(0x2581..=0x2587);
+                ranges.push(0x2589..=0x258F);
+                ranges.push(0x2594..=0x2595);
+            }
+            BlockKind::Triangle => {
+                ranges.push(0x25B2..=0x25B2);
+                ranges.push(0x25B6..=0x25B6);
+                ranges.push(0x25BC..=0x25BC);
+                ranges.push(0x25C0..=0x25C0);
+            }
+            BlockKind::Corner => {
+                ranges.push(0x25E2..=0x25E5);
+            }
+            BlockKind::Geometric => {
+                ranges.push(0x25A0..=0x25FF);
+            }
+            BlockKind::Box => {
+                ranges.push(0x2500..=0x257F);
+            }
+            BlockKind::Legacy => {
+                ranges.push(0x1FB00..=0x1FBFF);
+            }
+        }
+    }
+
+    // 2) Filter GLYPH_BITMAPS by codepoint, collecting the indices we’re allowed to use.
+    let mut allowed: Vec<usize> = GLYPH_BITMAPS
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (ch, _bmp))| {
+            let cp = *ch as u32;
+            if ranges.iter().any(|r| r.contains(&cp)) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // 3) If nothing matched, fall back to *all* glyphs.
+    if allowed.is_empty() {
+        allowed = (0..GLYPH_BITMAPS.len()).collect();
+    }
+
+    // 4) Now perform the usual block‐rendering, but iterating only over `allowed`.
+    let mut out = String::new();
+    for block_row in &image.block {
+        let mut first = true;
+        let mut last_fg: Option<Colour> = None;
+        let mut last_bg: Option<Colour> = None;
+
+        for blk in block_row {
+            // Build a flat array of palette‐indices (one per pixel in the block).
+            let mut code = vec![0u8; bp];
+            for y in 0..gh {
+                for x in 0..gw {
+                    let p = &blk.pixels[y][x];
+                    let idx = match renderer {
+                        Renderer::Ansi8 if args.nograyscale && !is_near_grayscale(p.orig, GRAYSCALE_TOLERANCE) => p.ansi_ng,
+                        Renderer::Ansi8                                                               => p.ansi_std,
+                        Renderer::Irc  if args.nograyscale && !is_near_grayscale(p.orig, GRAYSCALE_TOLERANCE) => p.irc_ng,
+                        Renderer::Irc                                                                 => p.irc_std,
+                        Renderer::Ansi24                                                            => p.ansi_std,
+                    };
+                    code[y * gw + x] = idx;
+                }
+            }
+
+            // Find the glyph (and optional inversion) that best matches this block.
+            // `best` = (cost, glyph_index, fg_index, bg_index, inverted?)
+            let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
+            for &gi in &allowed {
+                let (_, bmp) = &GLYPH_BITMAPS[gi];
+                for &inv in &[false, true] {
+                    let mut fg_tot = 0;
+                    let mut bg_tot = 0;
+                    let mut fg_cnt = [0usize; 256];
+                    let mut bg_cnt = [0usize; 256];
+
+                    for i in 0..bp {
+                        let col = code[i] as usize;
+                        if bmp[i / gw][i % gw] ^ (inv as u8) == 1 {
+                            fg_tot += 1;
+                            fg_cnt[col] += 1;
+                        } else {
+                            bg_tot += 1;
+                            bg_cnt[col] += 1;
+                        }
+                    }
+
+                    let (fgi, fgm) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                    let (bgi, bgm) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                    let cost = (fg_tot - *fgm) + (bg_tot - *bgm);
+
+                    if cost < best.0 {
+                        best = (cost, gi, fgi as u8, bgi as u8, inv);
+                        if cost == 0 {
+                            break;
+                        }
+                    }
+                }
+                if best.0 == 0 {
+                    break;
+                }
+            }
+
+            // Emit the chosen glyph with correct foreground/background.
+            let glyph = GLYPH_BITMAPS[best.1].0;
+            let (fg_idx, bg_idx) = if best.4 {
+                (best.3, best.2)
+            } else {
+                (best.2, best.3)
+            };
+            let fg = Colour::Index(fg_idx);
+            let bg = Some(Colour::Index(bg_idx));
+
+            emit_colorized(
+                &mut out,
+                renderer,
+                fg,
+                bg,
+                glyph,
+                &mut first,
+                &mut last_fg,
+                &mut last_bg,
             );
         }
-        out.push_str("\x1b[0m\n");
-    }
-    out.trim_end().to_string()
-}
 
-pub fn ansi_draw_8bit(image: &AnsiImage, args: &args::Args) -> String {
-    let mut out: String = String::new();
-    for row in &image.halfblock {
-        for pixel_pair in row.iter() {
-
-            let fg = if args.nograyscale {
-                pixel_pair.top.ansi232
-            } else {
-                pixel_pair.top.ansi
-            };
-
-            let bg = if args.nograyscale {
-                pixel_pair.bottom.ansi232
-            } else {
-                pixel_pair.bottom.ansi
-            };
-
-            out.push_str(format!("\x1b[38;5;{}m\x1b[48;5;{}m{}", fg, bg, UP).as_str());
-        }
-        out.push_str("\x1b[0m\n");
-    }
-    out.trim_end().to_string()
-}
-
-pub fn irc_draw(image: &AnsiImage, args: &args::Args) -> String {
-    let mut out: String = String::new();
-    for row in &image.halfblock {
-        let mut last_fg: u8 = 255;
-        let mut last_bg: u8 = 255;
-        for (x, pixel_pair) in row.iter().enumerate() {
-
-            let fg = if args.nograyscale {
-                pixel_pair.top.irc88
-            } else {
-                pixel_pair.top.irc
-            };
-
-            let bg = if args.nograyscale {
-                pixel_pair.bottom.irc88
-            } else {
-                pixel_pair.bottom.irc
-            };
-
-            if x == 0 || fg != last_fg || bg != last_bg {
-                if last_bg == bg {
-                    out.push_str(&format!("\x03{}{}", fg, UP));
-                } else {
-                    out.push_str(&format!("\x03{},{}{}", fg, bg, UP));
-                }
-            } else {
-                out.push_str(&UP);
-            }
-
-            last_fg = fg;
-            last_bg = bg;
-        }
-
-        out.push_str("\x0f\n");
-    }
-    out.trim_end().to_string()
-}
-
-pub fn luma(rgb: &[u8; 3]) -> u8 {
-    let r = rgb[0] as u16;
-    let g = rgb[1] as u16;
-    let b = rgb[2] as u16;
-    ((0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round()) as u8
-}
-
-pub fn ansi_draw_braille_24bit(image_luma: &AnsiImage, image_chroma: &AnsiImage) -> String {
-    let mut out: String = String::new();
-    let bitmap_luma = &image_luma.bitmap;
-    let bitmap_chroma = &image_chroma.bitmap;
-    let height = bitmap_luma.len();
-    let width = bitmap_luma[0].len();
-
-    let mut error_matrix = vec![vec![0.0; width]; height];
-    
-    let mut min_luma = 255u32;
-    let mut max_luma = 0u32;
-    for row in bitmap_luma.iter() {
-        for &pixel in row.iter() {
-            let l = luma(&make_rgb_u8(pixel)) as u32;
-            min_luma = min_luma.min(l);
-            max_luma = max_luma.max(l);
-        }
+        // Reset colors, add a newline.
+        out.push_str(match renderer {
+            Renderer::Ansi8 | Renderer::Ansi24 => "\x1b[0m\n",
+            Renderer::Irc                     => "\x0f\n",
+        });
     }
 
-    let luma_range = max_luma.saturating_sub(min_luma).max(1);
-
-    let scaled_threshold = min_luma + (luma_range / 2);
-
-    for y in (0..height).step_by(4) {
-        let mut last_fg = [0u8; 3];
-        let mut first = true;
-        for x in (0..width).step_by(2) {
-            let mut braille_char = 0x2800;
-            let mut color_counts: HashMap<[u8; 3], u32> = HashMap::new();
-
-            for &(dx, dy, bit) in &POSITIONS {
-                let current_y = y + dy;
-                let current_x = x + dx;
-                if current_y < height && current_x < width {
-                    let original_pixel = bitmap_luma[current_y][current_x];
-                    let rgb = make_rgb_u8(original_pixel);
-                    let current_luma = luma(&rgb) as f64;
-
-                    let mut pixel_luma = current_luma + error_matrix[current_y][current_x];
-                    pixel_luma = pixel_luma.clamp(0.0, 255.0);
-
-                    let new_pixel = if pixel_luma > scaled_threshold as f64 {
-                        255.0
-                    } else {
-                        0.0
-                    };
-
-                    let error = pixel_luma - new_pixel;
-
-                    if new_pixel == 255.0 {
-                        braille_char |= bit;
-
-                        let px_chroma = bitmap_chroma[current_y][current_x];
-                        let rgb_chroma = make_rgb_u8(px_chroma);
-                        *color_counts.entry(rgb_chroma).or_insert(0) += 1;
-                    }
-
-                    if current_x + 1 < width {
-                        error_matrix[current_y][current_x + 1] += error * 7.0 / 16.0;
-                    }
-                    if current_y + 1 < height {
-                        if current_x > 0 {
-                            error_matrix[current_y + 1][current_x - 1] += error * 3.0 / 16.0;
-                        }
-                        error_matrix[current_y + 1][current_x] += error * 5.0 / 16.0;
-                        if current_x + 1 < width {
-                            error_matrix[current_y + 1][current_x + 1] += error * 1.0 / 16.0;
-                        }
-                    }
-                }
-            }
-
-            let fg_color = color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(color, _)| *color)
-                .unwrap_or([0, 0, 0]);
-            let braille_char = char::from_u32(braille_char).unwrap_or(' ');
-
-            if first || last_fg != fg_color {
-                out.push_str(&format!(
-                    "\x1b[38;2;{};{};{}m{}",
-                    fg_color[0], fg_color[1], fg_color[2], braille_char
-                ));
-            } else {
-                out.push(braille_char);
-            }
-            last_fg = fg_color;
-            first = false;
-        }
-        out.push_str("\x1b[0m\n");
-    }
-    out.trim_end().to_string()
+    out.trim_end_matches('\n').into()
 }
 
-
-pub fn ansi_draw_braille_8bit(
+fn render_braille(
     image_luma: &AnsiImage,
     image_chroma: &AnsiImage,
-    args: &args::Args,
+    args: &Args,
+    renderer: Renderer,
 ) -> String {
-    let mut out: String = String::new();
-    let bitmap_luma = &image_luma.bitmap;
-    let bitmap_chroma = &image_chroma.bitmap;
-    let height = bitmap_luma.len();
-    let width = bitmap_luma[0].len();
+    let h = image_luma.bitmap.len();
+    let w = image_luma.bitmap[0].len();
+    let mut err = vec![vec![0.0; w]; h];
 
-    let mut error_matrix = vec![vec![0.0; width]; height];
-    
-    let mut min_luma = 255u32;
-    let mut max_luma = 0u32;
-    for row in bitmap_luma.iter() {
-        for &pixel in row.iter() {
-            let l = luma(&make_rgb_u8(pixel)) as u32;
-            min_luma = min_luma.min(l);
-            max_luma = max_luma.max(l);
-        }
-    }
+    let (mut min_l, mut max_l) = (255u32,0u32);
+    for row in &image_luma.bitmap { for &px in row { let l = luma(&unpack_rgb(px)) as u32; min_l = min_l.min(l); max_l = max_l.max(l); } }
+    let thr = min_l + ((max_l - min_l).max(1)/2);
 
-    let luma_range = max_luma.saturating_sub(min_luma).max(1);
+    let mut out = String::new();
+    let mut first = true;
+    let mut last_fg: Option<Colour> = None;
+    let mut last_bg: Option<Colour> = None;
 
-    let scaled_threshold = min_luma + (luma_range / 2);
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(2) {
+            let mut braille = 0x2800;
+            let mut counts: HashMap<Colour,usize> = HashMap::new();
 
-    for y in (0..height).step_by(4) {
-        let mut last_fg = 255u8; // Initialize with a default color
-        let mut first = true;
-        for x in (0..width).step_by(2) {
-            let mut braille_char = 0x2800; // Base Unicode braille character
-            let mut color_counts: HashMap<u8, usize> = HashMap::new(); // Color counting
-
-            for &(dx, dy, bit) in &POSITIONS {
-                let current_y = y + dy;
-                let current_x = x + dx;
-                if current_y < height && current_x < width {
-                    let original_pixel = bitmap_luma[current_y][current_x];
-                    let rgb = make_rgb_u8(original_pixel);
-                    let current_luma = luma(&rgb) as f64;
-
-                    let mut pixel_luma = current_luma + error_matrix[current_y][current_x];
-                    pixel_luma = pixel_luma.clamp(0.0, 255.0);
-
-                    let new_pixel = if pixel_luma > scaled_threshold as f64 {
-                        255.0
-                    } else {
-                        0.0
-                    };
-
-                    let error = pixel_luma - new_pixel;
-
-                    if new_pixel == 255.0 {
-                        braille_char |= bit;
-
-                        let px_chroma = bitmap_chroma[current_y][current_x];
-                        let color = if args.nograyscale {
-                            nearest_hex_color(px_chroma, ANSI232.to_vec())
-                        } else {
-                            nearest_hex_color(px_chroma, ANSI256.to_vec())
-                        };
-                        *color_counts.entry(color).or_insert(0) += 1;
+            for &(dx,dy,bit) in &POSITIONS {
+                let yy=y+dy; let xx=x+dx;
+                if yy<h && xx<w {
+                    let pxl_luma_orig = image_luma.bitmap[yy][xx];
+                    let rgb_l = unpack_rgb(pxl_luma_orig);
+                    let mut lum = luma(&rgb_l) as f64 + err[yy][xx];
+                    lum = lum.clamp(0.0,255.0);
+                    let newp_is_dot = lum > thr as f64;
+                    let e = lum - if newp_is_dot { 255.0 } else { 0.0 };
+                    if xx+1<w { err[yy][xx+1]+=e*7.0/16.0 }
+                    if yy+1<h {
+                        if xx>0 { err[yy+1][xx-1]+=e*3.0/16.0 }
+                        err[yy+1][xx]+=e*5.0/16.0;
+                        if xx+1<w { err[yy+1][xx+1]+=e*1.0/16.0 }
                     }
-
-                    if current_x + 1 < width {
-                        error_matrix[current_y][current_x + 1] += error * 7.0 / 16.0;
-                    }
-                    if current_y + 1 < height {
-                        if current_x > 0 {
-                            error_matrix[current_y + 1][current_x - 1] += error * 3.0 / 16.0;
-                        }
-                        error_matrix[current_y + 1][current_x] += error * 5.0 / 16.0;
-                        if current_x + 1 < width {
-                            error_matrix[current_y + 1][current_x + 1] += error * 1.0 / 16.0;
-                        }
+                    if newp_is_dot {
+                        braille|=bit;
+                        let px_chroma_orig = image_chroma.bitmap[yy][xx];
+                        let ansi_pixel_chroma = AnsiPixel::new(&px_chroma_orig);
+                        let col = pick_colour(&ansi_pixel_chroma, renderer, args);
+                        *counts.entry(col).or_insert(0)+=1;
                     }
                 }
             }
 
-            let fg_color = *color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(color, _)| color)
-                .unwrap_or(&last_fg); // Default to last_fg if no colors are counted
+            let fg = counts.into_iter().max_by_key(|&(_,c)|c).map(|(c,_)|c)
+                .unwrap_or_else(|| {
+                    let default_px_val = image_chroma.bitmap.get(y).and_then(|r| r.get(x)).copied().unwrap_or(0);
+                    let default_ansi_pixel = AnsiPixel::new(&default_px_val);
+                    pick_colour(&default_ansi_pixel, renderer, args)
+                });
 
-            let braille_char = char::from_u32(braille_char).unwrap_or(' ');
-
-            if first || last_fg != fg_color {
-                out.push_str(&format!("\x1b[38;5;{}m{}", fg_color, braille_char));
-            } else {
-                out.push(braille_char);
-            }
-            last_fg = fg_color;
-            first = false;
+            let glyph = char::from_u32(braille).unwrap_or(' ');
+            emit_colorized(&mut out, renderer, fg, None, glyph, &mut first, &mut last_fg, &mut last_bg);
         }
-        out.push_str("\x1b[0m\n"); // Reset colors and move to the next line
+        out.push_str(match renderer {
+            Renderer::Ansi8 | Renderer::Ansi24 => "\x1b[0m\n",
+            Renderer::Irc    => "\x0f\n",
+        });
     }
-    out.trim_end().to_string()
+    out.trim_end_matches('\n').to_string()
 }
 
-pub fn irc_draw_braille(image_luma: &AnsiImage, image_chroma: &AnsiImage, args: &args::Args) -> String {
-    let mut out: String = String::new();
-    let bitmap_luma = &image_luma.bitmap;
-    let bitmap_chroma = &image_chroma.bitmap;
-    let height = bitmap_luma.len();
-    let width = bitmap_luma[0].len();
+pub fn ansi_draw_8bit_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Ansi8) }
+pub fn ansi_draw_24bit_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Ansi24) }
+pub fn irc_draw_block(i: &AnsiImage, a: &Args) -> String { render_blocks(i, a, Renderer::Irc) }
+pub fn ansi_draw_braille_8bit(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Ansi8) }
+pub fn ansi_draw_braille_24bit(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Ansi24) }
+pub fn irc_draw_braille(l: &AnsiImage, c: &AnsiImage, a: &Args) -> String { render_braille(l, c, a, Renderer::Irc) }
 
-    let mut error_matrix = vec![vec![0.0; width]; height];
-    
-    let mut min_luma = 255u32;
-    let mut max_luma = 0u32;
-
-    for row in bitmap_luma.iter() {
-        for &pixel in row.iter() {
-            let l = luma(&make_rgb_u8(pixel)) as u32;
-            min_luma = min_luma.min(l);
-            max_luma = max_luma.max(l);
-        }
-    }
-
-    let luma_range = max_luma.saturating_sub(min_luma).max(1);
-
-    let scaled_threshold = min_luma + (luma_range / 2);
-
-    for y in (0..height).step_by(4) {
-        let mut last_fg = 1u8;
-        let mut first = true;
-        for x in (0..width).step_by(2) {
-            let mut braille_char = 0x2800;
-            let mut color_counts = HashMap::new();
-
-            for &(dx, dy, bit) in &POSITIONS {
-                let current_y = y + dy;
-                let current_x = x + dx;
-                if current_y < height && current_x < width {
-                    let original_pixel = bitmap_luma[current_y][current_x];
-                    let rgb = make_rgb_u8(original_pixel);
-                    let current_luma = luma(&rgb) as f64;
-
-                    let mut pixel_luma = current_luma + error_matrix[current_y][current_x];
-                    pixel_luma = pixel_luma.clamp(0.0, 255.0);
-
-                    let new_pixel = if pixel_luma > scaled_threshold as f64 {
-                        255.0
-                    } else {
-                        0.0
-                    };
-
-                    let error = pixel_luma - new_pixel;
-
-                    if new_pixel == 255.0 {
-                        braille_char |= bit;
-
-                        let px_chroma = bitmap_chroma[current_y][current_x];
-                        let color = if args.nograyscale {
-                            nearest_hex_color(px_chroma, RGB88.to_vec())
-                        } else {
-                            nearest_hex_color(px_chroma, RGB99.to_vec())
-                        };
-                        *color_counts.entry(color).or_insert(0) += 1;
-                    }
-
-                    if current_x + 1 < width {
-                        error_matrix[current_y][current_x + 1] += error * 7.0 / 16.0;
-                    }
-                    if current_y + 1 < height {
-                        if current_x > 0 {
-                            error_matrix[current_y + 1][current_x - 1] += error * 3.0 / 16.0;
-                        }
-                        error_matrix[current_y + 1][current_x] += error * 5.0 / 16.0;
-                        if current_x + 1 < width {
-                            error_matrix[current_y + 1][current_x + 1] += error * 1.0 / 16.0;
-                        }
-                    }
-                }
-            }
-
-            let fg_color = *color_counts
-                .iter()
-                .max_by_key(|entry| entry.1)
-                .map(|(color, _)| color)
-                .unwrap_or(&last_fg);
-
-            let braille_char = char::from_u32(braille_char).unwrap_or(' ');
-
-            if first || fg_color != last_fg {
-                out.push_str(&format!("\x03{}{}", fg_color, braille_char));
-            } else {
-                out.push(braille_char);
-            }
-            last_fg = fg_color;
-            first = false;
-        }
-        out.push_str("\x0f\n");
-    }
-    out.trim_end().to_string()
+pub fn luma(rgb: &[u8;3]) -> u8 {
+    let r = rgb[0] as f32; let g = rgb[1] as f32; let b = rgb[2] as f32;
+    (0.299*r + 0.587*g + 0.114*b).round() as u8
 }
