@@ -1,6 +1,6 @@
 [package]
 name = "img2irc-rs"
-version = "1.3.0"
+version = "1.3.1"
 authors = ["waveplate"]
 github = "https://github.com/waveplate/img2irc"
 repository = "https://github.com/waveplate/img2irc"
@@ -25,8 +25,7 @@ path = "src/main.rs"
 [dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 reqwest = "0.11.14"
-photon-rs = { version = "0.3.2", default-features = false, git = "https://github.com/silvia-odwyer/photon", rev = "3b72d357848cd76be9363e87ad0cd02a19b988d2" }
-#photon-rs = "0.3.2"
+photon-rs = "0.3.3"
 clap = { version = "4.2.0", features = ["cargo", "derive"] }
 url = "2.3.1"
 atty = "0.2.14"

@@ -74,8 +74,8 @@ pub fn apply_effects(
 ) -> PhotonImage {
     let (width, height) = calculate_dimensions(args, &photon_image);
         
-    if args.rotate != 0 {
-        photon_image = rotate(&photon_image, args.rotate as i32);
+    if args.rotate != 0.00 {
+        photon_image = rotate(&photon_image, args.rotate);
     }
 
     if args.fliph {
@@ -267,7 +267,7 @@ pub fn apply_effects(
 pub fn apply_luma_effects(args: &args::Args, mut photon_image: PhotonImage) -> PhotonImage {
     let (width, height) = calculate_dimensions(args, &photon_image);
 
-    if args.rotate != 0 {
+    if args.rotate != 0.00 {
         photon_image = rotate(&photon_image, args.rotate);
     }
 

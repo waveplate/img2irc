@@ -1,8 +1,8 @@
-### img2irc (1.3.0)
+### img2irc (1.3.1)
 
 *img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
 
-`$ img2irc https://i.imgur.com/B9syzEm.png --render ansi --blocks --width 132 --contrast 50 --nograyscale`
+`$ img2irc https://i.imgur.com/WWSl2Sb.png --render ansi --blocks --width 132 --contrast 50 --nograyscale`
 
 > &nbsp;
 >![img2irc block example](https://i.imgur.com/B9syzEm.png)
@@ -14,7 +14,7 @@
 
   installs `img2irc` to `/usr/local/bin`
 
-      curl -sL https://github.com/waveplate/img2irc/releases/download/v1.3.0/img2irc-1.3.0-linux-x86_64.tar.gz | sudo tar -xzf - --strip-components=1 -C /usr/local/bin img2irc-1.3.0/img2irc
+      curl -sL https://github.com/waveplate/img2irc/releases/download/v1.3.1/img2irc-1.3.1-linux-x86_64.tar.gz | sudo tar -xzf - --strip-components=1 -C /usr/local/bin img2irc-1.3.1/img2irc
 
   statically linked with musl, works on all x86_64 linux platforms
 

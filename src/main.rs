@@ -21,8 +21,6 @@ async fn main() {
             let canvas_luma = draw::AnsiImage::new(image_luma.clone());
             let canvas_chroma = draw::AnsiImage::new(image_chroma.clone());
 
-            eprintln!("Render mode: {:?}", args.render);
-
             if args.braille {
                 // Braille rendering
                 match args.render {

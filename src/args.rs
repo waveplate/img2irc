@@ -65,8 +65,8 @@ pub struct Args {
     pub filter: SamplingFilter,
 
     /// rotate degrees
-    #[arg(long, default_value_t = 0)]
-    pub rotate: i32,
+    #[arg(long, default_value_t = 0.00)]
+    pub rotate: f32,
 
     /// flip horizontal
     #[arg(long, default_value_t = false)]
