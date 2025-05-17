@@ -68,13 +68,13 @@
 
 #### braille mode
 
-`--braille` uses 2×4 braille dot patterns, doubling horizontal and octupling vertical resolution
+`--braille` uses 2×4 braille dot patterns, doubling horizontal and quadrupling vertical resolution
 
 #### block modes
 
 | type      | description          | unicode range  |
 |-----------|----------------------|----------------|
-| `full`      | full block           | 0x2588         |
+| `full`      | full block           | 0x20 + 0x2588  |
 | `half`      | half block           | 0x2580-0x2590  |
 | `quarter`   | quarter block        | 0x2596-0x259F  |
 | `eighth`    | eighth block         | 0x2581-0x2595  |
@@ -86,7 +86,7 @@
 
 specifying `--blocks` with no value uses all available glyph types
 
-`full` only uses the fullblock glyph
+`full` only uses the ASCII space and fullblock glyph
 
 `half` increases the vertical resolution twofold
 
@@ -101,6 +101,8 @@ specifying `--blocks` with no value uses all available glyph types
 `geometric` uses some geometric shapes
 
 `box` uses some box-drawing characters
+
+`legacy` uses some legacy geometric shapes
 
 > see `src/chars.rs` for the actual glyphs and bitmaps or read `utils/README.md` for information on how to generate a custom `chars.rs` file
 
