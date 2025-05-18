@@ -152,4 +152,5 @@ specifying `--blocks` with no value uses all available glyph types
 | --solarize                             | strange, otherworldly appearance with inverted colors and surreal atmosphere | false         |
 | --edgedetection                        | highlights edges and boundaries in an image                     | false         |
 
+![img2irc example 3](https://i.imgur.com/1AMyKwl.png)
 ![img2irc example 2](https://i.imgur.com/BWs5Hfd.png)
