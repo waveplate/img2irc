@@ -31,6 +31,30 @@
 > [!NOTE]
 > if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc-bin)!
 
+# font installation (recommended)
+
+certain glyph types (triangle, corner, geometric, box, legacy) require google's noto fonts extras to render correctly. full, half, quarter and eighth blocks typically work without extra fonts.
+
+## debian/ubuntu
+
+```bash
+sudo apt update
+sudo apt install fonts-noto
+```
+
+## arch linux
+
+```bash
+sudo pacman -S noto-fonts noto-fonts-extra
+```
+
+## windows
+
+1. download the latest noto-fonts zip from https://github.com/googlefonts/noto-fonts/releases/latest  
+2. extract the archive  
+3. install the .ttf files you need (e.g., noto sans symbols, noto sans symbols 2) by right-clicking → install, or copy them to c:\windows\fonts  
+
+
 # usage
 
 `img2irc <URL or PATH> [OPTIONS]`
@@ -152,5 +176,4 @@ specifying `--blocks` with no value uses all available glyph types
 | --solarize                             | strange, otherworldly appearance with inverted colors and surreal atmosphere | false         |
 | --edgedetection                        | highlights edges and boundaries in an image                     | false         |
 
-![img2irc example 3](https://i.imgur.com/1AMyKwl.png)
 ![img2irc example 2](https://i.imgur.com/BWs5Hfd.png)
