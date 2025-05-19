@@ -15,25 +15,23 @@ async fn main() {
 
     match load_image_from_url_or_path(args.image.as_str()).await {
         Ok(image) => {
-            let image_luma = effects::apply_luma_effects(&args, image.clone());
-            let image_chroma = effects::apply_effects(&args, image.clone());
 
-            let canvas_luma = draw::AnsiImage::new(image_luma.clone());
-            let canvas_chroma = draw::AnsiImage::new(image_chroma.clone());
+            let image = effects::apply_effects(&args, image.clone());
+            let canvas = draw::AnsiImage::new(image.clone());
 
             if args.braille {
-                // Braille rendering
+                let image_luma = effects::apply_luma_effects(&args, image.clone());
+                let canvas_luma = draw::AnsiImage::new(image_luma.clone());
                 match args.render {
-                    args::Render::Irc => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Irc)),
-                    args::Render::Ansi => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Ansi)),
-                    args::Render::Ansi24 => println!("{}", draw::render_braille(&canvas_luma, &canvas_chroma, &args, args::Render::Ansi24)),
+                    args::Render::Irc => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Irc)),
+                    args::Render::Ansi => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi)),
+                    args::Render::Ansi24 => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi24)),
                 }
             } else {
-                // Block rendering
                 match args.render {
-                    args::Render::Irc => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Irc)),
-                    args::Render::Ansi => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Ansi)),
-                    args::Render::Ansi24 => println!("{}", draw::render_blocks(&canvas_chroma, &args, args::Render::Ansi24)),
+                    args::Render::Irc => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Irc)),
+                    args::Render::Ansi => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Ansi)),
+                    args::Render::Ansi24 => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Ansi24)),
                 }
             }
         }
