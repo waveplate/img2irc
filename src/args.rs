@@ -77,7 +77,7 @@ pub struct Args {
     pub flipv: bool,
 
     /// colour mode to use
-    #[arg(long, value_enum, default_value_t = Render::Irc)]
+    #[arg(long, value_enum, default_value_t = Render::Ansi)]
     pub render: Render,
 
     /// use braille pixels
@@ -85,7 +85,6 @@ pub struct Args {
         long,
         default_value_t = false,
         conflicts_with = "block",
-        required_unless_present = "blocks"
     )]
     pub braille: bool,
  
@@ -95,7 +94,7 @@ pub struct Args {
         value_enum,
         value_delimiter = ',',
         num_args = 0..,
-        default_missing_values = &[
+        default_values = &[
             "full",
             "half",
             "quarter",
@@ -107,7 +106,6 @@ pub struct Args {
             "legacy",
         ],
         conflicts_with = "braille",
-        required_unless_present = "braille"
     )]
     pub blocks: Vec<BlockKind>,
 

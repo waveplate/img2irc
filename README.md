@@ -2,10 +2,10 @@
 
 *img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
 
-`$ img2irc https://i.imgur.com/qP1uBCK.png --render ansi --blocks --width 122 --contrast 20 --scale 1:1.05`
+`$ img2irc https://i.imgur.com/qP1uBCK.png`
 
 > &nbsp;
->![img2irc block example](https://i.imgur.com/OhOPmBQ.png)
+>![img2irc block example](https://i.imgur.com/ew513lc.png)
 > &nbsp; 
 
 # how to install
@@ -49,9 +49,9 @@
 
 ### colours rendering modes
 
-| option                                 | description                                                   | 
-|----------------------------------------|---------------------------------------------------------------|
-| --render                               | colour rendering mode (default: `irc`)                        |
+| option                                 | description                 | default          | 
+|----------------------------------------|-----------------------------|------------------|
+| --render                               | colour rendering mode       | `ansi`           |
 
 `irc` mode has 99 colours, (6.62-bit)
 
@@ -59,12 +59,12 @@
 
 `ansi24` has 16777216 colours (24-bit)
 
-### pixel rendering modes (select one)
+### pixel rendering modes
 
-| option        | description                   |
-|---------------|-------------------------------|
-| `--braille`   | use braille pixels            |
-| `--blocks[=types]` | use block pixels of the provided types. defaults to `full,half,quarter,eighth,triangle,corner,geometric,box,legacy` |
+| option        | description                   | default      |
+|---------------|-------------------------------|--------------|
+| `--braille`   | use braille pixels            | `false`      |
+| `--blocks[=types]` | use block pixels of the provided types  | `full,half,quarter,eighth,triangle,corner,geometric,box,legacy` |
 
 #### braille mode
 
