@@ -2,10 +2,10 @@
 
 *img2irc* is a premiere command-line utility which converts images to irc/ansi art, with a lot of post-processing filters
 
-`$ img2irc https://i.imgur.com/WWSl2Sb.png --render ansi --blocks --width 132 --contrast 50 --nograyscale`
+`$ img2irc https://i.imgur.com/qP1uBCK.png --render ansi --blocks --width 122 --contrast 20 --scale 1:1.05`
 
 > &nbsp;
->![img2irc block example](https://i.imgur.com/B9syzEm.png)
+>![img2irc block example](https://i.imgur.com/OhOPmBQ.png)
 > &nbsp; 
 
 # how to install
