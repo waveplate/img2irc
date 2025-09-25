@@ -1,0 +1,79 @@
+[full]
+start = 0x2588
+end = 0x2588
+
+[half]
+start = 0x2580
+end = 0x2580
+
+[[half]]
+start = 0x2584
+end = 0x2584
+
+[[half]]
+start = 0x258C
+end = 0x258C
+
+[[half]]
+start = 0x2590
+end = 0x2590
+
+[quarter]
+start = 0x2596
+end = 0x259F
+
+[[eighth]]
+start = 0x2581
+end = 0x2587
+
+[[eighth]]
+start = 0x2589
+end = 0x258F
+
+[[eighth]]
+start = 0x2594
+end = 0x2595
+
+[[triangle]]
+start = 0x25B2
+end = 0x25B2
+
+[[triangle]]
+start = 0x25B6
+end = 0x25B6
+
+[[triangle]]
+start = 0x25BC
+end = 0x25BC
+
+[[triangle]]
+start = 0x25C0
+end = 0x25C0
+
+[corner]
+start = 0x25E2
+end = 0x25E5
+
+[geometric]
+start = 0x25A0
+end = 0x25FF
+
+[box]
+start = 0x2500
+end = 0x257F
+
+[[legacy]]
+start = 0x1FB00
+end = 0x1FBFF
+
+[quarterblocks]
+start = 0x2596
+end = 0x259F
+
+[[myfav]]
+start = 0x12D0
+end = 0x12DF
+
+[[myfav]]
+start = 0x1300
+end = 0x1305
