@@ -1,5 +1,5 @@
-use crate::args::{Args, BlockKind, Render};
-use crate::chars::GLYPH_BITMAPS;
+use crate::args::{Args, Render};
+use crate::font::{GlyphBitmap, GlyphStore};
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
 
