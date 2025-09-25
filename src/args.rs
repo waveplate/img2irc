@@ -18,19 +18,6 @@ pub enum ColourSpace {
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
-pub enum BlockKind {
-    Full,       // U+2588
-    Half,       // U+2580, U+2584, U+258C, U+2590
-    Quarter,    // U+2596–U+259F
-    Eighth,     // U+2581–U+2587, U+2589–U+258F, U+2594–U+2595
-    Triangle,   // U+25B2, U+25B6, U+25BC, U+25C0
-    Corner,     // U+25E2–U+25E5
-    Geometric,  // U+25A0–U+25FF
-    Box,        // U+2500–U+257F
-    Legacy,     // U+1FB00–U+1FBFF
-}
-
-#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
 pub enum Render {
     Irc,
     Ansi,
@@ -84,14 +71,13 @@ pub struct Args {
     #[arg(
         long,
         default_value_t = false,
-        conflicts_with = "block",
+        conflicts_with = "blocks",
     )]
     pub braille: bool,
  
     /// use blocks
     #[arg(
         long,
-        value_enum,
         value_delimiter = ',',
         num_args = 0..,
         default_values = &[
@@ -107,7 +93,7 @@ pub struct Args {
         ],
         conflicts_with = "braille",
     )]
-    pub blocks: Vec<BlockKind>,
+    pub blocks: Vec<String>,
 
     /// adjust brightness (0 = no change)
     #[arg(short = 'b', long, default_value_t = 0.0, allow_hyphen_values = true)]    
