@@ -30,6 +30,9 @@ clap = { version = "4.2.0", features = ["cargo", "derive"] }
 url = "2.3.1"
 atty = "0.2.14"
 once_cell = "1.21.3"
+fontconfig = "0.10"
+freetype-rs = "0.31"
+toml = "0.8"
 
 [target.'cfg(target_env = "musl")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
