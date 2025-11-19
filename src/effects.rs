@@ -1,10 +1,10 @@
 use crate::args;
-use crate::chars::GLYPH_BITMAPS;
+use crate::font::GlyphStore;
 use photon_rs::{colour_spaces, channels, conv, effects, filters, monochrome, noise};
 use photon_rs::transform::{SamplingFilter, resize, crop, rotate, flipv, fliph};
 use photon_rs::PhotonImage;
 
-fn calculate_dimensions(args: &args::Args, image: &PhotonImage) -> (u32, u32) {
+fn calculate_dimensions(args: &args::Args, glyphs: &GlyphStore, image: &PhotonImage) -> (u32, u32) {
     let orig_w = image.get_width()  as f32;
     let orig_h = image.get_height() as f32;
 
@@ -13,8 +13,8 @@ fn calculate_dimensions(args: &args::Args, image: &PhotonImage) -> (u32, u32) {
     let (factor_x, factor_y) = if args.braille {
         (2.0, 4.0)
     } else {
-        let glyph = &GLYPH_BITMAPS[0].1;
-        (glyph[0].len() as f32, glyph.len() as f32)
+        let (gh, gw) = glyphs.metrics;
+        (gw as f32, gh as f32)
     };
 
     let (mut pw, mut ph) = match (args.width, args.height) {
@@ -70,9 +70,10 @@ fn calculate_dimensions(args: &args::Args, image: &PhotonImage) -> (u32, u32) {
 
 pub fn apply_effects(
     args: &args::Args,
+    glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
 ) -> PhotonImage {
-    let (width, height) = calculate_dimensions(args, &photon_image);
+    let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
         
     if args.rotate != 0.00 {
         photon_image = rotate(&photon_image, args.rotate);
@@ -264,8 +265,8 @@ pub fn apply_effects(
     photon_image
 }
 
-pub fn apply_luma_effects(args: &args::Args, mut photon_image: PhotonImage) -> PhotonImage {
-    let (width, height) = calculate_dimensions(args, &photon_image);
+pub fn apply_luma_effects(args: &args::Args, glyphs: &GlyphStore, mut photon_image: PhotonImage) -> PhotonImage {
+    let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
 
     if args.rotate != 0.00 {
         photon_image = rotate(&photon_image, args.rotate);

@@ -27,9 +27,15 @@ pub enum Render {
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
+
+    
+    /// list available blocks
+    #[arg(long, default_value_t = false)]
+    pub list_blocks: bool,
+
     /// image url or file path
-    #[arg(index = 1)]
-    pub image: String,
+    #[arg(required_unless_present="list_blocks")]
+    pub image: Option<String>,
 
     /// output image width in columns
     #[arg(short = 'w', long)]
@@ -94,6 +100,11 @@ pub struct Args {
         conflicts_with = "braille",
     )]
     pub blocks: Vec<String>,
+
+
+
+    /// specify font
+    
 
     /// adjust brightness (0 = no change)
     #[arg(short = 'b', long, default_value_t = 0.0, allow_hyphen_values = true)]    

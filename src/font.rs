@@ -1,14 +1,16 @@
 use fontconfig::Fontconfig;
 use freetype::{face::LoadFlag, Library};
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use toml::Value;
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlyphStore {
     pub glyphs: Vec<(char, GlyphBitmap)>,
     pub groups: HashMap<String, Vec<char>>,
@@ -16,6 +18,7 @@ pub struct GlyphStore {
     pub metrics: (usize, usize),
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct GlyphBase {
     glyphs: Vec<(char, GlyphBitmap)>,
     groups: HashMap<String, Vec<char>>,
@@ -25,13 +28,53 @@ struct GlyphBase {
 static GLYPH_BASE: OnceCell<GlyphBase> = OnceCell::new();
 
 fn find_font_path(font_name: &str) -> Option<String> {
-    let fc = Fontconfig::new().ok()?;
+    let fc = Fontconfig::new()?;
     fc.find("monospace", Some(font_name))
         .map(|f| f.path.display().to_string())
 }
 
 fn load_blocks() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSet<char>) {
-    let toml_str = fs::read_to_string("blocks.toml").expect("Failed to read blocks.toml");
+    let mut toml_path = None;
+
+    // Check IMG2IRC_CONFIG_DIR first (highest precedence)
+    if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
+        let path = Path::new(&config_dir).join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+
+    // If not found, check current directory
+    if toml_path.is_none() {
+        let path = PathBuf::from("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+
+    // If still not found, check XDG_CONFIG_HOME or ~/.config
+    if toml_path.is_none() {
+        let config_home = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config"
+        });
+        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+
+    // If still not found, check ~/.config/img2irc/
+    if toml_path.is_none() {
+        if let Ok(home) = env::var("HOME") {
+            let path = Path::new(&home).join(".config").join("img2irc").join("blocks.toml");
+            if path.exists() {
+                toml_path = Some(path);
+            }
+        }
+    }
+
+    let toml_path = toml_path.expect("Failed to find blocks.toml in any expected location");
+    let toml_str = fs::read_to_string(toml_path).expect("Failed to read blocks.toml");
     let value: Value = toml::from_str(&toml_str).expect("Invalid TOML in blocks.toml");
 
     let mut groups: HashMap<String, Vec<std::ops::RangeInclusive<u32>>> = HashMap::new();
@@ -99,7 +142,7 @@ fn render_glyph(face: &mut freetype::Face, ch: char, cell_width: usize, cell_hei
                 let x = left + bit_idx as i32;
                 let y = ascender - row as i32 - 1;
                 if x >= 0 && x < cell_width as i32 && y >= 0 && y < cell_height as i32 {
-                    cell[(cell_height - 1 - y as usize)][x as usize] = 1;
+                    cell[cell_height - 1 - y as usize][x as usize] = 1;
                 }
             }
         }
@@ -108,12 +151,56 @@ fn render_glyph(face: &mut freetype::Face, ch: char, cell_width: usize, cell_hei
     cell
 }
 
+fn cache_dir() -> PathBuf {
+    if let Ok(cache_home) = env::var("XDG_CACHE_HOME") {
+        PathBuf::from(cache_home).join("img2irc")
+    } else {
+        let mut path = PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+        path.push(".cache");
+        path.push("img2irc");
+        path
+    }
+}
+
+fn cache_path(font_name: &str) -> PathBuf {
+    cache_dir().join(format!("{}.toml", font_name))
+}
+
+fn load_cached_glyphs(font_name: &str) -> Option<GlyphBase> {
+    let path = cache_path(font_name);
+    if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| toml::from_str(&content).ok())
+    } else {
+        None
+    }
+}
+
+fn save_cached_glyphs(font_name: &str, base: &GlyphBase) {
+    let path = cache_path(font_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    if let Ok(content) = toml::to_string(base) {
+        fs::write(path, content).ok();
+    }
+}
+
+fn get_font_name() -> String {
+    env::var("IMG2IRC_FONT").unwrap_or_else(|_| "Cascadia Code".to_string())
+}
+
 fn build_base() -> GlyphBase {
+    let font_name = get_font_name();
+    if let Some(cached) = load_cached_glyphs(&font_name) {
+        return cached;
+    }
+
     let (group_ranges, mut chars) = load_blocks();
 
-    const FONT_NAME: &str = "Cascadia Code";
-    let font_path = find_font_path(FONT_NAME)
-        .unwrap_or_else(|| panic!("Could not find font '{}' via fontconfig", FONT_NAME));
+    let font_path = find_font_path(&font_name)
+        .unwrap_or_else(|| panic!("Could not find font '{}' via fontconfig", font_name));
 
     let library = Library::init().expect("Failed to initialise FreeType");
     let mut face = library
@@ -154,11 +241,13 @@ fn build_base() -> GlyphBase {
 
     let glyphs = glyphs_map.into_iter().collect();
 
-    GlyphBase {
+    let base = GlyphBase {
         glyphs,
         groups,
         metrics: (cell_height, cell_width),
-    }
+    };
+    save_cached_glyphs(&font_name, &base);
+    base
 }
 
 fn base_store() -> &'static GlyphBase {
@@ -190,3 +279,18 @@ pub fn glyph_store(blocks: &[String]) -> GlyphStore {
         metrics: base.metrics,
     }
 }
+
+pub fn print_blocks_config() {
+    let base = base_store();
+    let mut sorted_groups: Vec<_> = base.groups.iter().collect();
+    sorted_groups.sort_by_key(|(k, _)| *k);
+    for (name, chars) in sorted_groups {
+        println!("{}:", name);
+        for &ch in chars {
+            print!("{} ", ch);
+        }
+        println!();
+    }
+}
+
+

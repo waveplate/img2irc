@@ -1,3 +1,7 @@
+[custom]
+start = 0x61
+end   = 0x7A
+
 [full]
 start = 0x2588
 end = 0x2588
@@ -5,18 +9,6 @@ end = 0x2588
 [half]
 start = 0x2580
 end = 0x2580
-
-[[half]]
-start = 0x2584
-end = 0x2584
-
-[[half]]
-start = 0x258C
-end = 0x258C
-
-[[half]]
-start = 0x2590
-end = 0x2590
 
 [quarter]
 start = 0x2596
@@ -62,13 +54,13 @@ end = 0x25FF
 start = 0x2500
 end = 0x257F
 
-[[legacy]]
+[legacy]
 start = 0x1FB00
 end = 0x1FBFF
 
-[quarterblocks]
-start = 0x2596
-end = 0x259F
+[legacy2]
+start = 0x1CD00
+end   = 0x1CDE5
 
 [[myfav]]
 start = 0x12D0

@@ -94,6 +94,7 @@ fn nearest_distinctly_chromatic_hex_colour(col: u32, palette: &[u32], tolerance:
 pub struct AnsiImage {
     pub bitmap: Vec<Vec<u32>>,
     pub block:  Vec<Vec<AnsiPixelBlock>>,
+    pub glyphs: GlyphStore,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -141,7 +142,7 @@ impl AnsiPixel {
 }
 
 impl AnsiImage {
-    pub fn new(img: PhotonImage) -> Self {
+    pub fn new(img: PhotonImage, glyphs: GlyphStore) -> Self {
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
         let flat: Vec<u32> = raw.chunks(4).map(make_rgb_u32).collect();
@@ -152,17 +153,14 @@ impl AnsiImage {
             if row.len() % 2 != 0 { row.push(0); }
         }
 
-        let block = block_bitmap(&bitmap);
-        AnsiImage { bitmap, block }
+        let block = block_bitmap(&bitmap, &glyphs);
+        AnsiImage { bitmap, block, glyphs }
     }
 }
 
-fn block_bitmap(src: &Vec<Vec<u32>>) -> Vec<Vec<AnsiPixelBlock>> {
-    if GLYPH_BITMAPS.is_empty() { return Vec::new(); }
-    let (gh, gw) = {
-        let b = &GLYPH_BITMAPS[0].1;
-        (b.len(), b[0].len())
-    };
+fn block_bitmap(src: &Vec<Vec<u32>>, glyphs: &GlyphStore) -> Vec<Vec<AnsiPixelBlock>> {
+    if glyphs.glyphs.is_empty() { return Vec::new(); }
+    let (gh, gw) = glyphs.metrics;
     if gh == 0 || gw == 0 { return Vec::new(); }
 
     let mut px_rows: Vec<Vec<AnsiPixel>> = src.iter()
@@ -311,92 +309,28 @@ fn calculate_average_rgb(colors: &[u32]) -> [u8; 3] {
 
 /// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
 pub fn render_blocks(
-    image: &AnsiImage, // Assuming AnsiImage is in parent module or use crate::image::AnsiImage
+    image: &AnsiImage,
     args: &Args,
     render: Render,
 ) -> String {
-    // If no glyphs are defined at all, bail out.
-    if GLYPH_BITMAPS.is_empty() {
-        return "Error: GLYPH_BITMAPS empty".into();
+    if image.glyphs.glyphs.is_empty() {
+        return "Error: no glyphs available".into();
     }
 
-    // Determine glyph dimensions (height = number of rows, width = number of cols).
-    let bmp0 = &GLYPH_BITMAPS[0].1;
-    let gh = bmp0.len();
-    let gw = bmp0[0].len();
-    let bp = gh * gw; // bits per glyph pattern
+    let (gh, gw) = image.glyphs.metrics;
+    let bp = gh * gw;
 
-    // 1) Build the Unicode‐codepoint ranges based on args.blocks
-    let mut ranges: Vec<std::ops::RangeInclusive<u32>> = Vec::new();
-    for kind in &args.blocks {
-        match kind {
-            BlockKind::Full => {
-                ranges.push(0x20..=0x20); // Space
-                ranges.push(0x2588..=0x2588); // Full Block
-            }
-            BlockKind::Half => {
-                ranges.push(0x2580..=0x2580); // Upper Half Block
-                ranges.push(0x2584..=0x2584); // Lower Half Block
-                ranges.push(0x258C..=0x258C); // Left Half Block
-                ranges.push(0x2590..=0x2590); // Right Half Block
-            }
-            BlockKind::Quarter => {
-                ranges.push(0x2596..=0x259F); // Quadrants
-            }
-            BlockKind::Eighth => {
-                ranges.push(0x2581..=0x2587); // Lower one eighth to seven eighths blocks
-                ranges.push(0x2589..=0x258F); // Left one eighth to seven eighths blocks (missing 2588)
-                ranges.push(0x2594..=0x2595); // Upper one eighth and three eighths blocks
-            }
-            BlockKind::Triangle => {
-                ranges.push(0x25B2..=0x25B2); // Black Up-Pointing Triangle
-                ranges.push(0x25B6..=0x25B6); // Black Right-Pointing Triangle
-                ranges.push(0x25BC..=0x25BC); // Black Down-Pointing Triangle
-                ranges.push(0x25C0..=0x25C0); // Black Left-Pointing Triangle
-            }
-            BlockKind::Corner => {
-                ranges.push(0x25E2..=0x25E5); // Triangles in corners
-            }
-            BlockKind::Geometric => {
-                ranges.push(0x25A0..=0x25FF); // Geometric Shapes
-            }
-            BlockKind::Box => {
-                ranges.push(0x2500..=0x257F); // Box Drawing
-            }
-            BlockKind::Legacy => {
-                ranges.push(0x1FB00..=0x1FBFF); // Symbols for Legacy Computing
-            }
-        }
-    }
-
-    // 2) Filter GLYPH_BITMAPS by codepoint, collecting the indices we’re allowed to use.
-    let mut allowed: Vec<usize> = GLYPH_BITMAPS
+    let glyphs: Vec<(char, &GlyphBitmap)> = image
+        .glyphs
+        .glyphs
         .iter()
-        .enumerate()
-        .filter_map(|(i, (ch, _bmp))| {
-            let cp = *ch as u32;
-            if ranges.iter().any(|r| r.contains(&cp)) {
-                Some(i)
-            } else {
-                None
-            }
-        })
+        .filter(|(ch, _)| image.glyphs.selected.contains(ch))
+        .map(|(ch, bmp)| (*ch, bmp))
         .collect();
 
-    // 3) If nothing matched, fall back to *all* glyphs.
-    if allowed.is_empty() {
-        allowed = (0..GLYPH_BITMAPS.len()).collect();
-        // Optionally, you could add a warning or info message here if no user-specified blocks were found.
-        if args.blocks.is_empty() {
-            // This means user specified no block kinds, so all glyphs is the intended fallback.
-        } else {
-            // User specified block kinds, but none of them yielded any glyphs from GLYPH_BITMAPS.
-            // This case might warrant a warning, or it implies GLYPH_BITMAPS might not cover those ranges.
-        }
+    if glyphs.is_empty() {
+        return "Error: no glyphs selected".into();
     }
-     // If after fallback, 'allowed' is still empty (GLYPH_BITMAPS is empty), we already returned.
-
-    // 4) Now perform the usual block‐rendering, but iterating only over `allowed`.
     let mut out = String::new();
     for block_row in &image.block {
         let mut first = true;
@@ -418,75 +352,86 @@ pub fn render_blocks(
                 }
 
                 let mut best_cost = u64::MAX;
-                let mut best_glyph_idx = if allowed.is_empty() { 0 } else { allowed[0] }; // Default to first allowed if any
+                let mut best_glyph_idx = 0;
                 let mut best_chosen_fg_color = [0u8; 3];
                 let mut best_chosen_bg_color = [0u8; 3];
 
-                if allowed.is_empty() { // Should not happen if GLYPH_BITMAPS is not empty.
-                     final_glyph = ' ';
-                     final_fg = Colour::RGB([0,0,0]);
-                     final_bg = Some(Colour::RGB([0,0,0]));
-                } else {
-                    for &gi in &allowed {
-                        let (_, bmp) = &GLYPH_BITMAPS[gi];
-                        
-                        let mut pixels_under_glyph_ones: Vec<u32> = Vec::new();
-                        let mut pixels_under_glyph_zeros: Vec<u32> = Vec::new();
+                for (gi, (_, bmp)) in glyphs.iter().enumerate() {
+                    let mut pixels_under_glyph_ones: Vec<u32> = Vec::new();
+                    let mut pixels_under_glyph_zeros: Vec<u32> = Vec::new();
 
-                        for i in 0..bp {
-                            let pixel_original_rgb = current_block_pixels_rgb[i];
-                            if bmp[i / gw][i % gw] == 1 {
+                    for row in 0..gh {
+                        for col in 0..gw {
+                            let idx = row * gw + col;
+                            let pixel_original_rgb = current_block_pixels_rgb[idx];
+                            if bmp[row][col] == 1 {
                                 pixels_under_glyph_ones.push(pixel_original_rgb);
                             } else {
                                 pixels_under_glyph_zeros.push(pixel_original_rgb);
                             }
                         }
-
-                        let avg_color_at_glyph_ones = calculate_average_rgb(&pixels_under_glyph_ones);
-                        let avg_color_at_glyph_zeros = calculate_average_rgb(&pixels_under_glyph_zeros);
-
-                        // Cost for non-inverted case
-                        let mut cost_no_invert = 0u64;
-                        for i in 0..bp {
-                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[i]);
-                            let target_rgb = if bmp[i / gw][i % gw] == 1 { avg_color_at_glyph_ones } else { avg_color_at_glyph_zeros };
-                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
-                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
-                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
-                            cost_no_invert += (dr*dr + dg*dg + db*db) as u64;
-                        }
-
-                        if cost_no_invert < best_cost {
-                            best_cost = cost_no_invert;
-                            best_glyph_idx = gi;
-                            best_chosen_fg_color = avg_color_at_glyph_ones;
-                            best_chosen_bg_color = avg_color_at_glyph_zeros;
-                        }
-
-                        // Cost for inverted case
-                        let mut cost_invert = 0u64;
-                        for i in 0..bp {
-                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[i]);
-                            let target_rgb = if bmp[i / gw][i % gw] == 1 { avg_color_at_glyph_zeros } else { avg_color_at_glyph_ones };
-                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
-                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
-                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
-                            cost_invert += (dr*dr + dg*dg + db*db) as u64;
-                        }
-
-                        if cost_invert < best_cost {
-                            best_cost = cost_invert;
-                            best_glyph_idx = gi;
-                            best_chosen_fg_color = avg_color_at_glyph_zeros; 
-                            best_chosen_bg_color = avg_color_at_glyph_ones;  
-                        }
-                        
-                        if best_cost == 0 { break; } 
                     }
-                    final_glyph = GLYPH_BITMAPS[best_glyph_idx].0;
-                    final_fg = Colour::RGB(best_chosen_fg_color);
-                    final_bg = Some(Colour::RGB(best_chosen_bg_color));
+
+                    let avg_color_at_glyph_ones = calculate_average_rgb(&pixels_under_glyph_ones);
+                    let avg_color_at_glyph_zeros = calculate_average_rgb(&pixels_under_glyph_zeros);
+
+                    let mut cost_no_invert = 0u64;
+                    for row in 0..gh {
+                        for col in 0..gw {
+                            let idx = row * gw + col;
+                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[idx]);
+                            let target_rgb = if bmp[row][col] == 1 {
+                                avg_color_at_glyph_ones
+                            } else {
+                                avg_color_at_glyph_zeros
+                            };
+                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
+                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
+                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
+                            cost_no_invert += (dr * dr + dg * dg + db * db) as u64;
+                        }
+                    }
+
+                    if cost_no_invert < best_cost {
+                        best_cost = cost_no_invert;
+                        best_glyph_idx = gi;
+                        best_chosen_fg_color = avg_color_at_glyph_ones;
+                        best_chosen_bg_color = avg_color_at_glyph_zeros;
+                    }
+
+                    let mut cost_invert = 0u64;
+                    for row in 0..gh {
+                        for col in 0..gw {
+                            let idx = row * gw + col;
+                            let pixel_original_rgb_components = unpack_rgb(current_block_pixels_rgb[idx]);
+                            let target_rgb = if bmp[row][col] == 1 {
+                                avg_color_at_glyph_zeros
+                            } else {
+                                avg_color_at_glyph_ones
+                            };
+                            let dr = pixel_original_rgb_components[0] as i32 - target_rgb[0] as i32;
+                            let dg = pixel_original_rgb_components[1] as i32 - target_rgb[1] as i32;
+                            let db = pixel_original_rgb_components[2] as i32 - target_rgb[2] as i32;
+                            cost_invert += (dr * dr + dg * dg + db * db) as u64;
+                        }
+                    }
+
+                    if cost_invert < best_cost {
+                        best_cost = cost_invert;
+                        best_glyph_idx = gi;
+                        best_chosen_fg_color = avg_color_at_glyph_zeros;
+                        best_chosen_bg_color = avg_color_at_glyph_ones;
+                    }
+
+                    if best_cost == 0 {
+                        break;
+                    }
                 }
+
+                let glyph_char = glyphs[best_glyph_idx].0;
+                final_glyph = glyph_char;
+                final_fg = Colour::RGB(best_chosen_fg_color);
+                final_bg = Some(Colour::RGB(best_chosen_bg_color));
 
             } else {
                 // Palette-based glyph matching logic for Render::Ansi and Render::Irc
@@ -506,55 +451,62 @@ pub fn render_blocks(
                     }
                 }
 
-                let best_default_glyph_idx = if allowed.is_empty() { 0 } else { allowed[0] };
-                let mut best = (usize::MAX, best_default_glyph_idx, 0u8, 0u8, false); 
+                let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
 
-                if allowed.is_empty() { // Should not happen if GLYPH_BITMAPS is not empty
-                    final_glyph = ' ';
-                    final_fg = Colour::Index(0);
-                    final_bg = Some(Colour::Index(15)); // Default to black on white or similar
-                } else {
-                    for &gi in &allowed {
-                        let (_, bmp) = &GLYPH_BITMAPS[gi];
-                        for &inv in &[false, true] {
-                            let mut fg_tot: usize = 0; 
-                            let mut bg_tot: usize = 0;
-                            let mut fg_cnt = [0usize; 256]; 
-                            let mut bg_cnt = [0usize; 256];
-                            
-                            for i in 0..bp {
-                                let col_idx = code[i] as usize;
-                                if bmp[i / gw][i % gw] ^ (inv as u8) == 1 {
-                                    fg_tot += 1; fg_cnt[col_idx] += 1;
+                for (gi, (_, bmp)) in glyphs.iter().enumerate() {
+                    for &inv in &[false, true] {
+                        let mut fg_tot: usize = 0;
+                        let mut bg_tot: usize = 0;
+                        let mut fg_cnt = [0usize; 256];
+                        let mut bg_cnt = [0usize; 256];
+
+                        for row in 0..gh {
+                            for col in 0..gw {
+                                let idx = row * gw + col;
+                                let col_idx = code[idx] as usize;
+                                if bmp[row][col] ^ (inv as u8) == 1 {
+                                    fg_tot += 1;
+                                    fg_cnt[col_idx] += 1;
                                 } else {
-                                    bg_tot += 1; bg_cnt[col_idx] += 1;
+                                    bg_tot += 1;
+                                    bg_cnt[col_idx] += 1;
                                 }
                             }
-    
-                            let (fgi, fgm_val) = fg_cnt.iter().enumerate()
-                                               .max_by_key(|&(_, c)| c)
-                                               .map(|(i, c_ref)| (i, *c_ref)) // Get value from reference
-                                               .unwrap_or((0usize, 0_usize)); 
-                            let (bgi, bgm_val) = bg_cnt.iter().enumerate()
-                                               .max_by_key(|&(_, c)| c)
-                                               .map(|(i, c_ref)| (i, *c_ref)) // Get value from reference
-                                               .unwrap_or((0usize, 0_usize));
-                            
-                            let cost = (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_val));
-    
-                            if cost < best.0 {
-                                best = (cost, gi, fgi as u8, bgi as u8, inv);
-                                if cost == 0 { break; }
+                        }
+
+                        let (fgi, fgm_val) = fg_cnt
+                            .iter()
+                            .enumerate()
+                            .max_by_key(|&(_, c)| c)
+                            .map(|(i, c_ref)| (i, *c_ref))
+                            .unwrap_or((0usize, 0usize));
+                        let (bgi, bgm_val) = bg_cnt
+                            .iter()
+                            .enumerate()
+                            .max_by_key(|&(_, c)| c)
+                            .map(|(i, c_ref)| (i, *c_ref))
+                            .unwrap_or((0usize, 0usize));
+
+                        let cost = (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_val));
+
+                        if cost < best.0 {
+                            best = (cost, gi, fgi as u8, bgi as u8, inv);
+                            if cost == 0 {
+                                break;
                             }
                         }
-                        if best.0 == 0 { break; }
                     }
-                    final_glyph = GLYPH_BITMAPS[best.1].0;
-                    let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
-                    
-                    final_fg = Colour::Index(fg_idx);
-                    final_bg = Some(Colour::Index(bg_idx));
+                    if best.0 == 0 {
+                        break;
+                    }
                 }
+
+                let glyph_entry = glyphs[best.1].0;
+                let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
+
+                final_glyph = glyph_entry;
+                final_fg = Colour::Index(fg_idx);
+                final_bg = Some(Colour::Index(bg_idx));
             }
 
             emit_colourized( // Assuming emit_colourized is in parent or use crate::image::emit_colourized
