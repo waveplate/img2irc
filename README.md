@@ -31,28 +31,45 @@
 > [!NOTE]
 > if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc-bin)!
 
+
+---------
+# *no sixel, no problem*
+
+<p align="center">
+  <img src="https://i.imgur.com/uyfA9BH.png" />
+</p>
+<p align="center"><i>mandarin duck, ansi24. 80px -- when images are rendered in 24-bit colour, they can look quite good even at small sizes</i></span>
+
+---------
+
+
 # font installation (recommended)
 
-certain glyph types (triangle, corner, geometric, box, legacy) require google's noto fonts extras to render correctly. full, half, quarter and eighth blocks typically work without extra fonts.
+certain glyph types (triangle, corner, geometric, box, legacy) requuire obscure unicode glyphs not found it most fonts. if your output looks broken, try installing **cascadia code** -- it's a great font regardless. full, half, quarter, and eighth blocks typically work without extra fonts.
+
+if you use linux, you can configuree your system to only use cascadia code as a fallback, i.e., when your preferred font is missing a unicode glyph. [check out this guide](https://github.com/davgar99/arch-linux-font-improvement-guide) for more info. it's aimed at arch, but the general idea is the same for all distros
 
 ## debian/ubuntu
 
+cascadia code is available in debian/ubuntu via the `fonts-cascadia-code` package:
+
 ```bash
-sudo apt update
-sudo apt install fonts-noto
+sudo apt install fonts-cascadia-code
 ```
 
 ## arch linux
 
+on arch linux, cascadia code can be installed from the community repository:
+
 ```bash
-sudo pacman -S noto-fonts noto-fonts-extra
+sudo pacman -S ttf-cascadia-code
 ```
 
 ## windows
 
-1. download the latest noto-fonts zip from https://github.com/googlefonts/noto-fonts/releases/latest  
-2. extract the archive  
-3. install the .ttf files you need (e.g., noto sans symbols, noto sans symbols 2) by right-clicking → install, or copy them to c:\windows\fonts  
+1. download the latest cascadia code release from [github](https://github.com/microsoft/cascadia-code/releases/latest).
+2. extract the zip archive.
+3. install the `.ttf` or `.otf` files you need by right-clicking → **install**, or copy them to `c:\windows\fonts`.
 
 
 # usage
@@ -73,9 +90,9 @@ sudo pacman -S noto-fonts noto-fonts-extra
 
 ### colours rendering modes
 
-| option                                 | description                 | default          | 
-|----------------------------------------|-----------------------------|------------------|
-| --render                               | colour rendering mode       | `ansi`           |
+| option                                 | description                 | default          | options                 |
+|----------------------------------------|-----------------------------|------------------|-------------------------|
+| --render                               | colour rendering mode       | `ansi`           | `irc`, `ansi`, `ansi24` |
 
 `irc` mode has 99 colours, (6.62-bit)
 
@@ -85,10 +102,10 @@ sudo pacman -S noto-fonts noto-fonts-extra
 
 ### pixel rendering modes
 
-| option        | description                   | default      |
-|---------------|-------------------------------|--------------|
-| `--braille`   | use braille pixels            | `false`      |
-| `--blocks[=types]` | use block pixels of the provided types  | `full,half,quarter,eighth,triangle,corner,geometric,box,legacy` |
+| option        | description                   | default      | options (comma-separated) |
+|---------------|-------------------------------|--------------|---------|
+| `--braille`   | use braille pixels            | `false`      | N/A |
+| `--blocks[=types]` | use block pixels of the provided types  | `full`, `half`, `quarter`, `eighth`, `triangle`, `corner`, `geometric`, `box`, `legacy`|
 
 #### braille mode
 
@@ -107,6 +124,8 @@ sudo pacman -S noto-fonts noto-fonts-extra
 | `geometric` | geometric patterns   | 0x25A0-0x25FF  |
 | `box`       | box-drawing glyphs   | 0x2500-0x257F  |
 | `legacy`    | legacy block styles  | 0x1FB00-0x1FBFF|
+
+must be provided as a comma-delimited string
 
 specifying `--blocks` with no value uses all available glyph types
 
