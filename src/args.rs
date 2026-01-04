@@ -103,6 +103,14 @@ pub struct Args {
 
 
 
+    /// exclude unicode range (e.g. "2600-26FF")
+    #[arg(short = 'E', long)]
+    pub exclude_range: Vec<String>,
+
+    /// exclude specific character
+    #[arg(short = 'e', long)]
+    pub exclude: Vec<char>,
+
     /// specify font
     
 

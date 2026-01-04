@@ -254,7 +254,17 @@ fn base_store() -> &'static GlyphBase {
     GLYPH_BASE.get_or_init(build_base)
 }
 
-pub fn glyph_store(blocks: &[String]) -> GlyphStore {
+fn parse_hex_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let start = u32::from_str_radix(parts[0], 16).ok()?;
+    let end = u32::from_str_radix(parts[1], 16).ok()?;
+    Some(start..=end)
+}
+
+pub fn glyph_store(blocks: &[String], exclude_ranges: &[String], exclude_chars: &[char]) -> GlyphStore {
     let base = base_store();
 
     let mut selected = HashSet::new();
@@ -270,6 +280,20 @@ pub fn glyph_store(blocks: &[String]) -> GlyphStore {
             selected.extend(base.glyphs.iter().map(|(ch, _)| *ch));
         }
     }
+
+    // Process exclusions
+    for range_str in exclude_ranges {
+        if let Some(range) = parse_hex_range(range_str) {
+            selected.retain(|&ch| !range.contains(&(ch as u32)));
+        } else {
+            eprintln!("Warning: Invalid range format '{}'. Expected hex range like '2600-26FF'.", range_str);
+        }
+    }
+
+    for &ch in exclude_chars {
+        selected.remove(&ch);
+    }
+
     selected.insert(' ');
 
     GlyphStore {

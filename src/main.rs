@@ -13,7 +13,7 @@ use std::{error::Error, io::Cursor, process::exit};
 async fn main() {
     let args = args::parse_args();
 
-    let glyphs = font::glyph_store(&args.blocks);
+    let glyphs = font::glyph_store(&args.blocks, &args.exclude_range, &args.exclude);
     eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
     eprintln!("Cell size: {}x{}", glyphs.metrics.0, glyphs.metrics.1);
 
