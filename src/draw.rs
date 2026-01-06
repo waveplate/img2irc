@@ -325,6 +325,18 @@ pub fn render_blocks(
         .glyphs
         .iter()
         .filter(|(ch, _)| image.glyphs.selected.contains(ch))
+        .filter(|(ch, _)| {
+            if *ch == ' ' && !args.blocks.is_empty() {
+                return args.blocks.iter().any(|block| {
+                    image
+                        .glyphs
+                        .groups
+                        .get(&block.to_lowercase())
+                        .map_or(false, |chars| chars.contains(&' '))
+                });
+            }
+            true
+        })
         .map(|(ch, bmp)| (*ch, bmp))
         .collect();
 
