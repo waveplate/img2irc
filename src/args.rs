@@ -33,8 +33,28 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub list_blocks: bool,
 
+    /// list available unicode ranges
+    #[arg(long, default_value_t = false)]
+    pub list_ranges: bool,
+
+    /// print all characters in each range
+    #[arg(long, default_value_t = false)]
+    pub print_ranges: bool,
+
+    /// show bitmaps for characters in blocks
+    #[arg(long, default_value_t = false)]
+    pub show_block_bitmaps: bool,
+
+    /// clear the font cache
+    #[arg(long, default_value_t = false)]
+    pub clear_cache: bool,
+
+    /// manual vertical offset for glyph rendering
+    #[arg(long, default_value_t = 0)]
+    pub y_offset: i32,
+
     /// image url or file path
-    #[arg(required_unless_present="list_blocks")]
+    #[arg(required_unless_present_any=["list_blocks", "list_ranges", "print_ranges", "show_block_bitmaps", "clear_cache"])]
     pub image: Option<String>,
 
     /// output image width in columns
@@ -101,7 +121,13 @@ pub struct Args {
     )]
     pub blocks: Vec<String>,
 
+    /// include unicode range (e.g. "2600-26FF")
+    #[arg(long)]
+    pub include_range: Vec<String>,
 
+    /// include specific characters (e.g. "abcde")
+    #[arg(long)]
+    pub include: Option<String>,
 
     /// exclude unicode range (e.g. "2600-26FF")
     #[arg(short = 'E', long)]
@@ -111,8 +137,25 @@ pub struct Args {
     #[arg(short = 'e', long)]
     pub exclude: Vec<char>,
 
-    /// specify font
-    
+    /// specify font (can be used multiple times)
+    #[arg(long)]
+    pub font: Vec<String>,
+
+    /// check specific character details (debug)
+    #[arg(long)]
+    pub check_char: Option<char>,
+
+    /// only use foreground colours (transparent background)
+    #[arg(long, default_value_t = false)]
+    pub fg_only: bool,
+
+    /// optimize glyph selection assuming this background colour (e.g. "000000")
+    #[arg(long)]
+    pub bg_opt: Option<String>,
+
+    /// tolerance for considering a colour grayscale (0-255)
+    #[arg(long, default_value_t = 16)]
+    pub grayscale_tolerance: u8,
 
     /// adjust brightness (0 = no change)
     #[arg(short = 'b', long, default_value_t = 0.0, allow_hyphen_values = true)]    

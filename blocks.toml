@@ -1,26 +1,10 @@
-[corner2]
-start = 0x25E2
-end = 0x25E2
+[space]
+start = 0x20
+end = 0x20
 
-[corner3]
-start = 0x25E3
-end = 0x25E3
-
-[corner4]
-start = 0x25E4
-end = 0x25E4
-
-[corner5]
-start = 0x25E5
-end = 0x25E5
-
-[lefthalf]
-start = 0x258C
-end = 0x258C
-
-[righthalf]
-start = 0x2590
-end = 0x2590
+[uppercase]
+start = 0x41
+end = 0x5A
 
 [custom]
 start = 0x61
@@ -86,54 +70,10 @@ end = 0x1FBFF
 start = 0x1CD00
 end   = 0x1CDE5
 
-[curr]
-start = 0x20A0
-end = 0x20CF
-
-[letter]
-start = 0x2100
-end = 0x214F
-
-[arrows]
-start = 0x2190
-end = 0x21FF
-
-[math]
-start = 0x2200
-end = 0x22FF
-
-[tech]
-start = 0x2300
-end = 0x23FF
-
 [box]
 start = 0x2500
 end = 0x257F
 
-[geom]
-start = 0x2580
-end = 0x25FF
-
-[misc]
-start = 0x2600
-end = 0x26FF
-
-[ding]
-start = 0x2700
-end = 0x27BF
-
 [braille]
 start = 0x2800
 end = 0x28FF
-
-[emoji]
-start = 0x1F600
-end = 0x1F64F
-
-[transport]
-start = 0x1F680
-end = 0x1F6FF
-
-[picto]
-start = 0x1F300
-end = 0x1F5FF

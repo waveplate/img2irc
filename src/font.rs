@@ -1,11 +1,12 @@
 use fontconfig::Fontconfig;
 use freetype::{face::LoadFlag, Library};
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use toml::Value;
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
@@ -19,63 +20,130 @@ pub struct GlyphStore {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct GlyphBase {
-    glyphs: Vec<(char, GlyphBitmap)>,
-    groups: HashMap<String, Vec<char>>,
-    metrics: (usize, usize),
+struct CachedMetrics {
+    cell_width: usize,
+    cell_height: usize,
+    ascender: i32,
+    descender: i32,
+    y_offset: i32,
 }
 
-static GLYPH_BASE: OnceCell<GlyphBase> = OnceCell::new();
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct CachedBlock {
+    glyphs: Vec<(char, GlyphBitmap)>,
+}
+
+struct FontContext {
+    library: Library,
+    user_faces: HashMap<String, freetype::Face>,
+    fallback_faces: HashMap<String, freetype::Face>,
+    font_paths: Vec<String>,
+    missing_chars: HashSet<char>,
+}
+
+impl FontContext {
+    fn new(font_names: &[String]) -> Self {
+        let library = Library::init().expect("Failed to initialise FreeType");
+        let mut font_paths = Vec::new();
+        let mut user_faces = HashMap::new();
+
+        // Always ensure we have at least one font (Cascadia Code default) if none provided
+        let fonts_to_load = if font_names.is_empty() {
+            vec!["Cascadia Code".to_string()]
+        } else {
+            font_names.to_vec()
+        };
+
+        for font_name in &fonts_to_load {
+            if let Some(path) = find_font_path(font_name) {
+                eprintln!("Loaded font: {}", path);
+                font_paths.push(path.clone());
+                if let Ok(face) = library.new_face(Path::new(&path), 0) {
+                     let size_px = 24;
+                     let _ = face.set_pixel_sizes(0, size_px);
+                     user_faces.insert(path, face);
+                }
+            } else {
+                eprintln!("Warning: Font '{}' not found.", font_name);
+            }
+        }
+
+        if user_faces.is_empty() {
+            panic!("No usable fonts found. Please install Cascadia Code or specify a valid font with --font.");
+        }
+
+        FontContext {
+            library,
+            user_faces,
+            fallback_faces: HashMap::new(),
+            font_paths,
+            missing_chars: HashSet::new(),
+        }
+    }
+
+    fn get_main_face(&self) -> &freetype::Face {
+        // Return the first successfully loaded user face
+        // We iterate font_paths to preserve priority order
+        for path in &self.font_paths {
+            if let Some(face) = self.user_faces.get(path) {
+                return face;
+            }
+        }
+        // Should be unreachable due to check in new()
+        self.user_faces.values().next().unwrap()
+    }
+}
 
 fn find_font_path(font_name: &str) -> Option<String> {
     let fc = Fontconfig::new()?;
-    fc.find("monospace", Some(font_name))
+    fc.find(font_name, None)
         .map(|f| f.path.display().to_string())
 }
 
-fn load_blocks() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSet<char>) {
-    let mut toml_path = None;
+fn get_fallback_font_path(ch: char) -> Option<String> {
+    let output = Command::new("fc-match")
+        .arg("-f")
+        .arg("%{file}")
+        .arg(format!(":charset={:x}", ch as u32))
+        .output()
+        .ok()?;
 
-    // Check IMG2IRC_CONFIG_DIR first (highest precedence)
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn load_blocks_config() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSet<char>) {
+    let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
         let path = Path::new(&config_dir).join("blocks.toml");
-        if path.exists() {
-            toml_path = Some(path);
-        }
+        if path.exists() { toml_path = Some(path); }
     }
-
-    // If not found, check current directory
     if toml_path.is_none() {
         let path = PathBuf::from("blocks.toml");
-        if path.exists() {
-            toml_path = Some(path);
-        }
+        if path.exists() { toml_path = Some(path); }
     }
-
-    // If still not found, check XDG_CONFIG_HOME or ~/.config
     if toml_path.is_none() {
         let config_home = env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
             env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config"
         });
         let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
-        if path.exists() {
-            toml_path = Some(path);
-        }
+        if path.exists() { toml_path = Some(path); }
     }
-
-    // If still not found, check ~/.config/img2irc/
     if toml_path.is_none() {
         if let Ok(home) = env::var("HOME") {
             let path = Path::new(&home).join(".config").join("img2irc").join("blocks.toml");
-            if path.exists() {
-                toml_path = Some(path);
-            }
+            if path.exists() { toml_path = Some(path); }
         }
     }
 
-    let toml_path = toml_path.expect("Failed to find blocks.toml in any expected location");
+    let toml_path = toml_path.expect("Failed to find blocks.toml");
     let toml_str = fs::read_to_string(toml_path).expect("Failed to read blocks.toml");
-    let value: Value = toml::from_str(&toml_str).expect("Invalid TOML in blocks.toml");
+    let value: Value = toml::from_str(&toml_str).expect("Invalid TOML");
 
     let mut groups: HashMap<String, Vec<std::ops::RangeInclusive<u32>>> = HashMap::new();
     let mut chars = HashSet::new();
@@ -105,18 +173,16 @@ fn load_blocks() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSe
                     }
                 }
             }
-
             if !ranges.is_empty() {
                 groups.insert(name.to_lowercase(), ranges);
             }
         }
     }
-
     chars.insert(' ');
     (groups, chars)
 }
 
-fn render_glyph(face: &mut freetype::Face, ch: char, cell_width: usize, cell_height: usize) -> GlyphBitmap {
+fn render_glyph_from_face(face: &mut freetype::Face, ch: char, cell_width: usize, cell_height: usize, global_ascender: i32, y_offset: i32) -> GlyphBitmap {
     face.load_char(ch as usize, LoadFlag::RENDER | LoadFlag::TARGET_MONO)
         .unwrap_or_else(|_| panic!("Failed to load glyph {}", ch));
 
@@ -127,7 +193,7 @@ fn render_glyph(face: &mut freetype::Face, ch: char, cell_width: usize, cell_hei
     let pitch = bitmap.pitch().abs() as usize;
 
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
-    let ascender = glyph.bitmap_top();
+    let glyph_ascender = glyph.bitmap_top();
     let left = glyph.bitmap_left();
 
     for row in 0..rows {
@@ -140,15 +206,22 @@ fn render_glyph(face: &mut freetype::Face, ch: char, cell_width: usize, cell_hei
             let bit = 7 - (bit_idx % 8);
             if row_data[byte_index] & (1 << bit) != 0 {
                 let x = left + bit_idx as i32;
-                let y = ascender - row as i32 - 1;
+                let y = global_ascender - glyph_ascender + row as i32 + y_offset;
+                
                 if x >= 0 && x < cell_width as i32 && y >= 0 && y < cell_height as i32 {
-                    cell[cell_height - 1 - y as usize][x as usize] = 1;
+                    cell[y as usize][x as usize] = 1;
                 }
             }
         }
     }
-
     cell
+}
+
+pub fn clear_cache() {
+    let dir = cache_dir();
+    if dir.exists() {
+        let _ = fs::remove_dir_all(dir);
+    }
 }
 
 fn cache_dir() -> PathBuf {
@@ -162,159 +235,351 @@ fn cache_dir() -> PathBuf {
     }
 }
 
-fn cache_path(font_name: &str) -> PathBuf {
-    cache_dir().join(format!("{}.toml", font_name))
+fn hash_context(font_paths: &[String], y_offset: i32) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for p in font_paths {
+        p.hash(&mut hasher);
+    }
+    y_offset.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
-fn load_cached_glyphs(font_name: &str) -> Option<GlyphBase> {
-    let path = cache_path(font_name);
+fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
+    let hash = hash_context(&ctx.font_paths, y_offset);
+    let path = cache_dir().join(format!("metrics_{}.bin", hash));
+
     if path.exists() {
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|content| toml::from_str(&content).ok())
-    } else {
-        None
-    }
-}
-
-fn save_cached_glyphs(font_name: &str, base: &GlyphBase) {
-    let path = cache_path(font_name);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    if let Ok(content) = toml::to_string(base) {
-        fs::write(path, content).ok();
-    }
-}
-
-fn get_font_name() -> String {
-    env::var("IMG2IRC_FONT").unwrap_or_else(|_| "Cascadia Code".to_string())
-}
-
-fn build_base() -> GlyphBase {
-    let font_name = get_font_name();
-    if let Some(cached) = load_cached_glyphs(&font_name) {
-        return cached;
+        if let Ok(data) = fs::read(&path) {
+            if let Ok(metrics) = bincode::deserialize(&data) {
+                return metrics;
+            }
+        }
     }
 
-    let (group_ranges, mut chars) = load_blocks();
-
-    let font_path = find_font_path(&font_name)
-        .unwrap_or_else(|| panic!("Could not find font '{}' via fontconfig", font_name));
-
-    let library = Library::init().expect("Failed to initialise FreeType");
-    let mut face = library
-        .new_face(Path::new(&font_path), 0)
-        .expect("Failed to load font face");
-
-    let size_px = 24;
-    face.set_pixel_sizes(0, size_px)
-        .expect("Failed to set pixel size");
-
-    let metrics = face.size_metrics().expect("No size metrics available");
+    let main_face = ctx.get_main_face();
+    let metrics = main_face.size_metrics().expect("No size metrics available");
+    
     let cell_width = ((metrics.max_advance >> 6) as i32).max(1) as usize;
-    let ascender = (metrics.ascender >> 6) as i32;
+    let mut ascender = (metrics.ascender >> 6) as i32;
     let descender = (metrics.descender >> 6) as i32;
-    let cell_height = (ascender - descender).max(1) as usize;
+    let mut cell_height = (ascender + descender.abs()).max(1) as usize;
 
-    let mut groups: HashMap<String, Vec<char>> = HashMap::new();
-    for (name, ranges) in group_ranges {
-        let mut members = Vec::new();
-        for range in ranges {
-            for code in range {
-                if let Some(ch) = char::from_u32(code) {
-                    members.push(ch);
-                    chars.insert(ch);
+    // Calibrate against Full Block (U+2588)
+    let full_block_char = '█';
+    for path in &ctx.font_paths {
+        if let Some(face) = ctx.user_faces.get(path) {
+             if face.get_char_index(full_block_char as usize) != 0 {
+                 if face.load_char(full_block_char as usize, LoadFlag::RENDER | LoadFlag::TARGET_MONO).is_ok() {
+                    let glyph = face.glyph();
+                    let bitmap = glyph.bitmap();
+                    if bitmap.rows() > 0 {
+                        eprintln!("Calibrating metrics based on Full Block (U+2588) from {}", path);
+                        cell_height = bitmap.rows() as usize;
+                        ascender = glyph.bitmap_top();
+                        break; 
+                    }
+                 }
+             }
+        }
+    }
+
+    eprintln!("Metrics: Ascender={}, Descender={}, Height={}, Width={}, Y-Offset={}", ascender, descender, cell_height, cell_width, y_offset);
+
+    let metrics = CachedMetrics {
+        cell_width,
+        cell_height,
+        ascender,
+        descender,
+        y_offset,
+    };
+
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
+    if let Ok(data) = bincode::serialize(&metrics) {
+        fs::write(path, data).ok();
+    }
+
+    metrics
+}
+
+fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], metrics: &CachedMetrics) -> Vec<(char, GlyphBitmap)> {
+    let hash = hash_context(&ctx.font_paths, metrics.y_offset);
+    let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
+
+    if path.exists() {
+        if let Ok(data) = fs::read(&path) {
+            if let Ok(block) = bincode::deserialize::<CachedBlock>(&data) {
+                // eprintln!("Loaded block '{}' from cache", block_name);
+                return block.glyphs;
+            }
+        }
+    }
+
+    eprintln!("Rendering block '{}' ({} glyphs)", block_name, chars.len());
+    let mut glyphs = Vec::new();
+
+    for &ch in chars {
+        let mut found = false;
+        
+        // 0. Check if we already know this character is missing from the system
+        if ctx.missing_chars.contains(&ch) {
+            continue;
+        }
+
+        // 1. User fonts
+        for path in &ctx.font_paths {
+            if let Some(face) = ctx.user_faces.get_mut(path) {
+                 if face.get_char_index(ch as usize) != 0 {
+                    let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender, metrics.y_offset);
+                    glyphs.push((ch, bitmap));
+                    found = true;
+                    break;
                 }
             }
         }
-        if !members.is_empty() {
-            groups.insert(name, members);
+        if found { continue; }
+
+        // 2. Fallback
+        if let Some(path) = get_fallback_font_path(ch) {
+             if !ctx.fallback_faces.contains_key(&path) {
+                 if let Ok(mut face) = ctx.library.new_face(Path::new(&path), 0) {
+                     let _ = face.set_pixel_sizes(0, 24);
+                     ctx.fallback_faces.insert(path.clone(), face);
+                 }
+             }
+             if let Some(face) = ctx.fallback_faces.get_mut(&path) {
+                 if face.get_char_index(ch as usize) != 0 {
+                      let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender, metrics.y_offset);
+                      glyphs.push((ch, bitmap));
+                      found = true;
+                 }
+             }
+        }
+
+        // If not found in any font, it is skipped and marked as missing
+        if !found {
+            ctx.missing_chars.insert(ch);
         }
     }
 
-    let mut glyphs_map: BTreeMap<char, GlyphBitmap> = BTreeMap::new();
-    for ch in chars.iter().copied() {
-        let bitmap = render_glyph(&mut face, ch, cell_width, cell_height);
-        glyphs_map.insert(ch, bitmap);
+    let block = CachedBlock { glyphs: glyphs.clone() };
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
+    if let Ok(data) = bincode::serialize(&block) {
+        fs::write(path, data).ok();
     }
 
-    let glyphs = glyphs_map.into_iter().collect();
-
-    let base = GlyphBase {
-        glyphs,
-        groups,
-        metrics: (cell_height, cell_width),
-    };
-    save_cached_glyphs(&font_name, &base);
-    base
-}
-
-fn base_store() -> &'static GlyphBase {
-    GLYPH_BASE.get_or_init(build_base)
+    glyphs
 }
 
 fn parse_hex_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
     let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 2 {
-        return None;
-    }
+    if parts.len() != 2 { return None; }
     let start = u32::from_str_radix(parts[0], 16).ok()?;
     let end = u32::from_str_radix(parts[1], 16).ok()?;
     Some(start..=end)
 }
 
-pub fn glyph_store(blocks: &[String], exclude_ranges: &[String], exclude_chars: &[char]) -> GlyphStore {
-    let base = base_store();
+pub fn glyph_store(
+    blocks: &[String],
+    exclude_ranges: &[String],
+    exclude_chars: &[char],
+    include_ranges: &[String],
+    include_chars: Option<&String>,
+    fonts: &[String],
+    y_offset: i32
+) -> GlyphStore {
+    let mut ctx = FontContext::new(fonts);
+    let metrics = get_metrics(&mut ctx, y_offset);
+    let (config_groups, _) = load_blocks_config();
 
-    let mut selected = HashSet::new();
+    let mut all_glyphs = BTreeMap::new();
+    let mut selected_chars = HashSet::new();
+
+    // Determine which blocks to load
+    let mut blocks_to_load = HashSet::new();
     if blocks.is_empty() {
-        selected.extend(base.glyphs.iter().map(|(ch, _)| *ch));
+        // If no blocks specified, load ALL known blocks from config
+        blocks_to_load.extend(config_groups.keys().cloned());
     } else {
         for name in blocks {
-            if let Some(chars) = base.groups.get(&name.to_lowercase()) {
-                selected.extend(chars.iter().copied());
-            }
+            blocks_to_load.insert(name.to_lowercase());
         }
-        if selected.is_empty() {
-            selected.extend(base.glyphs.iter().map(|(ch, _)| *ch));
+    }
+
+    // Iterating sorted blocks for consistent logging/order
+    let mut sorted_blocks: Vec<_> = blocks_to_load.iter().collect();
+    sorted_blocks.sort();
+
+    let mut groups_out = HashMap::new();
+
+    // Load requested blocks
+    for block_name in sorted_blocks {
+        if let Some(ranges) = config_groups.get(block_name) {
+            let mut block_chars = Vec::new();
+            for range in ranges {
+                for code in range.clone() {
+                    if let Some(ch) = char::from_u32(code) {
+                        block_chars.push(ch);
+                    }
+                }
+            }
+            if !block_chars.is_empty() {
+                let glyphs = get_block_glyphs(&mut ctx, block_name, &block_chars, &metrics);
+                groups_out.insert(block_name.clone(), block_chars.clone());
+                for (ch, bitmap) in glyphs {
+                    all_glyphs.insert(ch, bitmap);
+                    selected_chars.insert(ch);
+                }
+            }
+        } else {
+             eprintln!("Warning: Block '{}' not defined in blocks.toml", block_name);
+        }
+    }
+
+    // Process explicit inclusions (treat as a virtual "included" block)
+    let mut explicit_chars = Vec::new();
+    if let Some(inc_str) = include_chars {
+        for ch in inc_str.chars() {
+            explicit_chars.push(ch);
+        }
+    }
+    for range_str in include_ranges {
+        if let Some(range) = parse_hex_range(range_str) {
+            for code in range {
+                if let Some(ch) = char::from_u32(code) {
+                    explicit_chars.push(ch);
+                }
+            }
+        } else {
+            eprintln!("Warning: Invalid include range format '{}'. Expected hex range like '2600-26FF'.", range_str);
+        }
+    }
+
+    if !explicit_chars.is_empty() {
+        let glyphs = get_block_glyphs(&mut ctx, "explicit_includes", &explicit_chars, &metrics);
+        groups_out.insert("explicit_includes".to_string(), explicit_chars.clone());
+        for (ch, bitmap) in glyphs {
+            all_glyphs.insert(ch, bitmap);
+            selected_chars.insert(ch);
         }
     }
 
     // Process exclusions
     for range_str in exclude_ranges {
         if let Some(range) = parse_hex_range(range_str) {
-            selected.retain(|&ch| !range.contains(&(ch as u32)));
+            selected_chars.retain(|&ch| !range.contains(&(ch as u32)));
         } else {
-            eprintln!("Warning: Invalid range format '{}'. Expected hex range like '2600-26FF'.", range_str);
+            eprintln!("Warning: Invalid exclude range format '{}'. Expected hex range like '2600-26FF'.", range_str);
         }
     }
-
     for &ch in exclude_chars {
-        selected.remove(&ch);
+        selected_chars.remove(&ch);
     }
 
-    selected.insert(' ');
+    // Ensure space is present and selected
+    if !all_glyphs.contains_key(&' ') {
+         let glyphs = get_block_glyphs(&mut ctx, "space", &[' '], &metrics);
+         if let Some((ch, bitmap)) = glyphs.first() {
+             all_glyphs.insert(*ch, bitmap.clone());
+             selected_chars.insert(*ch);
+         }
+    } else {
+        selected_chars.insert(' ');
+    }
 
     GlyphStore {
-        glyphs: base.glyphs.clone(),
-        groups: base.groups.clone(),
-        selected,
-        metrics: base.metrics,
+        glyphs: all_glyphs.into_iter().collect(),
+        groups: groups_out,
+        selected: selected_chars,
+        metrics: (metrics.cell_height, metrics.cell_width),
+    }
+}
+
+pub fn list_ranges() {
+    let (groups, _) = load_blocks_config();
+    let mut sorted_groups: Vec<_> = groups.iter().collect();
+    sorted_groups.sort_by_key(|(k, _)| *k);
+    
+    println!("{:<20} | {:<20} | {}", "Block Name", "Range", "Count");
+    println!("{:-<20}-+-{:-<20}-+-{:-<5}", "", "", "");
+
+    for (name, ranges) in sorted_groups {
+        let mut count = 0;
+        let mut range_strs = Vec::new();
+        for range in ranges {
+            count += range.end() - range.start() + 1;
+            range_strs.push(format!("{:X}-{:X}", range.start(), range.end()));
+        }
+        println!("{:<20} | {:<20} | {}", name, range_strs.join(", "), count);
+    }
+}
+
+pub fn print_ranges() {
+    let (groups, _) = load_blocks_config();
+    let mut sorted_groups: Vec<_> = groups.iter().collect();
+    sorted_groups.sort_by_key(|(k, _)| *k);
+
+    for (name, ranges) in sorted_groups {
+        println!("{}:", name);
+        for range in ranges {
+            for code in range.clone() {
+                if let Some(ch) = char::from_u32(code) {
+                    print!("{} ", ch);
+                }
+            }
+        }
+        println!("\n");
     }
 }
 
 pub fn print_blocks_config() {
-    let base = base_store();
-    let mut sorted_groups: Vec<_> = base.groups.iter().collect();
+    let (groups, _) = load_blocks_config();
+    let mut sorted_groups: Vec<_> = groups.iter().collect();
     sorted_groups.sort_by_key(|(k, _)| *k);
-    for (name, chars) in sorted_groups {
+    for (name, ranges) in sorted_groups {
         println!("{}:", name);
-        for &ch in chars {
-            print!("{} ", ch);
+        // Printing ranges is better than printing all chars for config listing
+        for range in ranges {
+             print!("{:X}-{:X} ", range.start(), range.end());
         }
         println!();
     }
 }
 
+pub fn print_block_bitmaps(store: &GlyphStore) {
+    let glyph_map: HashMap<char, &GlyphBitmap> = store.glyphs.iter().map(|(c, b)| (*c, b)).collect();
+    let mut sorted_groups: Vec<_> = store.groups.keys().collect();
+    sorted_groups.sort();
 
+    for name in sorted_groups {
+        let chars = &store.groups[name];
+        let selected_chars: Vec<char> = chars.iter().copied().filter(|c| store.selected.contains(c)).collect();
+
+        if selected_chars.is_empty() { continue; }
+
+        println!("Block: {}", name);
+        for &ch in &selected_chars {
+            if let Some(bitmap) = glyph_map.get(&ch) {
+                println!("Character: {} ({})", ch, ch.escape_unicode());
+                if let Some(first_row) = bitmap.first() {
+                    let width = first_row.len();
+                    print!("┌");
+                    for _ in 0..width { print!("──"); }
+                    println!("┐");
+
+                    for row in *bitmap {
+                        print!("│");
+                        for &pixel in row {
+                            if pixel > 0 { print!("██"); } else { print!("  "); }
+                        }
+                        println!("│");
+                    }
+                    print!("└");
+                    for _ in 0..width { print!("──"); }
+                    println!("┘");
+                }
+                println!();
+            }
+        }
+        println!("{}", "-".repeat(40));
+    }
+}
