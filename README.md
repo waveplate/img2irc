@@ -196,3 +196,4 @@ specifying `--blocks` with no value uses all available glyph types
 | --edgedetection                        | highlights edges and boundaries in an image                     | false         |
 
 ![img2irc example 2](https://i.imgur.com/BWs5Hfd.png)
+
