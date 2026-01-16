@@ -309,6 +309,10 @@ pub fn render_blocks(
     args: &Args,
     render: Render,
 ) -> String {
+    if args.smooth.is_some() {
+        return render_blocks_smooth(image, args, render);
+    }
+
     if image.glyphs.glyphs.is_empty() {
         return "Error: no glyphs available".into();
     }
@@ -866,4 +870,309 @@ pub fn render_braille(
 pub fn luma(rgb: &[u8;3]) -> u8 {
     let r = rgb[0] as f32; let g = rgb[1] as f32; let b = rgb[2] as f32;
     (0.299*r + 0.587*g + 0.114*b).round() as u8
+}
+
+fn dist_sq(p1: &[u8; 3], p2: &[u8; 3]) -> u64 {
+    let dr = p1[0] as i64 - p2[0] as i64;
+    let dg = p1[1] as i64 - p2[1] as i64;
+    let db = p1[2] as i64 - p2[2] as i64;
+    (dr * dr + dg * dg + db * db) as u64
+}
+
+fn render_blocks_smooth(
+    image: &AnsiImage,
+    args: &Args,
+    render: Render,
+) -> String {
+    if image.glyphs.glyphs.is_empty() {
+        return "Error: no glyphs available".into();
+    }
+
+    let bg_opt_rgb = args.bg_opt.as_ref().map(|s| unpack_rgb(parse_hex_color(s)));
+    let (gh, gw) = image.glyphs.metrics;
+    let bp = gh * gw;
+    let img_h = image.bitmap.len();
+    let img_w = if img_h > 0 { image.bitmap[0].len() } else { 0 };
+
+    let glyphs: Vec<FastGlyph> = image
+        .glyphs
+        .glyphs
+        .iter()
+        .filter(|(ch, _)| image.glyphs.selected.contains(ch))
+        .filter(|(ch, _)| {
+            if *ch == ' ' && !args.blocks.is_empty() {
+                return args.blocks.iter().any(|block| {
+                    image
+                        .glyphs
+                        .groups
+                        .get(&block.to_lowercase())
+                        .map_or(false, |chars| chars.contains(&' '))
+                });
+            }
+            true
+        })
+        .map(|(ch, bmp)| {
+            let mut bitmap = Vec::with_capacity(bp);
+            for row in bmp {
+                bitmap.extend_from_slice(row);
+            }
+            
+            // Extract boundaries for continuity check
+            let mut top = Vec::with_capacity(gw);
+            let mut bottom = Vec::with_capacity(gw);
+            let mut left = Vec::with_capacity(gh);
+            let mut right = Vec::with_capacity(gh);
+
+            for x in 0..gw {
+                top.push(bitmap[x]);
+                bottom.push(bitmap[(gh - 1) * gw + x]);
+            }
+            for y in 0..gh {
+                left.push(bitmap[y * gw]);
+                right.push(bitmap[y * gw + (gw - 1)]);
+            }
+
+            FastGlyph { 
+                ch: *ch, 
+                bitmap, 
+                edge_bitmap: vec![], // Unused in smooth window
+                top, bottom, left, right 
+            }
+        })
+        .collect();
+
+    if glyphs.is_empty() {
+        return "Error: no glyphs selected".into();
+    }
+
+    let mut out = String::new();
+    let mut current_block_pixels_rgb: Vec<PrePixel> = Vec::with_capacity(bp);
+    
+    // Weights
+    let smooth_weight = args.smooth.unwrap_or(1.0).clamp(0.0, 1.0); 
+    let color_weight = 1.0 - smooth_weight;
+    
+    for (row_idx, block_row) in image.block.iter().enumerate() {
+        let mut first = true;
+        let mut last_fg: Option<Colour> = None;
+        let mut last_bg: Option<Colour> = None;
+        
+        let global_y = row_idx * gh;
+
+        for (col_idx, blk) in block_row.iter().enumerate() {
+            let global_x = col_idx * gw;
+            let final_glyph: char;
+            let final_fg: Colour;
+            let final_bg: Option<Colour>;
+
+            if render == Render::Ansi24 {
+                current_block_pixels_rgb.clear();
+                for y_idx in 0..gh {
+                    for x_idx in 0..gw {
+                        let px = blk.pixels[y_idx][x_idx].orig;
+                        let [r, g, b] = unpack_rgb(px);
+                        current_block_pixels_rgb.push(PrePixel {
+                            r: r as u64, g: g as u64, b: b as u64,
+                            sq: (r as u64).pow(2) + (g as u64).pow(2) + (b as u64).pow(2)
+                        });
+                    }
+                }
+
+                let mut best_cost = u64::MAX;
+                let mut best_glyph_idx = 0;
+                let mut best_chosen_fg_color = [0u8; 3];
+                let mut best_chosen_bg_color = [0u8; 3];
+
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    let mut sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
+                    let mut count_ones = 0u64;
+                    let mut sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
+                    let mut count_zeros = 0u64;
+
+                    for i in 0..bp {
+                        let px = &current_block_pixels_rgb[i];
+                        if fglyph.bitmap[i] == 1 {
+                            sum_ones.r += px.r; sum_ones.g += px.g; sum_ones.b += px.b; sum_ones.sq += px.sq;
+                            count_ones += 1;
+                        } else {
+                            sum_zeros.r += px.r; sum_zeros.g += px.g; sum_zeros.b += px.b; sum_zeros.sq += px.sq;
+                            count_zeros += 1;
+                        }
+                    }
+
+                    let avg_ones = if count_ones > 0 {
+                        [(sum_ones.r / count_ones) as u8, (sum_ones.g / count_ones) as u8, (sum_ones.b / count_ones) as u8]
+                    } else { [0,0,0] };
+
+                    let avg_zeros = if count_zeros > 0 {
+                        [(sum_zeros.r / count_zeros) as u8, (sum_zeros.g / count_zeros) as u8, (sum_zeros.b / count_zeros) as u8]
+                    } else { [0,0,0] };
+
+                    let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
+                    let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
+                    let penalty_per_miss = 1000u64;
+
+                    // --- Internal Color Cost ---
+                    let cost_internal_no_inv = if use_coverage_heuristic {
+                         let term1 = sum_ones.sq;
+                         let term2 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                         let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                         let cost_fg = (term1 + term3).saturating_sub(term2);
+                         cost_fg + (count_zeros * penalty_per_miss)
+                    } else {
+                        let target_bg = bg_ref.unwrap_or(avg_zeros);
+                        let t1_1 = sum_ones.sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let cost_ones = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let t1_0 = sum_zeros.sq;
+                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros.r + target_bg[1] as u64 * sum_zeros.g + target_bg[2] as u64 * sum_zeros.b);
+                        let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                        let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
+                        cost_ones + cost_zeros
+                    };
+
+                    // --- Boundary Cost (Smoothness) ---
+                    let mut boundary_cost_no_inv = 0u64;
+                    if smooth_weight > 0.0 {
+                        let target_bg = bg_ref.unwrap_or(avg_zeros);
+                        
+                        // Top
+                        if global_y > 0 {
+                            for x in 0..gw {
+                                let img_px = unpack_rgb(image.bitmap[global_y - 1][global_x + x]);
+                                let target = if fglyph.top[x] == 1 { avg_ones } else { target_bg };
+                                boundary_cost_no_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        // Bottom
+                        if global_y + gh < img_h {
+                            for x in 0..gw {
+                                let img_px = unpack_rgb(image.bitmap[global_y + gh][global_x + x]);
+                                let target = if fglyph.bottom[x] == 1 { avg_ones } else { target_bg };
+                                boundary_cost_no_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        // Left
+                        if global_x > 0 {
+                            for y in 0..gh {
+                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x - 1]);
+                                let target = if fglyph.left[y] == 1 { avg_ones } else { target_bg };
+                                boundary_cost_no_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        // Right
+                        if global_x + gw < img_w {
+                            for y in 0..gh {
+                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x + gw]);
+                                let target = if fglyph.right[y] == 1 { avg_ones } else { target_bg };
+                                boundary_cost_no_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                    }
+
+                    let total_cost_no_inv = (cost_internal_no_inv as f64 * color_weight as f64 + boundary_cost_no_inv as f64 * smooth_weight as f64) as u64;
+
+                    if total_cost_no_inv < best_cost {
+                        best_cost = total_cost_no_inv;
+                        best_glyph_idx = gi;
+                        best_chosen_fg_color = avg_ones;
+                        best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
+                    }
+
+                    // --- Inverted Check ---
+                    let cost_internal_inv = if use_coverage_heuristic {
+                         let t1_0 = sum_zeros.sq;
+                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                         let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                         cost_fg + (count_ones * penalty_per_miss)
+                    } else {
+                         let target_bg = bg_ref.unwrap_or(avg_ones);
+                         let t1_0 = sum_zeros.sq;
+                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                         let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                         let t1_1 = sum_ones.sq;
+                         let t2_1 = 2 * (target_bg[0] as u64 * sum_ones.r + target_bg[1] as u64 * sum_ones.g + target_bg[2] as u64 * sum_ones.b);
+                         let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                         let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                         cost_fg + cost_bg
+                    };
+
+                    let mut boundary_cost_inv = 0u64;
+                    if smooth_weight > 0.0 {
+                        // FG is avg_zeros, BG is bg_ref OR avg_ones
+                        let target_bg = bg_ref.unwrap_or(avg_ones);
+                        
+                        if global_y > 0 {
+                            for x in 0..gw {
+                                let img_px = unpack_rgb(image.bitmap[global_y - 1][global_x + x]);
+                                // Inverted: 0->FG(avg_zeros), 1->BG(target_bg)
+                                let target = if fglyph.top[x] == 0 { avg_zeros } else { target_bg };
+                                boundary_cost_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        if global_y + gh < img_h {
+                            for x in 0..gw {
+                                let img_px = unpack_rgb(image.bitmap[global_y + gh][global_x + x]);
+                                let target = if fglyph.bottom[x] == 0 { avg_zeros } else { target_bg };
+                                boundary_cost_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        if global_x > 0 {
+                            for y in 0..gh {
+                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x - 1]);
+                                let target = if fglyph.left[y] == 0 { avg_zeros } else { target_bg };
+                                boundary_cost_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                        if global_x + gw < img_w {
+                            for y in 0..gh {
+                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x + gw]);
+                                let target = if fglyph.right[y] == 0 { avg_zeros } else { target_bg };
+                                boundary_cost_inv += dist_sq(&img_px, &target);
+                            }
+                        }
+                    }
+
+                    let total_cost_inv = (cost_internal_inv as f64 * color_weight as f64 + boundary_cost_inv as f64 * smooth_weight as f64) as u64;
+
+                    if total_cost_inv < best_cost {
+                        best_cost = total_cost_inv;
+                        best_glyph_idx = gi;
+                        best_chosen_fg_color = avg_zeros;
+                        best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
+                    }
+
+                    if best_cost == 0 { break; }
+                }
+
+                final_glyph = glyphs[best_glyph_idx].ch;
+                final_fg = Colour::RGB(best_chosen_fg_color);
+                final_bg = if args.fg_only { None } else { Some(Colour::RGB(best_chosen_bg_color)) };
+
+            } else {
+                final_glyph = ' ';
+                final_fg = Colour::Index(7);
+                final_bg = None;
+            }
+
+            emit_colourized(
+                &mut out,
+                render,
+                final_fg,
+                final_bg,
+                final_glyph,
+                &mut first,
+                &mut last_fg,
+                &mut last_bg,
+            );
+        }
+        out.push_str(match render {
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
+            Render::Irc => "\x0f\n", // IRC color reset
+        });
+    }
+    out.trim_end_matches('\n').into()
 }
