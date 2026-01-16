@@ -324,6 +324,10 @@ pub struct Args {
     /// highlights edges and boundaries in an image
     #[arg(long="edgedetection", default_value_t = false)]
     pub edge_detection: bool,
+
+    /// prefers characters which result in a smooth image (0.0 to 1.0)
+    #[arg(long, num_args(0..=1), default_missing_value="1.0")]
+    pub smooth: Option<f32>,
 }
 
 pub fn parse_args() -> Args {

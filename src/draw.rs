@@ -1,5 +1,5 @@
 use crate::args::{Args, Render};
-use crate::font::{GlyphBitmap, GlyphStore};
+use crate::font::GlyphStore;
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
 
@@ -7,6 +7,23 @@ use std::collections::HashMap;
 use std::iter::repeat;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
+
+struct FastGlyph {
+    ch: char,
+    bitmap: Vec<u8>,
+    edge_bitmap: Vec<u8>,
+    // Boundary signatures for continuity (smooth mode)
+    top: Vec<u8>,
+    bottom: Vec<u8>,
+    left: Vec<u8>,
+    right: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+struct PrePixel {
+    r: u64, g: u64, b: u64,
+    sq: u64,
+}
 
 /// Braille dot positions (for render_braille)
 const POSITIONS: [(usize, usize, u32); 8] = [
@@ -282,36 +299,6 @@ fn emit_colourized(
     *first = false;
 }
 
-/// Helper to calculate the average RGB color from a slice of u32 RGB values.
-#[inline]
-fn calculate_average_rgb(colors: &[u32]) -> [u8; 3] {
-    if colors.is_empty() {
-        return [0, 0, 0]; // Return black if no colors to average
-    }
-    let mut sum_r: u64 = 0;
-    let mut sum_g: u64 = 0;
-    let mut sum_b: u64 = 0;
-    for &col_u32 in colors {
-        sum_r += ((col_u32 >> 16) & 0xFF) as u64;
-        sum_g += ((col_u32 >> 8) & 0xFF) as u64;
-        sum_b += (col_u32 & 0xFF) as u64;
-    }
-    let count = colors.len() as u64;
-    [
-        (sum_r / count) as u8,
-        (sum_g / count) as u8,
-        (sum_b / count) as u8,
-    ]
-}
-
-#[inline(always)]
-fn diff_rgb(p1: &[u8; 3], p2: &[u8; 3]) -> u64 {
-    let dr = p1[0] as i32 - p2[0] as i32;
-    let dg = p1[1] as i32 - p2[1] as i32;
-    let db = p1[2] as i32 - p2[2] as i32;
-    (dr * dr + dg * dg + db * db) as u64
-}
-
 fn parse_hex_color(s: &str) -> u32 {
     u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0)
 }
@@ -331,7 +318,7 @@ pub fn render_blocks(
     let (gh, gw) = image.glyphs.metrics;
     let bp = gh * gw;
 
-    let glyphs: Vec<(char, &GlyphBitmap)> = image
+    let glyphs: Vec<FastGlyph> = image
         .glyphs
         .glyphs
         .iter()
@@ -348,29 +335,136 @@ pub fn render_blocks(
             }
             true
         })
-        .map(|(ch, bmp)| (*ch, bmp))
+        .map(|(ch, bmp)| {
+            let mut bitmap = Vec::with_capacity(bp);
+            for row in bmp {
+                bitmap.extend_from_slice(row);
+            }
+            
+            let mut edge_bitmap = vec![0u8; bp];
+            if args.smooth.is_some() {
+                for y in 0..gh {
+                    for x in 0..gw {
+                        let i = y * gw + x;
+                        let v = bitmap[i];
+                        let mut is_edge = false;
+                        if x > 0 && bitmap[i - 1] != v { is_edge = true; }
+                        else if x + 1 < gw && bitmap[i + 1] != v { is_edge = true; }
+                        else if y > 0 && bitmap[i - gw] != v { is_edge = true; }
+                        else if y + 1 < gh && bitmap[i + gw] != v { is_edge = true; }
+                        
+                        if is_edge { edge_bitmap[i] = 1; }
+                    }
+                }
+            }
+            
+            // Extract boundaries for continuity check
+            let mut top = Vec::with_capacity(gw);
+            let mut bottom = Vec::with_capacity(gw);
+            let mut left = Vec::with_capacity(gh);
+            let mut right = Vec::with_capacity(gh);
+
+            // Top and Bottom rows
+            for x in 0..gw {
+                top.push(bitmap[x]);
+                bottom.push(bitmap[(gh - 1) * gw + x]);
+            }
+            // Left and Right columns
+            for y in 0..gh {
+                left.push(bitmap[y * gw]);
+                right.push(bitmap[y * gw + (gw - 1)]);
+            }
+
+            FastGlyph { 
+                ch: *ch, 
+                bitmap, 
+                edge_bitmap,
+                top, bottom, left, right 
+            }
+        })
         .collect();
 
     if glyphs.is_empty() {
         return "Error: no glyphs selected".into();
     }
     let mut out = String::new();
-    for block_row in &image.block {
+
+    // Pre-allocate buffer for pixel data to avoid repeated allocations
+    let mut current_block_pixels_rgb: Vec<PrePixel> = Vec::with_capacity(bp);
+    // For indexed modes
+    let mut current_block_indices: Vec<u8> = Vec::with_capacity(bp);
+    // For smooth mode
+    let mut current_block_edges: Vec<u8> = vec![0u8; bp];
+
+    // Track selected glyphs for continuity (smooth mode)
+    let blocks_width = if !image.block.is_empty() { image.block[0].len() } else { 0 };
+    let mut previous_row_glyph_indices: Vec<(usize, bool)> = vec![(usize::MAX, false); blocks_width];
+
+    for (row_idx, block_row) in image.block.iter().enumerate() {
         let mut first = true;
         let mut last_fg: Option<Colour> = None; // Assuming Colour is in parent or use crate::image::Colour
         let mut last_bg: Option<Colour> = None;
+        let mut left_neighbor_glyph_idx: (usize, bool) = (usize::MAX, false);
 
-        for blk in block_row {
+        for (col_idx, blk) in block_row.iter().enumerate() {
             let final_glyph: char;
             let final_fg: Colour;
             let final_bg: Option<Colour>;
+            let mut chosen_glyph_index: usize = 0;
+            let mut chosen_glyph_inverted: bool = false;
+
+            // Get neighbors for continuity
+            let left_neighbor_data = if left_neighbor_glyph_idx.0 != usize::MAX {
+                Some((&glyphs[left_neighbor_glyph_idx.0], left_neighbor_glyph_idx.1))
+            } else { None };
+            
+            let top_neighbor_data = if previous_row_glyph_indices[col_idx].0 != usize::MAX {
+                Some((&glyphs[previous_row_glyph_indices[col_idx].0], previous_row_glyph_indices[col_idx].1))
+            } else { None };
 
             if render == Render::Ansi24 {
                 // Ansi24 specific glyph matching using direct RGB values
-                let mut current_block_pixels_rgb: Vec<u32> = Vec::with_capacity(bp);
+                current_block_pixels_rgb.clear();
                 for y_idx in 0..gh {
                     for x_idx in 0..gw {
-                        current_block_pixels_rgb.push(blk.pixels[y_idx][x_idx].orig);
+                        let px = blk.pixels[y_idx][x_idx].orig;
+                        let [r, g, b] = unpack_rgb(px);
+                        let r = r as u64;
+                        let g = g as u64;
+                        let b = b as u64;
+                        current_block_pixels_rgb.push(PrePixel {
+                            r, g, b,
+                            sq: r*r + g*g + b*b
+                        });
+                    }
+                }
+
+                if args.smooth.is_some() {
+                    // Calculate edges for the current block
+                    // Higher threshold to avoid detecting noise as edges (which would match dither patterns)
+                    let threshold_sq = 60 * 60 * 3; 
+                    for y in 0..gh {
+                        for x in 0..gw {
+                            let i = y * gw + x;
+                            let p = &current_block_pixels_rgb[i];
+                            let mut is_edge = false;
+                            
+                            // Check neighbors
+                            let check = |idx2: usize| -> bool {
+                                let p2 = &current_block_pixels_rgb[idx2];
+                                let dist = (p.r as i64 - p2.r as i64).pow(2) + 
+                                           (p.g as i64 - p2.g as i64).pow(2) + 
+                                           (p.b as i64 - p2.b as i64).pow(2);
+                                dist as u64 > threshold_sq
+                            };
+
+                            if x > 0 && check(i - 1) { is_edge = true; }
+                            else if x + 1 < gw && check(i + 1) { is_edge = true; }
+                            else if y > 0 && check(i - gw) { is_edge = true; }
+                            else if y + 1 < gh && check(i + gw) { is_edge = true; }
+
+                            current_block_edges[i] = if is_edge { 1 } else { 0 };
+                        }
                     }
                 }
 
@@ -379,102 +473,160 @@ pub fn render_blocks(
                 let mut best_chosen_fg_color = [0u8; 3];
                 let mut best_chosen_bg_color = [0u8; 3];
 
-                for (gi, (_, bmp)) in glyphs.iter().enumerate() {
-                    let mut pixels_under_glyph_ones: Vec<u32> = Vec::new();
-                    let mut pixels_under_glyph_zeros: Vec<u32> = Vec::new();
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    let mut sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
+                    let mut count_ones = 0u64;
+                    let mut sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
+                    let mut count_zeros = 0u64;
 
-                    for row in 0..gh {
-                        for col in 0..gw {
-                            let idx = row * gw + col;
-                            let pixel_original_rgb = current_block_pixels_rgb[idx];
-                            if bmp[row][col] == 1 {
-                                pixels_under_glyph_ones.push(pixel_original_rgb);
-                            } else {
-                                pixels_under_glyph_zeros.push(pixel_original_rgb);
-                            }
+                    for i in 0..bp {
+                        let px = &current_block_pixels_rgb[i];
+                        if fglyph.bitmap[i] == 1 {
+                            sum_ones.r += px.r; sum_ones.g += px.g; sum_ones.b += px.b; sum_ones.sq += px.sq;
+                            count_ones += 1;
+                        } else {
+                            sum_zeros.r += px.r; sum_zeros.g += px.g; sum_zeros.b += px.b; sum_zeros.sq += px.sq;
+                            count_zeros += 1;
                         }
                     }
 
-                    let avg_ones = calculate_average_rgb(&pixels_under_glyph_ones);
-                    let avg_zeros = calculate_average_rgb(&pixels_under_glyph_zeros);
-                    
+                    let avg_ones = if count_ones > 0 {
+                        [(sum_ones.r / count_ones) as u8, (sum_ones.g / count_ones) as u8, (sum_ones.b / count_ones) as u8]
+                    } else { [0,0,0] };
+
+                    let avg_zeros = if count_zeros > 0 {
+                        [(sum_zeros.r / count_zeros) as u8, (sum_zeros.g / count_zeros) as u8, (sum_zeros.b / count_zeros) as u8]
+                    } else { [0,0,0] };
+
                     let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
                     let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
                     let penalty_per_miss = 1000u64;
+                    
+                    // Smoothness weighting
+                    let smooth_weight = args.smooth.unwrap_or(0.0).clamp(0.0, 1.0);
+                    let color_weight = 1.0 - smooth_weight;
+                    let continuity_scalar = 195_075.0; // Max per-pixel squared error in RGB
 
                     // --- Cost Calculation (Normal: 1=FG, 0=BG) ---
-                    let mut cost_no_invert = 0u64;
-                    if use_coverage_heuristic {
+                    let cost_no_invert = if use_coverage_heuristic {
                         // Heuristic: FG(1) matches avg_ones. BG(0) is ignored but penalized.
-                        for row in 0..gh {
-                            for col in 0..gw {
-                                if bmp[row][col] == 1 {
-                                    let idx = row * gw + col;
-                                    let px = unpack_rgb(current_block_pixels_rgb[idx]);
-                                    let d = diff_rgb(&px, &avg_ones);
-                                    cost_no_invert += d;
-                                } else {
-                                    cost_no_invert += penalty_per_miss;
-                                }
-                            }
-                        }
+                         let term1 = sum_ones.sq;
+                         let term2 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                         let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                         let cost_fg = (term1 + term3).saturating_sub(term2);
+                         cost_fg + (count_zeros * penalty_per_miss)
                     } else {
                         // Standard: FG(1)=avg_ones, BG(0)=avg_zeros (or bg_ref)
                         let target_bg = bg_ref.unwrap_or(avg_zeros);
-                        for row in 0..gh {
-                            for col in 0..gw {
-                                let idx = row * gw + col;
-                                let px = unpack_rgb(current_block_pixels_rgb[idx]);
-                                let target = if bmp[row][col] == 1 { avg_ones } else { target_bg };
-                                cost_no_invert += diff_rgb(&px, &target);
+                        
+                        // Cost ones
+                        let t1_1 = sum_ones.sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let cost_ones = (t1_1 + t3_1).saturating_sub(t2_1);
+                        
+                        // Cost zeros
+                        let t1_0 = sum_zeros.sq;
+                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros.r + target_bg[1] as u64 * sum_zeros.g + target_bg[2] as u64 * sum_zeros.b);
+                        let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                        let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
+                        
+                        cost_ones + cost_zeros
+                    };
+
+                    let total_cost_no_invert = if smooth_weight > 0.0 {
+                        // Calculate Hamming distance for continuity
+                        let mut hamming = 0u64;
+                        if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
+                            for y in 0..gh {
+                                let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
+                                let curr_bit = fglyph.left[y]; // Not inverted
+                                if ln_bit != curr_bit { hamming += 1; }
                             }
                         }
-                    }
+                        if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
+                            for x in 0..gw {
+                                let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
+                                let curr_bit = fglyph.top[x]; // Not inverted
+                                if tn_bit != curr_bit { hamming += 1; }
+                            }
+                        }
+                        
+                        let continuity_cost = (hamming as f64 * continuity_scalar) as u64;
+                        (cost_no_invert as f64 * color_weight as f64 + continuity_cost as f64 * smooth_weight as f64) as u64
+                    } else {
+                        cost_no_invert
+                    };
 
-                    if cost_no_invert < best_cost {
-                        best_cost = cost_no_invert;
+                    if total_cost_no_invert < best_cost {
+                        best_cost = total_cost_no_invert;
                         best_glyph_idx = gi;
                         best_chosen_fg_color = avg_ones;
                         best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
                     }
-
-                    // --- Cost Calculation (Inverted: 0=FG, 1=BG) ---
-                    let mut cost_invert = 0u64;
-                    if use_coverage_heuristic {
-                        // Heuristic: FG(0) matches avg_zeros. BG(1) is ignored but penalized.
-                        for row in 0..gh {
-                            for col in 0..gw {
-                                if bmp[row][col] == 0 {
-                                    let idx = row * gw + col;
-                                    let px = unpack_rgb(current_block_pixels_rgb[idx]);
-                                    let d = diff_rgb(&px, &avg_zeros);
-                                    cost_invert += d;
-                                } else {
-                                    cost_invert += penalty_per_miss;
-                                }
-                            }
-                        }
-                    } else {
-                        // Standard: FG(0)=avg_zeros, BG(1)=avg_ones (or bg_ref)
-                        // Note: bg_ref replaces the Background role.
-                        // Inverted: 1 is Background. So 1 uses bg_ref.
-                        let target_bg = bg_ref.unwrap_or(avg_ones);
-                        for row in 0..gh {
-                            for col in 0..gw {
-                                let idx = row * gw + col;
-                                let px = unpack_rgb(current_block_pixels_rgb[idx]);
-                                // Inverted map: 0->FG(avg_zeros), 1->BG(target_bg)
-                                let target = if bmp[row][col] == 0 { avg_zeros } else { target_bg };
-                                cost_invert += diff_rgb(&px, &target);
-                            }
-                        }
+                    
+                    if best_cost == 0 {
+                         // Perfect match
                     }
 
-                    if cost_invert < best_cost {
-                        best_cost = cost_invert;
+                    // --- Cost Calculation (Inverted: 0=FG, 1=BG) ---
+                    let cost_invert = if use_coverage_heuristic {
+                         // Heuristic: FG(0) matches avg_zeros. BG(1) is ignored but penalized.
+                         let t1_0 = sum_zeros.sq;
+                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                         let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                         
+                         cost_fg + (count_ones * penalty_per_miss)
+                    } else {
+                         // Standard: FG(0)=avg_zeros, BG(1)=avg_ones (or bg_ref)
+                         let target_bg = bg_ref.unwrap_or(avg_ones);
+                         
+                         // Cost zeros (FG)
+                         let t1_0 = sum_zeros.sq;
+                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                         let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                         
+                         // Cost ones (BG)
+                         let t1_1 = sum_ones.sq;
+                         let t2_1 = 2 * (target_bg[0] as u64 * sum_ones.r + target_bg[1] as u64 * sum_ones.g + target_bg[2] as u64 * sum_ones.b);
+                         let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                         let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                         
+                         cost_fg + cost_bg
+                    };
+
+                    let total_cost_invert = if smooth_weight > 0.0 {
+                        // Calculate Hamming distance for continuity
+                        let mut hamming = 0u64;
+                        if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
+                            for y in 0..gh {
+                                let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
+                                let curr_bit = 1 - fglyph.left[y]; // Inverted
+                                if ln_bit != curr_bit { hamming += 1; }
+                            }
+                        }
+                        if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
+                            for x in 0..gw {
+                                let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
+                                let curr_bit = 1 - fglyph.top[x]; // Inverted
+                                if tn_bit != curr_bit { hamming += 1; }
+                            }
+                        }
+                        
+                        let continuity_cost = (hamming as f64 * continuity_scalar) as u64;
+                        (cost_invert as f64 * color_weight as f64 + continuity_cost as f64 * smooth_weight as f64) as u64
+                    } else {
+                        cost_invert
+                    };
+
+                    if total_cost_invert < best_cost {
+                        best_cost = total_cost_invert;
                         best_glyph_idx = gi;
                         best_chosen_fg_color = avg_zeros;
                         best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
+                        chosen_glyph_inverted = true;
                     }
 
                     if best_cost == 0 {
@@ -482,14 +634,15 @@ pub fn render_blocks(
                     }
                 }
 
-                let glyph_char = glyphs[best_glyph_idx].0;
+                chosen_glyph_index = best_glyph_idx;
+                let glyph_char = glyphs[best_glyph_idx].ch;
                 final_glyph = glyph_char;
                 final_fg = Colour::RGB(best_chosen_fg_color);
                 final_bg = if args.fg_only { None } else { Some(Colour::RGB(best_chosen_bg_color)) };
 
             } else {
                 // Palette-based glyph matching logic for Render::Ansi and Render::Irc
-                let mut code = vec![0u8; bp];
+                current_block_indices.clear();
                 for y_idx in 0..gh {
                     for x_idx in 0..gw {
                         let p = &blk.pixels[y_idx][x_idx];
@@ -501,7 +654,7 @@ pub fn render_blocks(
                             Render::Irc => p.irc_std,
                             _ => p.ansi_std, // Fallback, Ansi24 is handled above
                         };
-                        code[y_idx * gw + x_idx] = idx;
+                        current_block_indices.push(idx);
                     }
                 }
 
@@ -517,25 +670,29 @@ pub fn render_blocks(
                 };
 
                 let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
+                
+                // Smoothness weighting
+                let smooth_weight = args.smooth.unwrap_or(0.0).clamp(0.0, 1.0);
+                let color_weight = 1.0 - smooth_weight;
+                
+                // Edge penalty for indexed mode
+                let edge_penalty_idx = 1000usize;
 
-                for (gi, (_, bmp)) in glyphs.iter().enumerate() {
+                for (gi, fglyph) in glyphs.iter().enumerate() {
                     for &inv in &[false, true] {
                         let mut fg_tot: usize = 0;
                         let mut bg_tot: usize = 0;
                         let mut fg_cnt = [0usize; 256];
                         let mut bg_cnt = [0usize; 256];
 
-                        for row in 0..gh {
-                            for col in 0..gw {
-                                let idx = row * gw + col;
-                                let col_idx = code[idx] as usize;
-                                if bmp[row][col] ^ (inv as u8) == 1 {
-                                    fg_tot += 1;
-                                    fg_cnt[col_idx] += 1;
-                                } else {
-                                    bg_tot += 1;
-                                    bg_cnt[col_idx] += 1;
-                                }
+                        for i in 0..bp {
+                            let col_idx = current_block_indices[i] as usize;
+                            if fglyph.bitmap[i] ^ (inv as u8) == 1 {
+                                fg_tot += 1;
+                                fg_cnt[col_idx] += 1;
+                            } else {
+                                bg_tot += 1;
+                                bg_cnt[col_idx] += 1;
                             }
                         }
 
@@ -553,7 +710,7 @@ pub fn render_blocks(
                             bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0))
                         };
 
-                        let cost = if args.fg_only && bg_opt_idx.is_none() {
+                        let cost_base = if args.fg_only && bg_opt_idx.is_none() {
                             // Heuristic: Score = 2 * Matches - Total_FG_Pixels
                             // Cost = Total_Pixels - Score
                             let total_pixels = bp;
@@ -562,6 +719,38 @@ pub fn render_blocks(
                         } else {
                             (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective))
                         };
+
+                        let mut extra_cost = 0usize;
+                        if smooth_weight > 0.0 {
+                            // Edge structural cost
+                            if args.smooth.is_some() {
+                                for i in 0..bp {
+                                    if current_block_edges[i] != fglyph.edge_bitmap[i] {
+                                        extra_cost += edge_penalty_idx;
+                                    }
+                                }
+                            }
+
+                            // Continuity cost (Hamming distance)
+                            let mut hamming = 0usize;
+                            if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
+                                for y in 0..gh {
+                                    let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
+                                    let curr_bit = if inv { 1 - fglyph.left[y] } else { fglyph.left[y] };
+                                    if ln_bit != curr_bit { hamming += 1; }
+                                }
+                            }
+                            if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
+                                for x in 0..gw {
+                                    let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
+                                    let curr_bit = if inv { 1 - fglyph.top[x] } else { fglyph.top[x] };
+                                    if tn_bit != curr_bit { hamming += 1; }
+                                }
+                            }
+                            extra_cost += hamming;
+                        }
+
+                        let cost = (cost_base as f32 * color_weight + extra_cost as f32 * smooth_weight) as usize;
 
                         if cost < best.0 {
                             best = (cost, gi, fgi as u8, bgi_std as u8, inv);
@@ -575,13 +764,18 @@ pub fn render_blocks(
                     }
                 }
 
-                let glyph_entry = glyphs[best.1].0;
+                chosen_glyph_index = best.1;
+                let glyph_entry = glyphs[best.1].ch;
                 let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
 
                 final_glyph = glyph_entry;
                 final_fg = Colour::Index(fg_idx);
                 final_bg = if args.fg_only { None } else { Some(Colour::Index(bg_idx)) };
             }
+
+            // Update neighbor tracking
+            left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
+            previous_row_glyph_indices[col_idx] = (chosen_glyph_index, chosen_glyph_inverted);
 
             emit_colourized(
                 &mut out,
