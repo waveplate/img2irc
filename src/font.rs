@@ -39,10 +39,11 @@ struct FontContext {
     fallback_faces: HashMap<String, freetype::Face>,
     font_paths: Vec<String>,
     missing_chars: HashSet<char>,
+    font_size: u32,
 }
 
 impl FontContext {
-    fn new(font_names: &[String]) -> Self {
+    fn new(font_names: &[String], font_size: u32) -> Self {
         let library = Library::init().expect("Failed to initialise FreeType");
         let mut font_paths = Vec::new();
         let mut user_faces = HashMap::new();
@@ -59,8 +60,7 @@ impl FontContext {
                 eprintln!("Loaded font: {}", path);
                 font_paths.push(path.clone());
                 if let Ok(face) = library.new_face(Path::new(&path), 0) {
-                     let size_px = 24;
-                     let _ = face.set_pixel_sizes(0, size_px);
+                     let _ = face.set_pixel_sizes(0, font_size);
                      user_faces.insert(path, face);
                 }
             } else {
@@ -78,6 +78,7 @@ impl FontContext {
             fallback_faces: HashMap::new(),
             font_paths,
             missing_chars: HashSet::new(),
+            font_size,
         }
     }
 
@@ -235,17 +236,18 @@ fn cache_dir() -> PathBuf {
     }
 }
 
-fn hash_context(font_paths: &[String], y_offset: i32) -> String {
+fn hash_context(font_paths: &[String], y_offset: i32, font_size: u32) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for p in font_paths {
         p.hash(&mut hasher);
     }
     y_offset.hash(&mut hasher);
+    font_size.hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
 fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
-    let hash = hash_context(&ctx.font_paths, y_offset);
+    let hash = hash_context(&ctx.font_paths, y_offset, ctx.font_size);
     let path = cache_dir().join(format!("metrics_{}.bin", hash));
 
     if path.exists() {
@@ -302,7 +304,7 @@ fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
 }
 
 fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], metrics: &CachedMetrics) -> Vec<(char, GlyphBitmap)> {
-    let hash = hash_context(&ctx.font_paths, metrics.y_offset);
+    let hash = hash_context(&ctx.font_paths, metrics.y_offset, ctx.font_size);
     let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
 
     if path.exists() {
@@ -341,8 +343,8 @@ fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], met
         // 2. Fallback
         if let Some(path) = get_fallback_font_path(ch) {
              if !ctx.fallback_faces.contains_key(&path) {
-                 if let Ok(mut face) = ctx.library.new_face(Path::new(&path), 0) {
-                     let _ = face.set_pixel_sizes(0, 24);
+                 if let Ok(face) = ctx.library.new_face(Path::new(&path), 0) {
+                     let _ = face.set_pixel_sizes(0, ctx.font_size);
                      ctx.fallback_faces.insert(path.clone(), face);
                  }
              }
@@ -385,9 +387,10 @@ pub fn glyph_store(
     include_ranges: &[String],
     include_chars: Option<&String>,
     fonts: &[String],
-    y_offset: i32
+    y_offset: i32,
+    font_size: u32
 ) -> GlyphStore {
-    let mut ctx = FontContext::new(fonts);
+    let mut ctx = FontContext::new(fonts, font_size);
     let metrics = get_metrics(&mut ctx, y_offset);
     let (config_groups, _) = load_blocks_config();
 

@@ -141,6 +141,10 @@ pub struct Args {
     #[arg(long)]
     pub font: Vec<String>,
 
+    /// font size (height in pixels)
+    #[arg(long, default_value_t = 24)]
+    pub font_size: u32,
+
     /// check specific character details (debug)
     #[arg(long)]
     pub check_char: Option<char>,

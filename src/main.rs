@@ -43,11 +43,11 @@ async fn main() {
             &args.exclude_range,
             &args.exclude,
             &args.include_range,
-            args.include.as_ref(),
-            &args.font,
-            args.y_offset
-        );
-        font::print_block_bitmaps(&glyphs);
+                        args.include.as_ref(),
+                        &args.font,
+                        args.y_offset,
+                        args.font_size
+                    );        font::print_block_bitmaps(&glyphs);
         exit(0);
     }
 
@@ -62,11 +62,11 @@ async fn main() {
                 &args.exclude_range, 
                 &args.exclude, 
                 &args.include_range,
-                args.include.as_ref(),
-                &args.font, 
-                args.y_offset
-            );
-            eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
+                            args.include.as_ref(),
+                            &args.font,
+                            args.y_offset,
+                            args.font_size
+                        );            eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
             eprintln!("Cell size: {}x{}", glyphs.metrics.0, glyphs.metrics.1);
 
             let image = effects::apply_effects(&args, &glyphs, image.clone());
