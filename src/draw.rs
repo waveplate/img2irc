@@ -404,7 +404,7 @@ pub fn render_blocks(
     let blocks_width = if !image.block.is_empty() { image.block[0].len() } else { 0 };
     let mut previous_row_glyph_indices: Vec<(usize, bool)> = vec![(usize::MAX, false); blocks_width];
 
-    for (row_idx, block_row) in image.block.iter().enumerate() {
+    for (_row_idx, block_row) in image.block.iter().enumerate() {
         let mut first = true;
         let mut last_fg: Option<Colour> = None; // Assuming Colour is in parent or use crate::image::Colour
         let mut last_bg: Option<Colour> = None;
@@ -872,13 +872,6 @@ pub fn luma(rgb: &[u8;3]) -> u8 {
     (0.299*r + 0.587*g + 0.114*b).round() as u8
 }
 
-fn dist_sq(p1: &[u8; 3], p2: &[u8; 3]) -> u64 {
-    let dr = p1[0] as i64 - p2[0] as i64;
-    let dg = p1[1] as i64 - p2[1] as i64;
-    let db = p1[2] as i64 - p2[2] as i64;
-    (dr * dr + dg * dg + db * db) as u64
-}
-
 fn render_blocks_smooth(
     image: &AnsiImage,
     args: &Args,
@@ -891,8 +884,6 @@ fn render_blocks_smooth(
     let bg_opt_rgb = args.bg_opt.as_ref().map(|s| unpack_rgb(parse_hex_color(s)));
     let (gh, gw) = image.glyphs.metrics;
     let bp = gh * gw;
-    let img_h = image.bitmap.len();
-    let img_w = if img_h > 0 { image.bitmap[0].len() } else { 0 };
 
     // Pre-calculate blocks width/height
     let blocks_width = if !image.block.is_empty() { image.block[0].len() } else { 0 };
@@ -952,65 +943,31 @@ fn render_blocks_smooth(
     
     // Weights
     let smooth_weight = args.smooth.unwrap_or(1.0).clamp(0.0, 1.0); 
-
-    // Track the bottom edge colors of the previous row (for Top continuity)
-    // Initialized with "transparent" or image pixels? 
-    // Ideally image pixels if we want to anchor to the top edge of the image.
-    // Dimensions: blocks_width * [Colour; gw]
-    let mut prev_row_bottom_edges: Vec<Vec<[u8; 3]>> = Vec::with_capacity(blocks_width);
     
-    // Initialize with top image pixels if available
-    for col_idx in 0..blocks_width {
-        let global_x = col_idx * gw;
-        let mut edge = Vec::with_capacity(gw);
-        for x in 0..gw {
-            if global_x + x < img_w && 0 < img_h { 
-                // Use row 0? Or row -1 (virtual)? Use row 0 for now.
-                // Actually, continuity checks "My Top vs Neighbor Bottom".
-                // If Row 0, "Neighbor Bottom" is the image edge?
-                // Let's use image row 0 pixels. But wait, row 0 top matches image row -1 (non existent).
-                // Let's just use image row 0 pixels as the "target" for the first row's top edge?
-                // No, standard loop compares [Top] vs [Neighbor Bottom].
-                // If we initialize `prev_row_bottom_edges` with Image Row -1 (impossible), or just empty/black.
-                // Better: Check if row_idx == 0 inside loop.
-                edge.push([0,0,0]); 
-            } else {
-                edge.push([0,0,0]);
-            }
-        }
-        prev_row_bottom_edges.push(edge);
-    }
-    
-    // Pre-fill prev_row_bottom_edges with actual image data if row_idx=0 logic is complex?
-    // Let's stick to: "If row > 0, compare against prev_row. Else compare against image top edge?"
-    // The loop handles this.
+    // Continuity Scalar: Value of one bit mismatch relative to color error.
+    // One pixel max error is ~195k. 
+    // We set this low (10k) so it acts as a tie-breaker/nudge,
+    // rather than overriding internal color fidelity.
+    let continuity_scalar = 10_000.0; 
 
+    // Track the bottom edge bits of the previous row (for Top continuity)
+    // 0 = BG, 1 = FG. Initialized to 0 (BG).
+    let mut prev_row_bottom_bits: Vec<Vec<u8>> = vec![vec![0u8; gw]; blocks_width];
+    
     for (row_idx, block_row) in image.block.iter().enumerate() {
         let mut first = true;
         let mut last_fg: Option<Colour> = None;
         let mut last_bg: Option<Colour> = None;
-        let global_y = row_idx * gh;
 
-        // Track the right edge of the left neighbor (for Left continuity)
-        let mut left_neighbor_right_edge: Vec<[u8; 3]> = Vec::with_capacity(gh);
-        // Initialize with image pixels to the left?
-        if global_y < img_h {
-            for _ in 0..gh {
-                // If global_x=0, left is -1.
-                // We can use image[y][0] as a reference or just black.
-                 left_neighbor_right_edge.push([0,0,0]);
-            }
-        } else {
-             left_neighbor_right_edge.resize(gh, [0,0,0]);
-        }
+        // Track the right edge bits of the left neighbor (for Left continuity)
+        let mut left_neighbor_right_bits: Vec<u8> = vec![0u8; gh];
 
         for (col_idx, blk) in block_row.iter().enumerate() {
-            let global_x = col_idx * gw;
             let final_glyph: char;
             let final_fg: Colour;
             let final_bg: Option<Colour>;
 
-            // --- 1. Calculate Internal Colors & Cost ---
+            // Read block pixels
             current_block_pixels_rgb.clear();
             for y_idx in 0..gh {
                 for x_idx in 0..gw {
@@ -1023,38 +980,23 @@ fn render_blocks_smooth(
                 }
             }
 
-            let mut best_cost = u64::MAX;
-            let mut best_glyph_idx = 0;
-            let mut best_chosen_fg_color = [0u8; 3];
-            let mut best_chosen_bg_color = [0u8; 3];
-            let mut best_chosen_inv = false;
-
-            // Resolve references to neighbors
-            let top_neighbor_edge = &prev_row_bottom_edges[col_idx];
-            let left_neighbor_edge = &left_neighbor_right_edge;
-
-            // Should we compare against Image Boundary for the outer edges?
-            // If row_idx == 0, Top Neighbor is Image Top.
-            // If col_idx == 0, Left Neighbor is Image Left.
-            // Let's use image pixels for strict boundary matching if possible.
-            // This anchors the smooth window.
+            // --- 1. Find Optimal Colors (Standard "Non-Smooth" Pass) ---
+            // We iterate to find the glyph+colors that would be chosen without smoothness.
+            // This locks the FG/BG colors to ensure they don't shift weirdly.
             
-            // Optimization: If weight > 0, pre-fetch image boundary pixels
+            let mut std_best_cost = u64::MAX;
+            let mut locked_fg = [0u8; 3];
+            let mut locked_bg = [0u8; 3];
             
-            if smooth_weight > 0.0 {
-                if row_idx == 0 && global_y == 0 { // Top of image
-                     // No image pixels above 0. Use 0? Or just skip?
-                     // Usually continuity is "Don't mismatch".
-                }
-                if col_idx == 0 && global_x == 0 { // Left of image
-                }
-            }
+            // Re-use vectors to avoid allocation
+            let mut sum_ones;
+            let mut sum_zeros;
 
-            for (gi, fglyph) in glyphs.iter().enumerate() {
-                // ... (Internal cost stats calculation same as before) ...
-                let mut sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
+            for fglyph in glyphs.iter() {
+                // Reset accumulators
+                sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
+                sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
                 let mut count_ones = 0u64;
-                let mut sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
                 let mut count_zeros = 0u64;
 
                 for i in 0..bp {
@@ -1079,8 +1021,8 @@ fn render_blocks_smooth(
                 let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
                 let penalty_per_miss = 1000u64;
 
-                // Calc Internal Cost (No Inv)
-                let cost_internal_no_inv = if use_coverage_heuristic {
+                // 1A. Normal (1=FG=avg_ones, 0=BG=avg_zeros)
+                let cost_no_inv = if use_coverage_heuristic {
                      let term1 = sum_ones.sq;
                      let term2 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
                      let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
@@ -1098,58 +1040,14 @@ fn render_blocks_smooth(
                     cost_ones + cost_zeros
                 };
 
-                // Calc Boundary Cost (No Inv)
-                let mut boundary_cost_no_inv = 0u64;
-                if smooth_weight > 0.0 {
-                    let target_bg = bg_ref.unwrap_or(avg_zeros);
-                    
-                    // Top Continuity
-                    if row_idx > 0 {
-                        for x in 0..gw {
-                            let my_px = if fglyph.top[x] == 1 { avg_ones } else { target_bg };
-                            boundary_cost_no_inv += dist_sq(&my_px, &top_neighbor_edge[x]);
-                        }
-                    } else if global_y > 0 {
-                        // Compare against image top edge?
-                        // Optional: keeps top clean
-                        for x in 0..gw {
-                            if global_x + x < img_w {
-                                let img_px = unpack_rgb(image.bitmap[global_y - 1][global_x + x]);
-                                let my_px = if fglyph.top[x] == 1 { avg_ones } else { target_bg };
-                                boundary_cost_no_inv += dist_sq(&my_px, &img_px);
-                            }
-                        }
-                    }
-
-                    // Left Continuity
-                    if col_idx > 0 {
-                         for y in 0..gh {
-                            let my_px = if fglyph.left[y] == 1 { avg_ones } else { target_bg };
-                            boundary_cost_no_inv += dist_sq(&my_px, &left_neighbor_edge[y]);
-                         }
-                    } else if global_x > 0 {
-                        // Compare against image left edge
-                         for y in 0..gh {
-                            if global_y + y < img_h {
-                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x - 1]);
-                                let my_px = if fglyph.left[y] == 1 { avg_ones } else { target_bg };
-                                boundary_cost_no_inv += dist_sq(&my_px, &img_px);
-                            }
-                         }
-                    }
+                if cost_no_inv < std_best_cost {
+                    std_best_cost = cost_no_inv;
+                    locked_fg = avg_ones;
+                    locked_bg = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
                 }
 
-                let total_no_inv = (cost_internal_no_inv as f64 + boundary_cost_no_inv as f64 * smooth_weight as f64) as u64;
-                if total_no_inv < best_cost {
-                    best_cost = total_no_inv;
-                    best_glyph_idx = gi;
-                    best_chosen_fg_color = avg_ones;
-                    best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
-                    best_chosen_inv = false;
-                }
-
-                // Calc Internal Cost (Inv)
-                let cost_internal_inv = if use_coverage_heuristic {
+                // 1B. Inverted (0=FG=avg_zeros, 1=BG=avg_ones)
+                let cost_inv = if use_coverage_heuristic {
                      let t1_0 = sum_zeros.sq;
                      let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
                      let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
@@ -1167,88 +1065,138 @@ fn render_blocks_smooth(
                     cost_fg + cost_bg
                 };
 
-                // Calc Boundary Cost (Inv)
+                if cost_inv < std_best_cost {
+                    std_best_cost = cost_inv;
+                    locked_fg = avg_zeros;
+                    locked_bg = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
+                }
+                
+                if std_best_cost == 0 { break; }
+            }
+
+            // --- 2. Smooth Pass (Using Locked Colors) ---
+            // Now we search for the best glyph that fits these SPECIFIC colors + continuity.
+            // Cost = PixelError(LockedFG, LockedBG) + Continuity
+            
+            let mut best_cost = u64::MAX;
+            let mut best_glyph_idx = 0;
+            let mut best_chosen_inv = false;
+
+            let top_neighbor_bits = &prev_row_bottom_bits[col_idx];
+            let left_neighbor_bits = &left_neighbor_right_bits;
+            
+            // Pre-calculate squared RGB values for locked colors
+            let fg_p = PrePixel { 
+                r: locked_fg[0] as u64, g: locked_fg[1] as u64, b: locked_fg[2] as u64, 
+                sq: (locked_fg[0] as u64).pow(2) + (locked_fg[1] as u64).pow(2) + (locked_fg[2] as u64).pow(2) 
+            };
+            let bg_p = PrePixel { 
+                r: locked_bg[0] as u64, g: locked_bg[1] as u64, b: locked_bg[2] as u64, 
+                sq: (locked_bg[0] as u64).pow(2) + (locked_bg[1] as u64).pow(2) + (locked_bg[2] as u64).pow(2) 
+            };
+            
+            // If fg_only, BG is ignored (cost 0), so we only match FG.
+            let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
+            let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
+            let penalty_per_miss = 1000u64;
+
+            for (gi, fglyph) in glyphs.iter().enumerate() {
+                // Calculate Internal Cost for Fixed Colors
+                // Normal: 1 matches FG, 0 matches BG
+                let mut cost_internal_no_inv = 0u64;
+                // Inverted: 0 matches FG, 1 matches BG
+                let mut cost_internal_inv = 0u64;
+                
+                // We can iterate pixels and sum up cost
+                for i in 0..bp {
+                    let px = &current_block_pixels_rgb[i];
+                    
+                    // Cost if pixel is FG (distance to locked_fg)
+                    // (r1-r2)^2 = r1^2 + r2^2 - 2r1r2
+                    let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
+                    
+                    // Cost if pixel is BG (distance to locked_bg)
+                    let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
+                    
+                    if fglyph.bitmap[i] == 1 {
+                        // Normal: Bit 1 -> FG.
+                        cost_internal_no_inv += dist_fg;
+                        // Inverted: Bit 1 -> BG.
+                        if use_coverage_heuristic { cost_internal_inv += penalty_per_miss; } else { cost_internal_inv += dist_bg; }
+                    } else {
+                        // Normal: Bit 0 -> BG.
+                        if use_coverage_heuristic { cost_internal_no_inv += penalty_per_miss; } else { cost_internal_no_inv += dist_bg; }
+                        // Inverted: Bit 0 -> FG.
+                        cost_internal_inv += dist_fg;
+                    }
+                }
+                
+                // Add Continuity Cost and Select
+                
+                // 1. Normal
+                let mut boundary_cost_no_inv = 0u64;
+                if smooth_weight > 0.0 {
+                    if row_idx > 0 {
+                        for x in 0..gw { if fglyph.top[x] != top_neighbor_bits[x] { boundary_cost_no_inv += 1; } }
+                    }
+                    if col_idx > 0 {
+                         for y in 0..gh { if fglyph.left[y] != left_neighbor_bits[y] { boundary_cost_no_inv += 1; } }
+                    }
+                }
+                // Scale boundary cost
+                let boundary_val_no_inv = boundary_cost_no_inv as f64 * continuity_scalar;
+
+                let total_no_inv = cost_internal_no_inv as f64 + (boundary_val_no_inv * smooth_weight as f64);
+                if total_no_inv < (best_cost as f64) {
+                    best_cost = total_no_inv as u64;
+                    best_glyph_idx = gi;
+                    best_chosen_inv = false;
+                }
+                
+                // 2. Inverted
                 let mut boundary_cost_inv = 0u64;
                 if smooth_weight > 0.0 {
-                    let target_bg = bg_ref.unwrap_or(avg_ones);
-                    
-                    // Top Continuity
                     if row_idx > 0 {
-                        for x in 0..gw {
-                            // Inverted: 0->FG(avg_zeros), 1->BG(target_bg)
-                            let my_px = if fglyph.top[x] == 0 { avg_zeros } else { target_bg };
-                            boundary_cost_inv += dist_sq(&my_px, &top_neighbor_edge[x]);
-                        }
-                    } else if global_y > 0 {
-                        for x in 0..gw {
-                            if global_x + x < img_w {
-                                let img_px = unpack_rgb(image.bitmap[global_y - 1][global_x + x]);
-                                let my_px = if fglyph.top[x] == 0 { avg_zeros } else { target_bg };
-                                boundary_cost_inv += dist_sq(&my_px, &img_px);
-                            }
-                        }
+                        for x in 0..gw { if (1 - fglyph.top[x]) != top_neighbor_bits[x] { boundary_cost_inv += 1; } }
                     }
-
-                    // Left Continuity
                     if col_idx > 0 {
-                         for y in 0..gh {
-                            let my_px = if fglyph.left[y] == 0 { avg_zeros } else { target_bg };
-                            boundary_cost_inv += dist_sq(&my_px, &left_neighbor_edge[y]);
-                         }
-                    } else if global_x > 0 {
-                         for y in 0..gh {
-                            if global_y + y < img_h {
-                                let img_px = unpack_rgb(image.bitmap[global_y + y][global_x - 1]);
-                                let my_px = if fglyph.left[y] == 0 { avg_zeros } else { target_bg };
-                                boundary_cost_inv += dist_sq(&my_px, &img_px);
-                            }
-                         }
+                         for y in 0..gh { if (1 - fglyph.left[y]) != left_neighbor_bits[y] { boundary_cost_inv += 1; } }
                     }
                 }
-
-                let total_inv = (cost_internal_inv as f64 + boundary_cost_inv as f64 * smooth_weight as f64) as u64;
-                if total_inv < best_cost {
-                    best_cost = total_inv;
-                    best_glyph_idx = gi;
-                    best_chosen_fg_color = avg_zeros;
-                    best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
-                    best_chosen_inv = true;
-                }
-
+                                let boundary_val_inv = boundary_cost_inv as f64 * continuity_scalar;
+                
+                                let total_inv = cost_internal_inv as f64 + (boundary_val_inv * smooth_weight as f64);
+                                if total_inv < (best_cost as f64) {
+                                    best_cost = total_inv as u64;
+                                    best_glyph_idx = gi;
+                                    best_chosen_inv = true;
+                                }
+                
                 if best_cost == 0 { break; }
             }
 
             final_glyph = glyphs[best_glyph_idx].ch;
+            let best_chosen_fg_color = locked_fg;
+            let best_chosen_bg_color = locked_bg;
             
             // --- Update Neighbors for next iteration ---
             let fglyph = &glyphs[best_glyph_idx];
             
-            // Note: best_chosen_bg_color is already correct BG (avg_zeros for NoInv, avg_ones for Inv).
-            // But if bg_ref was used, it might differ.
-            // Simplified: Use the resolved colors we just calculated cost with.
-            // For Inverted: FG=avg_zeros, BG=target_bg (which is bg_ref OR avg_ones).
-            let (res_fg, res_bg) = if best_chosen_inv {
-                (best_chosen_fg_color, best_chosen_bg_color) 
-            } else {
-                (best_chosen_fg_color, best_chosen_bg_color)
-            };
-            
-            // Prepare edges for tracking
-            // Right Edge -> becomes next Left Neighbor
-            left_neighbor_right_edge.clear();
+            // Prepare edges for tracking (VISUAL bits)
+            // Right Edge -> next Left
+            left_neighbor_right_bits.clear();
             for y in 0..gh {
                 let bit = if best_chosen_inv { 1 - fglyph.right[y] } else { fglyph.right[y] };
-                left_neighbor_right_edge.push(if bit == 1 { res_fg } else { res_bg });
+                left_neighbor_right_bits.push(bit);
             }
 
-            // Bottom Edge -> becomes next Top Neighbor (in prev_row_bottom_edges)
+            // Bottom Edge -> next Top
             let mut bottom_edge = Vec::with_capacity(gw);
             for x in 0..gw {
                 let bit = if best_chosen_inv { 1 - fglyph.bottom[x] } else { fglyph.bottom[x] };
-                bottom_edge.push(if bit == 1 { res_fg } else { res_bg });
+                bottom_edge.push(bit);
             }
-            prev_row_bottom_edges[col_idx] = bottom_edge;
-
+            prev_row_bottom_bits[col_idx] = bottom_edge;
 
             // Map the chosen RGB colors to the target render mode
             match render {
