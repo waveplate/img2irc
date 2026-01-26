@@ -10,9 +10,9 @@ end = 0x5A
 start = 0x61
 end   = 0x7A
 
-[dingbats]
-start = 0x2700
-end = 0x27BF
+#[dingbats]
+#start = 0x2700
+#end = 0x27BF
 
 [full]
 start = 0x2588

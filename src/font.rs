@@ -497,13 +497,14 @@ pub fn glyph_store(
     }
 }
 
-pub fn list_ranges() {
+pub fn list_ranges() -> String {
     let (groups, _) = load_blocks_config();
     let mut sorted_groups: Vec<_> = groups.iter().collect();
     sorted_groups.sort_by_key(|(k, _)| *k);
     
-    println!("{:<20} | {:<20} | {}", "Block Name", "Range", "Count");
-    println!("{:-<20}-+-{:-<20}-+-{:-<5}", "", "", "");
+    let mut out = String::new();
+    out.push_str(&format!("{:<20} | {:<20} | {}\n", "Block Name", "Range", "Count"));
+    out.push_str(&format!("{:-<20}-+-{:-<20}-+-{:-<5}\n", "", "", ""));
 
     for (name, ranges) in sorted_groups {
         let mut count = 0;
@@ -512,77 +513,93 @@ pub fn list_ranges() {
             count += range.end() - range.start() + 1;
             range_strs.push(format!("{:X}-{:X}", range.start(), range.end()));
         }
-        println!("{:<20} | {:<20} | {}", name, range_strs.join(", "), count);
+        out.push_str(&format!("{:<20} | {:<20} | {}\n", name, range_strs.join(", "), count));
     }
+    out
 }
 
-pub fn print_ranges() {
+pub fn print_ranges() -> String {
     let (groups, _) = load_blocks_config();
     let mut sorted_groups: Vec<_> = groups.iter().collect();
     sorted_groups.sort_by_key(|(k, _)| *k);
 
+    let mut out = String::new();
     for (name, ranges) in sorted_groups {
-        println!("{}:", name);
+        out.push_str(&format!("{}:\n", name));
+        let mut count = 0;
         for range in ranges {
             for code in range.clone() {
                 if let Some(ch) = char::from_u32(code) {
-                    print!("{} ", ch);
+                    out.push_str(&format!("{} ", ch));
+                    count += 1;
+                    if count >= 32 {
+                        out.push('\n');
+                        count = 0;
+                    }
                 }
             }
         }
-        println!("\n");
+        if count > 0 {
+            out.push('\n');
+        }
+        out.push('\n');
     }
+    out
 }
 
-pub fn print_blocks_config() {
+pub fn print_blocks_config() -> String {
     let (groups, _) = load_blocks_config();
     let mut sorted_groups: Vec<_> = groups.iter().collect();
     sorted_groups.sort_by_key(|(k, _)| *k);
+    let mut out = String::new();
     for (name, ranges) in sorted_groups {
-        println!("{}:", name);
+        out.push_str(&format!("{}:\n", name));
         // Printing ranges is better than printing all chars for config listing
         for range in ranges {
-             print!("{:X}-{:X} ", range.start(), range.end());
+             out.push_str(&format!("{:X}-{:X} ", range.start(), range.end()));
         }
-        println!();
+        out.push_str("\n");
     }
+    out
 }
 
-pub fn print_block_bitmaps(store: &GlyphStore) {
+pub fn print_block_bitmaps(store: &GlyphStore) -> String {
     let glyph_map: HashMap<char, &GlyphBitmap> = store.glyphs.iter().map(|(c, b)| (*c, b)).collect();
     let mut sorted_groups: Vec<_> = store.groups.keys().collect();
     sorted_groups.sort();
 
+    let mut out = String::new();
     for name in sorted_groups {
         let chars = &store.groups[name];
         let selected_chars: Vec<char> = chars.iter().copied().filter(|c| store.selected.contains(c)).collect();
 
         if selected_chars.is_empty() { continue; }
 
-        println!("Block: {}", name);
+        out.push_str(&format!("Block: {}\n", name));
         for &ch in &selected_chars {
             if let Some(bitmap) = glyph_map.get(&ch) {
-                println!("Character: {} ({})", ch, ch.escape_unicode());
+                out.push_str(&format!("Character: {} ({})\n", ch, ch.escape_unicode()));
                 if let Some(first_row) = bitmap.first() {
                     let width = first_row.len();
-                    print!("┌");
-                    for _ in 0..width { print!("──"); }
-                    println!("┐");
+                    out.push('┌');
+                    for _ in 0..width { out.push_str("──"); }
+                    out.push_str("┐\n");
 
                     for row in *bitmap {
-                        print!("│");
+                        out.push('│');
                         for &pixel in row {
-                            if pixel > 0 { print!("██"); } else { print!("  "); }
+                            if pixel > 0 { out.push_str("██"); } else { out.push_str("  "); }
                         }
-                        println!("│");
+                        out.push_str("│\n");
                     }
-                    print!("└");
-                    for _ in 0..width { print!("──"); }
-                    println!("┘");
+                    out.push('└');
+                    for _ in 0..width { out.push_str("──"); }
+                    out.push_str("┘\n");
                 }
-                println!();
+                out.push('\n');
             }
         }
-        println!("{}", "-".repeat(40));
+        out.push_str(&format!("{}\n", "-".repeat(40)));
     }
+    out
 }

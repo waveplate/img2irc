@@ -150,6 +150,10 @@ pub fn apply_effects(
         conv::gaussian_blur(&mut photon_image, args.gaussian_blur);
     }
 
+    if args.luma_blur > 0 {
+        apply_luma_blur(&mut photon_image, args.luma_blur);
+    }
+
     if args.pixelize > 0 {
         effects::pixelize(&mut photon_image, args.pixelize);
     }
@@ -324,4 +328,41 @@ pub fn apply_luma_effects(args: &args::Args, glyphs: &GlyphStore, mut photon_ima
     }
 
     photon_image
+}
+
+fn apply_luma_blur(img: &mut PhotonImage, radius: i32) {
+    let mut luma = img.clone();
+    monochrome::grayscale(&mut luma);
+    conv::gaussian_blur(&mut luma, radius);
+    
+    let raw_orig = img.get_raw_pixels();
+    let raw_luma = luma.get_raw_pixels();
+    let mut new_raw = raw_orig.clone();
+    
+    // YUV coefficients (Rec. 601)
+    for i in (0..raw_orig.len()).step_by(4) {
+        let r = raw_orig[i] as f32;
+        let g = raw_orig[i+1] as f32;
+        let b = raw_orig[i+2] as f32;
+        
+        // Calculate original Chroma (U, V)
+        let y_old = 0.299 * r + 0.587 * g + 0.114 * b;
+        let u = 0.492 * (b - y_old);
+        let v = 0.877 * (r - y_old);
+        
+        // Use new Luma (Y) from blurred grayscale image
+        let y_new = raw_luma[i] as f32;
+        
+        // Convert back to RGB
+        let new_r = (y_new + 1.140 * v).clamp(0.0, 255.0) as u8;
+        let new_g = (y_new - 0.395 * u - 0.581 * v).clamp(0.0, 255.0) as u8;
+        let new_b = (y_new + 2.032 * u).clamp(0.0, 255.0) as u8;
+        
+        new_raw[i] = new_r;
+        new_raw[i+1] = new_g;
+        new_raw[i+2] = new_b;
+        // Alpha remains unchanged
+    }
+    
+    *img = PhotonImage::new(new_raw, img.get_width(), img.get_height());
 }

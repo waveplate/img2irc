@@ -9,12 +9,21 @@ pub enum SamplingFilter {
     Lanczos3,
 }
 
-#[derive(clap::ValueEnum, Clone, Debug)]
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
 pub enum ColourSpace {
     HSL,
     HSV, 
     HSLUV,
     LCH,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum Encoding {
+    Utf8,
+    Utf16,
+    Utf16be,
+    Utf16le,
+    Cesu8,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
@@ -213,6 +222,10 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = ColourSpace::HSV)]
     pub colorspace: ColourSpace,
 
+    /// output encoding
+    #[arg(long, value_enum, default_value_t = Encoding::Utf8)]
+    pub encoding: Encoding,
+
     /// exclude grayscale when picking nearest colour in palette (unless already grayscale)
     #[arg(long, default_value_t = false, group = "grayscale_opts")]
     pub grayscale: bool,
@@ -232,6 +245,10 @@ pub struct Args {
     /// gaussian blur radius
     #[arg(long="gaussianblur", default_value_t = 0)]
     pub gaussian_blur: i32,
+
+    /// gaussian blur radius (only luminance)
+    #[arg(long="lumablur", default_value_t = 0)]
+    pub luma_blur: i32,
 
     /// oil filter ("[radius],[intensity]")
     #[arg(long)]
@@ -328,6 +345,10 @@ pub struct Args {
     /// prefers characters which result in a smooth image (0.0 to 1.0)
     #[arg(long, num_args(0..=1), default_missing_value="1.0")]
     pub smooth: Option<f32>,
+
+    /// attempt to rescale local blocks to find better matching glyphs
+    #[arg(long="dynamic-scaling", default_value_t = false)]
+    pub dynamic_scaling: bool,
 }
 
 pub fn parse_args() -> Args {

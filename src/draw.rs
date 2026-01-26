@@ -1251,3 +1251,65 @@ fn render_blocks_smooth(
     out.trim_end_matches('\n').into()
 }
 
+
+fn get_transformed_block_pixels(
+    orig_pixels: &[PrePixel],
+    gw: usize,
+    gh: usize,
+    scale_x: f32,
+    scale_y: f32
+) -> Vec<PrePixel> {
+    let mut out = Vec::with_capacity(gw * gh);
+    let cx = gw as f32 / 2.0;
+    let cy = gh as f32 / 2.0;
+
+    for y in 0..gh {
+        for x in 0..gw {
+            // Map target (x,y) to source (u,v)
+            let u = (x as f32 - cx) / scale_x + cx;
+            let v = (y as f32 - cy) / scale_y + cy;
+
+            // Clamping to edges (0.0 to limit)
+            let u_clamped = u.clamp(0.0, (gw - 1) as f32);
+            let v_clamped = v.clamp(0.0, (gh - 1) as f32);
+            
+            let x0 = u_clamped.floor() as usize;
+            let x1 = (x0 + 1).min(gw - 1);
+            let y0 = v_clamped.floor() as usize;
+            let y1 = (y0 + 1).min(gh - 1);
+            
+            let wx = u_clamped - x0 as f32;
+            let wy = v_clamped - y0 as f32;
+            
+            let idx00 = y0 * gw + x0;
+            let idx10 = y0 * gw + x1;
+            let idx01 = y1 * gw + x0;
+            let idx11 = y1 * gw + x1;
+            
+            let p00 = &orig_pixels[idx00];
+            let p10 = &orig_pixels[idx10];
+            let p01 = &orig_pixels[idx01];
+            let p11 = &orig_pixels[idx11];
+
+            let lerp = |a: u64, b: u64, t: f32| (a as f32 * (1.0 - t) + b as f32 * t);
+            
+            let r_top = lerp(p00.r, p10.r, wx);
+            let r_bot = lerp(p01.r, p11.r, wx);
+            let r = lerp(r_top as u64, r_bot as u64, wy) as u64;
+
+            let g_top = lerp(p00.g, p10.g, wx);
+            let g_bot = lerp(p01.g, p11.g, wx);
+            let g = lerp(g_top as u64, g_bot as u64, wy) as u64;
+
+            let b_top = lerp(p00.b, p10.b, wx);
+            let b_bot = lerp(p01.b, p11.b, wx);
+            let b = lerp(b_top as u64, b_bot as u64, wy) as u64;
+            
+            out.push(PrePixel {
+                r, g, b,
+                sq: r*r + g*g + b*b
+            });
+        }
+    }
+    out
+}

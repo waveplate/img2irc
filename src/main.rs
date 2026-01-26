@@ -7,7 +7,8 @@ mod font;
 use reqwest;
 use url::Url;
 use photon_rs::PhotonImage;
-use std::{error::Error, io::Cursor, process::exit};
+use std::{error::Error, io::{Cursor, Write}, process::exit};
+use crate::args::Encoding;
 
 #[tokio::main]
 async fn main() {
@@ -23,17 +24,17 @@ async fn main() {
 
     if args.list_blocks {
         eprintln!("Available blocks:");
-        font::print_blocks_config();
+        write_encoded_output(&font::print_blocks_config(), &args.encoding);
         exit(0);
     }
 
     if args.list_ranges {
-        font::list_ranges();
+        write_encoded_output(&font::list_ranges(), &args.encoding);
         exit(0);
     }
 
     if args.print_ranges {
-        font::print_ranges();
+        write_encoded_output(&font::print_ranges(), &args.encoding);
         exit(0);
     }
 
@@ -47,7 +48,8 @@ async fn main() {
                         &args.font,
                         args.y_offset,
                         args.font_size
-                    );        font::print_block_bitmaps(&glyphs);
+                    );
+        write_encoded_output(&font::print_block_bitmaps(&glyphs), &args.encoding);
         exit(0);
     }
 
@@ -74,21 +76,23 @@ async fn main() {
 
             eprintln!("Loaded canvases");
 
-            if args.braille {
+            let result = if args.braille {
                 let image_luma = effects::apply_luma_effects(&args, &glyphs, image.clone());
                 let canvas_luma = draw::AnsiImage::new(image_luma.clone(), glyphs.clone(), args.grayscale_tolerance);
                 match args.render {
-                    args::Render::Irc => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Irc)),
-                    args::Render::Ansi => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi)),
-                    args::Render::Ansi24 => println!("{}", draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi24)),
+                    args::Render::Irc => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Irc),
+                    args::Render::Ansi => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi),
+                    args::Render::Ansi24 => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi24),
                 }
             } else {
                 match args.render {
-                    args::Render::Irc => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Irc)),
-                    args::Render::Ansi => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Ansi)),
-                    args::Render::Ansi24 => println!("{}", draw::render_blocks(&canvas, &args, args::Render::Ansi24)),
+                    args::Render::Irc => draw::render_blocks(&canvas, &args, args::Render::Irc),
+                    args::Render::Ansi => draw::render_blocks(&canvas, &args, args::Render::Ansi),
+                    args::Render::Ansi24 => draw::render_blocks(&canvas, &args, args::Render::Ansi24),
                 }
-            }
+            };
+
+            write_encoded_output(&result, &args.encoding);
         }
 
         Err(e) => {
@@ -96,6 +100,67 @@ async fn main() {
             exit(1);
         }
     }
+}
+
+fn write_encoded_output(content: &str, encoding: &Encoding) {
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    let _ = write_encoded_to(content, encoding, &mut handle);
+    let _ = handle.flush();
+}
+
+fn write_encoded_to<W: Write>(content: &str, encoding: &Encoding, handle: &mut W) -> std::io::Result<()> {
+    match encoding {
+        Encoding::Utf8 => {
+            writeln!(handle, "{}", content)?;
+        }
+        Encoding::Utf16 => {
+            // Default to native endian with BOM
+            let bom = 0xFEFFu16;
+            #[cfg(target_endian = "little")]
+            {
+                handle.write_all(&bom.to_le_bytes())?;
+                write_encoded_to(content, &Encoding::Utf16le, handle)?;
+            }
+            #[cfg(target_endian = "big")]
+            {
+                handle.write_all(&bom.to_be_bytes())?;
+                write_encoded_to(content, &Encoding::Utf16be, handle)?;
+            }
+        }
+        Encoding::Utf16be => {
+            for c in content.encode_utf16() {
+                handle.write_all(&c.to_be_bytes())?;
+            }
+            handle.write_all(&('\n' as u16).to_be_bytes())?;
+        }
+        Encoding::Utf16le => {
+            for c in content.encode_utf16() {
+                handle.write_all(&c.to_le_bytes())?;
+            }
+            handle.write_all(&('\n' as u16).to_le_bytes())?;
+        }
+        Encoding::Cesu8 => {
+            for u in content.encode_utf16() {
+                if u <= 0x7F {
+                    handle.write_all(&[u as u8])?;
+                } else if u <= 0x7FF {
+                    handle.write_all(&[
+                        0xC0 | ((u >> 6) as u8),
+                        0x80 | ((u & 0x3F) as u8),
+                    ])?;
+                } else {
+                    handle.write_all(&[
+                        0xE0 | ((u >> 12) as u8),
+                        0x80 | (((u >> 6) & 0x3F) as u8),
+                        0x80 | ((u & 0x3F) as u8),
+                    ])?;
+                }
+            }
+            handle.write_all(b"\n")?;
+        }
+    }
+    Ok(())
 }
 
 async fn load_image_from_url_or_path(image: &str) -> Result<PhotonImage, Box<dyn Error>> {
