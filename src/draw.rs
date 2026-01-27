@@ -2,6 +2,7 @@ use crate::args::{Args, Render};
 use crate::font::GlyphStore;
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
+use image::{ImageBuffer, Rgb};
 
 use std::collections::HashMap;
 use std::iter::repeat;
@@ -303,16 +304,24 @@ fn parse_hex_color(s: &str) -> u32 {
     u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0)
 }
 
+#[derive(Clone, Debug)]
+pub struct RenderedCell {
+    pub char: char,
+    pub fg: [u8; 3],
+    pub bg: Option<[u8; 3]>,
+}
+
 pub struct RenderResult {
     pub content: String,
     pub error_count: u64,
     pub total_pixels: u64,
     pub dynamic_scaling_count: u64,
+    pub grid: Vec<Vec<RenderedCell>>,
 }
 
 impl From<&str> for RenderResult {
     fn from(s: &str) -> Self {
-        RenderResult { content: s.to_string(), error_count: 0, total_pixels: 0, dynamic_scaling_count: 0 }
+        RenderResult { content: s.to_string(), error_count: 0, total_pixels: 0, dynamic_scaling_count: 0, grid: Vec::new() }
     }
 }
 
@@ -435,7 +444,10 @@ pub fn render_blocks(
         vec![(1.0, 1.0)]
     };
 
+    let mut grid: Vec<Vec<RenderedCell>> = Vec::new();
+
     for (_row_idx, block_row) in image.block.iter().enumerate() {
+        let mut grid_row = Vec::new();
         let mut first = true;
         let mut last_fg: Option<Colour> = None; // Assuming Colour is in parent or use crate::image::Colour
         let mut last_bg: Option<Colour> = None;
@@ -859,6 +871,28 @@ pub fn render_blocks(
             }
             total_error += block_error;
 
+            let fg_rgb = match final_fg {
+                Colour::RGB(c) => c,
+                Colour::Index(i) => {
+                    let hex = match render {
+                        Render::Irc => IRC99[i as usize % 99],
+                        _ => ANSI256[i as usize],
+                    };
+                    unpack_rgb(hex)
+                }
+            };
+            let bg_rgb = final_bg.clone().map(|c| match c {
+                Colour::RGB(c) => c,
+                Colour::Index(i) => {
+                    let hex = match render {
+                        Render::Irc => IRC99[i as usize % 99],
+                        _ => ANSI256[i as usize],
+                    };
+                    unpack_rgb(hex)
+                }
+            });
+            grid_row.push(RenderedCell { char: final_glyph, fg: fg_rgb, bg: bg_rgb });
+
             emit_colourized(
                 &mut out,
                 render,
@@ -874,12 +908,14 @@ pub fn render_blocks(
             Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
             Render::Irc => "\x0f\n",
         });
+        grid.push(grid_row);
     }
     RenderResult {
         content: out.trim_end_matches('\n').into(),
         error_count: total_error,
         total_pixels: total_pixels,
         dynamic_scaling_count,
+        grid,
     }
 }
 
@@ -952,12 +988,71 @@ pub fn render_braille(
         error_count: 0,
         total_pixels: (w * h) as u64,
         dynamic_scaling_count: 0,
+        grid: Vec::new(),
     }
 }
 
 pub fn luma(rgb: &[u8;3]) -> u8 {
     let r = rgb[0] as f32; let g = rgb[1] as f32; let b = rgb[2] as f32;
     (0.299*r + 0.587*g + 0.114*b).round() as u8
+}
+
+pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Result<(), image::ImageError> {
+    if result.grid.is_empty() { return Ok(()); }
+    let rows = result.grid.len();
+    let cols = result.grid[0].len();
+    let (gh, gw) = glyphs.metrics; 
+    
+    let img_width = (cols * gw) as u32;
+    let img_height = (rows * gh) as u32;
+    
+    let mut img = ImageBuffer::new(img_width, img_height);
+    
+    // Build quick lookup map
+    let glyph_map: HashMap<char, &Vec<Vec<u8>>> = glyphs.glyphs.iter().map(|(c, b)| (*c, b)).collect();
+    
+    for (r, row_cells) in result.grid.iter().enumerate() {
+        for (c, cell) in row_cells.iter().enumerate() {
+            let start_x = (c * gw) as u32;
+            let start_y = (r * gh) as u32;
+            
+            if let Some(bitmap) = glyph_map.get(&cell.char) {
+                for (y, row_data) in bitmap.iter().enumerate() {
+                    for (x, &pixel) in row_data.iter().enumerate() {
+                        let px = if pixel == 1 {
+                            Rgb(cell.fg)
+                        } else {
+                            if let Some(bg) = cell.bg { Rgb(bg) } else { Rgb([0, 0, 0]) }
+                        };
+                        
+                        let target_x = start_x + x as u32;
+                        let target_y = start_y + y as u32;
+                        if target_x < img_width && target_y < img_height {
+                            img.put_pixel(target_x, target_y, px);
+                        }
+                    }
+                }
+            } else {
+                // If glyph not found (e.g. braille or space if missing), fill with BG
+                // Space is usually in store. Braille chars are not.
+                // For Braille, we might want to handle it or skip.
+                // Assuming block mode mainly.
+                if let Some(bg) = cell.bg {
+                    for y in 0..gh {
+                        for x in 0..gw {
+                             let target_x = start_x + x as u32;
+                             let target_y = start_y + y as u32;
+                             if target_x < img_width && target_y < img_height {
+                                 img.put_pixel(target_x, target_y, Rgb(bg));
+                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    img.save(path)
 }
 
 fn render_blocks_smooth(
@@ -1056,7 +1151,10 @@ fn render_blocks_smooth(
         vec![(1.0, 1.0)]
     };
 
+    let mut grid: Vec<Vec<RenderedCell>> = Vec::new();
+
     for (row_idx, block_row) in image.block.iter().enumerate() {
+        let mut grid_row = Vec::new();
         let mut first = true;
         let mut last_fg: Option<Colour> = None;
         let mut last_bg: Option<Colour> = None;
@@ -1354,6 +1452,28 @@ fn render_blocks_smooth(
             }
             total_error += block_error;
 
+            let fg_rgb = match final_fg {
+                Colour::RGB(c) => c,
+                Colour::Index(i) => {
+                    let hex = match render {
+                        Render::Irc => IRC99[i as usize % 99],
+                        _ => ANSI256[i as usize],
+                    };
+                    unpack_rgb(hex)
+                }
+            };
+            let bg_rgb = final_bg.clone().map(|c| match c {
+                Colour::RGB(c) => c,
+                Colour::Index(i) => {
+                    let hex = match render {
+                        Render::Irc => IRC99[i as usize % 99],
+                        _ => ANSI256[i as usize],
+                    };
+                    unpack_rgb(hex)
+                }
+            });
+            grid_row.push(RenderedCell { char: final_glyph, fg: fg_rgb, bg: bg_rgb });
+
             emit_colourized(
                 &mut out,
                 render,
@@ -1369,12 +1489,14 @@ fn render_blocks_smooth(
             Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
             Render::Irc => "\x0f\n",
         });
+        grid.push(grid_row);
     }
     RenderResult {
         content: out.trim_end_matches('\n').into(),
         error_count: total_error,
         total_pixels: total_pixels,
         dynamic_scaling_count,
+        grid,
     }
 }
 

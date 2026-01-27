@@ -143,6 +143,13 @@ async fn main() {
                         eprintln!("Dynamic scaling applied to {} blocks.", best_res.dynamic_scaling_count);
                     }
                     write_encoded_output(&best_res.content, &args.encoding);
+                    if let Some(path) = &args.save_png {
+                        if let Err(e) = draw::save_as_png(&best_res, &glyphs, path) {
+                            eprintln!("Failed to save PNG: {}", e);
+                        } else {
+                            eprintln!("Saved PNG to {}", path);
+                        }
+                    }
                 } else {
                     eprintln!("Optimization failed to produce results.");
                 }
@@ -150,6 +157,13 @@ async fn main() {
             } else {
                 let result = render_output(&args, &glyphs, image);
                 write_encoded_output(&result.content, &args.encoding);
+                if let Some(path) = &args.save_png {
+                    if let Err(e) = draw::save_as_png(&result, &glyphs, path) {
+                        eprintln!("Failed to save PNG: {}", e);
+                    } else {
+                        eprintln!("Saved PNG to {}", path);
+                    }
+                }
             }
         }
 

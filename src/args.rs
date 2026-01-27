@@ -365,6 +365,10 @@ pub struct Args {
     /// dynamic scaling aggressiveness (0.0 to 0.5)
     #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value_t = 0.0)]
     pub fuzz: f32,
+
+    /// save output as PNG to the specified path
+    #[arg(long)]
+    pub save_png: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
