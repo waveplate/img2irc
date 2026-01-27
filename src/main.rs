@@ -71,33 +71,95 @@ async fn main() {
                         );            eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
             eprintln!("Cell size: {}x{}", glyphs.metrics.0, glyphs.metrics.1);
 
-            let image = effects::apply_effects(&args, &glyphs, image.clone());
-            let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance);
-
-            eprintln!("Loaded canvases");
-
-            let result = if args.braille {
-                let image_luma = effects::apply_luma_effects(&args, &glyphs, image.clone());
-                let canvas_luma = draw::AnsiImage::new(image_luma.clone(), glyphs.clone(), args.grayscale_tolerance);
-                match args.render {
-                    args::Render::Irc => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Irc),
-                    args::Render::Ansi => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi),
-                    args::Render::Ansi24 => draw::render_braille(&canvas_luma, &canvas, &args, args::Render::Ansi24),
+            if let Some(mode) = &args.optimize {
+                let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
+                let range_pct = args.scale_range.abs();
+                let start_mult = 1.0 - (range_pct / 100.0);
+                let end_mult = 1.0 + (range_pct / 100.0);
+                
+                let step = args.optimize_step / 100.0;
+                if step <= 0.0001 {
+                    eprintln!("Error: Step size must be positive.");
+                    exit(1);
                 }
+
+                eprintln!("Optimizing {:?} with scale range +/-{:.1}% (step {:.1}%)", 
+                    mode, range_pct, args.optimize_step);
+
+                let mut best_metric = f64::MAX;
+                let mut best_content = String::new();
+                let mut best_scale_x = base_sx;
+
+                let mut current_mult = start_mult;
+                let total_steps = ((end_mult - start_mult) / step + 1e-5).floor() as usize + 1;
+                let mut step_count = 0;
+
+                while current_mult <= end_mult + 0.00001 {
+                    step_count += 1;
+                    let mut loop_args = args.clone();
+                    let new_sx = base_sx * current_mult;
+                    loop_args.scale = Some((new_sx, base_sy));
+
+                    eprint!("\r[{}/{}] Testing scale {:.3}:{}... ", step_count, total_steps, new_sx, base_sy);
+                    let _ = std::io::stderr().flush();
+
+                    let result = render_output(&loop_args, &glyphs, image.clone());
+                    
+                    let metric = match mode {
+                        args::OptimizationMode::TotalBytes => result.content.len() as f64,
+                        args::OptimizationMode::LongestLine => result.content.lines().map(|l| l.len()).max().unwrap_or(0) as f64,
+                        args::OptimizationMode::BitmapError => {
+                            if result.total_pixels > 0 {
+                                result.error_count as f64 / result.total_pixels as f64
+                            } else {
+                                1.0 // Maximum error if no pixels
+                            }
+                        }
+                    };
+
+                    if metric < best_metric {
+                        eprintln!("New best! ({:.4} -> {:.4})", if best_metric == f64::MAX { 0.0 } else { best_metric }, metric);
+                        best_metric = metric;
+                        best_content = result.content;
+                        best_scale_x = new_sx;
+                    }
+
+                    current_mult += step;
+                }
+                
+                eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", best_scale_x, base_sy, best_metric);
+                write_encoded_output(&best_content, &args.encoding);
+
             } else {
-                match args.render {
-                    args::Render::Irc => draw::render_blocks(&canvas, &args, args::Render::Irc),
-                    args::Render::Ansi => draw::render_blocks(&canvas, &args, args::Render::Ansi),
-                    args::Render::Ansi24 => draw::render_blocks(&canvas, &args, args::Render::Ansi24),
-                }
-            };
-
-            write_encoded_output(&result, &args.encoding);
+                let result = render_output(&args, &glyphs, image);
+                write_encoded_output(&result.content, &args.encoding);
+            }
         }
 
         Err(e) => {
             eprintln!("Error: {}", e);
             exit(1);
+        }
+    }
+}
+
+fn render_output(args: &args::Args, glyphs: &font::GlyphStore, image: PhotonImage) -> draw::RenderResult {
+    let image = effects::apply_effects(args, glyphs, image);
+    let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance);
+
+    if args.braille {
+        let image_luma = effects::apply_luma_effects(args, glyphs, image);
+        let canvas_luma = draw::AnsiImage::new(image_luma, glyphs.clone(), args.grayscale_tolerance);
+        match args.render {
+            args::Render::Irc => draw::render_braille(&canvas_luma, &canvas, args, args::Render::Irc),
+            args::Render::Ansi => draw::render_braille(&canvas_luma, &canvas, args, args::Render::Ansi),
+            args::Render::Ansi24 => draw::render_braille(&canvas_luma, &canvas, args, args::Render::Ansi24),
+        }
+    } else {
+        match args.render {
+            args::Render::Irc => draw::render_blocks(&canvas, args, args::Render::Irc),
+            args::Render::Ansi => draw::render_blocks(&canvas, args, args::Render::Ansi),
+            args::Render::Ansi24 => draw::render_blocks(&canvas, args, args::Render::Ansi24),
         }
     }
 }

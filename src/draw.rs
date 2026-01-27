@@ -303,12 +303,24 @@ fn parse_hex_color(s: &str) -> u32 {
     u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0)
 }
 
+pub struct RenderResult {
+    pub content: String,
+    pub error_count: u64,
+    pub total_pixels: u64,
+}
+
+impl From<&str> for RenderResult {
+    fn from(s: &str) -> Self {
+        RenderResult { content: s.to_string(), error_count: 0, total_pixels: 0 }
+    }
+}
+
 /// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
 pub fn render_blocks(
     image: &AnsiImage,
     args: &Args,
     render: Render,
-) -> String {
+) -> RenderResult {
     if args.smooth.is_some() {
         return render_blocks_smooth(image, args, render);
     }
@@ -392,6 +404,8 @@ pub fn render_blocks(
         return "Error: no glyphs selected".into();
     }
     let mut out = String::new();
+    let mut total_error = 0u64;
+    let mut total_pixels = 0u64;
 
     // Pre-allocate buffer for pixel data to avoid repeated allocations
     let mut current_block_pixels_rgb: Vec<PrePixel> = Vec::with_capacity(bp);
@@ -411,6 +425,7 @@ pub fn render_blocks(
         let mut left_neighbor_glyph_idx: (usize, bool) = (usize::MAX, false);
 
         for (col_idx, blk) in block_row.iter().enumerate() {
+            total_pixels += bp as u64;
             let final_glyph: char;
             let final_fg: Colour;
             let final_bg: Option<Colour>;
@@ -643,6 +658,39 @@ pub fn render_blocks(
                 final_glyph = glyph_char;
                 final_fg = Colour::RGB(best_chosen_fg_color);
                 final_bg = if args.fg_only { None } else { Some(Colour::RGB(best_chosen_bg_color)) };
+                
+                // Calculate bitmap error for RGB
+                // Error = pixel is closer to the OTHER color than the one determined by glyph bit.
+                // FG is best_chosen_fg_color. BG is best_chosen_bg_color.
+                // If glyph bit (considering inversion) says FG, but pixel is closer to BG -> Error.
+                let mut block_error = 0u64;
+                let fglyph = &glyphs[chosen_glyph_index];
+                
+                let fg_p = PrePixel { 
+                    r: best_chosen_fg_color[0] as u64, g: best_chosen_fg_color[1] as u64, b: best_chosen_fg_color[2] as u64, 
+                    sq: (best_chosen_fg_color[0] as u64).pow(2) + (best_chosen_fg_color[1] as u64).pow(2) + (best_chosen_fg_color[2] as u64).pow(2) 
+                };
+                let bg_p = PrePixel { 
+                    r: best_chosen_bg_color[0] as u64, g: best_chosen_bg_color[1] as u64, b: best_chosen_bg_color[2] as u64, 
+                    sq: (best_chosen_bg_color[0] as u64).pow(2) + (best_chosen_bg_color[1] as u64).pow(2) + (best_chosen_bg_color[2] as u64).pow(2) 
+                };
+                
+                for i in 0..bp {
+                    let px = &current_block_pixels_rgb[i];
+                    let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
+                    let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
+                    
+                    let bit = fglyph.bitmap[i] ^ (chosen_glyph_inverted as u8);
+                    
+                    if bit == 1 {
+                        // Should be FG. Error if closer to BG.
+                        if dist_bg < dist_fg { block_error += 1; }
+                    } else {
+                        // Should be BG. Error if closer to FG.
+                        if dist_fg < dist_bg { block_error += 1; }
+                    }
+                }
+                total_error += block_error;
 
             } else {
                 // Palette-based glyph matching logic for Render::Ansi and Render::Irc
@@ -771,6 +819,38 @@ pub fn render_blocks(
                 chosen_glyph_index = best.1;
                 let glyph_entry = glyphs[best.1].ch;
                 let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
+                
+                // Recalculate error for the chosen glyph/colors
+                // We reuse the counting logic since it's fast enough and avoids carrying extra data in 'best'
+                // Error = pixels that are NOT the chosen FG color (in FG region) + pixels that are NOT chosen BG (in BG region).
+                // If fg_only heuristic, it might differ, but sticking to the standard definition of "mismatch" is safer.
+                
+                let fglyph = &glyphs[chosen_glyph_index];
+                let inv = best.4;
+                let chosen_fg_idx = fg_idx as usize;
+                
+                // Need to know chosen BG idx even if fg_only for error calc?
+                // If fg_only, "BG" is transparent. Any pixel in BG region is "correct" (or ignored?).
+                // But the user said "pixels that dont match the glyph bitmap".
+                // In fg_only, BG pixels are effectively "don't care"? 
+                // Let's assume standard error:
+                
+                let mut block_error = 0u64;
+                for i in 0..bp {
+                    let col_idx = current_block_indices[i] as usize;
+                    let bit = fglyph.bitmap[i] ^ (inv as u8);
+                    
+                    if bit == 1 {
+                        // FG region. Error if not chosen FG color.
+                        if col_idx != chosen_fg_idx { block_error += 1; }
+                    } else {
+                        // BG region. Error if not chosen BG color.
+                        if !args.fg_only {
+                            if col_idx != bg_idx as usize { block_error += 1; }
+                        }
+                    }
+                }
+                total_error += block_error;
 
                 final_glyph = glyph_entry;
                 final_fg = Colour::Index(fg_idx);
@@ -797,7 +877,11 @@ pub fn render_blocks(
             Render::Irc => "\x0f\n", // IRC color reset
         });
     }
-    out.trim_end_matches('\n').into()
+    RenderResult {
+        content: out.trim_end_matches('\n').into(),
+        error_count: total_error,
+        total_pixels: total_pixels,
+    }
 }
 
 pub fn render_braille(
@@ -805,7 +889,7 @@ pub fn render_braille(
     image_chroma: &AnsiImage,
     args: &Args,
     render: Render,
-) -> String {
+) -> RenderResult {
     let h = image_luma.bitmap.len();
     let w = image_luma.bitmap[0].len();
     let mut err = vec![vec![0.0; w]; h];
@@ -864,7 +948,11 @@ pub fn render_braille(
             Render::Irc    => "\x0f\n",
         });
     }
-    out.trim_end_matches('\n').to_string()
+    RenderResult {
+        content: out.trim_end_matches('\n').to_string(),
+        error_count: 0,
+        total_pixels: (w * h) as u64,
+    }
 }
 
 pub fn luma(rgb: &[u8;3]) -> u8 {
@@ -876,7 +964,7 @@ fn render_blocks_smooth(
     image: &AnsiImage,
     args: &Args,
     render: Render,
-) -> String {
+) -> RenderResult {
     if image.glyphs.glyphs.is_empty() {
         return "Error: no glyphs available".into();
     }
@@ -939,6 +1027,9 @@ fn render_blocks_smooth(
     }
 
     let mut out = String::new();
+    let mut total_error = 0u64;
+    let mut total_pixels = 0u64;
+
     let mut current_block_pixels_rgb: Vec<PrePixel> = Vec::with_capacity(bp);
     
     // Weights
@@ -963,6 +1054,7 @@ fn render_blocks_smooth(
         let mut left_neighbor_right_bits: Vec<u8> = vec![0u8; gh];
 
         for (col_idx, blk) in block_row.iter().enumerate() {
+            total_pixels += bp as u64;
             let final_glyph: char;
             let final_fg: Colour;
             let final_bg: Option<Colour>;
@@ -1231,6 +1323,29 @@ fn render_blocks_smooth(
                     };
                 }
             }
+            
+            // --- Error Calculation ---
+            // Locked colors are used.
+            let mut block_error = 0u64;
+            let inv = best_chosen_inv;
+            
+            for i in 0..bp {
+                let px = &current_block_pixels_rgb[i];
+                let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
+                let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
+                
+                let bit = fglyph.bitmap[i] ^ (inv as u8);
+                if bit == 1 {
+                    // Should be FG.
+                    if dist_bg < dist_fg { block_error += 1; }
+                } else {
+                    // Should be BG.
+                    if !args.fg_only {
+                        if dist_fg < dist_bg { block_error += 1; }
+                    }
+                }
+            }
+            total_error += block_error;
 
             emit_colourized(
                 &mut out,
@@ -1248,7 +1363,11 @@ fn render_blocks_smooth(
             Render::Irc => "\x0f\n",
         });
     }
-    out.trim_end_matches('\n').into()
+    RenderResult {
+        content: out.trim_end_matches('\n').into(),
+        error_count: total_error,
+        total_pixels: total_pixels,
+    }
 }
 
 

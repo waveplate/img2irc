@@ -349,6 +349,25 @@ pub struct Args {
     /// attempt to rescale local blocks to find better matching glyphs
     #[arg(long="dynamic-scaling", default_value_t = false)]
     pub dynamic_scaling: bool,
+
+    /// optimize output size
+    #[arg(long, value_enum)]
+    pub optimize: Option<OptimizationMode>,
+
+    /// search range for optimization in percent (e.g. 10 = +/- 10%)
+    #[arg(long, default_value_t = 0.0)]
+    pub scale_range: f32,
+
+    /// step size for optimization in percent
+    #[arg(long, default_value_t = 1.0)]
+    pub optimize_step: f32,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum OptimizationMode {
+    TotalBytes,
+    LongestLine,
+    BitmapError,
 }
 
 pub fn parse_args() -> Args {
