@@ -383,6 +383,7 @@ pub enum OptimizationMode {
     TotalBytes,
     LongestLine,
     BitmapError,
+    Smoothness,
 }
 
 pub fn parse_args() -> Args {

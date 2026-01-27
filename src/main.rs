@@ -125,14 +125,14 @@ async fn main() {
                             } else {
                                 1.0 
                             }
+                        },
+                        args::OptimizationMode::Smoothness => {
+                            draw::calculate_smoothness(&result, &glyphs)
                         }
                     };
 
                     let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                    if total_steps < 20 || p % (total_steps / 10).max(1) == 0 {
-                         eprint!("\r[{}/{}] Processed...", p, total_steps);
-                         let _ = std::io::stderr().flush();
-                    }
+                    eprintln!("[{}/{}] Scale {:.3}x{:.3} Fuzz {:.3} -> Metric {:.4}", p, total_steps, curr_sx, curr_sy, curr_fuzz, metric);
 
                     (metric, result, curr_sx, curr_sy, curr_fuzz)
                 }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));

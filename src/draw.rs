@@ -1055,6 +1055,67 @@ pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Re
     img.save(path)
 }
 
+pub fn calculate_smoothness(result: &RenderResult, glyphs: &GlyphStore) -> f64 {
+    if result.grid.is_empty() { return 0.0; }
+    let rows = result.grid.len();
+    let cols = result.grid[0].len();
+    let (gh, gw) = glyphs.metrics;
+    
+    let glyph_map: HashMap<char, &Vec<Vec<u8>>> = glyphs.glyphs.iter().map(|(c, b)| (*c, b)).collect();
+    
+    let mut total_variation = 0.0;
+    let mut total_pixels = 0;
+
+    let get_pixel = |r: usize, c: usize, y: usize, x: usize| -> Option<[u8; 3]> {
+        if r >= rows || c >= cols { return None; }
+        let cell = &result.grid[r][c];
+        if let Some(bitmap) = glyph_map.get(&cell.char) {
+            if y < bitmap.len() && x < bitmap[y].len() {
+                if bitmap[y][x] == 1 {
+                    Some(cell.fg)
+                } else {
+                    Some(cell.bg.unwrap_or([0, 0, 0]))
+                }
+            } else {
+                Some(cell.bg.unwrap_or([0, 0, 0]))
+            }
+        } else {
+            Some(cell.bg.unwrap_or([0, 0, 0]))
+        }
+    };
+
+    for r in 0..rows {
+        for c in 0..cols {
+            for y in 0..gh {
+                for x in 0..gw {
+                    let p1 = match get_pixel(r, c, y, x) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    
+                    // Right
+                    let (nr, nc, ny, nx) = if x + 1 < gw { (r, c, y, x + 1) } else { (r, c + 1, y, 0) };
+                    if let Some(p2) = get_pixel(nr, nc, ny, nx) {
+                        let d = (p1[0] as f64 - p2[0] as f64).powi(2) + (p1[1] as f64 - p2[1] as f64).powi(2) + (p1[2] as f64 - p2[2] as f64).powi(2);
+                        total_variation += d;
+                    }
+
+                    // Bottom
+                    let (nr, nc, ny, nx) = if y + 1 < gh { (r, c, y + 1, x) } else { (r + 1, c, 0, x) };
+                    if let Some(p2) = get_pixel(nr, nc, ny, nx) {
+                        let d = (p1[0] as f64 - p2[0] as f64).powi(2) + (p1[1] as f64 - p2[1] as f64).powi(2) + (p1[2] as f64 - p2[2] as f64).powi(2);
+                        total_variation += d;
+                    }
+                    
+                    total_pixels += 1;
+                }
+            }
+        }
+    }
+
+    if total_pixels == 0 { 0.0 } else { total_variation / (total_pixels as f64) }
+}
+
 fn render_blocks_smooth(
     image: &AnsiImage,
     args: &Args,
