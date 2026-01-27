@@ -997,8 +997,16 @@ pub fn luma(rgb: &[u8;3]) -> u8 {
     (0.299*r + 0.587*g + 0.114*b).round() as u8
 }
 
-pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Result<(), image::ImageError> {
+pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path_str: &str, metadata: &str) -> Result<(), Box<dyn std::error::Error>> {
     if result.grid.is_empty() { return Ok(()); }
+    let path = std::path::Path::new(path_str);
+    let final_path = if path.is_dir() {
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        path.join(format!("img2irc_{}.png", timestamp))
+    } else {
+        path.to_path_buf()
+    };
+
     let rows = result.grid.len();
     let cols = result.grid[0].len();
     let (gh, gw) = glyphs.metrics; 
@@ -1008,7 +1016,6 @@ pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Re
     
     let mut img = ImageBuffer::new(img_width, img_height);
     
-    // Build quick lookup map
     let glyph_map: HashMap<char, &Vec<Vec<u8>>> = glyphs.glyphs.iter().map(|(c, b)| (*c, b)).collect();
     
     for (r, row_cells) in result.grid.iter().enumerate() {
@@ -1022,9 +1029,8 @@ pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Re
                         let px = if pixel == 1 {
                             Rgb(cell.fg)
                         } else {
-                            if let Some(bg) = cell.bg { Rgb(bg) } else { Rgb([0, 0, 0]) }
+                            cell.bg.map(Rgb).unwrap_or(Rgb([0, 0, 0]))
                         };
-                        
                         let target_x = start_x + x as u32;
                         let target_y = start_y + y as u32;
                         if target_x < img_width && target_y < img_height {
@@ -1032,27 +1038,38 @@ pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path: &str) -> Re
                         }
                     }
                 }
-            } else {
-                // If glyph not found (e.g. braille or space if missing), fill with BG
-                // Space is usually in store. Braille chars are not.
-                // For Braille, we might want to handle it or skip.
-                // Assuming block mode mainly.
-                if let Some(bg) = cell.bg {
-                    for y in 0..gh {
-                        for x in 0..gw {
-                             let target_x = start_x + x as u32;
-                             let target_y = start_y + y as u32;
-                             if target_x < img_width && target_y < img_height {
-                                 img.put_pixel(target_x, target_y, Rgb(bg));
-                             }
-                        }
+            } else if let Some(bg) = cell.bg {
+                for y in 0..gh {
+                    for x in 0..gw {
+                         let target_x = start_x + x as u32;
+                         let target_y = start_y + y as u32;
+                         if target_x < img_width && target_y < img_height {
+                             img.put_pixel(target_x, target_y, Rgb(bg));
+                         }
                     }
                 }
             }
         }
     }
     
-    img.save(path)
+    let file = std::fs::File::create(&final_path)?;
+    let mut writer = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(writer, img_width, img_height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    
+    if !metadata.is_empty() {
+        if let Err(e) = encoder.add_text_chunk("Comment".to_string(), metadata.to_string()) {
+            eprintln!("Warning: Failed to add metadata chunk: {}", e);
+        }
+    }
+
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(img.as_raw())?;
+    drop(writer);
+
+    eprintln!("Saved PNG to {}", final_path.display());
+    Ok(())
 }
 
 pub fn calculate_smoothness(result: &RenderResult, glyphs: &GlyphStore) -> f64 {

@@ -90,10 +90,9 @@ async fn main() {
                 let result = render_output(&args, &glyphs, image);
                 write_encoded_output(&result.content, &args.encoding);
                 if let Some(path) = &args.save {
-                    if let Err(e) = draw::save_as_png(&result, &glyphs, path) {
+                    let metadata = format!("{:?}", args);
+                    if let Err(e) = draw::save_as_png(&result, &glyphs, path, &metadata) {
                         eprintln!("Failed to save PNG: {}", e);
-                    } else {
-                        eprintln!("Saved PNG to {}", path);
                     }
                 }
                 return;
@@ -208,10 +207,9 @@ async fn main() {
                 }
                 write_encoded_output(&best_res.content, &args.encoding);
                 if let Some(path) = &args.save {
-                    if let Err(e) = draw::save_as_png(&best_res, &glyphs, path) {
+                    let metadata = format!("{:?}", args);
+                    if let Err(e) = draw::save_as_png(&best_res, &glyphs, path, &metadata) {
                         eprintln!("Failed to save PNG: {}", e);
-                    } else {
-                        eprintln!("Saved PNG to {}", path);
                     }
                 }
             } else {
