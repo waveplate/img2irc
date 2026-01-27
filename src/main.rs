@@ -76,6 +76,7 @@ async fn main() {
 
             if let Some(mode) = &args.opt {
                 let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
+                let base_fuzz = args.fuzz;
                 let range_pct = args.range.abs();
                 let start_mult = 1.0 - (range_pct / 100.0);
                 let end_mult = 1.0 + (range_pct / 100.0);
@@ -102,11 +103,16 @@ async fn main() {
 
                 let best_result = scale_steps.par_iter().map(|&mult| {
                     let mut loop_args = args.clone();
-                    let (new_sx, new_sy) = match args.axis {
-                        args::OptimizeAxis::X => (base_sx * mult, base_sy),
-                        args::OptimizeAxis::Y => (base_sx, base_sy * mult),
+                    
+                    // Apply multiplier based on axis
+                    let (curr_sx, curr_sy, curr_fuzz) = match args.axis {
+                        args::OptimizeAxis::X => (base_sx * mult, base_sy, base_fuzz),
+                        args::OptimizeAxis::Y => (base_sx, base_sy * mult, base_fuzz),
+                        args::OptimizeAxis::Fuzz => (base_sx, base_sy, base_fuzz * mult),
                     };
-                    loop_args.scale = Some((new_sx, new_sy));
+
+                    loop_args.scale = Some((curr_sx, curr_sy));
+                    loop_args.fuzz = curr_fuzz;
 
                     let result = render_output(&loop_args, &glyphs, image.clone());
                     
@@ -123,18 +129,16 @@ async fn main() {
                     };
 
                     let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                    // Simple progress logging (might be out of order in terminal, but gives life signs)
-                    // Only print every few steps or if small total
                     if total_steps < 20 || p % (total_steps / 10).max(1) == 0 {
                          eprint!("\r[{}/{}] Processed...", p, total_steps);
                          let _ = std::io::stderr().flush();
                     }
 
-                    (metric, result, new_sx, new_sy)
+                    (metric, result, curr_sx, curr_sy, curr_fuzz)
                 }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-                if let Some((best_metric, best_res, final_sx, final_sy)) = best_result {
-                    eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", final_sx, final_sy, best_metric);
+                if let Some((best_metric, best_res, final_sx, final_sy, final_fuzz)) = best_result {
+                    eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3}, Best fuzz: {:.3}, Metric: {:.4}", final_sx, final_sy, final_fuzz, best_metric);
                     if best_res.dynamic_scaling_count > 0 {
                         eprintln!("Dynamic scaling applied to {} blocks.", best_res.dynamic_scaling_count);
                     }

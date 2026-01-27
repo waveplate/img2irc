@@ -358,7 +358,7 @@ pub struct Args {
     #[arg(long, default_value_t = 1.0)]
     pub step: f32,
 
-    /// axis to optimize
+    /// axis/parameter to optimize
     #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
     pub axis: OptimizeAxis,
 
@@ -371,6 +371,7 @@ pub struct Args {
 pub enum OptimizeAxis {
     X,
     Y,
+    Fuzz,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
