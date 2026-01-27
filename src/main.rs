@@ -79,8 +79,12 @@ async fn main() {
                 let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
                 let base_fuzz = args.fuzz;
                 let range_pct = args.range.abs();
-                let start_mult = 1.0 - (range_pct / 100.0);
+                let mut start_mult = 1.0 - (range_pct / 100.0);
                 let end_mult = 1.0 + (range_pct / 100.0);
+
+                if args.axis == args::OptimizeAxis::Fuzz && base_fuzz == 0.0 {
+                    start_mult = 1.0;
+                }
                 
                 let step = args.step / 100.0;
                 if step <= 0.0 {
