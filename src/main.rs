@@ -83,12 +83,12 @@ async fn main() {
                     exit(1);
                 }
 
-                eprintln!("Optimizing {:?} with scale range +/-{:.1}% (step {:.1}%)", 
-                    mode, range_pct, args.optimize_step);
+                eprintln!("Optimizing {:?} on {:?}-axis with scale range +/-{:.1}% (step {:.1}%)", 
+                    mode, args.optimize_axis, range_pct, args.optimize_step);
 
                 let mut best_metric = f64::MAX;
                 let mut best_content = String::new();
-                let mut best_scale_x = base_sx;
+                let mut best_scale = if args.optimize_axis == args::OptimizeAxis::X { base_sx } else { base_sy };
 
                 let mut current_mult = start_mult;
                 let total_steps = ((end_mult - start_mult) / step + 1e-5).floor() as usize + 1;
@@ -97,10 +97,13 @@ async fn main() {
                 while current_mult <= end_mult + 0.00001 {
                     step_count += 1;
                     let mut loop_args = args.clone();
-                    let new_sx = base_sx * current_mult;
-                    loop_args.scale = Some((new_sx, base_sy));
+                    let (new_sx, new_sy) = match args.optimize_axis {
+                        args::OptimizeAxis::X => (base_sx * current_mult, base_sy),
+                        args::OptimizeAxis::Y => (base_sx, base_sy * current_mult),
+                    };
+                    loop_args.scale = Some((new_sx, new_sy));
 
-                    eprint!("\r[{}/{}] Testing scale {:.3}:{}... ", step_count, total_steps, new_sx, base_sy);
+                    eprint!("\r[{}/{}] Testing scale {:.3}:{}... ", step_count, total_steps, new_sx, new_sy);
                     let _ = std::io::stderr().flush();
 
                     let result = render_output(&loop_args, &glyphs, image.clone());
@@ -121,13 +124,18 @@ async fn main() {
                         eprintln!("New best! ({:.4} -> {:.4})", if best_metric == f64::MAX { 0.0 } else { best_metric }, metric);
                         best_metric = metric;
                         best_content = result.content;
-                        best_scale_x = new_sx;
+                        best_scale = if args.optimize_axis == args::OptimizeAxis::X { new_sx } else { new_sy };
                     }
 
                     current_mult += step;
                 }
                 
-                eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", best_scale_x, base_sy, best_metric);
+                let (final_sx, final_sy) = match args.optimize_axis {
+                    args::OptimizeAxis::X => (best_scale, base_sy),
+                    args::OptimizeAxis::Y => (base_sx, best_scale),
+                };
+                
+                eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", final_sx, final_sy, best_metric);
                 write_encoded_output(&best_content, &args.encoding);
 
             } else {

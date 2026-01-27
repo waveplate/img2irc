@@ -361,6 +361,20 @@ pub struct Args {
     /// step size for optimization in percent
     #[arg(long, default_value_t = 1.0)]
     pub optimize_step: f32,
+
+    /// axis to optimize
+    #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
+    pub optimize_axis: OptimizeAxis,
+
+    /// dynamic scaling aggressiveness (0.0 to 0.5)
+    #[arg(long, default_value_t = 0.1)]
+    pub dynamic_scaling_fuzz: f32,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum OptimizeAxis {
+    X,
+    Y,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
