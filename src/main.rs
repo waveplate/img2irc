@@ -11,6 +11,7 @@ use std::{error::Error, io::{Cursor, Write}, process::exit};
 use crate::args::Encoding;
 
 use rayon::prelude::*;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::main]
@@ -82,7 +83,7 @@ async fn main() {
                 let end_mult = 1.0 + (range_pct / 100.0);
                 
                 let step = args.step / 100.0;
-                if step <= 0.0001 {
+                if step <= 0.0 {
                     eprintln!("Error: Step size must be positive.");
                     exit(1);
                 }
@@ -100,6 +101,7 @@ async fn main() {
                 
                 let total_steps = scale_steps.len();
                 let progress = AtomicUsize::new(0);
+                let best_found_metric = Arc::new(Mutex::new(f64::MAX));
 
                 let best_result = scale_steps.par_iter().map(|&mult| {
                     let mut loop_args = args.clone();
@@ -131,6 +133,14 @@ async fn main() {
                             draw::calculate_smoothness(&result, &glyphs)
                         }
                     };
+
+                    {
+                        let mut best_val = best_found_metric.lock().unwrap();
+                        if metric < *best_val {
+                            *best_val = metric;
+                            eprintln!("New best! Metric {:.4} (Scale {:.3}x{:.3} Fuzz {:.3})", metric, curr_sx, curr_sy, curr_fuzz);
+                        }
+                    }
 
                     let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
                     eprintln!("[{}/{}] Scale {:.3}x{:.3} Fuzz {:.3} -> Metric {:.4}", p, total_steps, curr_sx, curr_sy, curr_fuzz, metric);
