@@ -307,11 +307,12 @@ pub struct RenderResult {
     pub content: String,
     pub error_count: u64,
     pub total_pixels: u64,
+    pub dynamic_scaling_count: u64,
 }
 
 impl From<&str> for RenderResult {
     fn from(s: &str) -> Self {
-        RenderResult { content: s.to_string(), error_count: 0, total_pixels: 0 }
+        RenderResult { content: s.to_string(), error_count: 0, total_pixels: 0, dynamic_scaling_count: 0 }
     }
 }
 
@@ -417,16 +418,18 @@ pub fn render_blocks(
     // Track selected glyphs for continuity (smooth mode)
     let blocks_width = if !image.block.is_empty() { image.block[0].len() } else { 0 };
     let mut previous_row_glyph_indices: Vec<(usize, bool)> = vec![(usize::MAX, false); blocks_width];
+    let mut dynamic_scaling_count = 0u64;
 
     // Dynamic Scaling Factors
-    let fuzz = if args.dynamic_scaling { args.dynamic_scaling_fuzz.max(0.001) } else { 0.0 };
-    let scales = if args.dynamic_scaling {
+    let fuzz = args.fuzz.max(0.0);
+    let scales = if fuzz > 0.0001 {
+        let f = fuzz.max(0.001);
         vec![
             (1.0, 1.0),
-            (1.0 - fuzz, 1.0),
-            (1.0 + fuzz, 1.0),
-            (1.0, 1.0 - fuzz),
-            (1.0, 1.0 + fuzz),
+            (1.0 - f, 1.0),
+            (1.0 + f, 1.0),
+            (1.0, 1.0 - f),
+            (1.0, 1.0 + f),
         ]
     } else {
         vec![(1.0, 1.0)]
@@ -446,6 +449,7 @@ pub fn render_blocks(
             let mut final_bg: Option<Colour> = None;
             let mut chosen_glyph_index = 0;
             let mut chosen_glyph_inverted = false;
+            let mut best_scale_is_identity = true;
             
             // We need to keep track of the BEST match across all scales
             // and the pixel data associated with it (for error calc, if we want strictness, 
@@ -663,6 +667,7 @@ pub fn render_blocks(
                         final_fg = Colour::RGB(best_chosen_fg_color);
                         final_bg = if args.fg_only { None } else { Some(Colour::RGB(best_chosen_bg_color)) };
                         best_match_data = (best_glyph_idx, best_inv, best_chosen_fg_color, best_chosen_bg_color, 0, 0);
+                        best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
 
                 } else {
@@ -794,8 +799,13 @@ pub fn render_blocks(
                         final_fg = Colour::Index(fg_idx);
                         final_bg = if args.fg_only { None } else { Some(Colour::Index(bg_idx)) };
                         best_match_data = (best.1, best.4, [0,0,0], [0,0,0], fg_idx, bg_idx);
+                        best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
                 }
+            }
+
+            if !best_scale_is_identity {
+                dynamic_scaling_count += 1;
             }
 
             // Update neighbor tracking
@@ -862,13 +872,14 @@ pub fn render_blocks(
         }
         out.push_str(match render {
             Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
-            Render::Irc => "\x0f\n", // IRC color reset
+            Render::Irc => "\x0f\n",
         });
     }
     RenderResult {
         content: out.trim_end_matches('\n').into(),
         error_count: total_error,
         total_pixels: total_pixels,
+        dynamic_scaling_count,
     }
 }
 
@@ -940,6 +951,7 @@ pub fn render_braille(
         content: out.trim_end_matches('\n').to_string(),
         error_count: 0,
         total_pixels: (w * h) as u64,
+        dynamic_scaling_count: 0,
     }
 }
 
@@ -1027,16 +1039,18 @@ fn render_blocks_smooth(
     // Track the bottom edge bits of the previous row (for Top continuity)
     // 0 = BG, 1 = FG. Initialized to 0 (BG).
     let mut prev_row_bottom_bits: Vec<Vec<u8>> = vec![vec![0u8; gw]; blocks_width];
+    let mut dynamic_scaling_count = 0u64;
     
     // Dynamic Scaling Factors
-    let fuzz = if args.dynamic_scaling { args.dynamic_scaling_fuzz.max(0.001) } else { 0.0 };
-    let scales = if args.dynamic_scaling {
+    let fuzz = args.fuzz.max(0.0);
+    let scales = if fuzz > 0.0001 {
+        let f = fuzz.max(0.001);
         vec![
             (1.0, 1.0),
-            (1.0 - fuzz, 1.0),
-            (1.0 + fuzz, 1.0),
-            (1.0, 1.0 - fuzz),
-            (1.0, 1.0 + fuzz),
+            (1.0 - f, 1.0),
+            (1.0 + f, 1.0),
+            (1.0, 1.0 - f),
+            (1.0, 1.0 + f),
         ]
     } else {
         vec![(1.0, 1.0)]
@@ -1058,6 +1072,7 @@ fn render_blocks_smooth(
             let mut final_fg = Colour::Index(0);
             let mut final_bg: Option<Colour> = None;
             let mut best_match_data = (0usize, false, [0u8;3], [0u8;3]); // (glyph_idx, inv, fg, bg)
+            let mut best_scale_is_identity = true;
 
             // Read original block pixels
             current_block_pixels_rgb.clear();
@@ -1256,7 +1271,12 @@ fn render_blocks_smooth(
                     let glyph_char = glyphs[best_glyph_idx].ch;
                     final_glyph = glyph_char;
                     best_match_data = (best_glyph_idx, best_chosen_inv, locked_fg, locked_bg);
+                    best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                 }
+            }
+
+            if !best_scale_is_identity {
+                dynamic_scaling_count += 1;
             }
 
             // --- Apply Best Result ---
@@ -1354,6 +1374,7 @@ fn render_blocks_smooth(
         content: out.trim_end_matches('\n').into(),
         error_count: total_error,
         total_pixels: total_pixels,
+        dynamic_scaling_count,
     }
 }
 

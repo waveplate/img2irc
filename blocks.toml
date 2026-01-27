@@ -60,7 +60,7 @@ end = 0x25E5
 
 [geometric]
 start = 0x25A0
-end = 0x25FF
+end = 0x25FD
 
 [legacy]
 start = 0x1FB00

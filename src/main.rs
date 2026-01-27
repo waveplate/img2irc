@@ -10,6 +10,9 @@ use photon_rs::PhotonImage;
 use std::{error::Error, io::{Cursor, Write}, process::exit};
 use crate::args::Encoding;
 
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 #[tokio::main]
 async fn main() {
     let args = args::parse_args();
@@ -71,40 +74,39 @@ async fn main() {
                         );            eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
             eprintln!("Cell size: {}x{}", glyphs.metrics.0, glyphs.metrics.1);
 
-            if let Some(mode) = &args.optimize {
+            if let Some(mode) = &args.opt {
                 let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
-                let range_pct = args.scale_range.abs();
+                let range_pct = args.range.abs();
                 let start_mult = 1.0 - (range_pct / 100.0);
                 let end_mult = 1.0 + (range_pct / 100.0);
                 
-                let step = args.optimize_step / 100.0;
+                let step = args.step / 100.0;
                 if step <= 0.0001 {
                     eprintln!("Error: Step size must be positive.");
                     exit(1);
                 }
 
                 eprintln!("Optimizing {:?} on {:?}-axis with scale range +/-{:.1}% (step {:.1}%)", 
-                    mode, args.optimize_axis, range_pct, args.optimize_step);
+                    mode, args.axis, range_pct, args.step);
 
-                let mut best_metric = f64::MAX;
-                let mut best_content = String::new();
-                let mut best_scale = if args.optimize_axis == args::OptimizeAxis::X { base_sx } else { base_sy };
-
+                // Generate steps
+                let mut scale_steps = Vec::new();
                 let mut current_mult = start_mult;
-                let total_steps = ((end_mult - start_mult) / step + 1e-5).floor() as usize + 1;
-                let mut step_count = 0;
-
                 while current_mult <= end_mult + 0.00001 {
-                    step_count += 1;
+                    scale_steps.push(current_mult);
+                    current_mult += step;
+                }
+                
+                let total_steps = scale_steps.len();
+                let progress = AtomicUsize::new(0);
+
+                let best_result = scale_steps.par_iter().map(|&mult| {
                     let mut loop_args = args.clone();
-                    let (new_sx, new_sy) = match args.optimize_axis {
-                        args::OptimizeAxis::X => (base_sx * current_mult, base_sy),
-                        args::OptimizeAxis::Y => (base_sx, base_sy * current_mult),
+                    let (new_sx, new_sy) = match args.axis {
+                        args::OptimizeAxis::X => (base_sx * mult, base_sy),
+                        args::OptimizeAxis::Y => (base_sx, base_sy * mult),
                     };
                     loop_args.scale = Some((new_sx, new_sy));
-
-                    eprint!("\r[{}/{}] Testing scale {:.3}:{}... ", step_count, total_steps, new_sx, new_sy);
-                    let _ = std::io::stderr().flush();
 
                     let result = render_output(&loop_args, &glyphs, image.clone());
                     
@@ -115,28 +117,31 @@ async fn main() {
                             if result.total_pixels > 0 {
                                 result.error_count as f64 / result.total_pixels as f64
                             } else {
-                                1.0 // Maximum error if no pixels
+                                1.0 
                             }
                         }
                     };
 
-                    if metric < best_metric {
-                        eprintln!("New best! ({:.4} -> {:.4})", if best_metric == f64::MAX { 0.0 } else { best_metric }, metric);
-                        best_metric = metric;
-                        best_content = result.content;
-                        best_scale = if args.optimize_axis == args::OptimizeAxis::X { new_sx } else { new_sy };
+                    let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Simple progress logging (might be out of order in terminal, but gives life signs)
+                    // Only print every few steps or if small total
+                    if total_steps < 20 || p % (total_steps / 10).max(1) == 0 {
+                         eprint!("\r[{}/{}] Processed...", p, total_steps);
+                         let _ = std::io::stderr().flush();
                     }
 
-                    current_mult += step;
+                    (metric, result, new_sx, new_sy)
+                }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                if let Some((best_metric, best_res, final_sx, final_sy)) = best_result {
+                    eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", final_sx, final_sy, best_metric);
+                    if best_res.dynamic_scaling_count > 0 {
+                        eprintln!("Dynamic scaling applied to {} blocks.", best_res.dynamic_scaling_count);
+                    }
+                    write_encoded_output(&best_res.content, &args.encoding);
+                } else {
+                    eprintln!("Optimization failed to produce results.");
                 }
-                
-                let (final_sx, final_sy) = match args.optimize_axis {
-                    args::OptimizeAxis::X => (best_scale, base_sy),
-                    args::OptimizeAxis::Y => (base_sx, best_scale),
-                };
-                
-                eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3} with metric: {:.4}", final_sx, final_sy, best_metric);
-                write_encoded_output(&best_content, &args.encoding);
 
             } else {
                 let result = render_output(&args, &glyphs, image);

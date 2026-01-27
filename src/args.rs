@@ -346,29 +346,25 @@ pub struct Args {
     #[arg(long, num_args(0..=1), default_missing_value="1.0")]
     pub smooth: Option<f32>,
 
-    /// attempt to rescale local blocks to find better matching glyphs
-    #[arg(long="dynamic-scaling", default_value_t = false)]
-    pub dynamic_scaling: bool,
-
     /// optimize output size
-    #[arg(long, value_enum)]
-    pub optimize: Option<OptimizationMode>,
+    #[arg(long="opt", value_enum)]
+    pub opt: Option<OptimizationMode>,
 
     /// search range for optimization in percent (e.g. 10 = +/- 10%)
     #[arg(long, default_value_t = 0.0)]
-    pub scale_range: f32,
+    pub range: f32,
 
     /// step size for optimization in percent
     #[arg(long, default_value_t = 1.0)]
-    pub optimize_step: f32,
+    pub step: f32,
 
     /// axis to optimize
     #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
-    pub optimize_axis: OptimizeAxis,
+    pub axis: OptimizeAxis,
 
     /// dynamic scaling aggressiveness (0.0 to 0.5)
-    #[arg(long, default_value_t = 0.1)]
-    pub dynamic_scaling_fuzz: f32,
+    #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value_t = 0.0)]
+    pub fuzz: f32,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
