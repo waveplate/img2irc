@@ -75,110 +75,147 @@ async fn main() {
                         );            eprintln!("Loaded {} glyphs", glyphs.glyphs.len());
             eprintln!("Cell size: {}x{}", glyphs.metrics.0, glyphs.metrics.1);
 
-            if let Some(mode) = &args.opt {
-                let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
-                let base_fuzz = args.fuzz;
-                let range_pct = args.range.abs();
-                let mut start_mult = 1.0 - (range_pct / 100.0);
-                let end_mult = 1.0 + (range_pct / 100.0);
-
-                if args.axis == args::OptimizeAxis::Fuzz && base_fuzz == 0.0 {
-                    start_mult = 1.0;
-                }
-                
-                let step = args.step / 100.0;
-                if step <= 0.0 {
-                    eprintln!("Error: Step size must be positive.");
-                    exit(1);
-                }
-
-                eprintln!("Optimizing {:?} on {:?}-axis with scale range +/-{:.1}% (step {:.1}%)", 
-                    mode, args.axis, range_pct, args.step);
-
-                // Generate steps
-                let mut scale_steps = Vec::new();
-                let mut current_mult = start_mult;
-                while current_mult <= end_mult + 0.00001 {
-                    scale_steps.push(current_mult);
-                    current_mult += step;
-                }
-                
-                let total_steps = scale_steps.len();
-                let progress = AtomicUsize::new(0);
-                let best_found_metric = Arc::new(Mutex::new(f64::MAX));
-
-                let best_result = scale_steps.par_iter().map(|&mult| {
-                    let mut loop_args = args.clone();
-                    
-                    // Apply multiplier based on axis
-                    let (curr_sx, curr_sy, curr_fuzz) = match args.axis {
-                        args::OptimizeAxis::X => (base_sx * mult, base_sy, base_fuzz),
-                        args::OptimizeAxis::Y => (base_sx, base_sy * mult, base_fuzz),
-                        // Fuzz optimization is additive (mult is 1.0 +/- range_pct/100)
-                        args::OptimizeAxis::Fuzz => (base_sx, base_sy, (base_fuzz + (mult - 1.0)).max(0.0)),
-                    };
-
-                    loop_args.scale = Some((curr_sx, curr_sy));
-                    loop_args.fuzz = curr_fuzz;
-
-                    let result = render_output(&loop_args, &glyphs, image.clone());
-                    
-                    let metric = match mode {
-                        args::OptimizationMode::TotalBytes => result.content.len() as f64,
-                        args::OptimizationMode::LongestLine => result.content.lines().map(|l| l.len()).max().unwrap_or(0) as f64,
-                        args::OptimizationMode::BitmapError => {
-                            if result.total_pixels > 0 {
-                                result.error_count as f64 / result.total_pixels as f64
-                            } else {
-                                1.0 
-                            }
-                        },
-                        args::OptimizationMode::Smoothness => {
-                            draw::calculate_smoothness(&result, &glyphs)
-                        }
-                    };
-
-                    {
-                        let mut best_val = best_found_metric.lock().unwrap();
-                        if metric < *best_val {
-                            *best_val = metric;
-                            eprintln!("New best! Metric {:.4} (Scale {:.3}x{:.3} Fuzz {:.3})", metric, curr_sx, curr_sy, curr_fuzz);
-                        }
-                    }
-
-                    let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
-                    eprintln!("[{}/{}] Scale {:.3}x{:.3} Fuzz {:.3} -> Metric {:.4}", p, total_steps, curr_sx, curr_sy, curr_fuzz, metric);
-
-                    (metric, result, curr_sx, curr_sy, curr_fuzz)
-                }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                if let Some((best_metric, best_res, final_sx, final_sy, final_fuzz)) = best_result {
-                    eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3}, Best fuzz: {:.3}, Metric: {:.4}", final_sx, final_sy, final_fuzz, best_metric);
-                    if best_res.dynamic_scaling_count > 0 {
-                        eprintln!("Dynamic scaling applied to {} blocks.", best_res.dynamic_scaling_count);
-                    }
-                    write_encoded_output(&best_res.content, &args.encoding);
-                    if let Some(path) = &args.save_png {
-                        if let Err(e) = draw::save_as_png(&best_res, &glyphs, path) {
-                            eprintln!("Failed to save PNG: {}", e);
-                        } else {
-                            eprintln!("Saved PNG to {}", path);
-                        }
-                    }
-                } else {
-                    eprintln!("Optimization failed to produce results.");
-                }
-
+            // Determine optimization settings (explicit or auto)
+            let (opt_mode, opt_axis, opt_range, opt_step) = if args.auto {
+                (
+                    args.opt.clone().unwrap_or(args::OptimizationMode::Smoothness),
+                    args::OptimizeAxis::All,
+                    if args.range == 0.0 { 10.0 } else { args.range },
+                    if args.step == 1.0 { 2.0 } else { args.step },
+                )
+            } else if let Some(m) = &args.opt {
+                (m.clone(), args.axis.clone(), args.range, args.step)
             } else {
+                // No optimization requested
                 let result = render_output(&args, &glyphs, image);
                 write_encoded_output(&result.content, &args.encoding);
-                if let Some(path) = &args.save_png {
+                if let Some(path) = &args.save {
                     if let Err(e) = draw::save_as_png(&result, &glyphs, path) {
                         eprintln!("Failed to save PNG: {}", e);
                     } else {
                         eprintln!("Saved PNG to {}", path);
                     }
                 }
+                return;
+            };
+
+            // Optimization Logic
+            let (base_sx, base_sy) = args.scale.unwrap_or((1.0, 1.0));
+            let base_fuzz = args.fuzz;
+            let range_pct = opt_range.abs();
+            let mut start_mult = 1.0 - (range_pct / 100.0);
+            let end_mult = 1.0 + (range_pct / 100.0);
+
+            // Special handling for Fuzz axis with 0 base (but All axis handles fuzz differently)
+            if opt_axis == args::OptimizeAxis::Fuzz && base_fuzz == 0.0 {
+                start_mult = 1.0;
+            }
+            
+            let step_val = opt_step / 100.0;
+            if step_val <= 0.0 {
+                eprintln!("Error: Step size must be positive.");
+                exit(1);
+            }
+
+            eprintln!("Optimizing {:?} on {:?}-axis with scale range +/-{:.1}% (step {:.1}%)", 
+                opt_mode, opt_axis, range_pct, opt_step);
+
+            // Generate raw steps (multipliers)
+            let mut raw_steps = Vec::new();
+            let mut current_mult = start_mult;
+            while current_mult <= end_mult + 0.00001 {
+                raw_steps.push(current_mult);
+                current_mult += step_val;
+            }
+
+            // Generate full search space (sx, sy, fuzz)
+            let mut search_space = Vec::new();
+            match opt_axis {
+                args::OptimizeAxis::All => {
+                    for &mx in &raw_steps {
+                        for &my in &raw_steps {
+                            for &mf in &raw_steps {
+                                 let f = (base_fuzz + (mf - 1.0)).max(0.0);
+                                 search_space.push((base_sx * mx, base_sy * my, f));
+                            }
+                        }
+                    }
+                },
+                args::OptimizeAxis::X => {
+                    for &m in &raw_steps { search_space.push((base_sx * m, base_sy, base_fuzz)); }
+                },
+                args::OptimizeAxis::Y => {
+                    for &m in &raw_steps { search_space.push((base_sx, base_sy * m, base_fuzz)); }
+                },
+                args::OptimizeAxis::Fuzz => {
+                    for &m in &raw_steps { 
+                        let f = (base_fuzz + (m - 1.0)).max(0.0);
+                        search_space.push((base_sx, base_sy, f)); 
+                    }
+                },
+            }
+            
+            let total_steps = search_space.len();
+            eprintln!("Total permutations to test: {}", total_steps);
+            
+            let progress = AtomicUsize::new(0);
+            let best_found_metric = Arc::new(Mutex::new(f64::MAX));
+
+            let best_result = search_space.par_iter().map(|&(curr_sx, curr_sy, curr_fuzz)| {
+                let mut loop_args = args.clone();
+                loop_args.scale = Some((curr_sx, curr_sy));
+                loop_args.fuzz = curr_fuzz;
+
+                let result = render_output(&loop_args, &glyphs, image.clone());
+                
+                let metric = match opt_mode {
+                    args::OptimizationMode::TotalBytes => result.content.len() as f64,
+                    args::OptimizationMode::LongestLine => result.content.lines().map(|l| l.len()).max().unwrap_or(0) as f64,
+                    args::OptimizationMode::BitmapError => {
+                        if result.total_pixels > 0 {
+                            result.error_count as f64 / result.total_pixels as f64
+                        } else {
+                            1.0 
+                        }
+                    },
+                    args::OptimizationMode::Smoothness => {
+                        draw::calculate_smoothness(&result, &glyphs)
+                    }
+                };
+
+                {
+                    let mut best_val = best_found_metric.lock().unwrap();
+                    if metric < *best_val {
+                        *best_val = metric;
+                        eprintln!("New best! Metric {:.4} (Scale {:.3}x{:.3} Fuzz {:.3})", metric, curr_sx, curr_sy, curr_fuzz);
+                    }
+                }
+
+                let p = progress.fetch_add(1, Ordering::Relaxed) + 1;
+                // Reduce log spam for massive searches
+                if total_steps < 50 || p % (total_steps / 20).max(1) == 0 {
+                     eprint!("\r[{}/{}] Processed...", p, total_steps);
+                     let _ = std::io::stderr().flush();
+                }
+
+                (metric, result, curr_sx, curr_sy, curr_fuzz)
+            }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            if let Some((best_metric, best_res, final_sx, final_sy, final_fuzz)) = best_result {
+                eprintln!("\nOptimization complete. Best scale: {:.3}:{:.3}, Best fuzz: {:.3}, Metric: {:.4}", final_sx, final_sy, final_fuzz, best_metric);
+                if best_res.dynamic_scaling_count > 0 {
+                    eprintln!("Dynamic scaling applied to {} blocks.", best_res.dynamic_scaling_count);
+                }
+                write_encoded_output(&best_res.content, &args.encoding);
+                if let Some(path) = &args.save {
+                    if let Err(e) = draw::save_as_png(&best_res, &glyphs, path) {
+                        eprintln!("Failed to save PNG: {}", e);
+                    } else {
+                        eprintln!("Saved PNG to {}", path);
+                    }
+                }
+            } else {
+                eprintln!("Optimization failed to produce results.");
             }
         }
 

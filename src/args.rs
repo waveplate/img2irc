@@ -366,9 +366,13 @@ pub struct Args {
     #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value_t = 0.0)]
     pub fuzz: f32,
 
-    /// save output as PNG to the specified path
+    /// save output as PNG (path or directory)
     #[arg(long)]
-    pub save_png: Option<String>,
+    pub save: Option<String>,
+
+    /// automatically find optimal geometric parameters (2-pass search)
+    #[arg(long, default_value_t = false)]
+    pub auto: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
@@ -376,6 +380,7 @@ pub enum OptimizeAxis {
     X,
     Y,
     Fuzz,
+    All,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
