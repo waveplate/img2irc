@@ -108,7 +108,8 @@ async fn main() {
                     let (curr_sx, curr_sy, curr_fuzz) = match args.axis {
                         args::OptimizeAxis::X => (base_sx * mult, base_sy, base_fuzz),
                         args::OptimizeAxis::Y => (base_sx, base_sy * mult, base_fuzz),
-                        args::OptimizeAxis::Fuzz => (base_sx, base_sy, base_fuzz * mult),
+                        // Fuzz optimization is additive (mult is 1.0 +/- range_pct/100)
+                        args::OptimizeAxis::Fuzz => (base_sx, base_sy, (base_fuzz + (mult - 1.0)).max(0.0)),
                     };
 
                     loop_args.scale = Some((curr_sx, curr_sy));
