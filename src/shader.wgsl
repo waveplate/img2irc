@@ -24,9 +24,9 @@ struct OutputCell {
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var<storage, read> pixels: array<u32>; // Packed RGB
 @group(0) @binding(2) var<storage, read> glyph_infos: array<GlyphInfo>;
-// WGSL doesn't support u8 storage buffers directly. We read as u32 and unpack.
 @group(0) @binding(3) var<storage, read> glyph_bitmaps: array<u32>; 
 @group(0) @binding(4) var<storage, read_write> output: array<OutputCell>;
+@group(0) @binding(5) var<storage, read> palette: array<u32>;
 
 fn unpack_rgb(c: u32) -> vec3<f32> {
     return vec3<f32>(
@@ -52,6 +52,25 @@ fn get_glyph_pixel(offset: u32, idx: u32) -> u32 {
     return (word >> shift) & 0xFFu;
 }
 
+fn find_closest_palette(c: vec3<f32>) -> vec3<f32> {
+    if (globals.mode == 2u) { return c; } // Truecolor
+    
+    var best_d = 1e38;
+    var best_c = vec3<f32>(0.0);
+    
+    let limit = select(256u, 99u, globals.mode == 1u); // IRC99 has 99 colors
+    
+    for (var i = 0u; i < limit; i = i + 1u) {
+        let pc = unpack_rgb(palette[i]);
+        let d = dot(c - pc, c - pc);
+        if (d < best_d) {
+            best_d = d;
+            best_c = pc;
+        }
+    }
+    return best_c;
+}
+
 @compute @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let bx = global_id.x;
@@ -64,7 +83,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // Extract block pixels
     let start_x = bx * globals.block_width;
     let start_y = by * globals.block_height;
     
@@ -72,14 +90,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var block_sq_sum = vec3<f32>(0.0);
     var valid_pixels = 0u;
 
-    // Iterate glyphs
-    var best_error = 3.40282347e+38; // Max f32
-    var best_glyph = 0u;
-    var best_fg = vec3<f32>(0.0);
-    var best_bg = vec3<f32>(0.0);
-    var best_inv = 0u;
-
-    // Pre-calculate block stats
     for (var y = 0u; y < globals.block_height; y = y + 1u) {
         for (var x = 0u; x < globals.block_width; x = x + 1u) {
             let px = start_x + x;
@@ -93,6 +103,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
+    var best_error = 1e38;
+    var best_glyph = 0u;
+    var best_fg = vec3<f32>(0.0);
+    var best_bg = vec3<f32>(0.0);
+    var best_inv = 0u;
+
     for (var i = 0u; i < globals.num_glyphs; i = i + 1u) {
         let info = glyph_infos[i];
         
@@ -103,15 +119,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var y = 0u; y < globals.block_height; y = y + 1u) {
             for (var x = 0u; x < globals.block_width; x = x + 1u) {
                 if (x >= info.width || y >= info.height) { continue; }
-                
                 let px = start_x + x;
                 let py = start_y + y;
                 if (px >= globals.img_width || py >= globals.img_height) { continue; }
 
-                let bit_idx = y * info.width + x;
-                // Use helper to read byte
-                let bit = get_glyph_pixel(info.offset, bit_idx);
-                
+                let bit = get_glyph_pixel(info.offset, y * info.width + x);
                 if (bit > 0u) {
                     let p = unpack_rgb(pixels[py * globals.img_width + px]);
                     sum_ones = sum_ones + p;
@@ -125,30 +137,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let sum_zeros = block_sum - sum_ones;
         let sum_zeros_sq = block_sq_sum - sum_ones_sq;
 
-        var avg_ones = vec3<f32>(0.0);
-        if (count_ones > 0u) { avg_ones = sum_ones / f32(count_ones); }
-        
-        var avg_zeros = vec3<f32>(0.0);
-        if (count_zeros > 0u) { avg_zeros = sum_zeros / f32(count_zeros); }
+        // Normal (Non-inverted)
+        var fg = vec3<f32>(0.0);
+        if (count_ones > 0u) { fg = find_closest_palette(sum_ones / f32(count_ones)); }
+        var bg = vec3<f32>(0.0);
+        if (count_zeros > 0u) { bg = find_closest_palette(sum_zeros / f32(count_zeros)); }
 
-        let err_ones = (sum_ones_sq) - (2.0 * avg_ones * sum_ones) + (f32(count_ones) * avg_ones * avg_ones);
-        let err_zeros = (sum_zeros_sq) - (2.0 * avg_zeros * sum_zeros) + (f32(count_zeros) * avg_zeros * avg_zeros);
-        let total_err_norm = (err_ones.r + err_ones.g + err_ones.b) + (err_zeros.r + err_zeros.g + err_zeros.b);
+        let err_ones = (sum_ones_sq) - (2.0 * fg * sum_ones) + (f32(count_ones) * fg * fg);
+        let err_zeros = (sum_zeros_sq) - (2.0 * bg * sum_zeros) + (f32(count_zeros) * bg * bg);
+        let total_err_norm = dot(err_ones + err_zeros, vec3<f32>(1.0));
 
         if (total_err_norm < best_error) {
             best_error = total_err_norm;
             best_glyph = i;
-            best_fg = avg_ones;
-            best_bg = avg_zeros;
+            best_fg = fg;
+            best_bg = bg;
             best_inv = 0u;
         }
 
-        // Inverted case
-        if (total_err_norm < best_error - 0.1) { 
-             best_error = total_err_norm;
+        // Inverted (avg_zeros becomes FG, avg_ones becomes BG)
+        var fg_inv = bg;
+        var bg_inv = fg;
+        let total_err_inv = total_err_norm; 
+
+        if (total_err_inv < best_error - 0.1) { 
+             best_error = total_err_inv;
              best_glyph = i;
-             best_fg = avg_zeros;
-             best_bg = avg_ones;
+             best_fg = fg_inv;
+             best_bg = bg_inv;
              best_inv = 1u;
         }
     }
