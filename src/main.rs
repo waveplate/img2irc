@@ -480,21 +480,24 @@ fn process_task(
         let mut best_val = best_found_metric.lock().unwrap();
         if metric < *best_val {
             *best_val = metric;
+            // Clear current line before printing new best
+            eprint!("\x1b[2K\r");
             eprintln!("New best! Metric {:.4} ({})", metric, info);
+
+            // Save candidate ONLY if it's a new best
+            if let Some(save_dir) = &raw_cli_args.save_candidates {
+                let _ = std::fs::create_dir_all(save_dir);
+                let safe_info = info.replace(" ", "_").replace(":", "-");
+                let fname = format!("{}/metric_{:.4}_{}.png", save_dir, metric, safe_info);
+                let metadata = format!("Metric: {}", metric);
+                let _ = draw::save_as_png(&result, glyph_store, &fname, &metadata);
+            }
         }
     }
 
     // Detailed logging every iteration as requested
     eprint!("\r[{}/{}] Metric {:.4} ({})", p, total_steps, metric, info);
     let _ = std::io::stderr().flush();
-
-    if let Some(save_dir) = &raw_cli_args.save_candidates {
-        let _ = std::fs::create_dir_all(save_dir);
-        let safe_info = info.replace(" ", "_").replace(":", "-");
-        let fname = format!("{}/metric_{:.4}_{}.png", save_dir, metric, safe_info);
-        let metadata = format!("Metric: {}", metric);
-        let _ = draw::save_as_png(&result, glyph_store, &fname, &metadata);
-    }
 
     (metric, result, loop_args)
 }
