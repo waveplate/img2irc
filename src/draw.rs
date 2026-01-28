@@ -1,4 +1,4 @@
-use crate::args::{Args, Render};
+use crate::args::{RenderArgs, Render};
 use crate::font::GlyphStore;
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
@@ -9,15 +9,16 @@ use std::iter::repeat;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
-struct FastGlyph {
-    ch: char,
-    bitmap: Vec<u8>,
-    edge_bitmap: Vec<u8>,
+#[derive(Clone)]
+pub struct FastGlyph {
+    pub ch: char,
+    pub bitmap: Vec<u8>,
+    pub edge_bitmap: Vec<u8>,
     // Boundary signatures for continuity (smooth mode)
-    top: Vec<u8>,
-    bottom: Vec<u8>,
-    left: Vec<u8>,
-    right: Vec<u8>,
+    pub top: Vec<u8>,
+    pub bottom: Vec<u8>,
+    pub left: Vec<u8>,
+    pub right: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -33,12 +34,12 @@ const POSITIONS: [(usize, usize, u32); 8] = [
 ];
 
 /// Cache for colour conversions: orig → (ansi_std, irc_std, ansi_ng, irc_ng)
-static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
+static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> = 
     Lazy::new(|| Mutex::new(HashMap::with_capacity(8_192)));
 
 /// Fast squared-distance search
 #[inline(always)]
-fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
+pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >>  8) & 0xFF) as i32;
     let pb = ((col >>  0) & 0xFF) as i32;
@@ -88,7 +89,8 @@ fn nearest_distinctly_chromatic_hex_colour(col: u32, palette: &[u32], tolerance:
 }
 
 /// Pack [R,G,B] → u32
-#[inline] fn make_rgb_u32(px: &[u8]) -> u32 {
+#[inline] 
+pub fn make_rgb_u32(px: &[u8]) -> u32 {
     if px.len() < 3 { return 0; }
     ((px[0] as u32) << 16) | ((px[1] as u32) << 8) | (px[2] as u32)
 }
@@ -127,7 +129,7 @@ pub struct AnsiPixelBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Colour { Index(u8), RGB([u8;3]) }
+pub enum Colour { Index(u8), RGB([u8;3]) }
 
 impl AnsiPixel {
     #[inline]
@@ -212,7 +214,7 @@ fn block_bitmap(src: &Vec<Vec<u32>>, glyphs: &GlyphStore, tolerance: u8) -> Vec<
     out
 }
 
-fn pick_colour(pixel: &AnsiPixel, r: Render, args: &Args) -> Colour {
+fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
     let distinct = !is_near_grayscale(pixel.orig, args.grayscale_tolerance);
     match r {
         Render::Ansi => {
@@ -227,7 +229,7 @@ fn pick_colour(pixel: &AnsiPixel, r: Render, args: &Args) -> Colour {
     }
 }
 
-fn emit_colourized(
+pub fn emit_colourized(
     out: &mut String,
     render: Render,
     fg: Colour,
@@ -325,37 +327,17 @@ impl From<&str> for RenderResult {
     }
 }
 
-/// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
-pub fn render_blocks(
-    image: &AnsiImage,
-    args: &Args,
-    render: Render,
-) -> RenderResult {
-    if args.smooth.is_some() {
-        return render_blocks_smooth(image, args, render);
-    }
-
-    if image.glyphs.glyphs.is_empty() {
-        return "Error: no glyphs available".into();
-    }
-
-    let bg_opt_rgb = args.bg_opt.as_ref().map(|s| unpack_rgb(parse_hex_color(s)));
-
-    let (gh, gw) = image.glyphs.metrics;
+pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> {
+    if glyphs.glyphs.is_empty() { return Vec::new(); }
+    let (gh, gw) = glyphs.metrics;
     let bp = gh * gw;
-
-    let glyphs: Vec<FastGlyph> = image
-        .glyphs
-        .glyphs
-        .iter()
-        .filter(|(ch, _)| image.glyphs.selected.contains(ch))
+    
+    glyphs.glyphs.iter()
+        .filter(|(ch, _)| glyphs.selected.contains(ch))
         .filter(|(ch, _)| {
             if *ch == ' ' && !args.blocks.is_empty() {
                 return args.blocks.iter().any(|block| {
-                    image
-                        .glyphs
-                        .groups
-                        .get(&block.to_lowercase())
+                    glyphs.groups.get(&block.to_lowercase())
                         .map_or(false, |chars| chars.contains(&' '))
                 });
             }
@@ -408,11 +390,29 @@ pub fn render_blocks(
                 top, bottom, left, right 
             }
         })
-        .collect();
+        .collect()
+}
+
+/// Render an image as block‐glyph ANSI/IRC art, using only the glyph groups in `args.blocks`.
+pub fn render_blocks(
+    image: &AnsiImage,
+    args: &RenderArgs,
+    render: Render,
+    glyphs: &[FastGlyph],
+) -> RenderResult {
+    if args.smooth.is_some() {
+        return render_blocks_smooth(image, args, render, glyphs);
+    }
 
     if glyphs.is_empty() {
-        return "Error: no glyphs selected".into();
+        return "Error: no glyphs available".into();
     }
+
+    let bg_opt_rgb = args.bg_opt.as_ref().map(|s| unpack_rgb(parse_hex_color(s)));
+
+    let (gh, gw) = image.glyphs.metrics;
+    let bp = gh * gw;
+
     let mut out = String::new();
     let mut total_error = 0u64;
     let mut total_pixels = 0u64;
@@ -445,6 +445,7 @@ pub fn render_blocks(
     };
 
     let mut grid: Vec<Vec<RenderedCell>> = Vec::new();
+    let mut working_pixels_buffer = Vec::with_capacity(bp); // Reuse buffer
 
     for (_row_idx, block_row) in image.block.iter().enumerate() {
         let mut grid_row = Vec::new();
@@ -462,20 +463,6 @@ pub fn render_blocks(
             let mut chosen_glyph_index = 0;
             let mut chosen_glyph_inverted = false;
             let mut best_scale_is_identity = true;
-            
-            // We need to keep track of the BEST match across all scales
-            // and the pixel data associated with it (for error calc, if we want strictness, 
-            // but error calc usually runs on UN-SCALED pixels to be fair? 
-            // Actually, if we distort the image to match, the error should probably be against the original?
-            // But dynamic scaling implies "maybe the image really meant this".
-            // Let's calculate error against the ORIGINAL pixels for consistency, 
-            // OR the transformed ones.
-            // PROMPT: "try to rescale local blocks to find better matching glyphs"
-            // Usually this means we want to find the glyph that LOOKS best.
-            // I will use the *transformed* pixels for matching, but for the final "Bitmap Error" metric
-            // used by the global optimizer, we should probably compare against the ORIGINAL pixels
-            // to avoid "cheating" by shrinking the block to a solid color.
-            // So: Match using Transformed. Report Error using Original.
             
             let mut best_match_data = (0usize, false, [0u8;3], [0u8;3], 0u8, 0u8); // (idx, inv, fg_rgb, bg_rgb, fg_idx, bg_idx)
 
@@ -495,11 +482,14 @@ pub fn render_blocks(
 
             for (sx, sy) in &scales {
                 // Generate pixels for this scale
-                let working_pixels = if *sx == 1.0 && *sy == 1.0 {
-                    original_pixels_rgb.clone()
+                if *sx == 1.0 && *sy == 1.0 {
+                    // Just reference original
+                    working_pixels_buffer.clear();
+                    working_pixels_buffer.extend_from_slice(&original_pixels_rgb);
                 } else {
-                    get_transformed_block_pixels(&original_pixels_rgb, gw, gh, *sx, *sy)
+                    get_transformed_block_pixels_into(&original_pixels_rgb, gw, gh, *sx, *sy, &mut working_pixels_buffer);
                 };
+                let working_pixels = &working_pixels_buffer;
 
                 // Get neighbors for continuity
                 let left_neighbor_data = if left_neighbor_glyph_idx.0 != usize::MAX {
@@ -513,27 +503,10 @@ pub fn render_blocks(
                 if render == Render::Ansi24 {
                     // --- Ansi24 Matching ---
                     if args.smooth.is_some() {
-                        // Recalculate edges for transformed pixels
-                        let threshold_sq = 60 * 60 * 3; 
-                        for y in 0..gh {
-                            for x in 0..gw {
-                                let i = y * gw + x;
-                                let p = &working_pixels[i];
-                                let mut is_edge = false;
-                                let check = |idx2: usize| -> bool {
-                                    let p2 = &working_pixels[idx2];
-                                    let dist = (p.r as i64 - p2.r as i64).pow(2) + 
-                                               (p.g as i64 - p2.g as i64).pow(2) + 
-                                               (p.b as i64 - p2.b as i64).pow(2);
-                                    dist as u64 > threshold_sq
-                                };
-                                if x > 0 && check(i - 1) { is_edge = true; }
-                                else if x + 1 < gw && check(i + 1) { is_edge = true; }
-                                else if y > 0 && check(i - gw) { is_edge = true; }
-                                else if y + 1 < gh && check(i + gw) { is_edge = true; }
-                                current_block_edges[i] = if is_edge { 1 } else { 0 };
-                            }
-                        }
+                         // (Same as before, reusing logic if needed, but smooth uses dedicated function now)
+                         // But if user passes --smooth in args, we redirect at start.
+                         // So this branch is for NON-smooth mode only (unless logic changes).
+                         // The top of function handles smooth redirect.
                     }
 
                     let mut best_cost = u64::MAX;
@@ -541,80 +514,70 @@ pub fn render_blocks(
                     let mut best_chosen_fg_color = [0u8; 3];
                     let mut best_chosen_bg_color = [0u8; 3];
                     let mut best_inv = false;
+                    
+                    // Optimization: Pre-calculate block sum
+                    let mut block_sum_r = 0u64;
+                    let mut block_sum_g = 0u64;
+                    let mut block_sum_b = 0u64;
+                    let mut block_sum_sq = 0u64;
+                    for p in working_pixels {
+                        block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
+                    }
 
                     for (gi, fglyph) in glyphs.iter().enumerate() {
-                        let mut sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
+                        let mut sum_ones_r = 0u64;
+                        let mut sum_ones_g = 0u64;
+                        let mut sum_ones_b = 0u64;
+                        let mut sum_ones_sq = 0u64;
                         let mut count_ones = 0u64;
-                        let mut sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
-                        let mut count_zeros = 0u64;
 
                         for i in 0..bp {
-                            let px = &working_pixels[i];
                             if fglyph.bitmap[i] == 1 {
-                                sum_ones.r += px.r; sum_ones.g += px.g; sum_ones.b += px.b; sum_ones.sq += px.sq;
+                                let px = &working_pixels[i];
+                                sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
                                 count_ones += 1;
-                            } else {
-                                sum_zeros.r += px.r; sum_zeros.g += px.g; sum_zeros.b += px.b; sum_zeros.sq += px.sq;
-                                count_zeros += 1;
                             }
                         }
+                        
+                        let count_zeros = bp as u64 - count_ones;
+                        
+                        // Derive Zeros
+                        let sum_zeros_r = block_sum_r - sum_ones_r;
+                        let sum_zeros_g = block_sum_g - sum_ones_g;
+                        let sum_zeros_b = block_sum_b - sum_ones_b;
+                        let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                        let avg_ones = if count_ones > 0 {
-                            [(sum_ones.r / count_ones) as u8, (sum_ones.g / count_ones) as u8, (sum_ones.b / count_ones) as u8]
-                        } else { [0,0,0] };
-                        let avg_zeros = if count_zeros > 0 {
-                            [(sum_zeros.r / count_zeros) as u8, (sum_zeros.g / count_zeros) as u8, (sum_zeros.b / count_zeros) as u8]
-                        } else { [0,0,0] };
-
+                                                let avg_ones = if count_ones > 0 {
+                                                    [((sum_ones_r / count_ones) as u8), ((sum_ones_g / count_ones) as u8), ((sum_ones_b / count_ones) as u8)]
+                                                } else { [0,0,0] };
+                                                let avg_zeros = if count_zeros > 0 {
+                                                    [((sum_zeros_r / count_ones) as u8), ((sum_zeros_g / count_zeros) as u8), ((sum_zeros_b / count_zeros) as u8)]
+                                                } else { [0,0,0] };
                         let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
                         let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
                         let penalty_per_miss = 1000u64;
                         
-                        let smooth_weight = args.smooth.unwrap_or(0.0).clamp(0.0, 1.0);
-                        let color_weight = 1.0 - smooth_weight;
-                        let continuity_scalar = 195_075.0;
-
                         // Cost Calculation (Normal)
                         let cost_no_invert = if use_coverage_heuristic {
-                             let term1 = sum_ones.sq;
-                             let term2 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                             let term1 = sum_ones_sq;
+                             let term2 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                              let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                              (term1 + term3).saturating_sub(term2) + (count_zeros * penalty_per_miss)
                         } else {
                             let target_bg = bg_ref.unwrap_or(avg_zeros);
-                            let t1_1 = sum_ones.sq;
-                            let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                            let t1_1 = sum_ones_sq;
+                            let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                             let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                             let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-                            let t1_0 = sum_zeros.sq;
-                            let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros.r + target_bg[1] as u64 * sum_zeros.g + target_bg[2] as u64 * sum_zeros.b);
+                            let t1_0 = sum_zeros_sq;
+                            let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
                             let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                             let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
                             c1 + c0
                         };
 
-                        let total_cost_no_invert = if smooth_weight > 0.0 {
-                            let mut hamming = 0u64;
-                            if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
-                                for y in 0..gh {
-                                    let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
-                                    if ln_bit != fglyph.left[y] { hamming += 1; }
-                                }
-                            }
-                            if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
-                                for x in 0..gw {
-                                    let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
-                                    if tn_bit != fglyph.top[x] { hamming += 1; }
-                                }
-                            }
-                            let continuity_cost = (hamming as f64 * continuity_scalar) as u64;
-                            (cost_no_invert as f64 * color_weight as f64 + continuity_cost as f64 * smooth_weight as f64) as u64
-                        } else {
-                            cost_no_invert
-                        };
-
-                        if total_cost_no_invert < best_cost {
-                            best_cost = total_cost_no_invert;
+                        if cost_no_invert < best_cost {
+                            best_cost = cost_no_invert;
                             best_glyph_idx = gi;
                             best_chosen_fg_color = avg_ones;
                             best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
@@ -623,45 +586,25 @@ pub fn render_blocks(
 
                         // Cost Calculation (Inverted)
                         let cost_invert = if use_coverage_heuristic {
-                             let t1_0 = sum_zeros.sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                             let t1_0 = sum_zeros_sq;
+                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                              let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                              (t1_0 + t3_0).saturating_sub(t2_0) + (count_ones * penalty_per_miss)
                         } else {
                              let target_bg = bg_ref.unwrap_or(avg_ones);
-                             let t1_0 = sum_zeros.sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                             let t1_0 = sum_zeros_sq;
+                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                              let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                              let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                             let t1_1 = sum_ones.sq;
-                             let t2_1 = 2 * (target_bg[0] as u64 * sum_ones.r + target_bg[1] as u64 * sum_ones.g + target_bg[2] as u64 * sum_ones.b);
+                             let t1_1 = sum_ones_sq;
+                             let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
                              let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                              let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
                              c_fg + c_bg
                         };
 
-                        let total_cost_invert = if smooth_weight > 0.0 {
-                            let mut hamming = 0u64;
-                            if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
-                                for y in 0..gh {
-                                    let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
-                                    if ln_bit != (1 - fglyph.left[y]) { hamming += 1; }
-                                }
-                            }
-                            if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
-                                for x in 0..gw {
-                                    let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
-                                    if tn_bit != (1 - fglyph.top[x]) { hamming += 1; }
-                                }
-                            }
-                            let continuity_cost = (hamming as f64 * continuity_scalar) as u64;
-                            (cost_invert as f64 * color_weight as f64 + continuity_cost as f64 * smooth_weight as f64) as u64
-                        } else {
-                            cost_invert
-                        };
-
-                        if total_cost_invert < best_cost {
-                            best_cost = total_cost_invert;
+                        if cost_invert < best_cost {
+                            best_cost = cost_invert;
                             best_glyph_idx = gi;
                             best_chosen_fg_color = avg_zeros;
                             best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
@@ -728,9 +671,7 @@ pub fn render_blocks(
                     } else { None };
 
                     let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
-                    let smooth_weight = args.smooth.unwrap_or(0.0).clamp(0.0, 1.0);
-                    let color_weight = 1.0 - smooth_weight;
-                    let edge_penalty_idx = 1000usize;
+                    let color_weight = 1.0; 
 
                     for (gi, fglyph) in glyphs.iter().enumerate() {
                         for &inv in &[false, true] {
@@ -765,35 +706,7 @@ pub fn render_blocks(
                                 (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective))
                             };
 
-                            let mut extra_cost = 0usize;
-                            if smooth_weight > 0.0 {
-                                if args.smooth.is_some() {
-                                    for i in 0..bp {
-                                        // current_block_edges calculated on original pixels? Or scaled?
-                                        // For indexed we don't have easy edge detection on indices.
-                                        // Skipping edge check for indexed dynamic scaling for now or use glyph edge?
-                                        // Using fglyph.edge_bitmap vs nothing.
-                                    }
-                                }
-                                let mut hamming = 0usize;
-                                if let Some((ln_glyph, ln_inv)) = left_neighbor_data {
-                                    for y in 0..gh {
-                                        let ln_bit = if ln_inv { 1 - ln_glyph.right[y] } else { ln_glyph.right[y] };
-                                        let curr_bit = if inv { 1 - fglyph.left[y] } else { fglyph.left[y] };
-                                        if ln_bit != curr_bit { hamming += 1; }
-                                    }
-                                }
-                                if let Some((tn_glyph, tn_inv)) = top_neighbor_data {
-                                    for x in 0..gw {
-                                        let tn_bit = if tn_inv { 1 - tn_glyph.bottom[x] } else { tn_glyph.bottom[x] };
-                                        let curr_bit = if inv { 1 - fglyph.top[x] } else { fglyph.top[x] };
-                                        if tn_bit != curr_bit { hamming += 1; }
-                                    }
-                                }
-                                extra_cost += hamming;
-                            }
-
-                            let cost = (cost_base as f32 * color_weight + extra_cost as f32 * smooth_weight) as usize;
+                            let cost = (cost_base as f32 * color_weight) as usize;
                             if cost < best.0 {
                                 best = (cost, gi, fgi as u8, bgi_std as u8, inv);
                                 if cost == 0 { break; }
@@ -849,8 +762,8 @@ pub fn render_blocks(
                     
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
                     
-                    if bit == 1 { if dist_bg < dist_fg { block_error += 1; } }
-                    else { if !args.fg_only { if dist_fg < dist_bg { block_error += 1; } } }
+                    if bit == 1 { if dist_bg < dist_fg { block_error += 1; } } // If pixel should be FG, but BG is closer
+                    else { if !args.fg_only { if dist_fg < dist_bg { block_error += 1; } } } // If pixel should be BG, but FG is closer
                 }
             } else {
                 let fg_idx = best_match_data.4 as usize;
@@ -865,8 +778,8 @@ pub fn render_blocks(
                     let col_idx = nearest_hex_colour_fast(rgb_u32, if render == Render::Ansi { &ANSI256 } else { &IRC99 }) as usize;
                     
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
-                    if bit == 1 { if col_idx != fg_idx { block_error += 1; } }
-                    else { if !args.fg_only { if col_idx != bg_idx { block_error += 1; } } }
+                    if bit == 1 { if col_idx != fg_idx { block_error += 1; } } // If pixel should be FG, but original is not that color
+                    else { if !args.fg_only { if col_idx != bg_idx { block_error += 1; } } } // If pixel should be BG, but original is not that color
                 }
             }
             total_error += block_error;
@@ -922,7 +835,7 @@ pub fn render_blocks(
 pub fn render_braille(
     image_luma: &AnsiImage,
     image_chroma: &AnsiImage,
-    args: &Args,
+    args: &RenderArgs,
     render: Render,
 ) -> RenderResult {
     let h = image_luma.bitmap.len();
@@ -1059,7 +972,10 @@ pub fn save_as_png(result: &RenderResult, glyphs: &GlyphStore, path_str: &str, m
     encoder.set_depth(png::BitDepth::Eight);
     
     if !metadata.is_empty() {
-        if let Err(e) = encoder.add_text_chunk("Comment".to_string(), metadata.to_string()) {
+        // Encode metadata as base64 to avoid ISO 8859-1 issues with unicode characters
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let encoded_metadata = STANDARD.encode(metadata);
+        if let Err(e) = encoder.add_text_chunk("Comment".to_string(), encoded_metadata) {
             eprintln!("Warning: Failed to add metadata chunk: {}", e);
         }
     }
@@ -1133,12 +1049,94 @@ pub fn calculate_smoothness(result: &RenderResult, glyphs: &GlyphStore) -> f64 {
     if total_pixels == 0 { 0.0 } else { total_variation / (total_pixels as f64) }
 }
 
+pub fn calculate_smoothness_relative(result: &RenderResult, glyphs: &GlyphStore) -> f64 {
+    let base_smoothness = calculate_smoothness(result, glyphs);
+    let total_glyphs = (result.grid.len() * result.grid.get(0).map(|r| r.len()).unwrap_or(0)) as f64;
+    // Penalize larger renders by multiplying smoothness by sqrt of glyph count?
+    // User asked for "relative to total number of glyphs". 
+    // If smoothness decreases as N increases (1/N behaviour), multiplying by N makes it constant-ish.
+    // Let's multiply by total_glyphs.
+    base_smoothness * total_glyphs
+}
+
+pub fn calculate_frequency_metric(result: &RenderResult, original: &AnsiImage, glyphs: &GlyphStore) -> f64 {
+    // "Prefers smooth error over sharp error"
+    // 1. Calculate Error Image (Pixel Diff)
+    // 2. Calculate Roughness (Smoothness metric) of Error Image
+    
+    if result.grid.is_empty() { return 0.0; }
+    let rows = result.grid.len();
+    let cols = result.grid[0].len();
+    let (gh, gw) = glyphs.metrics;
+    
+    let glyph_map: HashMap<char, &Vec<Vec<u8>>> = glyphs.glyphs.iter().map(|(c, b)| (*c, b)).collect();
+    let mut total_variation = 0.0;
+    let mut count = 0;
+
+    let get_pixel_diff = |r: usize, c: usize, y: usize, x: usize| -> Option<[i32; 3]> {
+        if r >= rows || c >= cols { return None; }
+        
+        // Rendered Pixel
+        let cell = &result.grid[r][c];
+        let rendered_rgb = if let Some(bitmap) = glyph_map.get(&cell.char) {
+            if y < bitmap.len() && x < bitmap[y].len() {
+                if bitmap[y][x] == 1 { cell.fg } else { cell.bg.unwrap_or([0,0,0]) }
+            } else { cell.bg.unwrap_or([0,0,0]) }
+        } else { cell.bg.unwrap_or([0,0,0]) };
+
+        // Original Pixel
+        let orig_y = r * gh + y;
+        let orig_x = c * gw + x;
+        if orig_y >= original.bitmap.len() || orig_x >= original.bitmap[0].len() { return None; }
+        
+        let orig_u32 = original.bitmap[orig_y][orig_x];
+        let orig_rgb = unpack_rgb(orig_u32);
+
+        Some([
+            rendered_rgb[0] as i32 - orig_rgb[0] as i32,
+            rendered_rgb[1] as i32 - orig_rgb[1] as i32,
+            rendered_rgb[2] as i32 - orig_rgb[2] as i32,
+        ])
+    };
+
+    for r in 0..rows {
+        for c in 0..cols {
+            for y in 0..gh {
+                for x in 0..gw {
+                    let d1 = match get_pixel_diff(r, c, y, x) { Some(d) => d, None => continue };
+                    
+                    // Compare Error pixel with right neighbor Error pixel
+                    // Right
+                    let (nr, nc, ny, nx) = if x + 1 < gw { (r, c, y, x + 1) } else { (r, c + 1, y, 0) };
+                    if let Some(d2) = get_pixel_diff(nr, nc, ny, nx) {
+                        // Squared difference of ERRORS
+                        // (E1 - E2)^2
+                        let dist = (d1[0] - d2[0]).pow(2) + (d1[1] - d2[1]).pow(2) + (d1[2] - d2[2]).pow(2);
+                        total_variation += dist as f64;
+                    }
+                    
+                    // Bottom
+                    let (nr, nc, ny, nx) = if y + 1 < gh { (r, c, y + 1, x) } else { (r + 1, c, 0, x) };
+                    if let Some(d2) = get_pixel_diff(nr, nc, ny, nx) {
+                        let dist = (d1[0] - d2[0]).pow(2) + (d1[1] - d2[1]).pow(2) + (d1[2] - d2[2]).pow(2);
+                        total_variation += dist as f64;
+                    }
+                    count += 1;
+                }
+            }
+        }
+    }
+    
+    if count == 0 { 0.0 } else { total_variation / count as f64 }
+}
+
 fn render_blocks_smooth(
     image: &AnsiImage,
-    args: &Args,
+    args: &RenderArgs,
     render: Render,
+    glyphs: &[FastGlyph],
 ) -> RenderResult {
-    if image.glyphs.glyphs.is_empty() {
+    if glyphs.is_empty() {
         return "Error: no glyphs available".into();
     }
 
@@ -1148,56 +1146,6 @@ fn render_blocks_smooth(
 
     // Pre-calculate blocks width/height
     let blocks_width = if !image.block.is_empty() { image.block[0].len() } else { 0 };
-
-    let glyphs: Vec<FastGlyph> = image
-        .glyphs
-        .glyphs
-        .iter()
-        .filter(|(ch, _)| image.glyphs.selected.contains(ch))
-        .filter(|(ch, _)| {
-            if *ch == ' ' && !args.blocks.is_empty() {
-                return args.blocks.iter().any(|block| {
-                    image
-                        .glyphs
-                        .groups
-                        .get(&block.to_lowercase())
-                        .map_or(false, |chars| chars.contains(&' '))
-                });
-            }
-            true
-        })
-        .map(|(ch, bmp)| {
-            let mut bitmap = Vec::with_capacity(bp);
-            for row in bmp {
-                bitmap.extend_from_slice(row);
-            }
-            
-            let mut top = Vec::with_capacity(gw);
-            let mut bottom = Vec::with_capacity(gw);
-            let mut left = Vec::with_capacity(gh);
-            let mut right = Vec::with_capacity(gh);
-
-            for x in 0..gw {
-                top.push(bitmap[x]);
-                bottom.push(bitmap[(gh - 1) * gw + x]);
-            }
-            for y in 0..gh {
-                left.push(bitmap[y * gw]);
-                right.push(bitmap[y * gw + (gw - 1)]);
-            }
-
-            FastGlyph { 
-                ch: *ch, 
-                bitmap, 
-                edge_bitmap: vec![],
-                top, bottom, left, right 
-            }
-        })
-        .collect();
-
-    if glyphs.is_empty() {
-        return "Error: no glyphs selected".into();
-    }
 
     let mut out = String::new();
     let mut total_error = 0u64;
@@ -1230,6 +1178,13 @@ fn render_blocks_smooth(
     };
 
     let mut grid: Vec<Vec<RenderedCell>> = Vec::new();
+    let mut working_pixels_buffer = Vec::with_capacity(bp);
+    
+    // Optimization: Reuse distance cache vectors
+    let mut cost_cache_fg_no_inv = vec![0u64; bp];
+    let mut cost_cache_bg_no_inv = vec![0u64; bp];
+    let mut cost_cache_fg_inv = vec![0u64; bp];
+    let mut cost_cache_bg_inv = vec![0u64; bp];
 
     for (row_idx, block_row) in image.block.iter().enumerate() {
         let mut grid_row = Vec::new();
@@ -1268,48 +1223,55 @@ fn render_blocks_smooth(
             let left_neighbor_bits = &left_neighbor_right_bits;
 
             for (sx, sy) in &scales {
-                let working_pixels = if *sx == 1.0 && *sy == 1.0 {
-                    original_pixels_rgb.clone()
+                if *sx == 1.0 && *sy == 1.0 {
+                    working_pixels_buffer.clear();
+                    working_pixels_buffer.extend_from_slice(&original_pixels_rgb);
                 } else {
-                    get_transformed_block_pixels(&original_pixels_rgb, gw, gh, *sx, *sy)
+                    get_transformed_block_pixels_into(&original_pixels_rgb, gw, gh, *sx, *sy, &mut working_pixels_buffer);
                 };
-                
-                // Note: We update 'current_block_pixels_rgb' because the loop body logic might use it?
-                // The loop body below uses 'current_block_pixels_rgb'. 
-                // Wait, in my previous replacement for render_blocks I used 'working_pixels'.
-                // Here I should update 'current_block_pixels_rgb' to be 'working_pixels' so I don't have to rewrite the whole inner body references.
-                current_block_pixels_rgb = working_pixels;
+                let current_block_pixels_rgb = &working_pixels_buffer;
 
                 // --- 1. Find Optimal Colors (Standard "Non-Smooth" Pass) ---
                 let mut std_best_cost = u64::MAX;
                 let mut locked_fg = [0u8; 3];
                 let mut locked_bg = [0u8; 3];
                 
-                let mut sum_ones;
-                let mut sum_zeros;
+                // Optimization: Pre-calculate block sum
+                let mut block_sum_r = 0u64;
+                let mut block_sum_g = 0u64;
+                let mut block_sum_b = 0u64;
+                let mut block_sum_sq = 0u64;
+                for p in current_block_pixels_rgb {
+                    block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
+                }
 
                 for fglyph in glyphs.iter() {
-                    sum_ones = PrePixel { r:0, g:0, b:0, sq:0 };
-                    sum_zeros = PrePixel { r:0, g:0, b:0, sq:0 };
+                    let mut sum_ones_r = 0u64;
+                    let mut sum_ones_g = 0u64;
+                    let mut sum_ones_b = 0u64;
+                    let mut sum_ones_sq = 0u64;
                     let mut count_ones = 0u64;
-                    let mut count_zeros = 0u64;
 
                     for i in 0..bp {
-                        let px = &current_block_pixels_rgb[i];
                         if fglyph.bitmap[i] == 1 {
-                            sum_ones.r += px.r; sum_ones.g += px.g; sum_ones.b += px.b; sum_ones.sq += px.sq;
+                            let px = &current_block_pixels_rgb[i];
+                            sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
                             count_ones += 1;
-                        } else {
-                            sum_zeros.r += px.r; sum_zeros.g += px.g; sum_zeros.b += px.b; sum_zeros.sq += px.sq;
-                            count_zeros += 1;
                         }
                     }
+                    let count_zeros = bp as u64 - count_ones;
+
+                    // Derive Zeros
+                    let sum_zeros_r = block_sum_r - sum_ones_r;
+                    let sum_zeros_g = block_sum_g - sum_ones_g;
+                    let sum_zeros_b = block_sum_b - sum_ones_b;
+                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
                     let avg_ones = if count_ones > 0 {
-                        [(sum_ones.r / count_ones) as u8, (sum_ones.g / count_ones) as u8, (sum_ones.b / count_ones) as u8]
+                        [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8]
                     } else { [0,0,0] };
                     let avg_zeros = if count_zeros > 0 {
-                        [(sum_zeros.r / count_zeros) as u8, (sum_zeros.g / count_zeros) as u8, (sum_zeros.b / count_zeros) as u8]
+                        [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8]
                     } else { [0,0,0] };
 
                     let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
@@ -1317,18 +1279,18 @@ fn render_blocks_smooth(
                     let penalty_per_miss = 1000u64;
 
                     let cost_no_inv = if use_coverage_heuristic {
-                         let term1 = sum_ones.sq;
-                         let term2 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                         let term1 = sum_ones_sq;
+                         let term2 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                          let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                          (term1 + term3).saturating_sub(term2) + (count_zeros * penalty_per_miss)
                     } else {
                         let target_bg = bg_ref.unwrap_or(avg_zeros);
-                        let t1_1 = sum_ones.sq;
-                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones.r + avg_ones[1] as u64 * sum_ones.g + avg_ones[2] as u64 * sum_ones.b);
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                         let cost_ones = (t1_1 + t3_1).saturating_sub(t2_1);
-                        let t1_0 = sum_zeros.sq;
-                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros.r + target_bg[1] as u64 * sum_zeros.g + target_bg[2] as u64 * sum_zeros.b);
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                         let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
                         cost_ones + cost_zeros
@@ -1341,18 +1303,18 @@ fn render_blocks_smooth(
                     }
 
                     let cost_inv = if use_coverage_heuristic {
-                         let t1_0 = sum_zeros.sq;
-                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                         let t1_0 = sum_zeros_sq;
+                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                          let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                          (t1_0 + t3_0).saturating_sub(t2_0) + (count_ones * penalty_per_miss)
                     } else {
                         let target_bg = bg_ref.unwrap_or(avg_ones);
-                        let t1_0 = sum_zeros.sq;
-                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros.r + avg_zeros[1] as u64 * sum_zeros.g + avg_zeros[2] as u64 * sum_zeros.b);
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                         let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                        let t1_1 = sum_ones.sq;
-                        let t2_1 = 2 * (target_bg[0] as u64 * sum_ones.r + target_bg[1] as u64 * sum_ones.g + target_bg[2] as u64 * sum_ones.b);
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                         let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
                         cost_fg + cost_bg
@@ -1384,21 +1346,48 @@ fn render_blocks_smooth(
                 let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
                 let penalty_per_miss = 1000u64;
 
+                // Pre-calculate per-pixel costs for FG and BG
+                // cost_cache_fg[i] = error if pixel i is FG
+                // cost_cache_bg[i] = error if pixel i is BG
+                for i in 0..bp {
+                    let px = &current_block_pixels_rgb[i];
+                    let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
+                    let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
+                    
+                    cost_cache_fg_no_inv[i] = dist_fg;
+                    if use_coverage_heuristic {
+                         cost_cache_bg_no_inv[i] = penalty_per_miss;
+                    } else {
+                         cost_cache_bg_no_inv[i] = dist_bg;
+                    }
+                    
+                    // For inverted case:
+                    // If glyph is inverted, then bitmap 0 -> FG, bitmap 1 -> BG.
+                    // But we iterate glyph bitmap. 
+                    // If inverted: 
+                    //   raw 1 -> visual 0 (BG) -> cost dist_bg
+                    //   raw 0 -> visual 1 (FG) -> cost dist_fg
+                    
+                    if use_coverage_heuristic {
+                         cost_cache_fg_inv[i] = penalty_per_miss; // visual BG is miss
+                    } else {
+                         cost_cache_fg_inv[i] = dist_bg;
+                    }
+                    cost_cache_bg_inv[i] = dist_fg;
+                }
+
                 for (gi, fglyph) in glyphs.iter().enumerate() {
                     let mut cost_internal_no_inv = 0u64;
                     let mut cost_internal_inv = 0u64;
                     
+                    // Optimized inner loop: No math, just lookups
                     for i in 0..bp {
-                        let px = &current_block_pixels_rgb[i];
-                        let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
-                        let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
-                        
                         if fglyph.bitmap[i] == 1 {
-                            cost_internal_no_inv += dist_fg;
-                            if use_coverage_heuristic { cost_internal_inv += penalty_per_miss; } else { cost_internal_inv += dist_bg; }
+                            cost_internal_no_inv += cost_cache_fg_no_inv[i];
+                            cost_internal_inv += cost_cache_fg_inv[i];
                         } else {
-                            if use_coverage_heuristic { cost_internal_no_inv += penalty_per_miss; } else { cost_internal_no_inv += dist_bg; }
-                            cost_internal_inv += dist_fg;
+                            cost_internal_no_inv += cost_cache_bg_no_inv[i];
+                            cost_internal_inv += cost_cache_bg_inv[i];
                         }
                     }
                     
@@ -1579,14 +1568,15 @@ fn render_blocks_smooth(
 }
 
 
-fn get_transformed_block_pixels(
+fn get_transformed_block_pixels_into(
     orig_pixels: &[PrePixel],
     gw: usize,
     gh: usize,
     scale_x: f32,
-    scale_y: f32
-) -> Vec<PrePixel> {
-    let mut out = Vec::with_capacity(gw * gh);
+    scale_y: f32,
+    out: &mut Vec<PrePixel>
+) {
+    out.clear();
     let cx = gw as f32 / 2.0;
     let cy = gh as f32 / 2.0;
 
@@ -1638,5 +1628,4 @@ fn get_transformed_block_pixels(
             });
         }
     }
-    out
 }

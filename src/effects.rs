@@ -4,7 +4,7 @@ use photon_rs::{colour_spaces, channels, conv, effects, filters, monochrome, noi
 use photon_rs::transform::{SamplingFilter, resize, crop, rotate, flipv, fliph};
 use photon_rs::PhotonImage;
 
-fn calculate_dimensions(args: &args::Args, glyphs: &GlyphStore, image: &PhotonImage) -> (u32, u32) {
+fn calculate_dimensions(args: &args::RenderArgs, glyphs: &GlyphStore, image: &PhotonImage) -> (u32, u32) {
     let orig_w = image.get_width()  as f32;
     let orig_h = image.get_height() as f32;
 
@@ -69,7 +69,7 @@ fn calculate_dimensions(args: &args::Args, glyphs: &GlyphStore, image: &PhotonIm
 }
 
 pub fn apply_effects(
-    args: &args::Args,
+    args: &args::RenderArgs,
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
 ) -> PhotonImage {
@@ -269,7 +269,7 @@ pub fn apply_effects(
     photon_image
 }
 
-pub fn apply_luma_effects(args: &args::Args, glyphs: &GlyphStore, mut photon_image: PhotonImage) -> PhotonImage {
+pub fn apply_luma_effects(args: &args::RenderArgs, glyphs: &GlyphStore, mut photon_image: PhotonImage) -> PhotonImage {
     let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
 
     if args.rotate != 0.00 {

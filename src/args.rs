@@ -1,4 +1,6 @@
 use clap::Parser;
+use std::str::FromStr;
+use std::fmt;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum SamplingFilter {
@@ -33,11 +35,124 @@ pub enum Render {
     Ansi24,
 }
 
+#[derive(Clone, Debug)]
+pub enum Param {
+    Fixed(f32),
+    Range { start: f32, end: f32, step: f32 },
+}
+
+impl FromStr for Param {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains(':') {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 3 {
+                return Err(format!("Invalid range format '{}'. Expected 'start:end:step' (e.g. '20:40:1')", s));
+            }
+            let start = parts[0].parse().map_err(|e| format!("Invalid start: {}", e))?;
+            let end = parts[1].parse().map_err(|e| format!("Invalid end: {}", e))?;
+            let step = parts[2].parse().map_err(|e| format!("Invalid step: {}", e))?;
+            if step == 0.0 { return Err("Step cannot be zero".into()); }
+            Ok(Param::Range { start, end, step })
+        } else {
+            let val = s.parse().map_err(|e| format!("Invalid number: {}", e))?;
+            Ok(Param::Fixed(val))
+        }
+    }
+}
+
+impl fmt::Display for Param {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Param::Fixed(v) => write!(f, "{}", v),
+            Param::Range { start, end, step } => write!(f, "{}:{}:{}", start, end, step),
+        }
+    }
+}
+
+// Struct used for actual rendering (all values resolved to f32)
+#[derive(Clone, Debug)]
+pub struct RenderArgs {
+    pub list_blocks: bool,
+    pub list_ranges: bool,
+    pub print_ranges: bool,
+    pub show_block_bitmaps: bool,
+    pub clear_cache: bool,
+    pub y_offset: i32,
+    pub image: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub scale: Option<(f32, f32)>,
+    pub crop: Option<(u32, u32, u32, u32)>,
+    pub filter: SamplingFilter,
+    pub rotate: f32,
+    pub fliph: bool,
+    pub flipv: bool,
+    pub render: Render,
+    pub braille: bool,
+    pub blocks: Vec<String>,
+    pub include_range: Vec<String>,
+    pub include: Option<String>,
+    pub exclude_range: Vec<String>,
+    pub exclude: Vec<char>,
+    pub font: Vec<String>,
+    pub font_size: u32,
+    pub check_char: Option<char>,
+    pub fg_only: bool,
+    pub bg_opt: Option<String>,
+    pub grayscale_tolerance: u8,
+    
+    // Numeric params
+    pub brightness: f32,
+    pub contrast: f32,
+    pub gamma: f32,
+    pub saturation: f32,
+    pub hue: f32,
+    pub invert: bool,
+    pub dither: u32,
+    pub luma_brightness: f32,
+    pub luma_contrast: f32,
+    pub luma_gamma: f32,
+    pub luma_saturation: f32,
+    pub luma_invert: bool,
+    pub colorspace: ColourSpace,
+    pub encoding: Encoding,
+    pub grayscale: bool,
+    pub nograyscale: bool,
+    pub pixelize: i32,
+    pub box_blur: bool,
+    pub gaussian_blur: i32,
+    pub luma_blur: i32,
+    pub oil: Option<String>,
+    pub halftone: bool,
+    pub sepia: bool,
+    pub normalize: bool,
+    pub noise: bool,
+    pub emboss: bool,
+    pub identity: bool,
+    pub laplace: bool,
+    pub noise_reduction: bool,
+    pub sharpen: bool,
+    pub cali: bool,
+    pub dramatic: bool,
+    pub firenze: bool,
+    pub golden: bool,
+    pub lix: bool,
+    pub lofi: bool,
+    pub neue: bool,
+    pub obsidian: bool,
+    pub pastel_pink: bool,
+    pub ryo: bool,
+    pub frosted_glass: bool,
+    pub solarize: bool,
+    pub edge_detection: bool,
+    pub smooth: Option<f32>,
+    pub fuzz: f32,
+}
+
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-
-    
     /// list available blocks
     #[arg(long, default_value_t = false)]
     pub list_blocks: bool,
@@ -68,27 +183,48 @@ pub struct Args {
 
     /// output image width in columns
     #[arg(short = 'w', long)]
-    pub width: Option<u32>,
+    pub width: Option<Param>,
 
     /// output image height in rows
     #[arg(short = 'H', long)]
-    pub height: Option<u32>,
+    pub height: Option<Param>,
 
     /// scaling factors (x:y, e.g., "2:2")
     #[arg(long, value_parser = parse_xy_pair)]
     pub scale: Option<(f32, f32)>,
 
+    /// scale x (or start:end:step)
+    #[arg(long)]
+    pub scalex: Option<Param>,
+
+    /// scale y (or start:end:step)
+    #[arg(long)]
+    pub scaley: Option<Param>,
+
     /// crop image (x1,y1,x2,y2)
     #[arg(long, value_parser = parse_crop_coordinates)]
     pub crop: Option<(u32, u32, u32, u32)>,
+
+    /// crop x1
+    #[arg(long)]
+    pub crop_x1: Option<Param>,
+    /// crop y1
+    #[arg(long)]
+    pub crop_y1: Option<Param>,
+    /// crop x2
+    #[arg(long)]
+    pub crop_x2: Option<Param>,
+    /// crop y2
+    #[arg(long)]
+    pub crop_y2: Option<Param>,
 
     /// sampling filter
     #[arg(long, value_enum, default_value_t = SamplingFilter::Nearest)]
     pub filter: SamplingFilter,
 
     /// rotate degrees
-    #[arg(long, default_value_t = 0.00)]
-    pub rotate: f32,
+    #[arg(long, default_value = "0.0")]
+    pub rotate: Param,
 
     /// flip horizontal
     #[arg(long, default_value_t = false)]
@@ -151,8 +287,8 @@ pub struct Args {
     pub font: Vec<String>,
 
     /// font size (height in pixels)
-    #[arg(long, default_value_t = 24)]
-    pub font_size: u32,
+    #[arg(long, default_value = "24")]
+    pub font_size: Param,
 
     /// check specific character details (debug)
     #[arg(long)]
@@ -167,28 +303,29 @@ pub struct Args {
     pub bg_opt: Option<String>,
 
     /// tolerance for considering a colour grayscale (0-255)
-    #[arg(long, default_value_t = 16)]
-    pub grayscale_tolerance: u8,
+    #[arg(long, default_value = "16")]
+    pub grayscale_tolerance: Param,
 
-    /// adjust brightness (0 = no change)
-    #[arg(short = 'b', long, default_value_t = 0.0, allow_hyphen_values = true)]    
-    pub brightness: f32,
+    // Iteratable params
+    /// adjust brightness (0 = no change, or start:end:step)
+    #[arg(short = 'b', long, default_value = "0.0", allow_hyphen_values = true)]    
+    pub brightness: Param,
 
-    /// adjust contrast (0 = no change)
-    #[arg(short = 'c', long, default_value_t = 0.0, allow_hyphen_values = true)]
-    pub contrast: f32,
+    /// adjust contrast (0 = no change, or start:end:step)
+    #[arg(short = 'c', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub contrast: Param,
 
-    /// adjust gamma (0 to 255)
-    #[arg(short = 'g', long, default_value_t = 0.0, allow_hyphen_values = true)]
-    pub gamma: f32,
+    /// adjust gamma (0 to 255, or start:end:step)
+    #[arg(short = 'g', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub gamma: Param,
 
-    /// adjust saturation (0 = no change)
-    #[arg(short = 's', long, default_value_t = 0.0, allow_hyphen_values = true)]
-    pub saturation: f32,
+    /// adjust saturation (0 = no change, or start:end:step)
+    #[arg(short = 's', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub saturation: Param,
 
-    /// rotate hue (0 to 360)
-    #[arg(short = 'u', long, default_value_t = 0.0)]
-    pub hue: f32,
+    /// rotate hue (0 to 360, or start:end:step)
+    #[arg(short = 'u', long, default_value = "0.0")]
+    pub hue: Param,
 
     /// colors are inverted, opposite on the color wheel
     #[arg(short = 'i', long, default_value_t = false)]
@@ -199,20 +336,20 @@ pub struct Args {
     pub dither: u32,
 
     /// adjust luma brightness (braille only)
-    #[arg(short = 'B', long, default_value_t = 0.0, allow_hyphen_values = true, requires = "braille")]
-    pub luma_brightness: f32,
+    #[arg(short = 'B', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_brightness: Param,
 
     /// adjust luma contrast (braille only)
-    #[arg(short = 'C', long, default_value_t = 0.0, allow_hyphen_values = true, requires = "braille")]
-    pub luma_contrast: f32,
+    #[arg(short = 'C', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_contrast: Param,
 
     /// adjust luma gamma (braille only)
-    #[arg(short = 'G', long, default_value_t = 0.0, allow_hyphen_values = true, requires = "braille")]
-    pub luma_gamma: f32,
+    #[arg(short = 'G', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_gamma: Param,
 
     /// adjust luma saturation (braille only)
-    #[arg(short = 'S', long, default_value_t = 0.0, allow_hyphen_values = true, requires = "braille")]
-    pub luma_saturation: f32,
+    #[arg(short = 'S', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_saturation: Param,
 
     /// luminance is inverted
     #[arg(short = 'I', long, default_value_t = false, requires = "braille")]
@@ -235,20 +372,20 @@ pub struct Args {
     pub nograyscale: bool,
 
     /// pixelize pixel size
-    #[arg(long, default_value_t = 0)]
-    pub pixelize: i32,
+    #[arg(long, default_value = "0")]
+    pub pixelize: Param,
 
     /// simple average of all the neighboring pixels surrounding a given pixel
     #[arg(long="boxblur", default_value_t = false)]
     pub box_blur: bool,
 
     /// gaussian blur radius
-    #[arg(long="gaussianblur", default_value_t = 0)]
-    pub gaussian_blur: i32,
+    #[arg(long="gaussianblur", default_value = "0")]
+    pub gaussian_blur: Param,
 
     /// gaussian blur radius (only luminance)
-    #[arg(long="lumablur", default_value_t = 0)]
-    pub luma_blur: i32,
+    #[arg(long="lumablur", default_value = "0")]
+    pub luma_blur: Param,
 
     /// oil filter ("[radius],[intensity]")
     #[arg(long)]
@@ -363,8 +500,8 @@ pub struct Args {
     pub axis: OptimizeAxis,
 
     /// dynamic scaling aggressiveness (0.0 to 0.5)
-    #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value_t = 0.0)]
-    pub fuzz: f32,
+    #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value = "0.0")]
+    pub fuzz: Param,
 
     /// save output as PNG (path or directory)
     #[arg(long)]
@@ -373,6 +510,14 @@ pub struct Args {
     /// automatically find optimal geometric parameters (2-pass search)
     #[arg(long, default_value_t = false)]
     pub auto: bool,
+
+    /// use GPU for rendering (experimental)
+    #[arg(long)]
+    pub gpu: bool,
+
+    /// save all candidate images to this directory
+    #[arg(long)]
+    pub save_candidates: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
@@ -389,6 +534,8 @@ pub enum OptimizationMode {
     LongestLine,
     BitmapError,
     Smoothness,
+    Relative,
+    Frequency,
 }
 
 pub fn parse_args() -> Args {
