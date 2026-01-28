@@ -191,7 +191,19 @@ struct Task {
 }
 
 fn args_to_render_args(args: &Args) -> RenderArgs {
-    let (sx, sy) = args.scale.unwrap_or((1.0, 1.0));
+    let (mut sx, mut sy) = args.scale.unwrap_or((1.0, 1.0));
+    if let Some(p) = &args.scalex { sx = param_base(p); }
+    if let Some(p) = &args.scaley { sy = param_base(p); }
+
+    let mut crop = args.crop;
+    if args.crop_x1.is_some() || args.crop_y1.is_some() || args.crop_x2.is_some() || args.crop_y2.is_some() {
+        let (mut x1, mut y1, mut x2, mut y2) = crop.unwrap_or((0, 0, 0, 0));
+        if let Some(p) = &args.crop_x1 { x1 = param_base(p) as u32; }
+        if let Some(p) = &args.crop_y1 { y1 = param_base(p) as u32; }
+        if let Some(p) = &args.crop_x2 { x2 = param_base(p) as u32; }
+        if let Some(p) = &args.crop_y2 { y2 = param_base(p) as u32; }
+        crop = Some((x1, y1, x2, y2));
+    }
     
     RenderArgs {
         list_blocks: args.list_blocks,
@@ -204,7 +216,7 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         width: args.width.as_ref().map(|p| param_base(p) as u32),
         height: args.height.as_ref().map(|p| param_base(p) as u32),
         scale: Some((sx, sy)),
-        crop: args.crop,
+        crop,
         filter: args.filter.clone(),
         rotate: param_base(&args.rotate),
         fliph: args.fliph,
