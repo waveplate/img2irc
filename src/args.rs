@@ -487,6 +487,10 @@ pub struct Args {
     #[arg(long="opt", value_enum)]
     pub opt: Option<OptimizationMode>,
 
+    /// axis/parameter to optimize
+    #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
+    pub axis: OptimizeAxis,
+
     /// search range for optimization in percent (e.g. 10 = +/- 10%)
     #[arg(long, default_value_t = 0.0)]
     pub range: f32,
@@ -494,10 +498,6 @@ pub struct Args {
     /// step size for optimization in percent
     #[arg(long, default_value_t = 1.0)]
     pub step: f32,
-
-    /// axis/parameter to optimize
-    #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
-    pub axis: OptimizeAxis,
 
     /// dynamic scaling aggressiveness (0.0 to 0.5)
     #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value = "0.0")]

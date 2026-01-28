@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 use crate::draw::{FastGlyph, RenderResult, RenderedCell, AnsiImage};
-use crate::args::{Args, RenderArgs, Render};
+use crate::args::{RenderArgs, Render};
 use crate::palette::{ANSI256, IRC99};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
@@ -24,8 +24,6 @@ struct Globals {
     block_height: u32,
     num_glyphs: u32,
     mode: u32, // 0=ANSI, 1=IRC, 2=ANSI24
-    _pad0: u32,
-    _pad1: u32,
 }
 
 #[repr(C)]
@@ -131,6 +129,17 @@ impl GpuContext {
                     },
                     count: None,
                 },
+                // Palette
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -165,7 +174,6 @@ impl GpuContext {
         _args: &RenderArgs,
         render_mode: Render,
     ) -> RenderResult {
-        // Prepare Data
         let (gh, gw) = image.glyphs.metrics;
         let img_width = image.bitmap[0].len() as u32;
         let img_height = image.bitmap.len() as u32;
@@ -183,8 +191,6 @@ impl GpuContext {
                 Render::Irc => 1,
                 Render::Ansi24 => 2,
             },
-            _pad0: 0,
-            _pad1: 0,
         };
 
         // Flatten Image
@@ -208,11 +214,15 @@ impl GpuContext {
             });
             gpu_glyph_bitmaps.extend_from_slice(&g.bitmap);
         }
-        
-        // Pad to multiple of 4 bytes
         while gpu_glyph_bitmaps.len() % 4 != 0 {
             gpu_glyph_bitmaps.push(0);
         }
+
+        // Palette
+        let palette = match render_mode {
+            Render::Irc => &IRC99[..],
+            _ => &ANSI256[..],
+        };
 
         // Create Buffers
         let globals_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -254,6 +264,12 @@ impl GpuContext {
             mapped_at_creation: false,
         });
 
+        let palette_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Palette Buffer"),
+            contents: bytemuck::cast_slice(palette),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
         // Bind Group
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Bind Group"),
@@ -264,6 +280,7 @@ impl GpuContext {
                 wgpu::BindGroupEntry { binding: 2, resource: glyph_info_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 3, resource: glyph_bitmap_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 4, resource: output_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: palette_buffer.as_entire_binding() },
             ],
         });
 
@@ -277,7 +294,6 @@ impl GpuContext {
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
             
-            // Dispatch
             let x_groups = (block_cols + 15) / 16;
             let y_groups = (block_rows + 15) / 16;
             cpass.dispatch_workgroups(x_groups, y_groups, 1);

@@ -145,8 +145,8 @@ async fn main() {
                 let final_fuzz = final_render_args.fuzz;
                 
                 // Print detailed info about what changed
-                eprintln!("\nOptimization complete. Best metric: {:.4}", best_metric);
-                eprintln!("Scale: {:.3}x{:.3}, Fuzz: {:.3}", final_sx, final_sy, final_fuzz);
+                eprintln!("\nOptimization complete. Best metric: {{:.4}}", best_metric);
+                eprintln!("Scale: {{:.3}}x{{:.3}}, Fuzz: {{:.3}}", final_sx, final_sy, final_fuzz);
                 
                 // Re-render best result on CPU
                 let final_res = render_output(&final_render_args, &glyph_store, image, &glyphs, None);
@@ -426,7 +426,7 @@ fn apply_task_to_args(args: &mut RenderArgs, task: &Task) {
 fn task_info_string(task: &Task) -> String {
     let mut s = String::new();
     for (field, val) in &task.overrides {
-        s.push_str(&format!(" {:?}:{:.3}", field, val));
+        s.push_str(&format!(" {:?}:{{:.3}}", field, val));
     }
     s
 }
@@ -482,13 +482,13 @@ fn process_task(
             *best_val = metric;
             // Clear current line before printing new best
             eprint!("\x1b[2K\r");
-            eprintln!("New best! Metric {:.4} ({})", metric, info);
+            eprintln!("New best! Metric {{:.4}} ({})", metric, info);
 
             // Save candidate ONLY if it's a new best
             if let Some(save_dir) = &raw_cli_args.save_candidates {
                 let _ = std::fs::create_dir_all(save_dir);
                 let safe_info = info.replace(" ", "_").replace(":", "-");
-                let fname = format!("{}/metric_{:.4}_{}.png", save_dir, metric, safe_info);
+                let fname = format!("{{}}/metric_{{:.4}}_{{}}.png", save_dir, metric, safe_info);
                 let metadata = format!("Metric: {}", metric);
                 let _ = draw::save_as_png(&result, glyph_store, &fname, &metadata);
             }
@@ -496,7 +496,7 @@ fn process_task(
     }
 
     // Detailed logging every iteration as requested
-    eprint!("\r[{}/{}] Metric {:.4} ({})", p, total_steps, metric, info);
+    eprint!("\r[{{}}/{}] Metric {{:.4}} ({})", p, total_steps, metric, info);
     let _ = std::io::stderr().flush();
 
     (metric, result, loop_args)
@@ -554,7 +554,7 @@ fn write_encoded_output(content: &str, encoding: &Encoding) {
 fn write_encoded_to<W: Write>(content: &str, encoding: &Encoding, handle: &mut W) -> std::io::Result<()> {
     match encoding {
         Encoding::Utf8 => {
-            writeln!(handle, "{}", content)?;
+            writeln!(handle, "{{}}", content)?;
         }
         Encoding::Utf16 => {
             let bom = 0xFEFFu16;
