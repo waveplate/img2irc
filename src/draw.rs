@@ -14,11 +14,11 @@ pub struct FastGlyph {
     pub ch: char,
     pub bitmap: Vec<u8>,
     pub edge_bitmap: Vec<u8>,
-    // Boundary signatures for continuity (smooth mode)
     pub top: Vec<u8>,
     pub bottom: Vec<u8>,
     pub left: Vec<u8>,
     pub right: Vec<u8>,
+    pub coverage: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -348,46 +348,28 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
             for row in bmp {
                 bitmap.extend_from_slice(row);
             }
-            
-            let mut edge_bitmap = vec![0u8; bp];
-            if args.smooth.is_some() {
-                for y in 0..gh {
-                    for x in 0..gw {
-                        let i = y * gw + x;
-                        let v = bitmap[i];
-                        let mut is_edge = false;
-                        if x > 0 && bitmap[i - 1] != v { is_edge = true; }
-                        else if x + 1 < gw && bitmap[i + 1] != v { is_edge = true; }
-                        else if y > 0 && bitmap[i - gw] != v { is_edge = true; }
-                        else if y + 1 < gh && bitmap[i + gw] != v { is_edge = true; }
-                        
-                        if is_edge { edge_bitmap[i] = 1; }
-                    }
-                }
-            }
-            
-            // Extract boundaries for continuity check
-            let mut top = Vec::with_capacity(gw);
-            let mut bottom = Vec::with_capacity(gw);
+            let edge_bitmap = Vec::new();
+            let top = bitmap[0..gw].to_vec();
+            let bottom = bitmap[bp - gw..bp].to_vec();
             let mut left = Vec::with_capacity(gh);
             let mut right = Vec::with_capacity(gh);
-
-            // Top and Bottom rows
-            for x in 0..gw {
-                top.push(bitmap[x]);
-                bottom.push(bitmap[(gh - 1) * gw + x]);
-            }
-            // Left and Right columns
             for y in 0..gh {
                 left.push(bitmap[y * gw]);
                 right.push(bitmap[y * gw + (gw - 1)]);
             }
 
-            FastGlyph { 
-                ch: *ch, 
-                bitmap, 
+            let ones = bitmap.iter().filter(|&&b| b == 1).count();
+            let coverage = ones as f32 / bitmap.len() as f32;
+
+            FastGlyph {
+                ch: *ch,
+                bitmap,
                 edge_bitmap,
-                top, bottom, left, right 
+                top,
+                bottom,
+                left,
+                right,
+                coverage,
             }
         })
         .collect()
@@ -568,7 +550,11 @@ pub fn render_blocks(
                         let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                         let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                        let cost_no_invert = c1 + c0;
+                        let mut cost_no_invert = c1 + c0;
+                        if args.fg_only && args.bg_opt.is_none() {
+                            let coverage = count_ones as f64 / bp as f64;
+                            cost_no_invert = (cost_no_invert as f64 * (2.0 - coverage)) as u64;
+                        }
 
                         if cost_no_invert < best_cost {
                             best_cost = cost_no_invert;
@@ -594,7 +580,12 @@ pub fn render_blocks(
                         let t2_1 = 2 * (target_bg_inv[0] as u64 * sum_ones_r + target_bg_inv[1] as u64 * sum_ones_g + target_bg_inv[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64 + target_bg_inv[1] as u64 * target_bg_inv[1] as u64 + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
                         let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                        let cost_invert = c_fg + c_bg;
+                        let mut cost_invert = c_fg + c_bg;
+
+                        if args.fg_only && args.bg_opt.is_none() {
+                            let coverage = count_zeros as f64 / bp as f64; // Inverted coverage is count_zeros
+                            cost_invert = (cost_invert as f64 * (2.0 - coverage)) as u64;
+                        }
 
                         if cost_invert < best_cost {
                             best_cost = cost_invert;
@@ -691,7 +682,13 @@ pub fn render_blocks(
                             let t3_0 = count_zeros * bg_p.sq;
                             let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
 
-                            let cost = c1 + c0;
+                            let mut cost = c1 + c0;
+
+                            // Coverage heuristic: if fg_only and no fixed bg, strongly penalize low coverage
+                            if args.fg_only && args.bg_opt.is_none() {
+                                let coverage = count_ones as f64 / bp as f64;
+                                cost = (cost as f64 * (2.0 - coverage)) as u64;
+                            }
 
                             if cost < best_overall_cost {
                                 best_overall_cost = cost;
@@ -1268,7 +1265,11 @@ fn render_blocks_smooth(
                     let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
                     let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
                     let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
-                    let cost_no_inv = cost_ones + cost_zeros;
+                    let mut cost_no_inv = cost_ones + cost_zeros;
+                    if args.fg_only && args.bg_opt.is_none() {
+                        let coverage = count_ones as f64 / bp as f64;
+                        cost_no_inv = (cost_no_inv as f64 * (2.0 - coverage)) as u64;
+                    }
 
                     if cost_no_inv < std_best_cost {
                         std_best_cost = cost_no_inv;
@@ -1292,7 +1293,12 @@ fn render_blocks_smooth(
                     let t2_1 = 2 * (target_bg_inv[0] as u64 * sum_ones_r + target_bg_inv[1] as u64 * sum_ones_g + target_bg_inv[2] as u64 * sum_ones_b);
                     let t3_1 = count_ones * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64 + target_bg_inv[1] as u64 * target_bg_inv[1] as u64 + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
                     let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                    let cost_inv = cost_fg + cost_bg;
+                    let mut cost_inv = cost_fg + cost_bg;
+
+                    if args.fg_only && args.bg_opt.is_none() {
+                        let coverage = count_zeros as f64 / bp as f64;
+                        cost_inv = (cost_inv as f64 * (2.0 - coverage)) as u64;
+                    }
 
                     if cost_inv < std_best_cost {
                         std_best_cost = cost_inv;
@@ -1365,8 +1371,13 @@ fn render_blocks_smooth(
                         }
                     }
                     let boundary_val_no_inv = boundary_cost_no_inv as f64 * continuity_scalar;
-                    let total_no_inv = cost_internal_no_inv as f64 + (boundary_val_no_inv * smooth_weight as f64);
+                    let mut total_no_inv = cost_internal_no_inv as f64 + (boundary_val_no_inv * smooth_weight as f64);
                     
+                    if args.fg_only && args.bg_opt.is_none() {
+                        let coverage = fglyph.coverage as f64; // Use pre-calculated coverage
+                        total_no_inv = total_no_inv * (2.0 - coverage);
+                    }
+
                     if total_no_inv < (best_cost as f64) {
                         best_cost = total_no_inv as u64;
                         best_glyph_idx = gi;
@@ -1383,8 +1394,13 @@ fn render_blocks_smooth(
                         }
                     }
                     let boundary_val_inv = boundary_cost_inv as f64 * continuity_scalar;
-                    let total_inv = cost_internal_inv as f64 + (boundary_val_inv * smooth_weight as f64);
+                    let mut total_inv = cost_internal_inv as f64 + (boundary_val_inv * smooth_weight as f64);
                     
+                    if args.fg_only && args.bg_opt.is_none() {
+                        let coverage = 1.0 - fglyph.coverage as f64; // Inverted coverage
+                        total_inv = total_inv * (2.0 - coverage);
+                    }
+
                     if total_inv < (best_cost as f64) {
                         best_cost = total_inv as u64;
                         best_glyph_idx = gi;
