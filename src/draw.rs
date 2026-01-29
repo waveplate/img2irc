@@ -488,6 +488,79 @@ fn render_blocks_connected(
         }
     }
 
+    // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
+    // Smooth colors with neighbors to prevent "streaks" caused by slight variations in best-fit averages.
+    let smoothing_threshold_sq = 40u64 * 40u64; // Tolerance ~40/255
+
+    // Helper for color distance (duplicate)
+    let dist_sq_local = |a: [u8;3], b: [u8;3]| -> u64 {
+        let dr = (a[0] as i64 - b[0] as i64);
+        let dg = (a[1] as i64 - b[1] as i64);
+        let db = (a[2] as i64 - b[2] as i64);
+        (dr*dr + dg*dg + db*db) as u64
+    };
+
+    for y in 0..grid_h {
+        for x in 0..grid_w {
+            let idx = y * grid_w + x;
+            
+            let mut new_fg = grid_data[idx].fg;
+            let mut new_bg = grid_data[idx].bg;
+            let mut changed = false;
+
+            // Blend with Left
+            if x > 0 {
+                let left_idx = idx - 1;
+                if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
+                    new_fg = [
+                        ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
+                        ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
+                        ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8
+                    ];
+                    changed = true;
+                }
+                if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
+                    new_bg = [
+                        ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
+                        ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
+                        ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8
+                    ];
+                    changed = true;
+                }
+            }
+            
+            // Blend with Top
+             if y > 0 {
+                let top_idx = idx - grid_w;
+                if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
+                    new_fg = [
+                        ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
+                        ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
+                        ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8
+                    ];
+                    changed = true;
+                }
+                if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
+                    new_bg = [
+                        ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
+                        ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
+                        ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8
+                    ];
+                    changed = true;
+                }
+            }
+
+            if changed {
+                grid_data[idx].fg = new_fg;
+                grid_data[idx].bg = new_bg;
+                if render == Render::Ansi24 {
+                    grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
+                    if !args.fg_only { grid_data[idx].bg_col = Some(Colour::RGB(new_bg)); }
+                }
+            }
+        }
+    }
+
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     // We alternate passes: TL->BR, then BR->TL.
     let iterations = 4;
