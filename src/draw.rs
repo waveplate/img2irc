@@ -410,14 +410,21 @@ fn render_blocks_connected(
                 }
             }
             
-            // Calculate Quantized Colors (High / Low)
-            // Calculate Quantized Colors (High / Low)
+            // Calculate Quantized Colors (High / Low) with Safety Defaults
             let mut raw_c_high = if high_count > 0 {
                 [(high_sum_r / high_count) as u8, (high_sum_g / high_count) as u8, (high_sum_b / high_count) as u8]
-            } else { [255, 255, 255] };
+            } else { [0, 0, 0] }; // Placeholder, will fix below
             let mut raw_c_low = if low_count > 0 {
                 [(low_sum_r / low_count) as u8, (low_sum_g / low_count) as u8, (low_sum_b / low_count) as u8]
             } else { [0, 0, 0] };
+            
+            if high_count == 0 && low_count == 0 {
+                 raw_c_high = [255, 255, 255]; raw_c_low = [0, 0, 0];
+            } else if high_count == 0 {
+                 raw_c_high = raw_c_low;
+            } else if low_count == 0 {
+                 raw_c_low = raw_c_high;
+            }
 
             // Sticky Color Logic: Lock to previous block if similar enough
             let dist_sq = |a: [u8;3], b: [u8;3]| -> u32 {
@@ -460,104 +467,73 @@ fn render_blocks_connected(
                 block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
             }
 
-            // 2. Phase 2: The "Filter" (Edge Matching)
-            // We find the Minimum Edge Error first.
-            let mut min_edge_error = usize::MAX;
-            let mut candidates: Vec<(usize, bool, usize)> = Vec::new(); // (idx, inv, edge_err)
-
-            for (gi, fglyph) in glyphs.iter().enumerate() {
-                for inv in [false, true] {
-                    // Calculate Edge Error
-                    let mut edge_error = 0usize;
-                    
-                    // Top
-                    for i in 0..gw {
-                        let g_bit = fglyph.top[i] ^ (inv as u8);
-                        if g_bit != src_top[i] { edge_error += 1; }
-                    }
-                    // Bottom
-                    for i in 0..gw {
-                        let g_bit = fglyph.bottom[i] ^ (inv as u8);
-                        if g_bit != src_bottom[i] { edge_error += 1; }
-                    }
-                    // Left
-                    for i in 0..gh {
-                        let g_bit = fglyph.left[i] ^ (inv as u8);
-                        let target = if !left_neighbor_edge.is_empty() { left_neighbor_edge[i] } else { src_left[i] };
-                        if g_bit != target { edge_error += 1; }
-                    }
-                    // Right
-                    for i in 0..gh {
-                        let g_bit = fglyph.right[i] ^ (inv as u8);
-                        if g_bit != src_right[i] { edge_error += 1; }
-                    }
-
-                    if edge_error < min_edge_error {
-                        min_edge_error = edge_error;
-                        candidates.clear();
-                        candidates.push((gi, inv, edge_error));
-                    } else if edge_error == min_edge_error {
-                        candidates.push((gi, inv, edge_error));
-                    }
-                }
-            }
-
-            // 3. Phase 3: The "Selection" (Visual Matching on Candidates)
-            let mut best_cost = f64::MAX;
+            // Unified Search (Edge + Color)
+            let mut best_cost = u64::MAX;
             let mut final_glyph = ' ';
             let mut final_fg = Colour::Index(0);
             let mut final_bg: Option<Colour> = None;
             let mut chosen_glyph_index = 0;
             let mut chosen_glyph_inverted = false;
-            // Best colors are now fixed per block, but we store them for dithering
             let best_fg_c = c_high;
             let best_bg_c = c_low;
+            
+            let edge_weight = 20000u64;
 
-            for (gi, inv, _edge_err) in candidates {
-                let fglyph = &glyphs[gi];
-                
-                // Standard Internal Error Calculation
-                let mut sum_ones_r = 0u64;
-                let mut sum_ones_g = 0u64;
-                let mut sum_ones_b = 0u64;
-                let mut sum_ones_sq = 0u64;
-                let mut count_ones = 0u64;
+            for (gi, fglyph) in glyphs.iter().enumerate() {
+                for inv in [false, true] {
+                    // 1. Edge Cost
+                    let mut edge_mismatch = 0u64;
+                    // Left (Soft Sticky)
+                    let target_left = if !left_neighbor_edge.is_empty() { &left_neighbor_edge } else { &src_left };
+                    for i in 0..gh { if (fglyph.left[i] ^ inv as u8) != target_left[i] { edge_mismatch += 1; } }
+                    // Top (Source)
+                    for i in 0..gw { if (fglyph.top[i] ^ inv as u8) != src_top[i] { edge_mismatch += 1; } }
+                    // Bottom (Source)
+                    for i in 0..gw { if (fglyph.bottom[i] ^ inv as u8) != src_bottom[i] { edge_mismatch += 1; } }
+                    // Right (Source)
+                    for i in 0..gh { if (fglyph.right[i] ^ inv as u8) != src_right[i] { edge_mismatch += 1; } }
+                    
+                    let edge_cost = edge_mismatch * edge_weight;
+                    if edge_cost >= best_cost { continue; }
 
-                for i in 0..bp {
-                    if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                        let px = &current_block_pixels_rgb[i];
-                        sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
-                        count_ones += 1;
+                    // 2. Color Cost (Pre-calculated vectors)
+                    let mut sum_ones_r = 0u64;
+                    let mut sum_ones_g = 0u64;
+                    let mut sum_ones_b = 0u64;
+                    let mut sum_ones_sq = 0u64;
+                    let mut count_ones = 0u64;
+
+                    for i in 0..bp {
+                        if fglyph.bitmap[i] ^ (inv as u8) == 1 {
+                            let px = &current_block_pixels_rgb[i];
+                            sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                            count_ones += 1;
+                        }
                     }
-                }
-                let count_zeros = bp as u64 - count_ones;
-                let sum_zeros_r = block_sum_r - sum_ones_r;
-                let sum_zeros_g = block_sum_g - sum_ones_g;
-                let sum_zeros_b = block_sum_b - sum_ones_b;
-                let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+                    let count_zeros = bp as u64 - count_ones;
+                    let sum_zeros_r = block_sum_r - sum_ones_r;
+                    let sum_zeros_g = block_sum_g - sum_ones_g;
+                    let sum_zeros_b = block_sum_b - sum_ones_b;
+                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                // Fixed Colors Cost Calculation
-                let c1 = (sum_ones_sq + count_ones * fg_p_fixed.sq).saturating_sub(2 * (fg_p_fixed.r * sum_ones_r + fg_p_fixed.g * sum_ones_g + fg_p_fixed.b * sum_ones_b));
-                let c0 = (sum_zeros_sq + count_zeros * bg_p_fixed.sq).saturating_sub(2 * (bg_p_fixed.r * sum_zeros_r + bg_p_fixed.g * sum_zeros_g + bg_p_fixed.b * sum_zeros_b));
-                
-                let coverage = if inv { count_zeros } else { count_ones } as f64 / bp as f64;
-                let cost = if args.fg_only {
-                    (c1 as f64) + (count_zeros as f64 * 1000.0) - (coverage * 0.001)
-                } else {
-                    (c1 + c0) as f64 - (coverage * 0.001)
-                };
+                    let c1 = (sum_ones_sq + count_ones * fg_p_fixed.sq).saturating_sub(2 * (fg_p_fixed.r * sum_ones_r + fg_p_fixed.g * sum_ones_g + fg_p_fixed.b * sum_ones_b));
+                    let c0 = (sum_zeros_sq + count_zeros * bg_p_fixed.sq).saturating_sub(2 * (bg_p_fixed.r * sum_zeros_r + bg_p_fixed.g * sum_zeros_g + bg_p_fixed.b * sum_zeros_b));
+                    
+                    let total_cost = edge_cost + c1 + c0;
 
-                if cost < best_cost {
-                    best_cost = cost;
-                    chosen_glyph_index = gi;
-                    chosen_glyph_inverted = inv;
-                    final_glyph = fglyph.ch;
-                    if inv && !args.fg_only {
-                        final_fg = c_low_col.clone().unwrap();
-                        final_bg = Some(c_high_col.clone());
-                    } else {
-                        final_fg = c_high_col.clone();
-                        final_bg = c_low_col.clone();
+                    if total_cost < best_cost {
+                        best_cost = total_cost;
+                        chosen_glyph_index = gi;
+                        chosen_glyph_inverted = inv;
+                        final_glyph = fglyph.ch;
+                        // Use snapped colors
+                        if inv && !args.fg_only {
+                            final_fg = c_low_col.clone().unwrap();
+                            final_bg = Some(c_high_col.clone());
+                        } else {
+                            final_fg = c_high_col.clone();
+                            final_bg = c_low_col.clone();
+                        }
                     }
                 }
             }
