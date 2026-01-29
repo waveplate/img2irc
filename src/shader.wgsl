@@ -162,11 +162,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let err_zeros = (sum_zeros_sq) - (2.0 * bg * sum_zeros) + (f32(count_zeros) * bg * bg);
         var total_err_norm = dot(err_ones + err_zeros, vec3<f32>(1.0));
 
-        // Coverage heuristic: if fg_only and no fixed bg, strongly penalize low coverage
-        if (fg_only && !has_fixed_bg) {
-            let coverage = f32(count_ones) / f32(valid_pixels);
-            total_err_norm = total_err_norm * (2.0 - coverage);
-        }
+        // Stable Tie-breaker: prefer glyphs with more coverage (only affects ties or near-ties)
+        let coverage = f32(count_ones) / f32(valid_pixels);
+        total_err_norm = total_err_norm - (coverage * 0.001);
 
         if (total_err_norm < best_error) {
             best_error = total_err_norm;
@@ -177,14 +175,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         // Inverted (avg_zeros becomes FG, avg_ones becomes BG)
-        // Note: Inversion is tricky with fg_only. If fg_only is true, we probably shouldn't allow inversion 
-        // because the 'bg' part is fixed.
         if (!fg_only) {
             var fg_inv = bg;
             var bg_inv = fg;
-            let total_err_inv = total_err_norm; 
+            var total_err_inv = dot(err_ones + err_zeros, vec3<f32>(1.0)); // same error base
+            
+            // Inverted Tie-breaker: use inverted coverage
+            let inv_coverage = f32(count_zeros) / f32(valid_pixels);
+            total_err_inv = total_err_inv - (inv_coverage * 0.001);
 
-            if (total_err_inv < best_error - 0.1) { 
+            if (total_err_inv < best_error) { 
                  best_error = total_err_inv;
                  best_glyph = i;
                  best_fg = fg_inv;
