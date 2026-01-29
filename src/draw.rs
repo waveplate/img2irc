@@ -355,6 +355,11 @@ fn render_blocks_connected(
         let mut first = true;
         let mut last_fg: Option<Colour> = None;
         let mut last_bg: Option<Colour> = None;
+        
+        // Continuity State
+        let mut last_fg_raw: Option<[u8; 3]> = None;
+        let mut last_bg_raw: Option<[u8; 3]> = None;
+        let mut left_neighbor_edge: Vec<u8> = Vec::new();
 
         for (_col_idx, blk) in block_row.iter().enumerate() {
             total_pixels += bp as u64;
@@ -406,12 +411,29 @@ fn render_blocks_connected(
             }
             
             // Calculate Quantized Colors (High / Low)
-            let raw_c_high = if high_count > 0 {
+            // Calculate Quantized Colors (High / Low)
+            let mut raw_c_high = if high_count > 0 {
                 [(high_sum_r / high_count) as u8, (high_sum_g / high_count) as u8, (high_sum_b / high_count) as u8]
             } else { [255, 255, 255] };
-            let raw_c_low = if low_count > 0 {
+            let mut raw_c_low = if low_count > 0 {
                 [(low_sum_r / low_count) as u8, (low_sum_g / low_count) as u8, (low_sum_b / low_count) as u8]
             } else { [0, 0, 0] };
+
+            // Sticky Color Logic: Lock to previous block if similar enough
+            let dist_sq = |a: [u8;3], b: [u8;3]| -> u32 {
+                let dr = (a[0] as i32 - b[0] as i32).pow(2);
+                let dg = (a[1] as i32 - b[1] as i32).pow(2);
+                let db = (a[2] as i32 - b[2] as i32).pow(2);
+                (dr + dg + db) as u32
+            };
+            let continuity_threshold_sq = 2500; // Tolerance = 50
+
+            if let Some(prev) = last_fg_raw {
+                if dist_sq(raw_c_high, prev) < continuity_threshold_sq { raw_c_high = prev; }
+            }
+            if let Some(prev) = last_bg_raw {
+                if dist_sq(raw_c_low, prev) < continuity_threshold_sq { raw_c_low = prev; }
+            }
             
             let (c_high, c_low, c_high_col, c_low_col) = if render == Render::Ansi24 {
                  let target_bg = if args.fg_only { [0,0,0] } else { raw_c_low };
@@ -420,7 +442,10 @@ fn render_blocks_connected(
                  let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
                  let hi = nearest_hex_colour_fast(make_rgb_u32(&raw_c_high), palette);
                  let lo = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&raw_c_low), palette) };
-                 (unpack_rgb(palette[hi as usize]), unpack_rgb(palette[lo as usize]), Colour::Index(hi), if args.fg_only { None } else { Some(Colour::Index(lo)) })
+                 // Update raw inputs to match what we actually use, for continuity
+                 raw_c_high = unpack_rgb(palette[hi as usize]);
+                 if !args.fg_only { raw_c_low = unpack_rgb(palette[lo as usize]); }
+                 (raw_c_high, unpack_rgb(palette[lo as usize]), Colour::Index(hi), if args.fg_only { None } else { Some(Colour::Index(lo)) })
             };
 
             let fg_p_fixed = PrePixel { r: c_high[0] as u64, g: c_high[1] as u64, b: c_high[2] as u64, sq: (c_high[0] as u64).pow(2) + (c_high[1] as u64).pow(2) + (c_high[2] as u64).pow(2) };
@@ -458,7 +483,8 @@ fn render_blocks_connected(
                     // Left
                     for i in 0..gh {
                         let g_bit = fglyph.left[i] ^ (inv as u8);
-                        if g_bit != src_left[i] { edge_error += 1; }
+                        let target = if !left_neighbor_edge.is_empty() { left_neighbor_edge[i] } else { src_left[i] };
+                        if g_bit != target { edge_error += 1; }
                     }
                     // Right
                     for i in 0..gh {
@@ -554,6 +580,12 @@ fn render_blocks_connected(
             total_error += block_error;
 
             grid_row.push(RenderedCell { char: final_glyph, fg: best_fg_c, bg: if args.fg_only { None } else { Some(best_bg_c) } });
+            
+            // Update State for next block
+            last_fg_raw = Some(c_high);
+            last_bg_raw = Some(c_low);
+            left_neighbor_edge = glyphs[chosen_glyph_index].right.iter().map(|&b| b ^ (chosen_glyph_inverted as u8)).collect();
+
             emit_colourized(&mut out, render, final_fg, final_bg, final_glyph, &mut first, &mut last_fg, &mut last_bg);
         }
         if args.fg_only {
