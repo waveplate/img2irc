@@ -387,6 +387,19 @@ fn render_blocks_connected(
             let mut best_fg_rgb = [0u8; 3];
             let mut best_bg_rgb = [0u8; 3];
 
+            // 2a. Calculate Uniform (Flat) Cost for Denoising
+            let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
+            let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
+            let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
+            
+            let term_sq = avg_r*avg_r + avg_g*avg_g + avg_b*avg_b;
+            let term_linear = avg_r*block_sum_r + avg_g*block_sum_g + avg_b*block_sum_b;
+            let uniform_cost = (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
+            
+            // Threshold: If splitting into 2 colors doesn't save at least this much error, force flat.
+            // 800 roughly allows for a variance of ~5 levels per pixel across a 32-pixel block.
+            let noise_gain_threshold = 800u64; 
+
             for (gi, fglyph) in glyphs.iter().enumerate() {
                 // Calc Mean Colors for this Glyph's partition
                 let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
@@ -429,10 +442,6 @@ fn render_blocks_connected(
                 }
 
                 // Calculate Error Cost (Inverted)
-                // Inverted means we swap the roles: Ones become Background (Low), Zeros become Foreground (High).
-                // Or rather: The Glyph mask is inverted.
-                // 1 -> 0 (BG), 0 -> 1 (FG).
-                // So FG cloud is Zeros, BG cloud is Ones.
                 let cost_inverted = {
                      // FG matches Zeros
                      let t1_0 = sum_zeros_sq;
@@ -454,6 +463,15 @@ fn render_blocks_connected(
                     // avg_ones came from '1's. avg_zeros came from '0's.
                     best_fg_rgb = avg_zeros; best_bg_rgb = avg_ones;
                 }
+            }
+
+            // 2b. Apply Denoising: Force Flat if gain is small
+            let gain = uniform_cost.saturating_sub(best_cost);
+            if gain < noise_gain_threshold {
+                let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
+                best_fg_rgb = flat_col; 
+                best_bg_rgb = flat_col;
+                // best_glyph_idx remains valid (will render as flat solid)
             }
 
             // 3. Finalize Colors (Snap to Palette if needed)
