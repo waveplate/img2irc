@@ -355,68 +355,125 @@ fn render_blocks_connected(
     }
 
     let mut grid_data: Vec<BlockData> = Vec::with_capacity(grid_h * grid_w);
-    let threshold = 127;
+    let mut grid_state: Vec<(usize, bool)> = vec![(0, false); grid_h * grid_w];
+    let mut idx_counter = 0;
 
     for block_row in &image.block {
         for blk in block_row {
-            // 1. Analyze Contrast & Quantize
-            let mut high_sum = [0u64; 3];
-            let mut high_count = 0u64;
-            let mut low_sum = [0u64; 3];
-            let mut low_count = 0u64;
-            
+            // 1. Capture Pixels & Pre-calc Sums
             let mut pixels = Vec::with_capacity(bp);
+            let mut block_sum_r = 0u64;
+            let mut block_sum_g = 0u64;
+            let mut block_sum_b = 0u64;
+            let mut block_sum_sq = 0u64;
 
             for y in 0..gh {
                 for x in 0..gw {
                     let px_orig = blk.pixels[y][x].orig;
                     let rgb = unpack_rgb(px_orig);
-                    pixels.push(PrePixel {
+                    let p = PrePixel {
                         r: rgb[0] as u64, g: rgb[1] as u64, b: rgb[2] as u64,
                         sq: (rgb[0] as u64).pow(2) + (rgb[1] as u64).pow(2) + (rgb[2] as u64).pow(2)
-                    });
-
-                    let lum = luma(&rgb);
-                    if lum > threshold {
-                        high_sum[0] += rgb[0] as u64; high_sum[1] += rgb[1] as u64; high_sum[2] += rgb[2] as u64;
-                        high_count += 1;
-                    } else {
-                        low_sum[0] += rgb[0] as u64; low_sum[1] += rgb[1] as u64; low_sum[2] += rgb[2] as u64;
-                        low_count += 1;
-                    }
+                    };
+                    block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
+                    pixels.push(p);
                 }
             }
 
-            let mut c_high = if high_count > 0 {
-                [(high_sum[0]/high_count) as u8, (high_sum[1]/high_count) as u8, (high_sum[2]/high_count) as u8]
-            } else { [0,0,0] };
-            let mut c_low = if low_count > 0 {
-                [(low_sum[0]/low_count) as u8, (low_sum[1]/low_count) as u8, (low_sum[2]/low_count) as u8]
-            } else { [0,0,0] };
+            // 2. Find Best Fit (Dynamic Thresholding via Glyph Partitioning)
+            let mut best_cost = u64::MAX;
+            let mut best_glyph_idx = 0;
+            let mut best_inv = false;
+            let mut best_fg_rgb = [0u8; 3];
+            let mut best_bg_rgb = [0u8; 3];
 
-            // Handle empty buckets
-            if high_count == 0 && low_count == 0 { c_high = [255,255,255]; c_low = [0,0,0]; }
-            else if high_count == 0 { c_high = c_low; }
-            else if low_count == 0 { c_low = c_high; }
+            for (gi, fglyph) in glyphs.iter().enumerate() {
+                // Calc Mean Colors for this Glyph's partition
+                let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
+                let mut count_ones = 0u64;
 
-            // Snap to Palette
+                for i in 0..bp {
+                    if fglyph.bitmap[i] == 1 {
+                        let px = &pixels[i];
+                        sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                        count_ones += 1;
+                    }
+                }
+                
+                let count_zeros = bp as u64 - count_ones;
+                let sum_zeros_r = block_sum_r - sum_ones_r;
+                let sum_zeros_g = block_sum_g - sum_ones_g;
+                let sum_zeros_b = block_sum_b - sum_ones_b;
+                let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+
+                let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
+                let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
+
+                // Calculate Error Cost (Normal)
+                let cost_normal = {
+                     let t1_1 = sum_ones_sq;
+                     let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                     let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                     let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+                     let t1_0 = sum_zeros_sq;
+                     let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                     let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                     let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+                     c1 + c0
+                };
+
+                if cost_normal < best_cost {
+                    best_cost = cost_normal;
+                    best_glyph_idx = gi; best_inv = false;
+                    best_fg_rgb = avg_ones; best_bg_rgb = avg_zeros;
+                }
+
+                // Calculate Error Cost (Inverted)
+                // Inverted means we swap the roles: Ones become Background (Low), Zeros become Foreground (High).
+                // Or rather: The Glyph mask is inverted.
+                // 1 -> 0 (BG), 0 -> 1 (FG).
+                // So FG cloud is Zeros, BG cloud is Ones.
+                let cost_inverted = {
+                     // FG matches Zeros
+                     let t1_0 = sum_zeros_sq;
+                     let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                     let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                     let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                     // BG matches Ones
+                     let t1_1 = sum_ones_sq;
+                     let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                     let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                     let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                     c_fg + c_bg
+                };
+
+                if cost_inverted < best_cost {
+                    best_cost = cost_inverted;
+                    best_glyph_idx = gi; best_inv = true;
+                    // If inverted, pixels under '1' are BG, pixels under '0' are FG.
+                    // avg_ones came from '1's. avg_zeros came from '0's.
+                    best_fg_rgb = avg_zeros; best_bg_rgb = avg_ones;
+                }
+            }
+
+            // 3. Finalize Colors (Snap to Palette if needed)
             let (final_fg, final_bg, fg_obj, bg_obj) = if render == Render::Ansi24 {
-                let bg_opt = if args.fg_only { None } else { Some(Colour::RGB(c_low)) };
-                (c_high, c_low, Some(Colour::RGB(c_high)), bg_opt)
+                let bg_opt = if args.fg_only { None } else { Some(Colour::RGB(best_bg_rgb)) };
+                (best_fg_rgb, best_bg_rgb, Some(Colour::RGB(best_fg_rgb)), bg_opt)
             } else {
                 let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
-                let hi_idx = nearest_hex_colour_fast(make_rgb_u32(&c_high), palette);
-                let lo_idx = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&c_low), palette) };
+                let hi_idx = nearest_hex_colour_fast(make_rgb_u32(&best_fg_rgb), palette);
+                let lo_idx = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&best_bg_rgb), palette) };
                 let hi_rgb = unpack_rgb(palette[hi_idx as usize]);
                 let lo_rgb = unpack_rgb(palette[lo_idx as usize]);
                 let bg_opt = if args.fg_only { None } else { Some(Colour::Index(lo_idx)) };
-                (hi_rgb, if args.fg_only { c_low } else { lo_rgb }, Some(Colour::Index(hi_idx)), bg_opt)
+                (hi_rgb, if args.fg_only { best_bg_rgb } else { lo_rgb }, Some(Colour::Index(hi_idx)), bg_opt)
             };
 
             let contrast = (final_fg[0] as i32 - final_bg[0] as i32).pow(2) + 
                            (final_fg[1] as i32 - final_bg[1] as i32).pow(2) + 
                            (final_fg[2] as i32 - final_bg[2] as i32).pow(2);
-            let is_flat = contrast < 400; // Tolerance squared
+            let is_flat = contrast < 400;
 
             grid_data.push(BlockData {
                 pixels,
@@ -426,46 +483,9 @@ fn render_blocks_connected(
                 bg_col: bg_obj,
                 is_flat,
             });
+            grid_state[idx_counter] = (best_glyph_idx, best_inv);
+            idx_counter += 1;
         }
-    }
-
-    // --- Phase 2: State Initialization (Greedy Best Visual Match) ---
-    // Stores (glyph_index, inverted)
-    let mut grid_state: Vec<(usize, bool)> = vec![(0, false); grid_h * grid_w];
-
-    for idx in 0..grid_data.len() {
-        let data = &grid_data[idx];
-        
-        let fg_p = PrePixel { r: data.fg[0] as u64, g: data.fg[1] as u64, b: data.fg[2] as u64, sq: (data.fg[0] as u64).pow(2) + (data.fg[1] as u64).pow(2) + (data.fg[2] as u64).pow(2) };
-        let bg_p = PrePixel { r: data.bg[0] as u64, g: data.bg[1] as u64, b: data.bg[2] as u64, sq: (data.bg[0] as u64).pow(2) + (data.bg[1] as u64).pow(2) + (data.bg[2] as u64).pow(2) };
-
-        // Pre-calc data sums
-        let mut d_block_sum_r = 0u64; let mut d_block_sum_g = 0u64; let mut d_block_sum_b = 0u64; let mut d_block_sum_sq = 0u64;
-        for p in &data.pixels { d_block_sum_r += p.r; d_block_sum_g += p.g; d_block_sum_b += p.b; d_block_sum_sq += p.sq; }
-
-        let mut best_cost = u64::MAX;
-        let mut best_choice = (0, false);
-
-        for (gi, fglyph) in glyphs.iter().enumerate() {
-            for inv in [false, true] {
-                // Color Error Only
-                let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64; let mut count_ones = 0u64;
-                for i in 0..bp {
-                    if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                        let px = &data.pixels[i];
-                        sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
-                        count_ones += 1;
-                    }
-                }
-                let count_zeros = bp as u64 - count_ones;
-                let c1 = (sum_ones_sq + count_ones * fg_p.sq).saturating_sub(2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b));
-                let c0 = (d_block_sum_sq - sum_ones_sq + count_zeros * bg_p.sq).saturating_sub(2 * (bg_p.r * (d_block_sum_r - sum_ones_r) + bg_p.g * (d_block_sum_g - sum_ones_g) + bg_p.b * (d_block_sum_b - sum_ones_b)));
-                
-                let cost = c1 + c0;
-                if cost < best_cost { best_cost = cost; best_choice = (gi, inv); }
-            }
-        }
-        grid_state[idx] = best_choice;
     }
 
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
