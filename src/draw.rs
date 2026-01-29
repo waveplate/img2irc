@@ -477,7 +477,14 @@ fn render_blocks_connected(
             let best_fg_c = c_high;
             let best_bg_c = c_low;
             
-            let edge_weight = 20000u64;
+            let edge_weight = 1_000_000u64;
+            
+            // Contrast Check: If the block is effectively solid color, don't enforce left-edge connectivity
+            // This prevents "phantom lines" from propagating through white space or solid black areas.
+            let contrast_dist = (c_high[0] as i32 - c_low[0] as i32).pow(2)  + (c_high[1] as i32 - c_low[1] as i32).pow(2) + (c_high[2] as i32 - c_low[2] as i32).pow(2);
+            if contrast_dist < 200 { 
+                left_neighbor_edge.clear();
+            }
 
             for (gi, fglyph) in glyphs.iter().enumerate() {
                 for inv in [false, true] {
