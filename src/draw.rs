@@ -245,14 +245,14 @@ pub fn emit_colourized(
             Render::Irc => {
                 out.push('\x03');
                 match fg {
-                    Colour::Index(i) => write!(out, "{:02}", i % 99).unwrap(),
-                    _ => out.push_str("01"),
+                    Colour::Index(i) => write!(out, "{}", i % 99).unwrap(),
+                    _ => out.push_str("1"),
                 }
                 if let Some(bg_c) = &bg {
                     out.push(',');
                     match bg_c {
-                        Colour::Index(i) => write!(out, "{:02}", i % 99).unwrap(),
-                        _ => out.push_str("00"),
+                        Colour::Index(i) => write!(out, "{}", i % 99).unwrap(),
+                        _ => out.push_str("0"),
                     }
                 }
             }
@@ -358,15 +358,18 @@ fn render_blocks_connected(
     let mut grid_state: Vec<(usize, bool)> = vec![(0, false); grid_h * grid_w];
     let mut idx_counter = 0;
 
+    let fuzz = args.fuzz.max(0.0);
+    let scales = if fuzz > 0.0001 {
+        let f = fuzz.max(0.001);
+        vec![(1.0, 1.0), (1.0 - f, 1.0), (1.0 + f, 1.0), (1.0, 1.0 - f), (1.0, 1.0 + f)]
+    } else { vec![(1.0, 1.0)] };
+    
+    let mut working_pixels_buffer = Vec::with_capacity(bp);
+
     for block_row in &image.block {
         for blk in block_row {
-            // 1. Capture Pixels & Pre-calc Sums
-            let mut pixels = Vec::with_capacity(bp);
-            let mut block_sum_r = 0u64;
-            let mut block_sum_g = 0u64;
-            let mut block_sum_b = 0u64;
-            let mut block_sum_sq = 0u64;
-
+            // 1. Capture Base Pixels
+            let mut original_pixels = Vec::with_capacity(bp);
             for y in 0..gh {
                 for x in 0..gw {
                     let px_orig = blk.pixels[y][x].orig;
@@ -375,120 +378,107 @@ fn render_blocks_connected(
                         r: rgb[0] as u64, g: rgb[1] as u64, b: rgb[2] as u64,
                         sq: (rgb[0] as u64).pow(2) + (rgb[1] as u64).pow(2) + (rgb[2] as u64).pow(2)
                     };
-                    block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
-                    pixels.push(p);
+                    original_pixels.push(p);
                 }
             }
+            
+            let mut best_overall_cost = u64::MAX;
+            let mut best_overall_glyph = 0;
+            let mut best_overall_inv = false;
+            let mut best_overall_fg = [0u8; 3];
+            let mut best_overall_bg = [0u8; 3];
+            let mut best_block_pixels = original_pixels.clone();
 
-            // 2. Find Best Fit
-            let mut best_cost = u64::MAX;
-            let mut best_glyph_idx = 0;
-            let mut best_inv = false;
-            let mut best_fg_rgb = [0u8; 3];
-            let mut best_bg_rgb = [0u8; 3];
-
-            if render != Render::Ansi24 {
-                // --- Indexed Mode (Frequency/Mode Logic) ---
-                // Mirroring standard render_blocks behavior: Pick the most frequent palette color (Mode).
-                let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
-                let mut indices = Vec::with_capacity(bp);
-                
-                for p in &pixels {
-                    let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                    
-                    // Grayscale check (match standard renderer)
-                    let min_val = p.r.min(p.g.min(p.b));
-                    let max_val = p.r.max(p.g.max(p.b));
-                    let is_gray = max_val.saturating_sub(min_val) <= args.grayscale_tolerance as u64;
-
-                    let idx = match render {
-                        Render::Ansi => {
-                            let std = nearest_hex_colour_fast(rgb_u32, &ANSI256);
-                            if args.nograyscale && !is_gray {
-                                nearest_distinctly_chromatic_hex_colour(rgb_u32, &ANSI256, args.grayscale_tolerance).unwrap_or(std)
-                            } else { std }
-                        },
-                        Render::Irc => {
-                            let std = nearest_hex_colour_fast(rgb_u32, &IRC99);
-                            if args.nograyscale && !is_gray {
-                                nearest_distinctly_chromatic_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance).unwrap_or(std)
-                            } else { std }
-                        },
-                        _ => 0,
-                    };
-                    indices.push(idx);
+            for (sx, sy) in &scales {
+                if *sx == 1.0 && *sy == 1.0 {
+                    working_pixels_buffer.clear();
+                    working_pixels_buffer.extend_from_slice(&original_pixels);
+                } else {
+                    get_transformed_block_pixels_into(&original_pixels, gw, gh, *sx, *sy, &mut working_pixels_buffer);
                 }
+                let pixels = &working_pixels_buffer;
 
-                for (gi, fglyph) in glyphs.iter().enumerate() {
-                    for inv in [false, true] {
-                        let mut fg_cnt = [0u16; 256];
-                        let mut bg_cnt = [0u16; 256];
-                        let mut fg_len = 0;
-                        let mut bg_len = 0;
+                // Pre-calc Sums for this scale
+                let mut block_sum_r = 0u64; let mut block_sum_g = 0u64; let mut block_sum_b = 0u64; let mut block_sum_sq = 0u64;
+                for p in pixels { block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq; }
 
-                        for i in 0..bp {
-                            let val = indices[i] as usize;
-                            if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                                fg_cnt[val] += 1;
-                                fg_len += 1;
-                            } else {
-                                bg_cnt[val] += 1;
-                                bg_len += 1;
+                // 2. Find Best Fit for Scale
+                let mut scale_best_cost = u64::MAX;
+                let mut scale_best_glyph = 0;
+                let mut scale_best_inv = false;
+                let mut scale_best_fg = [0u8; 3];
+                let mut scale_best_bg = [0u8; 3];
+
+                if render != Render::Ansi24 {
+                    // --- Indexed Mode (Frequency/Mode Logic) ---
+                    let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
+                    let mut indices = Vec::with_capacity(bp);
+                    for p in pixels {
+                        let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
+                        let min_val = p.r.min(p.g.min(p.b));
+                        let max_val = p.r.max(p.g.max(p.b));
+                        let is_gray = max_val.saturating_sub(min_val) <= args.grayscale_tolerance as u64;
+                        let idx = match render {
+                            Render::Ansi => {
+                                let std = nearest_hex_colour_fast(rgb_u32, &ANSI256);
+                                if args.nograyscale && !is_gray { nearest_distinctly_chromatic_hex_colour(rgb_u32, &ANSI256, args.grayscale_tolerance).unwrap_or(std) } else { std }
+                            },
+                            Render::Irc => {
+                                let std = nearest_hex_colour_fast(rgb_u32, &IRC99);
+                                if args.nograyscale && !is_gray { nearest_distinctly_chromatic_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance).unwrap_or(std) } else { std }
+                            },
+                            _ => 0,
+                        };
+                        indices.push(idx);
+                    }
+
+                    for (gi, fglyph) in glyphs.iter().enumerate() {
+                        for inv in [false, true] {
+                            let mut fg_cnt = [0u16; 256]; let mut bg_cnt = [0u16; 256];
+                            let mut fg_len = 0; let mut bg_len = 0;
+                            for i in 0..bp {
+                                let val = indices[i] as usize;
+                                if fglyph.bitmap[i] ^ (inv as u8) == 1 { fg_cnt[val] += 1; fg_len += 1; }
+                                else { bg_cnt[val] += 1; bg_len += 1; }
+                            }
+                            let (fgi, fx) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                            let (bgi, bx) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                            let cost = ((fg_len as u64) - (*fx as u64)) + ((bg_len as u64) - (*bx as u64));
+
+                            if cost < scale_best_cost {
+                                scale_best_cost = cost; scale_best_glyph = gi; scale_best_inv = inv;
+                                scale_best_fg = unpack_rgb(palette[fgi]); scale_best_bg = unpack_rgb(palette[bgi]);
                             }
                         }
-
-                        // Find Mode (Most frequent color)
-                        let (fgi, fx) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
-                        let (bgi, bx) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
-                        
-                        // Cost = Mismatches (Pixels not matching the mode)
-                        let cost = ((fg_len as u64) - (*fx as u64)) + ((bg_len as u64) - (*bx as u64));
-
-                        if cost < best_cost {
-                            best_cost = cost;
-                            best_glyph_idx = gi;
-                            best_inv = inv;
-                            best_fg_rgb = unpack_rgb(palette[fgi]);
-                            best_bg_rgb = unpack_rgb(palette[bgi]);
-                        }
                     }
-                }
-            } else {
-                // --- TrueColor Mode (RGB Average + Noise Threshold) ---
-                // Uniform Cost for Denoising
-                let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
-                let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
-                let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
-                
-                let term_sq = avg_r*avg_r + avg_g*avg_g + avg_b*avg_b;
-                let term_linear = avg_r*block_sum_r + avg_g*block_sum_g + avg_b*block_sum_b;
-                let uniform_cost = (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
-                let noise_gain_threshold = 800u64; 
+                } else {
+                    // --- TrueColor Mode (RGB Average + Noise Threshold) ---
+                    let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
+                    let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
+                    let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
+                    let term_sq = avg_r*avg_r + avg_g*avg_g + avg_b*avg_b;
+                    let term_linear = avg_r*block_sum_r + avg_g*block_sum_g + avg_b*block_sum_b;
+                    let uniform_cost = (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
+                    let noise_gain_threshold = 800u64; 
 
-                for (gi, fglyph) in glyphs.iter().enumerate() {
-                    // Calc Mean Colors for this Glyph's partition
-                    let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
-                    let mut count_ones = 0u64;
-
-                    for i in 0..bp {
-                        if fglyph.bitmap[i] == 1 {
-                            let px = &pixels[i];
-                            sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
-                            count_ones += 1;
+                    for (gi, fglyph) in glyphs.iter().enumerate() {
+                        let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
+                        let mut count_ones = 0u64;
+                        for i in 0..bp {
+                            if fglyph.bitmap[i] == 1 {
+                                let px = &pixels[i];
+                                sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                                count_ones += 1;
+                            }
                         }
-                    }
-                    
-                    let count_zeros = bp as u64 - count_ones;
-                    let sum_zeros_r = block_sum_r - sum_ones_r;
-                    let sum_zeros_g = block_sum_g - sum_ones_g;
-                    let sum_zeros_b = block_sum_b - sum_ones_b;
-                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+                        let count_zeros = bp as u64 - count_ones;
+                        let sum_zeros_r = block_sum_r - sum_ones_r; let sum_zeros_g = block_sum_g - sum_ones_g; let sum_zeros_b = block_sum_b - sum_ones_b;
+                        let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                    let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
-                    let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
+                        let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
+                        let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
 
-                    // Calculate Error Cost (Normal)
-                    let cost_normal = {
+                        // Normal Error
                         let t1_1 = sum_ones_sq;
                         let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
@@ -497,17 +487,10 @@ fn render_blocks_connected(
                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                         let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                        c1 + c0
-                    };
+                        let cost_normal = c1 + c0;
+                        if cost_normal < scale_best_cost { scale_best_cost = cost_normal; scale_best_glyph = gi; scale_best_inv = false; scale_best_fg = avg_ones; scale_best_bg = avg_zeros; }
 
-                    if cost_normal < best_cost {
-                        best_cost = cost_normal;
-                        best_glyph_idx = gi; best_inv = false;
-                        best_fg_rgb = avg_ones; best_bg_rgb = avg_zeros;
-                    }
-
-                    // Calculate Error Cost (Inverted)
-                    let cost_inverted = {
+                        // Inverted Error
                         let t1_0 = sum_zeros_sq;
                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
@@ -516,26 +499,35 @@ fn render_blocks_connected(
                         let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                         let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                        c_fg + c_bg
-                    };
-
-                    if cost_inverted < best_cost {
-                        best_cost = cost_inverted;
-                        best_glyph_idx = gi; best_inv = true;
-                        best_fg_rgb = avg_zeros; best_bg_rgb = avg_ones;
+                        let cost_inverted = c_fg + c_bg;
+                        if cost_inverted < scale_best_cost { scale_best_cost = cost_inverted; scale_best_glyph = gi; scale_best_inv = true; scale_best_fg = avg_zeros; scale_best_bg = avg_ones; }
+                    }
+                    
+                    let gain = uniform_cost.saturating_sub(scale_best_cost);
+                    if gain < noise_gain_threshold {
+                        let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
+                        scale_best_fg = flat_col; scale_best_bg = flat_col;
                     }
                 }
 
-                // Apply Denoising: Force Flat if gain is small (TrueColor only)
-                let gain = uniform_cost.saturating_sub(best_cost);
-                if gain < noise_gain_threshold {
-                    let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
-                    best_fg_rgb = flat_col; 
-                    best_bg_rgb = flat_col;
+                if scale_best_cost < best_overall_cost {
+                    best_overall_cost = scale_best_cost;
+                    best_overall_glyph = scale_best_glyph;
+                    best_overall_inv = scale_best_inv;
+                    best_overall_fg = scale_best_fg;
+                    best_overall_bg = scale_best_bg;
+                    best_block_pixels = pixels.to_vec();
                 }
-            }
+            } // scales loop
 
-            // 3. Finalize Colors (Snap to Palette if needed)
+            // Use Best Scale Results
+            let best_fg_rgb = best_overall_fg;
+            let best_bg_rgb = best_overall_bg;
+            let best_glyph_idx = best_overall_glyph;
+            let best_inv = best_overall_inv;
+            let pixels = best_block_pixels;
+
+            // 3. Finalize Colors
             let (final_fg, final_bg, fg_obj, bg_obj) = if render == Render::Ansi24 {
                 let bg_opt = if args.fg_only { None } else { Some(Colour::RGB(best_bg_rgb)) };
                 (best_fg_rgb, best_bg_rgb, Some(Colour::RGB(best_fg_rgb)), bg_opt)
