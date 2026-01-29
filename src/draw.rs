@@ -505,6 +505,9 @@ fn render_blocks_connected(
                 (dr*dr + dg*dg + db*db) as u64
             };
 
+            let mut best_cost = u64::MAX;
+            let mut best_choice = grid_state[curr_idx];
+
             for (gi, fglyph) in glyphs.iter().enumerate() {
                 for inv in [false, true] {
                     // Determine My Apparent Colors
