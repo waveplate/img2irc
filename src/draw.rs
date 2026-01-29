@@ -364,6 +364,16 @@ fn render_blocks_connected(
             let mut src_bottom = Vec::with_capacity(gw);
             let mut src_left = Vec::with_capacity(gh);
             let mut src_right = Vec::with_capacity(gh);
+            
+            // Color Splitting Accumulators
+            let mut high_sum_r = 0u64;
+            let mut high_sum_g = 0u64;
+            let mut high_sum_b = 0u64;
+            let mut high_count = 0u64;
+            let mut low_sum_r = 0u64;
+            let mut low_sum_g = 0u64;
+            let mut low_sum_b = 0u64;
+            let mut low_count = 0u64;
 
             current_block_pixels_rgb.clear();
             for y in 0..gh {
@@ -379,12 +389,42 @@ fn render_blocks_connected(
                     if x == 0 { src_left.push(bit); }
                     if x == gw - 1 { src_right.push(bit); }
 
+                    // Accumulate Colors
+                    if bit == 1 {
+                        high_sum_r += rgb[0] as u64; high_sum_g += rgb[1] as u64; high_sum_b += rgb[2] as u64;
+                        high_count += 1;
+                    } else {
+                        low_sum_r += rgb[0] as u64; low_sum_g += rgb[1] as u64; low_sum_b += rgb[2] as u64;
+                        low_count += 1;
+                    }
+
                     current_block_pixels_rgb.push(PrePixel {
                         r: rgb[0] as u64, g: rgb[1] as u64, b: rgb[2] as u64,
                         sq: (rgb[0] as u64).pow(2) + (rgb[1] as u64).pow(2) + (rgb[2] as u64).pow(2)
                     });
                 }
             }
+            
+            // Calculate Quantized Colors (High / Low)
+            let raw_c_high = if high_count > 0 {
+                [(high_sum_r / high_count) as u8, (high_sum_g / high_count) as u8, (high_sum_b / high_count) as u8]
+            } else { [255, 255, 255] };
+            let raw_c_low = if low_count > 0 {
+                [(low_sum_r / low_count) as u8, (low_sum_g / low_count) as u8, (low_sum_b / low_count) as u8]
+            } else { [0, 0, 0] };
+            
+            let (c_high, c_low, c_high_col, c_low_col) = if render == Render::Ansi24 {
+                 let target_bg = if args.fg_only { [0,0,0] } else { raw_c_low };
+                 (raw_c_high, target_bg, Colour::RGB(raw_c_high), if args.fg_only { None } else { Some(Colour::RGB(raw_c_low)) })
+            } else {
+                 let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
+                 let hi = nearest_hex_colour_fast(make_rgb_u32(&raw_c_high), palette);
+                 let lo = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&raw_c_low), palette) };
+                 (unpack_rgb(palette[hi as usize]), unpack_rgb(palette[lo as usize]), Colour::Index(hi), if args.fg_only { None } else { Some(Colour::Index(lo)) })
+            };
+
+            let fg_p_fixed = PrePixel { r: c_high[0] as u64, g: c_high[1] as u64, b: c_high[2] as u64, sq: (c_high[0] as u64).pow(2) + (c_high[1] as u64).pow(2) + (c_high[2] as u64).pow(2) };
+            let bg_p_fixed = PrePixel { r: c_low[0] as u64, g: c_low[1] as u64, b: c_low[2] as u64, sq: (c_low[0] as u64).pow(2) + (c_low[1] as u64).pow(2) + (c_low[2] as u64).pow(2) };
 
             // Calculate Block Sums for Internal Error (Standard Logic)
             let mut block_sum_r = 0u64;
@@ -443,8 +483,9 @@ fn render_blocks_connected(
             let mut final_bg: Option<Colour> = None;
             let mut chosen_glyph_index = 0;
             let mut chosen_glyph_inverted = false;
-            let mut best_fg_c = [0u8; 3];
-            let mut best_bg_c = [0u8; 3];
+            // Best colors are now fixed per block, but we store them for dithering
+            let best_fg_c = c_high;
+            let best_bg_c = c_low;
 
             for (gi, inv, _edge_err) in candidates {
                 let fglyph = &glyphs[gi];
@@ -469,28 +510,9 @@ fn render_blocks_connected(
                 let sum_zeros_b = block_sum_b - sum_ones_b;
                 let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
-                let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
-
-                let (fg_c, bg_c, fg_col, bg_col) = if render == Render::Ansi24 {
-                    let target_bg = if args.fg_only { [0,0,0] } else { avg_zeros };
-                    (avg_ones, target_bg, Colour::RGB(avg_ones), if args.fg_only { None } else { Some(Colour::RGB(target_bg)) })
-                } else {
-                    let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
-                    let fgi = nearest_hex_colour_fast(make_rgb_u32(&avg_ones), palette);
-                    let bgi = if args.fg_only { 
-                        nearest_hex_colour_fast(0x000000, palette) 
-                    } else { 
-                        nearest_hex_colour_fast(make_rgb_u32(&avg_zeros), palette) 
-                    };
-                    (unpack_rgb(palette[fgi as usize]), unpack_rgb(palette[bgi as usize]), Colour::Index(fgi), if args.fg_only { None } else { Some(Colour::Index(bgi)) })
-                };
-
-                let fg_p = PrePixel { r: fg_c[0] as u64, g: fg_c[1] as u64, b: fg_c[2] as u64, sq: (fg_c[0] as u64).pow(2) + (fg_c[1] as u64).pow(2) + (fg_c[2] as u64).pow(2) };
-                let bg_p = PrePixel { r: bg_c[0] as u64, g: bg_c[1] as u64, b: bg_c[2] as u64, sq: (bg_c[0] as u64).pow(2) + (bg_c[1] as u64).pow(2) + (bg_c[2] as u64).pow(2) };
-
-                let c1 = (sum_ones_sq + count_ones * fg_p.sq).saturating_sub(2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b));
-                let c0 = (sum_zeros_sq + count_zeros * bg_p.sq).saturating_sub(2 * (bg_p.r * sum_zeros_r + bg_p.g * sum_zeros_g + bg_p.b * sum_zeros_b));
+                // Fixed Colors Cost Calculation
+                let c1 = (sum_ones_sq + count_ones * fg_p_fixed.sq).saturating_sub(2 * (fg_p_fixed.r * sum_ones_r + fg_p_fixed.g * sum_ones_g + fg_p_fixed.b * sum_ones_b));
+                let c0 = (sum_zeros_sq + count_zeros * bg_p_fixed.sq).saturating_sub(2 * (bg_p_fixed.r * sum_zeros_r + bg_p_fixed.g * sum_zeros_g + bg_p_fixed.b * sum_zeros_b));
                 
                 let coverage = if inv { count_zeros } else { count_ones } as f64 / bp as f64;
                 let cost = if args.fg_only {
@@ -505,14 +527,12 @@ fn render_blocks_connected(
                     chosen_glyph_inverted = inv;
                     final_glyph = fglyph.ch;
                     if inv && !args.fg_only {
-                        final_fg = bg_col.unwrap();
-                        final_bg = Some(fg_col);
+                        final_fg = c_low_col.clone().unwrap();
+                        final_bg = Some(c_high_col.clone());
                     } else {
-                        final_fg = fg_col;
-                        final_bg = bg_col;
+                        final_fg = c_high_col.clone();
+                        final_bg = c_low_col.clone();
                     }
-                    best_fg_c = fg_c;
-                    best_bg_c = bg_c;
                 }
             }
 
