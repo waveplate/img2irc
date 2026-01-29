@@ -493,74 +493,141 @@ fn render_blocks_connected(
             for p in &data.pixels { d_block_sum_r += p.r; d_block_sum_g += p.g; d_block_sum_b += p.b; d_block_sum_sq += p.sq; }
 
             // Identify Constraints (Neighbors)
-            // Identify Constraints (Neighbors)
-            let mut cons_top: Option<(usize, bool)> = None;
-            let mut cons_bottom: Option<(usize, bool)> = None;
-            let mut cons_left: Option<(usize, bool)> = None;
-            let mut cons_right: Option<(usize, bool)> = None;
-            let mut cons_tl: Option<(usize, bool)> = None;
-            let mut cons_tr: Option<(usize, bool)> = None;
-            let mut cons_bl: Option<(usize, bool)> = None;
-            let mut cons_br: Option<(usize, bool)> = None;
+            // Semantic Color Matching (Visual Continuity)
+            let mut color_mismatch_cost = 0u64;
+            let edge_importance_weight = 4; // Edges are 4x more critical than internal pixels
 
-            if cy > 0 { 
-                let n = curr_idx - grid_w; 
-                if !grid_data[n].is_flat { cons_top = Some(grid_state[n]); } 
-                if cx > 0 { let n_tl = n - 1; if !grid_data[n_tl].is_flat { cons_tl = Some(grid_state[n_tl]); } }
-                if cx < grid_w - 1 { let n_tr = n + 1; if !grid_data[n_tr].is_flat { cons_tr = Some(grid_state[n_tr]); } }
-            }
-            if cy < grid_h - 1 { 
-                let n = curr_idx + grid_w; 
-                if !grid_data[n].is_flat { cons_bottom = Some(grid_state[n]); } 
-                if cx > 0 { let n_bl = n - 1; if !grid_data[n_bl].is_flat { cons_bl = Some(grid_state[n_bl]); } }
-                if cx < grid_w - 1 { let n_br = n + 1; if !grid_data[n_br].is_flat { cons_br = Some(grid_state[n_br]); } }
-            }
-            if cx > 0 { let n = curr_idx - 1; if !grid_data[n].is_flat { cons_left = Some(grid_state[n]); } }
-            if cx < grid_w - 1 { let n = curr_idx + 1; if !grid_data[n].is_flat { cons_right = Some(grid_state[n]); } }
-            
-            // If No constraints and is flat, skip (already optimized)
-            if data.is_flat && cons_top.is_none() && cons_bottom.is_none() && cons_left.is_none() && cons_right.is_none() 
-               && cons_tl.is_none() && cons_tr.is_none() && cons_bl.is_none() && cons_br.is_none() { continue; }
-
-            let mut best_cost = u64::MAX;
-            let mut best_choice = grid_state[curr_idx];
+            // Helper for color distance
+            let dist_sq = |a: [u8;3], b: [u8;3]| -> u64 {
+                let dr = (a[0] as i64 - b[0] as i64);
+                let dg = (a[1] as i64 - b[1] as i64);
+                let db = (a[2] as i64 - b[2] as i64);
+                (dr*dr + dg*dg + db*db) as u64
+            };
 
             for (gi, fglyph) in glyphs.iter().enumerate() {
                 for inv in [false, true] {
-                    // 1. Edge Cost
-                    let mut mismatch = 0u64;
-                    // Top Neighbor's Bottom Match
-                    if let Some((ni, niv)) = cons_top {
-                        for i in 0..gw { if (fglyph.top[i] ^ (inv as u8)) != (glyphs[ni].bottom[i] ^ (niv as u8)) { mismatch += 1; } }
-                    }
-                    // Bottom Neighbor's Top Match
-                    if let Some((ni, niv)) = cons_bottom {
-                        for i in 0..gw { if (fglyph.bottom[i] ^ (inv as u8)) != (glyphs[ni].top[i] ^ (niv as u8)) { mismatch += 1; } }
-                    }
-                    // Left Neighbor's Right Match
-                    if let Some((ni, niv)) = cons_left {
-                        for i in 0..gh { if (fglyph.left[i] ^ (inv as u8)) != (glyphs[ni].right[i] ^ (niv as u8)) { mismatch += 1; } }
-                    }
-                    // Right Neighbor's Left Match
-                    if let Some((ni, niv)) = cons_right {
-                        for i in 0..gh { if (fglyph.right[i] ^ (inv as u8)) != (glyphs[ni].left[i] ^ (niv as u8)) { mismatch += 1; } }
+                    // Determine My Apparent Colors
+                    let (my_fg, my_bg) = if inv { (data.bg, data.fg) } else { (data.fg, data.bg) };
+                    let mut current_edge_error = 0u64;
+
+                    // --- Orthogonal Neighbors ---
+                    
+                    // Top Neighbor (Matches My Top to Neighbor Bottom)
+                    if cy > 0 {
+                        let n_idx = curr_idx - grid_w;
+                        let (ni, niv) = grid_state[n_idx];
+                        let n_data = &grid_data[n_idx];
+                        let (n_fg, n_bg) = if niv { (n_data.bg, n_data.fg) } else { (n_data.fg, n_data.bg) };
+                        let n_glyph = &glyphs[ni];
+                        
+                        for i in 0..gw {
+                            let n_on = (n_glyph.bottom[i] ^ (niv as u8)) == 1;
+                            let n_col = if n_on { n_fg } else { n_bg };
+                            let my_on = (fglyph.top[i] ^ (inv as u8)) == 1;
+                            let my_col = if my_on { my_fg } else { my_bg };
+                            current_edge_error += dist_sq(n_col, my_col);
+                        }
                     }
 
-                    // Diagonal Corners (Single bit constraints)
-                    if let Some((ni, niv)) = cons_tl {
-                        if (fglyph.top[0] ^ (inv as u8)) != (glyphs[ni].bottom[gw-1] ^ (niv as u8)) { mismatch += 1; }
+                    // Bottom Neighbor (Matches My Bottom to Neighbor Top)
+                    if cy < grid_h - 1 {
+                        let n_idx = curr_idx + grid_w;
+                        let (ni, niv) = grid_state[n_idx];
+                        let n_data = &grid_data[n_idx];
+                        let (n_fg, n_bg) = if niv { (n_data.bg, n_data.fg) } else { (n_data.fg, n_data.bg) };
+                        let n_glyph = &glyphs[ni];
+                        
+                        for i in 0..gw {
+                            let n_on = (n_glyph.top[i] ^ (niv as u8)) == 1;
+                            let n_col = if n_on { n_fg } else { n_bg };
+                            let my_on = (fglyph.bottom[i] ^ (inv as u8)) == 1;
+                            let my_col = if my_on { my_fg } else { my_bg };
+                            current_edge_error += dist_sq(n_col, my_col);
+                        }
                     }
-                    if let Some((ni, niv)) = cons_tr {
-                        if (fglyph.top[gw-1] ^ (inv as u8)) != (glyphs[ni].bottom[0] ^ (niv as u8)) { mismatch += 1; }
+
+                    // Left Neighbor (Matches My Left to Neighbor Right)
+                    if cx > 0 {
+                        let n_idx = curr_idx - 1;
+                        let (ni, niv) = grid_state[n_idx];
+                        let n_data = &grid_data[n_idx];
+                        let (n_fg, n_bg) = if niv { (n_data.bg, n_data.fg) } else { (n_data.fg, n_data.bg) };
+                        let n_glyph = &glyphs[ni];
+                        
+                        for i in 0..gh {
+                            let n_on = (n_glyph.right[i] ^ (niv as u8)) == 1;
+                            let n_col = if n_on { n_fg } else { n_bg };
+                            let my_on = (fglyph.left[i] ^ (inv as u8)) == 1;
+                            let my_col = if my_on { my_fg } else { my_bg };
+                            current_edge_error += dist_sq(n_col, my_col);
+                        }
                     }
-                    if let Some((ni, niv)) = cons_bl {
-                        if (fglyph.bottom[0] ^ (inv as u8)) != (glyphs[ni].top[gw-1] ^ (niv as u8)) { mismatch += 1; }
-                    }
-                    if let Some((ni, niv)) = cons_br {
-                        if (fglyph.bottom[gw-1] ^ (inv as u8)) != (glyphs[ni].top[0] ^ (niv as u8)) { mismatch += 1; }
+
+                    // Right Neighbor (Matches My Right to Neighbor Left)
+                    if cx < grid_w - 1 {
+                        let n_idx = curr_idx + 1;
+                        let (ni, niv) = grid_state[n_idx];
+                        let n_data = &grid_data[n_idx];
+                        let (n_fg, n_bg) = if niv { (n_data.bg, n_data.fg) } else { (n_data.fg, n_data.bg) };
+                        let n_glyph = &glyphs[ni];
+                        
+                        for i in 0..gh {
+                            let n_on = (n_glyph.left[i] ^ (niv as u8)) == 1;
+                            let n_col = if n_on { n_fg } else { n_bg };
+                            let my_on = (fglyph.right[i] ^ (inv as u8)) == 1;
+                            let my_col = if my_on { my_fg } else { my_bg };
+                            current_edge_error += dist_sq(n_col, my_col);
+                        }
                     }
                     
-                    let edge_cost = mismatch * edge_weight;
+                    // --- Diagonal Neighbors (Single Pixel Corners) ---
+                    // TL
+                    if cy > 0 && cx > 0 {
+                         let n_idx = (curr_idx - grid_w) - 1;
+                         let (ni, niv) = grid_state[n_idx];
+                         // Neighbor BR pixel vs My TL pixel
+                         let n_on = (glyphs[ni].bottom[gw-1] ^ (niv as u8)) == 1;
+                         let n_col = if n_on { if niv { grid_data[n_idx].bg } else { grid_data[n_idx].fg } } else { if niv { grid_data[n_idx].fg } else { grid_data[n_idx].bg } };
+                         let my_on = (fglyph.top[0] ^ (inv as u8)) == 1;
+                         let my_col = if my_on { my_fg } else { my_bg };
+                         current_edge_error += dist_sq(n_col, my_col);
+                    }
+                    // TR
+                    if cy > 0 && cx < grid_w - 1 {
+                         let n_idx = (curr_idx - grid_w) + 1;
+                         let (ni, niv) = grid_state[n_idx];
+                         // Neighbor BL pixel vs My TR pixel
+                         let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
+                         let n_col = if n_on { if niv { grid_data[n_idx].bg } else { grid_data[n_idx].fg } } else { if niv { grid_data[n_idx].fg } else { grid_data[n_idx].bg } };
+                         let my_on = (fglyph.top[gw-1] ^ (inv as u8)) == 1;
+                         let my_col = if my_on { my_fg } else { my_bg };
+                         current_edge_error += dist_sq(n_col, my_col);
+                    }
+                    // BL
+                    if cy < grid_h - 1 && cx > 0 {
+                         let n_idx = (curr_idx + grid_w) - 1;
+                         let (ni, niv) = grid_state[n_idx];
+                         // Neighbor TR pixel vs My BL pixel
+                         let n_on = (glyphs[ni].top[gw-1] ^ (niv as u8)) == 1;
+                         let n_col = if n_on { if niv { grid_data[n_idx].bg } else { grid_data[n_idx].fg } } else { if niv { grid_data[n_idx].fg } else { grid_data[n_idx].bg } };
+                         let my_on = (fglyph.bottom[0] ^ (inv as u8)) == 1;
+                         let my_col = if my_on { my_fg } else { my_bg };
+                         current_edge_error += dist_sq(n_col, my_col);
+                    }
+                    // BR
+                    if cy < grid_h - 1 && cx < grid_w - 1 {
+                         let n_idx = (curr_idx + grid_w) + 1;
+                         let (ni, niv) = grid_state[n_idx];
+                         // Neighbor TL pixel vs My BR pixel
+                         let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
+                         let n_col = if n_on { if niv { grid_data[n_idx].bg } else { grid_data[n_idx].fg } } else { if niv { grid_data[n_idx].fg } else { grid_data[n_idx].bg } };
+                         let my_on = (fglyph.bottom[gw-1] ^ (inv as u8)) == 1;
+                         let my_col = if my_on { my_fg } else { my_bg };
+                         current_edge_error += dist_sq(n_col, my_col);
+                    }
+
+                    let edge_cost = current_edge_error * edge_importance_weight;
                     if edge_cost >= best_cost { continue; } // Pruning
 
                     // 2. Data Cost
