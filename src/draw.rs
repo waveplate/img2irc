@@ -336,250 +336,261 @@ fn render_blocks_connected(
     glyphs: &[FastGlyph],
 ) -> RenderResult {
     if glyphs.is_empty() { return "Error: no glyphs available".into(); }
-
     let (gh, gw) = image.glyphs.metrics;
     let bp = gh * gw;
+    
+    // Grid Dimensions
+    let grid_h = image.block.len();
+    let grid_w = if grid_h > 0 { image.block[0].len() } else { 0 };
+    if grid_w == 0 { return "".into(); }
 
-    let mut out = String::new();
-    let mut total_error = 0u64;
-    let mut total_pixels = 0u64;
+    // --- Phase 1: Pre-calculate Block Data (Colors & Pixels) ---
+    struct BlockData {
+        pixels: Vec<PrePixel>,
+        fg: [u8; 3],  // High Color
+        bg: [u8; 3],  // Low Color
+        fg_col: Option<Colour>, // Cached Colour enum
+        bg_col: Option<Colour>,
+        is_flat: bool,
+    }
 
-    let mut current_block_pixels_rgb: Vec<PrePixel> = Vec::with_capacity(bp);
-    // Source Edge Signatures (0 = BG, 1 = FG)
-    // We derive these from the source pixels using a luma threshold (127)
+    let mut grid_data: Vec<BlockData> = Vec::with_capacity(grid_h * grid_w);
     let threshold = 127;
-    let mut grid: Vec<Vec<RenderedCell>> = Vec::new();
 
-    for (_row_idx, block_row) in image.block.iter().enumerate() {
-        let mut grid_row = Vec::new();
-        let mut first = true;
-        let mut last_fg: Option<Colour> = None;
-        let mut last_bg: Option<Colour> = None;
-        
-        // Continuity State
-        let mut last_fg_raw: Option<[u8; 3]> = None;
-        let mut last_bg_raw: Option<[u8; 3]> = None;
-        let mut left_neighbor_edge: Vec<u8> = Vec::new();
-
-        for (_col_idx, blk) in block_row.iter().enumerate() {
-            total_pixels += bp as u64;
-            
-            // 1. Phase 1: The "Contract" (Analyze Source Edges)
-            let mut src_top = Vec::with_capacity(gw);
-            let mut src_bottom = Vec::with_capacity(gw);
-            let mut src_left = Vec::with_capacity(gh);
-            let mut src_right = Vec::with_capacity(gh);
-            
-            // Color Splitting Accumulators
-            let mut high_sum_r = 0u64;
-            let mut high_sum_g = 0u64;
-            let mut high_sum_b = 0u64;
+    for block_row in &image.block {
+        for blk in block_row {
+            // 1. Analyze Contrast & Quantize
+            let mut high_sum = [0u64; 3];
             let mut high_count = 0u64;
-            let mut low_sum_r = 0u64;
-            let mut low_sum_g = 0u64;
-            let mut low_sum_b = 0u64;
+            let mut low_sum = [0u64; 3];
             let mut low_count = 0u64;
+            
+            let mut pixels = Vec::with_capacity(bp);
 
-            current_block_pixels_rgb.clear();
             for y in 0..gh {
                 for x in 0..gw {
                     let px_orig = blk.pixels[y][x].orig;
                     let rgb = unpack_rgb(px_orig);
-                    let lum = luma(&rgb);
-                    let bit = if lum > threshold { 1u8 } else { 0u8 };
-                    
-                    // Populate Edges
-                    if y == 0 { src_top.push(bit); }
-                    if y == gh - 1 { src_bottom.push(bit); }
-                    if x == 0 { src_left.push(bit); }
-                    if x == gw - 1 { src_right.push(bit); }
-
-                    // Accumulate Colors
-                    if bit == 1 {
-                        high_sum_r += rgb[0] as u64; high_sum_g += rgb[1] as u64; high_sum_b += rgb[2] as u64;
-                        high_count += 1;
-                    } else {
-                        low_sum_r += rgb[0] as u64; low_sum_g += rgb[1] as u64; low_sum_b += rgb[2] as u64;
-                        low_count += 1;
-                    }
-
-                    current_block_pixels_rgb.push(PrePixel {
+                    pixels.push(PrePixel {
                         r: rgb[0] as u64, g: rgb[1] as u64, b: rgb[2] as u64,
                         sq: (rgb[0] as u64).pow(2) + (rgb[1] as u64).pow(2) + (rgb[2] as u64).pow(2)
                     });
+
+                    let lum = luma(&rgb);
+                    if lum > threshold {
+                        high_sum[0] += rgb[0] as u64; high_sum[1] += rgb[1] as u64; high_sum[2] += rgb[2] as u64;
+                        high_count += 1;
+                    } else {
+                        low_sum[0] += rgb[0] as u64; low_sum[1] += rgb[1] as u64; low_sum[2] += rgb[2] as u64;
+                        low_count += 1;
+                    }
                 }
             }
-            
-            // Calculate Quantized Colors (High / Low) with Safety Defaults
-            let mut raw_c_high = if high_count > 0 {
-                [(high_sum_r / high_count) as u8, (high_sum_g / high_count) as u8, (high_sum_b / high_count) as u8]
-            } else { [0, 0, 0] }; // Placeholder, will fix below
-            let mut raw_c_low = if low_count > 0 {
-                [(low_sum_r / low_count) as u8, (low_sum_g / low_count) as u8, (low_sum_b / low_count) as u8]
-            } else { [0, 0, 0] };
-            
-            if high_count == 0 && low_count == 0 {
-                 raw_c_high = [255, 255, 255]; raw_c_low = [0, 0, 0];
-            } else if high_count == 0 {
-                 raw_c_high = raw_c_low;
-            } else if low_count == 0 {
-                 raw_c_low = raw_c_high;
-            }
 
-            // Sticky Color Logic: Lock to previous block if similar enough
-            let dist_sq = |a: [u8;3], b: [u8;3]| -> u32 {
-                let dr = (a[0] as i32 - b[0] as i32).pow(2);
-                let dg = (a[1] as i32 - b[1] as i32).pow(2);
-                let db = (a[2] as i32 - b[2] as i32).pow(2);
-                (dr + dg + db) as u32
-            };
-            let continuity_threshold_sq = 2500; // Tolerance = 50
+            let mut c_high = if high_count > 0 {
+                [(high_sum[0]/high_count) as u8, (high_sum[1]/high_count) as u8, (high_sum[2]/high_count) as u8]
+            } else { [0,0,0] };
+            let mut c_low = if low_count > 0 {
+                [(low_sum[0]/low_count) as u8, (low_sum[1]/low_count) as u8, (low_sum[2]/low_count) as u8]
+            } else { [0,0,0] };
 
-            if let Some(prev) = last_fg_raw {
-                if dist_sq(raw_c_high, prev) < continuity_threshold_sq { raw_c_high = prev; }
-            }
-            if let Some(prev) = last_bg_raw {
-                if dist_sq(raw_c_low, prev) < continuity_threshold_sq { raw_c_low = prev; }
-            }
-            
-            let (c_high, c_low, c_high_col, c_low_col) = if render == Render::Ansi24 {
-                 let target_bg = if args.fg_only { [0,0,0] } else { raw_c_low };
-                 (raw_c_high, target_bg, Colour::RGB(raw_c_high), if args.fg_only { None } else { Some(Colour::RGB(raw_c_low)) })
+            // Handle empty buckets
+            if high_count == 0 && low_count == 0 { c_high = [255,255,255]; c_low = [0,0,0]; }
+            else if high_count == 0 { c_high = c_low; }
+            else if low_count == 0 { c_low = c_high; }
+
+            // Snap to Palette
+            let (final_fg, final_bg, fg_obj, bg_obj) = if render == Render::Ansi24 {
+                let bg_opt = if args.fg_only { None } else { Some(Colour::RGB(c_low)) };
+                (c_high, c_low, Some(Colour::RGB(c_high)), bg_opt)
             } else {
-                 let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
-                 let hi = nearest_hex_colour_fast(make_rgb_u32(&raw_c_high), palette);
-                 let lo = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&raw_c_low), palette) };
-                 // Update raw inputs to match what we actually use, for continuity
-                 raw_c_high = unpack_rgb(palette[hi as usize]);
-                 if !args.fg_only { raw_c_low = unpack_rgb(palette[lo as usize]); }
-                 (raw_c_high, unpack_rgb(palette[lo as usize]), Colour::Index(hi), if args.fg_only { None } else { Some(Colour::Index(lo)) })
+                let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
+                let hi_idx = nearest_hex_colour_fast(make_rgb_u32(&c_high), palette);
+                let lo_idx = if args.fg_only { nearest_hex_colour_fast(0x000000, palette) } else { nearest_hex_colour_fast(make_rgb_u32(&c_low), palette) };
+                let hi_rgb = unpack_rgb(palette[hi_idx as usize]);
+                let lo_rgb = unpack_rgb(palette[lo_idx as usize]);
+                let bg_opt = if args.fg_only { None } else { Some(Colour::Index(lo_idx)) };
+                (hi_rgb, if args.fg_only { c_low } else { lo_rgb }, Some(Colour::Index(hi_idx)), bg_opt)
             };
 
-            let fg_p_fixed = PrePixel { r: c_high[0] as u64, g: c_high[1] as u64, b: c_high[2] as u64, sq: (c_high[0] as u64).pow(2) + (c_high[1] as u64).pow(2) + (c_high[2] as u64).pow(2) };
-            let bg_p_fixed = PrePixel { r: c_low[0] as u64, g: c_low[1] as u64, b: c_low[2] as u64, sq: (c_low[0] as u64).pow(2) + (c_low[1] as u64).pow(2) + (c_low[2] as u64).pow(2) };
+            let contrast = (final_fg[0] as i32 - final_bg[0] as i32).pow(2) + 
+                           (final_fg[1] as i32 - final_bg[1] as i32).pow(2) + 
+                           (final_fg[2] as i32 - final_bg[2] as i32).pow(2);
+            let is_flat = contrast < 400; // Tolerance squared
 
-            // Calculate Block Sums for Internal Error (Standard Logic)
-            let mut block_sum_r = 0u64;
-            let mut block_sum_g = 0u64;
-            let mut block_sum_b = 0u64;
-            let mut block_sum_sq = 0u64;
-            for p in &current_block_pixels_rgb {
-                block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
+            grid_data.push(BlockData {
+                pixels,
+                fg: final_fg,
+                bg: final_bg,
+                fg_col: fg_obj,
+                bg_col: bg_obj,
+                is_flat,
+            });
+        }
+    }
+
+    // --- Phase 2: State Initialization (Greedy Best Visual Match) ---
+    // Stores (glyph_index, inverted)
+    let mut grid_state: Vec<(usize, bool)> = vec![(0, false); grid_h * grid_w];
+
+    for idx in 0..grid_data.len() {
+        let data = &grid_data[idx];
+        
+        let fg_p = PrePixel { r: data.fg[0] as u64, g: data.fg[1] as u64, b: data.fg[2] as u64, sq: (data.fg[0] as u64).pow(2) + (data.fg[1] as u64).pow(2) + (data.fg[2] as u64).pow(2) };
+        let bg_p = PrePixel { r: data.bg[0] as u64, g: data.bg[1] as u64, b: data.bg[2] as u64, sq: (data.bg[0] as u64).pow(2) + (data.bg[1] as u64).pow(2) + (data.bg[2] as u64).pow(2) };
+
+        // Pre-calc data sums
+        let mut d_block_sum_r = 0u64; let mut d_block_sum_g = 0u64; let mut d_block_sum_b = 0u64; let mut d_block_sum_sq = 0u64;
+        for p in &data.pixels { d_block_sum_r += p.r; d_block_sum_g += p.g; d_block_sum_b += p.b; d_block_sum_sq += p.sq; }
+
+        let mut best_cost = u64::MAX;
+        let mut best_choice = (0, false);
+
+        for (gi, fglyph) in glyphs.iter().enumerate() {
+            for inv in [false, true] {
+                // Color Error Only
+                let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64; let mut count_ones = 0u64;
+                for i in 0..bp {
+                    if fglyph.bitmap[i] ^ (inv as u8) == 1 {
+                        let px = &data.pixels[i];
+                        sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                        count_ones += 1;
+                    }
+                }
+                let count_zeros = bp as u64 - count_ones;
+                let c1 = (sum_ones_sq + count_ones * fg_p.sq).saturating_sub(2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b));
+                let c0 = (d_block_sum_sq - sum_ones_sq + count_zeros * bg_p.sq).saturating_sub(2 * (bg_p.r * (d_block_sum_r - sum_ones_r) + bg_p.g * (d_block_sum_g - sum_ones_g) + bg_p.b * (d_block_sum_b - sum_ones_b)));
+                
+                let cost = c1 + c0;
+                if cost < best_cost { best_cost = cost; best_choice = (gi, inv); }
             }
+        }
+        grid_state[idx] = best_choice;
+    }
 
-            // Unified Search (Edge + Color)
+    // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
+    // We alternate passes: TL->BR, then BR->TL.
+    let iterations = 4;
+    let edge_weight = 500_000u64;
+
+    for pass in 0..iterations {
+        let forward = pass % 2 == 0;
+        // Standard iterator over indices
+        let indices: Vec<usize> = if forward { (0..grid_h * grid_w).collect() } else { (0..grid_h * grid_w).rev().collect() };
+
+        for &curr_idx in &indices {
+            let cx = curr_idx % grid_w;
+            let cy = curr_idx / grid_w;
+            let data = &grid_data[curr_idx];
+            
+            // Skip solid blocks for edge matching? No, they need to break lines.
+            // But if *neighbor* is flat, we don't care about matching it.
+
+            // Pre-calc data sums (Cached optimization)
+            let fg_p = PrePixel { r: data.fg[0] as u64, g: data.fg[1] as u64, b: data.fg[2] as u64, sq: (data.fg[0] as u64).pow(2) + (data.fg[1] as u64).pow(2) + (data.fg[2] as u64).pow(2) };
+            let bg_p = PrePixel { r: data.bg[0] as u64, g: data.bg[1] as u64, b: data.bg[2] as u64, sq: (data.bg[0] as u64).pow(2) + (data.bg[1] as u64).pow(2) + (data.bg[2] as u64).pow(2) };
+            let mut d_block_sum_r = 0u64; let mut d_block_sum_g = 0u64; let mut d_block_sum_b = 0u64; let mut d_block_sum_sq = 0u64;
+            for p in &data.pixels { d_block_sum_r += p.r; d_block_sum_g += p.g; d_block_sum_b += p.b; d_block_sum_sq += p.sq; }
+
+            // Identify Constraints (Neighbors)
+            let mut cons_top: Option<(usize, bool)> = None;
+            let mut cons_bottom: Option<(usize, bool)> = None;
+            let mut cons_left: Option<(usize, bool)> = None;
+            let mut cons_right: Option<(usize, bool)> = None;
+
+            if cy > 0 { let n = curr_idx - grid_w; if !grid_data[n].is_flat { cons_top = Some(grid_state[n]); } }
+            if cy < grid_h - 1 { let n = curr_idx + grid_w; if !grid_data[n].is_flat { cons_bottom = Some(grid_state[n]); } }
+            if cx > 0 { let n = curr_idx - 1; if !grid_data[n].is_flat { cons_left = Some(grid_state[n]); } }
+            if cx < grid_w - 1 { let n = curr_idx + 1; if !grid_data[n].is_flat { cons_right = Some(grid_state[n]); } }
+            
+            // If No constraints and is flat, skip (already optimized)
+            if data.is_flat && cons_top.is_none() && cons_bottom.is_none() && cons_left.is_none() && cons_right.is_none() { continue; }
+
             let mut best_cost = u64::MAX;
-            let mut final_glyph = ' ';
-            let mut final_fg = Colour::Index(0);
-            let mut final_bg: Option<Colour> = None;
-            let mut chosen_glyph_index = 0;
-            let mut chosen_glyph_inverted = false;
-            let best_fg_c = c_high;
-            let best_bg_c = c_low;
-            
-            let edge_weight = 1_000_000u64;
-            
-            // Contrast Check: If the block is effectively solid color, don't enforce left-edge connectivity
-            // This prevents "phantom lines" from propagating through white space or solid black areas.
-            let contrast_dist = (c_high[0] as i32 - c_low[0] as i32).pow(2)  + (c_high[1] as i32 - c_low[1] as i32).pow(2) + (c_high[2] as i32 - c_low[2] as i32).pow(2);
-            if contrast_dist < 200 { 
-                left_neighbor_edge.clear();
-            }
+            let mut best_choice = grid_state[curr_idx];
 
             for (gi, fglyph) in glyphs.iter().enumerate() {
                 for inv in [false, true] {
                     // 1. Edge Cost
-                    let mut edge_mismatch = 0u64;
-                    // Left (Soft Sticky)
-                    let target_left = if !left_neighbor_edge.is_empty() { &left_neighbor_edge } else { &src_left };
-                    for i in 0..gh { if (fglyph.left[i] ^ inv as u8) != target_left[i] { edge_mismatch += 1; } }
-                    // Top (Source)
-                    for i in 0..gw { if (fglyph.top[i] ^ inv as u8) != src_top[i] { edge_mismatch += 1; } }
-                    // Bottom (Source)
-                    for i in 0..gw { if (fglyph.bottom[i] ^ inv as u8) != src_bottom[i] { edge_mismatch += 1; } }
-                    // Right (Source)
-                    for i in 0..gh { if (fglyph.right[i] ^ inv as u8) != src_right[i] { edge_mismatch += 1; } }
+                    let mut mismatch = 0u64;
+                    // Top Neighbor's Bottom Match
+                    if let Some((ni, niv)) = cons_top {
+                        for i in 0..gw { if (fglyph.top[i] ^ (inv as u8)) != (glyphs[ni].bottom[i] ^ (niv as u8)) { mismatch += 1; } }
+                    }
+                    // Bottom Neighbor's Top Match
+                    if let Some((ni, niv)) = cons_bottom {
+                        for i in 0..gw { if (fglyph.bottom[i] ^ (inv as u8)) != (glyphs[ni].top[i] ^ (niv as u8)) { mismatch += 1; } }
+                    }
+                    // Left Neighbor's Right Match
+                    if let Some((ni, niv)) = cons_left {
+                        for i in 0..gh { if (fglyph.left[i] ^ (inv as u8)) != (glyphs[ni].right[i] ^ (niv as u8)) { mismatch += 1; } }
+                    }
+                    // Right Neighbor's Left Match
+                    if let Some((ni, niv)) = cons_right {
+                        for i in 0..gh { if (fglyph.right[i] ^ (inv as u8)) != (glyphs[ni].left[i] ^ (niv as u8)) { mismatch += 1; } }
+                    }
                     
-                    let edge_cost = edge_mismatch * edge_weight;
-                    if edge_cost >= best_cost { continue; }
+                    let edge_cost = mismatch * edge_weight;
+                    if edge_cost >= best_cost { continue; } // Pruning
 
-                    // 2. Color Cost (Pre-calculated vectors)
-                    let mut sum_ones_r = 0u64;
-                    let mut sum_ones_g = 0u64;
-                    let mut sum_ones_b = 0u64;
-                    let mut sum_ones_sq = 0u64;
-                    let mut count_ones = 0u64;
-
+                    // 2. Data Cost
+                    let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64; let mut count_ones = 0u64;
                     for i in 0..bp {
                         if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                            let px = &current_block_pixels_rgb[i];
+                            let px = &data.pixels[i];
                             sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
                             count_ones += 1;
                         }
                     }
                     let count_zeros = bp as u64 - count_ones;
-                    let sum_zeros_r = block_sum_r - sum_ones_r;
-                    let sum_zeros_g = block_sum_g - sum_ones_g;
-                    let sum_zeros_b = block_sum_b - sum_ones_b;
-                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
-
-                    let c1 = (sum_ones_sq + count_ones * fg_p_fixed.sq).saturating_sub(2 * (fg_p_fixed.r * sum_ones_r + fg_p_fixed.g * sum_ones_g + fg_p_fixed.b * sum_ones_b));
-                    let c0 = (sum_zeros_sq + count_zeros * bg_p_fixed.sq).saturating_sub(2 * (bg_p_fixed.r * sum_zeros_r + bg_p_fixed.g * sum_zeros_g + bg_p_fixed.b * sum_zeros_b));
+                    let c1 = (sum_ones_sq + count_ones * fg_p.sq).saturating_sub(2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b));
+                    let c0 = (d_block_sum_sq - sum_ones_sq + count_zeros * bg_p.sq).saturating_sub(2 * (bg_p.r * (d_block_sum_r - sum_ones_r) + bg_p.g * (d_block_sum_g - sum_ones_g) + bg_p.b * (d_block_sum_b - sum_ones_b)));
                     
-                    let total_cost = edge_cost + c1 + c0;
-
-                    if total_cost < best_cost {
-                        best_cost = total_cost;
-                        chosen_glyph_index = gi;
-                        chosen_glyph_inverted = inv;
-                        final_glyph = fglyph.ch;
-                        // Use snapped colors
-                        if inv && !args.fg_only {
-                            final_fg = c_low_col.clone().unwrap();
-                            final_bg = Some(c_high_col.clone());
-                        } else {
-                            final_fg = c_high_col.clone();
-                            final_bg = c_low_col.clone();
-                        }
-                    }
+                    let total = edge_cost + c1 + c0;
+                    if total < best_cost { best_cost = total; best_choice = (gi, inv); }
                 }
             }
+            grid_state[curr_idx] = best_choice;
+        }
+    }
 
-            // Error Calculation (Dithering)
-            let fglyph = &glyphs[chosen_glyph_index];
-            let inv = chosen_glyph_inverted;
-            let mut block_error = 0u64;
-            let fg_p = PrePixel { r: best_fg_c[0] as u64, g: best_fg_c[1] as u64, b: best_fg_c[2] as u64, sq: (best_fg_c[0] as u64).pow(2) + (best_fg_c[1] as u64).pow(2) + (best_fg_c[2] as u64).pow(2) };
-            let bg_p = PrePixel { r: best_bg_c[0] as u64, g: best_bg_c[1] as u64, b: best_bg_c[2] as u64, sq: (best_bg_c[0] as u64).pow(2) + (best_bg_c[1] as u64).pow(2) + (best_bg_c[2] as u64).pow(2) };
+    // --- Phase 4: Final Output Generation ---
+    let mut out = String::new();
+    let mut grid_out = Vec::new();
+    let mut total_error = 0u64; // Approximation
+    
+    for y in 0..grid_h {
+        let mut row_vec = Vec::new();
+        let mut first = true;
+        let mut last_fg: Option<Colour> = None;
+        let mut last_bg: Option<Colour> = None;
 
-            for i in 0..bp {
-                let px = &current_block_pixels_rgb[i];
-                let dist_fg = (px.sq + fg_p.sq).saturating_sub(2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b));
-                let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
-                let bit = fglyph.bitmap[i] ^ (inv as u8);
-                if bit == 1 { if dist_bg < dist_fg { block_error += 1; } }
-                else { if !args.fg_only && dist_fg < dist_bg { block_error += 1; } }
-            }
-            total_error += block_error;
-
-            grid_row.push(RenderedCell { char: final_glyph, fg: best_fg_c, bg: if args.fg_only { None } else { Some(best_bg_c) } });
+        for x in 0..grid_w {
+            let idx = y * grid_w + x;
+            let data = &grid_data[idx];
+            let (gi, inv) = grid_state[idx];
+            let glyph = &glyphs[gi];
+            let ch = glyph.ch;
             
-            // Update State for next block
-            last_fg_raw = Some(c_high);
-            last_bg_raw = Some(c_low);
-            left_neighbor_edge = glyphs[chosen_glyph_index].right.iter().map(|&b| b ^ (chosen_glyph_inverted as u8)).collect();
+            // Swap FG/BG if inverted
+            let (draw_fg, draw_bg, draw_fg_raw, draw_bg_raw) = if inv && !args.fg_only {
+                 (data.bg_col.clone().unwrap_or(Colour::Index(0)), Some(data.fg_col.clone().unwrap()), data.bg, Some(data.fg))
+            } else {
+                 (data.fg_col.clone().unwrap(), data.bg_col.clone(), data.fg, Some(data.bg))
+            };
 
-            emit_colourized(&mut out, render, final_fg, final_bg, final_glyph, &mut first, &mut last_fg, &mut last_bg);
+            row_vec.push(RenderedCell { char: ch, fg: draw_fg_raw, bg: draw_bg_raw });
+            emit_colourized(&mut out, render, draw_fg, draw_bg, ch, &mut first, &mut last_fg, &mut last_bg);
         }
         if args.fg_only {
             out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[39m\n", Render::Irc => "\x03\n" });
         } else {
             out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
         }
-        grid.push(grid_row);
+        grid_out.push(row_vec);
     }
-    
-    RenderResult { content: out.trim_end_matches('\n').into(), error_count: total_error, total_pixels, dynamic_scaling_count: 0, grid }
+
+    RenderResult { content: out.trim_end_matches('\n').into(), error_count: total_error, total_pixels: (bp * grid_h * grid_w) as u64, dynamic_scaling_count: 0, grid: grid_out }
 }
 
 pub fn render_blocks(
