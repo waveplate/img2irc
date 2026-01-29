@@ -551,7 +551,7 @@ pub fn render_blocks(
                                                     [((sum_ones_r / count_ones) as u8), ((sum_ones_g / count_ones) as u8), ((sum_ones_b / count_ones) as u8)]
                                                 } else { [0,0,0] };
                                                 let avg_zeros = if count_zeros > 0 {
-                                                    [((sum_zeros_r / count_ones) as u8), ((sum_zeros_g / count_zeros) as u8), ((sum_zeros_b / count_zeros) as u8)]
+                                                    [((sum_zeros_r / count_zeros) as u8), ((sum_zeros_g / count_zeros) as u8), ((sum_zeros_b / count_zeros) as u8)]
                                                 } else { [0,0,0] };
                         let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
                         let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
@@ -698,10 +698,18 @@ pub fn render_blocks(
                                 bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0))
                             };
 
-                            let cost_base = if args.fg_only && bg_opt_idx.is_none() {
-                                let total = bp;
-                                let score = (2 * fgm_val as isize) - (fg_tot as isize);
-                                ((total as isize) - score) as usize
+                            // Calculate cost: number of pixels that don't match drawn color
+                            let cost_base = if args.fg_only {
+                                let mut misses = 0usize;
+                                let fixed_bg_idx = bg_opt_idx.unwrap_or(0); // Assume color 0 (usually black) if no bg_opt
+                                for i in 0..bp {
+                                    let target_idx = current_block_indices[i] as usize;
+                                    let drawn_idx = if fglyph.bitmap[i] ^ (inv as u8) == 1 { fgi } else { fixed_bg_idx };
+                                    if drawn_idx != target_idx {
+                                        misses += 1;
+                                    }
+                                }
+                                misses
                             } else {
                                 (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective))
                             };
@@ -763,7 +771,7 @@ pub fn render_blocks(
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
                     
                     if bit == 1 { if dist_bg < dist_fg { block_error += 1; } } // If pixel should be FG, but BG is closer
-                    else { if !args.fg_only { if dist_fg < dist_bg { block_error += 1; } } } // If pixel should be BG, but FG is closer
+                    else { if dist_fg < dist_bg { block_error += 1; } } // If pixel should be BG, but FG is closer
                 }
             } else {
                 let fg_idx = best_match_data.4 as usize;
@@ -779,7 +787,7 @@ pub fn render_blocks(
                     
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
                     if bit == 1 { if col_idx != fg_idx { block_error += 1; } } // If pixel should be FG, but original is not that color
-                    else { if !args.fg_only { if col_idx != bg_idx { block_error += 1; } } } // If pixel should be BG, but original is not that color
+                    else { if col_idx != bg_idx { block_error += 1; } } // If pixel should be BG, but original is not that color
                 }
             }
             total_error += block_error;
@@ -1512,9 +1520,7 @@ fn render_blocks_smooth(
                 if bit == 1 {
                     if dist_bg < dist_fg { block_error += 1; }
                 } else {
-                    if !args.fg_only {
-                        if dist_fg < dist_bg { block_error += 1; }
-                    }
+                    if dist_fg < dist_bg { block_error += 1; }
                 }
             }
             total_error += block_error;

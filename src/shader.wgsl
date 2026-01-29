@@ -5,6 +5,8 @@ struct Globals {
     block_height: u32,
     num_glyphs: u32,
     mode: u32, // 0=ANSI, 1=IRC, 2=ANSI24
+    flags: u32, // bit 0 = fg_only, bit 1 = has_fixed_bg
+    fixed_bg: u32, // packed rgb
 }
 
 struct GlyphInfo {
@@ -109,6 +111,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var best_bg = vec3<f32>(0.0);
     var best_inv = 0u;
 
+    let fg_only = (globals.flags & 1u) != 0u;
+    let has_fixed_bg = (globals.flags & 2u) != 0u;
+    let fixed_bg_rgb = unpack_rgb(globals.fixed_bg);
+
     for (var i = 0u; i < globals.num_glyphs; i = i + 1u) {
         let info = glyph_infos[i];
         
@@ -140,12 +146,27 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Normal (Non-inverted)
         var fg = vec3<f32>(0.0);
         if (count_ones > 0u) { fg = find_closest_palette(sum_ones / f32(count_ones)); }
+        
         var bg = vec3<f32>(0.0);
-        if (count_zeros > 0u) { bg = find_closest_palette(sum_zeros / f32(count_zeros)); }
+        if (fg_only) {
+            if (has_fixed_bg) {
+                bg = find_closest_palette(fixed_bg_rgb);
+            } else {
+                bg = vec3<f32>(0.0); // Assume black background if none specified
+            }
+        } else {
+            if (count_zeros > 0u) { bg = find_closest_palette(sum_zeros / f32(count_zeros)); }
+        }
 
         let err_ones = (sum_ones_sq) - (2.0 * fg * sum_ones) + (f32(count_ones) * fg * fg);
         let err_zeros = (sum_zeros_sq) - (2.0 * bg * sum_zeros) + (f32(count_zeros) * bg * bg);
-        let total_err_norm = dot(err_ones + err_zeros, vec3<f32>(1.0));
+        var total_err_norm = dot(err_ones + err_zeros, vec3<f32>(1.0));
+
+        // Coverage heuristic: if fg_only and no fixed bg, strongly penalize low coverage
+        if (fg_only && !has_fixed_bg) {
+            let coverage = f32(count_ones) / f32(valid_pixels);
+            total_err_norm = total_err_norm * (2.0 - coverage);
+        }
 
         if (total_err_norm < best_error) {
             best_error = total_err_norm;
@@ -156,16 +177,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         // Inverted (avg_zeros becomes FG, avg_ones becomes BG)
-        var fg_inv = bg;
-        var bg_inv = fg;
-        let total_err_inv = total_err_norm; 
+        // Note: Inversion is tricky with fg_only. If fg_only is true, we probably shouldn't allow inversion 
+        // because the 'bg' part is fixed.
+        if (!fg_only) {
+            var fg_inv = bg;
+            var bg_inv = fg;
+            let total_err_inv = total_err_norm; 
 
-        if (total_err_inv < best_error - 0.1) { 
-             best_error = total_err_inv;
-             best_glyph = i;
-             best_fg = fg_inv;
-             best_bg = bg_inv;
-             best_inv = 1u;
+            if (total_err_inv < best_error - 0.1) { 
+                 best_error = total_err_inv;
+                 best_glyph = i;
+                 best_fg = fg_inv;
+                 best_bg = bg_inv;
+                 best_inv = 1u;
+            }
         }
     }
 

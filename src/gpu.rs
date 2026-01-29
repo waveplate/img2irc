@@ -24,6 +24,8 @@ struct Globals {
     block_height: u32,
     num_glyphs: u32,
     mode: u32, // 0=ANSI, 1=IRC, 2=ANSI24
+    flags: u32, // bit 0 = fg_only, bit 1 = has_fixed_bg
+    fixed_bg: u32, // packed rgb
 }
 
 #[repr(C)]
@@ -180,6 +182,16 @@ impl GpuContext {
         let block_cols = (img_width + gw as u32 - 1) / gw as u32;
         let block_rows = (img_height + gh as u32 - 1) / gh as u32;
         
+        let mut flags = 0u32;
+        if _args.fg_only { flags |= 1; }
+        let mut fixed_bg = 0u32;
+        if let Some(bg_hex) = &_args.bg_opt {
+            if let Ok(rgb) = u32::from_str_radix(bg_hex.trim_start_matches('#'), 16) {
+                fixed_bg = rgb;
+                flags |= 2;
+            }
+        }
+
         let globals = Globals {
             img_width,
             img_height,
@@ -191,6 +203,8 @@ impl GpuContext {
                 Render::Irc => 1,
                 Render::Ansi24 => 2,
             },
+            flags,
+            fixed_bg,
         };
 
         // Flatten Image

@@ -77,3 +77,7 @@ end = 0x257F
 [braille]
 start = 0x2800
 end = 0x28FF
+
+[braille2]
+start = 0x2801
+end = 0x28FF
