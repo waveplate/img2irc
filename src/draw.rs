@@ -380,98 +380,159 @@ fn render_blocks_connected(
                 }
             }
 
-            // 2. Find Best Fit (Dynamic Thresholding via Glyph Partitioning)
+            // 2. Find Best Fit
             let mut best_cost = u64::MAX;
             let mut best_glyph_idx = 0;
             let mut best_inv = false;
             let mut best_fg_rgb = [0u8; 3];
             let mut best_bg_rgb = [0u8; 3];
 
-            // 2a. Calculate Uniform (Flat) Cost for Denoising
-            let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
-            let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
-            let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
-            
-            let term_sq = avg_r*avg_r + avg_g*avg_g + avg_b*avg_b;
-            let term_linear = avg_r*block_sum_r + avg_g*block_sum_g + avg_b*block_sum_b;
-            let uniform_cost = (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
-            
-            // Threshold: If splitting into 2 colors doesn't save at least this much error, force flat.
-            // 800 roughly allows for a variance of ~5 levels per pixel across a 32-pixel block.
-            let noise_gain_threshold = 800u64; 
+            if render != Render::Ansi24 {
+                // --- Indexed Mode (Frequency/Mode Logic) ---
+                // Mirroring standard render_blocks behavior: Pick the most frequent palette color (Mode).
+                let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
+                let mut indices = Vec::with_capacity(bp);
+                
+                for p in &pixels {
+                    let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
+                    
+                    // Grayscale check (match standard renderer)
+                    let min_val = p.r.min(p.g.min(p.b));
+                    let max_val = p.r.max(p.g.max(p.b));
+                    let is_gray = max_val.saturating_sub(min_val) <= args.grayscale_tolerance as u64;
 
-            for (gi, fglyph) in glyphs.iter().enumerate() {
-                // Calc Mean Colors for this Glyph's partition
-                let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
-                let mut count_ones = 0u64;
+                    let idx = match render {
+                        Render::Ansi => {
+                            let std = nearest_hex_colour_fast(rgb_u32, &ANSI256);
+                            if args.nograyscale && !is_gray {
+                                nearest_distinctly_chromatic_hex_colour(rgb_u32, &ANSI256, args.grayscale_tolerance).unwrap_or(std)
+                            } else { std }
+                        },
+                        Render::Irc => {
+                            let std = nearest_hex_colour_fast(rgb_u32, &IRC99);
+                            if args.nograyscale && !is_gray {
+                                nearest_distinctly_chromatic_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance).unwrap_or(std)
+                            } else { std }
+                        },
+                        _ => 0,
+                    };
+                    indices.push(idx);
+                }
 
-                for i in 0..bp {
-                    if fglyph.bitmap[i] == 1 {
-                        let px = &pixels[i];
-                        sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
-                        count_ones += 1;
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    for inv in [false, true] {
+                        let mut fg_cnt = [0u16; 256];
+                        let mut bg_cnt = [0u16; 256];
+                        let mut fg_len = 0;
+                        let mut bg_len = 0;
+
+                        for i in 0..bp {
+                            let val = indices[i] as usize;
+                            if fglyph.bitmap[i] ^ (inv as u8) == 1 {
+                                fg_cnt[val] += 1;
+                                fg_len += 1;
+                            } else {
+                                bg_cnt[val] += 1;
+                                bg_len += 1;
+                            }
+                        }
+
+                        // Find Mode (Most frequent color)
+                        let (fgi, fx) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                        let (bgi, bx) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
+                        
+                        // Cost = Mismatches (Pixels not matching the mode)
+                        let cost = ((fg_len as u64) - (*fx as u64)) + ((bg_len as u64) - (*bx as u64));
+
+                        if cost < best_cost {
+                            best_cost = cost;
+                            best_glyph_idx = gi;
+                            best_inv = inv;
+                            best_fg_rgb = unpack_rgb(palette[fgi]);
+                            best_bg_rgb = unpack_rgb(palette[bgi]);
+                        }
                     }
                 }
+            } else {
+                // --- TrueColor Mode (RGB Average + Noise Threshold) ---
+                // Uniform Cost for Denoising
+                let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
+                let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
+                let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
                 
-                let count_zeros = bp as u64 - count_ones;
-                let sum_zeros_r = block_sum_r - sum_ones_r;
-                let sum_zeros_g = block_sum_g - sum_ones_g;
-                let sum_zeros_b = block_sum_b - sum_ones_b;
-                let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+                let term_sq = avg_r*avg_r + avg_g*avg_g + avg_b*avg_b;
+                let term_linear = avg_r*block_sum_r + avg_g*block_sum_g + avg_b*block_sum_b;
+                let uniform_cost = (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
+                let noise_gain_threshold = 800u64; 
 
-                let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
-                let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    // Calc Mean Colors for this Glyph's partition
+                    let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64;
+                    let mut count_ones = 0u64;
 
-                // Calculate Error Cost (Normal)
-                let cost_normal = {
-                     let t1_1 = sum_ones_sq;
-                     let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                     let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                     let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-                     let t1_0 = sum_zeros_sq;
-                     let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                     let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                     let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                     c1 + c0
-                };
+                    for i in 0..bp {
+                        if fglyph.bitmap[i] == 1 {
+                            let px = &pixels[i];
+                            sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                            count_ones += 1;
+                        }
+                    }
+                    
+                    let count_zeros = bp as u64 - count_ones;
+                    let sum_zeros_r = block_sum_r - sum_ones_r;
+                    let sum_zeros_g = block_sum_g - sum_ones_g;
+                    let sum_zeros_b = block_sum_b - sum_ones_b;
+                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                if cost_normal < best_cost {
-                    best_cost = cost_normal;
-                    best_glyph_idx = gi; best_inv = false;
-                    best_fg_rgb = avg_ones; best_bg_rgb = avg_zeros;
+                    let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
+                    let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
+
+                    // Calculate Error Cost (Normal)
+                    let cost_normal = {
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                        let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+                        c1 + c0
+                    };
+
+                    if cost_normal < best_cost {
+                        best_cost = cost_normal;
+                        best_glyph_idx = gi; best_inv = false;
+                        best_fg_rgb = avg_ones; best_bg_rgb = avg_zeros;
+                    }
+
+                    // Calculate Error Cost (Inverted)
+                    let cost_inverted = {
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                        let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                        c_fg + c_bg
+                    };
+
+                    if cost_inverted < best_cost {
+                        best_cost = cost_inverted;
+                        best_glyph_idx = gi; best_inv = true;
+                        best_fg_rgb = avg_zeros; best_bg_rgb = avg_ones;
+                    }
                 }
 
-                // Calculate Error Cost (Inverted)
-                let cost_inverted = {
-                     // FG matches Zeros
-                     let t1_0 = sum_zeros_sq;
-                     let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                     let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                     let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                     // BG matches Ones
-                     let t1_1 = sum_ones_sq;
-                     let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                     let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                     let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                     c_fg + c_bg
-                };
-
-                if cost_inverted < best_cost {
-                    best_cost = cost_inverted;
-                    best_glyph_idx = gi; best_inv = true;
-                    // If inverted, pixels under '1' are BG, pixels under '0' are FG.
-                    // avg_ones came from '1's. avg_zeros came from '0's.
-                    best_fg_rgb = avg_zeros; best_bg_rgb = avg_ones;
+                // Apply Denoising: Force Flat if gain is small (TrueColor only)
+                let gain = uniform_cost.saturating_sub(best_cost);
+                if gain < noise_gain_threshold {
+                    let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
+                    best_fg_rgb = flat_col; 
+                    best_bg_rgb = flat_col;
                 }
-            }
-
-            // 2b. Apply Denoising: Force Flat if gain is small
-            let gain = uniform_cost.saturating_sub(best_cost);
-            if gain < noise_gain_threshold {
-                let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
-                best_fg_rgb = flat_col; 
-                best_bg_rgb = flat_col;
-                // best_glyph_idx remains valid (will render as flat solid)
             }
 
             // 3. Finalize Colors (Snap to Palette if needed)
