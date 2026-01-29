@@ -553,61 +553,54 @@ pub fn render_blocks(
                                                 let avg_zeros = if count_zeros > 0 {
                                                     [((sum_zeros_r / count_zeros) as u8), ((sum_zeros_g / count_zeros) as u8), ((sum_zeros_b / count_zeros) as u8)]
                                                 } else { [0,0,0] };
-                        let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
-                        let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
-                        let penalty_per_miss = 1000u64;
+                        let target_bg = if args.fg_only {
+                            bg_opt_rgb.unwrap_or([0, 0, 0])
+                        } else {
+                            bg_opt_rgb.unwrap_or(avg_zeros)
+                        };
                         
                         // Cost Calculation (Normal)
-                        let cost_no_invert = if use_coverage_heuristic {
-                             let term1 = sum_ones_sq;
-                             let term2 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                             let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                             (term1 + term3).saturating_sub(term2) + (count_zeros * penalty_per_miss)
-                        } else {
-                            let target_bg = bg_ref.unwrap_or(avg_zeros);
-                            let t1_1 = sum_ones_sq;
-                            let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                            let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                            let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-                            let t1_0 = sum_zeros_sq;
-                            let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
-                            let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                            c1 + c0
-                        };
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                        let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+                        let cost_no_invert = c1 + c0;
 
                         if cost_no_invert < best_cost {
                             best_cost = cost_no_invert;
                             best_glyph_idx = gi;
                             best_chosen_fg_color = avg_ones;
-                            best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
+                            best_chosen_bg_color = target_bg;
                             best_inv = false;
                         }
 
                         // Cost Calculation (Inverted)
-                        let cost_invert = if use_coverage_heuristic {
-                             let t1_0 = sum_zeros_sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                             let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                             (t1_0 + t3_0).saturating_sub(t2_0) + (count_ones * penalty_per_miss)
+                        let target_bg_inv = if args.fg_only {
+                             bg_opt_rgb.unwrap_or([0, 0, 0])
                         } else {
-                             let target_bg = bg_ref.unwrap_or(avg_ones);
-                             let t1_0 = sum_zeros_sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                             let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                             let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                             let t1_1 = sum_ones_sq;
-                             let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
-                             let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                             let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                             c_fg + c_bg
+                             bg_opt_rgb.unwrap_or(avg_ones)
                         };
+
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                        let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (target_bg_inv[0] as u64 * sum_ones_r + target_bg_inv[1] as u64 * sum_ones_g + target_bg_inv[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64 + target_bg_inv[1] as u64 * target_bg_inv[1] as u64 + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
+                        let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let cost_invert = c_fg + c_bg;
 
                         if cost_invert < best_cost {
                             best_cost = cost_invert;
                             best_glyph_idx = gi;
                             best_chosen_fg_color = avg_zeros;
-                            best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
+                            best_chosen_bg_color = target_bg_inv;
                             best_inv = true;
                         }
 
@@ -1282,56 +1275,51 @@ fn render_blocks_smooth(
                         [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8]
                     } else { [0,0,0] };
 
-                    let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
-                    let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
-                    let penalty_per_miss = 1000u64;
-
-                    let cost_no_inv = if use_coverage_heuristic {
-                         let term1 = sum_ones_sq;
-                         let term2 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                         let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                         (term1 + term3).saturating_sub(term2) + (count_zeros * penalty_per_miss)
+                    let target_bg = if args.fg_only {
+                        bg_opt_rgb.unwrap_or([0, 0, 0])
                     } else {
-                        let target_bg = bg_ref.unwrap_or(avg_zeros);
-                        let t1_1 = sum_ones_sq;
-                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                        let cost_ones = (t1_1 + t3_1).saturating_sub(t2_1);
-                        let t1_0 = sum_zeros_sq;
-                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
-                        let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                        let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
-                        cost_ones + cost_zeros
+                        bg_opt_rgb.unwrap_or(avg_zeros)
                     };
+
+                    // Cost Calculation (Normal)
+                    let t1_1 = sum_ones_sq;
+                    let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                    let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                    let cost_ones = (t1_1 + t3_1).saturating_sub(t2_1);
+                    let t1_0 = sum_zeros_sq;
+                    let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
+                    let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                    let cost_zeros = (t1_0 + t3_0).saturating_sub(t2_0);
+                    let cost_no_inv = cost_ones + cost_zeros;
 
                     if cost_no_inv < std_best_cost {
                         std_best_cost = cost_no_inv;
                         locked_fg = avg_ones;
-                        locked_bg = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_zeros) };
+                        locked_bg = target_bg;
                     }
 
-                    let cost_inv = if use_coverage_heuristic {
-                         let t1_0 = sum_zeros_sq;
-                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                         (t1_0 + t3_0).saturating_sub(t2_0) + (count_ones * penalty_per_miss)
+                    // Cost Calculation (Inverted)
+                    let target_bg_inv = if args.fg_only {
+                         bg_opt_rgb.unwrap_or([0, 0, 0])
                     } else {
-                        let target_bg = bg_ref.unwrap_or(avg_ones);
-                        let t1_0 = sum_zeros_sq;
-                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                        let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                        let t1_1 = sum_ones_sq;
-                        let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
-                        let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                        let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                        cost_fg + cost_bg
+                         bg_opt_rgb.unwrap_or(avg_ones)
                     };
+
+                    let t1_0 = sum_zeros_sq;
+                    let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                    let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                    let cost_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+
+                    let t1_1 = sum_ones_sq;
+                    let t2_1 = 2 * (target_bg_inv[0] as u64 * sum_ones_r + target_bg_inv[1] as u64 * sum_ones_g + target_bg_inv[2] as u64 * sum_ones_b);
+                    let t3_1 = count_ones * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64 + target_bg_inv[1] as u64 * target_bg_inv[1] as u64 + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
+                    let cost_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                    let cost_inv = cost_fg + cost_bg;
 
                     if cost_inv < std_best_cost {
                         std_best_cost = cost_inv;
                         locked_fg = avg_zeros;
-                        locked_bg = if use_coverage_heuristic { [0,0,0] } else { bg_ref.unwrap_or(avg_ones) };
+                        locked_bg = target_bg_inv;
                     }
                     
                     if std_best_cost == 0 { break; }
