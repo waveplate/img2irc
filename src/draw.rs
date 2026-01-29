@@ -493,18 +493,34 @@ fn render_blocks_connected(
             for p in &data.pixels { d_block_sum_r += p.r; d_block_sum_g += p.g; d_block_sum_b += p.b; d_block_sum_sq += p.sq; }
 
             // Identify Constraints (Neighbors)
+            // Identify Constraints (Neighbors)
             let mut cons_top: Option<(usize, bool)> = None;
             let mut cons_bottom: Option<(usize, bool)> = None;
             let mut cons_left: Option<(usize, bool)> = None;
             let mut cons_right: Option<(usize, bool)> = None;
+            let mut cons_tl: Option<(usize, bool)> = None;
+            let mut cons_tr: Option<(usize, bool)> = None;
+            let mut cons_bl: Option<(usize, bool)> = None;
+            let mut cons_br: Option<(usize, bool)> = None;
 
-            if cy > 0 { let n = curr_idx - grid_w; if !grid_data[n].is_flat { cons_top = Some(grid_state[n]); } }
-            if cy < grid_h - 1 { let n = curr_idx + grid_w; if !grid_data[n].is_flat { cons_bottom = Some(grid_state[n]); } }
+            if cy > 0 { 
+                let n = curr_idx - grid_w; 
+                if !grid_data[n].is_flat { cons_top = Some(grid_state[n]); } 
+                if cx > 0 { let n_tl = n - 1; if !grid_data[n_tl].is_flat { cons_tl = Some(grid_state[n_tl]); } }
+                if cx < grid_w - 1 { let n_tr = n + 1; if !grid_data[n_tr].is_flat { cons_tr = Some(grid_state[n_tr]); } }
+            }
+            if cy < grid_h - 1 { 
+                let n = curr_idx + grid_w; 
+                if !grid_data[n].is_flat { cons_bottom = Some(grid_state[n]); } 
+                if cx > 0 { let n_bl = n - 1; if !grid_data[n_bl].is_flat { cons_bl = Some(grid_state[n_bl]); } }
+                if cx < grid_w - 1 { let n_br = n + 1; if !grid_data[n_br].is_flat { cons_br = Some(grid_state[n_br]); } }
+            }
             if cx > 0 { let n = curr_idx - 1; if !grid_data[n].is_flat { cons_left = Some(grid_state[n]); } }
             if cx < grid_w - 1 { let n = curr_idx + 1; if !grid_data[n].is_flat { cons_right = Some(grid_state[n]); } }
             
             // If No constraints and is flat, skip (already optimized)
-            if data.is_flat && cons_top.is_none() && cons_bottom.is_none() && cons_left.is_none() && cons_right.is_none() { continue; }
+            if data.is_flat && cons_top.is_none() && cons_bottom.is_none() && cons_left.is_none() && cons_right.is_none() 
+               && cons_tl.is_none() && cons_tr.is_none() && cons_bl.is_none() && cons_br.is_none() { continue; }
 
             let mut best_cost = u64::MAX;
             let mut best_choice = grid_state[curr_idx];
@@ -528,6 +544,20 @@ fn render_blocks_connected(
                     // Right Neighbor's Left Match
                     if let Some((ni, niv)) = cons_right {
                         for i in 0..gh { if (fglyph.right[i] ^ (inv as u8)) != (glyphs[ni].left[i] ^ (niv as u8)) { mismatch += 1; } }
+                    }
+
+                    // Diagonal Corners (Single bit constraints)
+                    if let Some((ni, niv)) = cons_tl {
+                        if (fglyph.top[0] ^ (inv as u8)) != (glyphs[ni].bottom[gw-1] ^ (niv as u8)) { mismatch += 1; }
+                    }
+                    if let Some((ni, niv)) = cons_tr {
+                        if (fglyph.top[gw-1] ^ (inv as u8)) != (glyphs[ni].bottom[0] ^ (niv as u8)) { mismatch += 1; }
+                    }
+                    if let Some((ni, niv)) = cons_bl {
+                        if (fglyph.bottom[0] ^ (inv as u8)) != (glyphs[ni].top[gw-1] ^ (niv as u8)) { mismatch += 1; }
+                    }
+                    if let Some((ni, niv)) = cons_br {
+                        if (fglyph.bottom[gw-1] ^ (inv as u8)) != (glyphs[ni].top[0] ^ (niv as u8)) { mismatch += 1; }
                     }
                     
                     let edge_cost = mismatch * edge_weight;
