@@ -620,112 +620,90 @@ pub fn render_blocks(
 
                 } else {
                     // --- Indexed Matching ---
-                    // Convert working pixels to indices
-                    current_block_indices.clear();
-                    for i in 0..bp {
-                        let px_rgb = &working_pixels[i];
-                        // Convert to u32 for cache lookup
-                        let rgb_u32 = ((px_rgb.r as u32) << 16) | ((px_rgb.g as u32) << 8) | (px_rgb.b as u32);
-                        // We use a simplified mapping here, using cache if possible but we have RGB.
-                        // We need to map RGB -> Index.
-                        // We can use nearest_hex_colour_fast.
-                        // Note: args.grayscale_tolerance is checked against the pixel.
-                        
-                        // Check if pixel is distinct from gray
-                        let min_val = px_rgb.r.min(px_rgb.g.min(px_rgb.b));
-                        let max_val = px_rgb.r.max(px_rgb.g.max(px_rgb.b));
-                        let is_gray = max_val.saturating_sub(min_val) <= args.grayscale_tolerance as u64;
-                        
-                        let idx = match render {
-                            Render::Ansi => {
-                                let std = nearest_hex_colour_fast(rgb_u32, &ANSI256);
-                                if args.nograyscale && !is_gray {
-                                    nearest_distinctly_chromatic_hex_colour(rgb_u32, &ANSI256, args.grayscale_tolerance).unwrap_or(std)
-                                } else { std }
-                            },
-                            Render::Irc => {
-                                let std = nearest_hex_colour_fast(rgb_u32, &IRC99);
-                                if args.nograyscale && !is_gray {
-                                    nearest_distinctly_chromatic_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance).unwrap_or(std)
-                                } else { std }
-                            },
-                            _ => 0,
-                        };
-                        current_block_indices.push(idx);
+                    let bg_opt_idx = args.bg_opt.as_ref().map(|s| nearest_hex_colour_fast(parse_hex_color(s), if render == Render::Ansi { &ANSI256 } else { &IRC99 }));
+                    
+                    let mut block_sum_r = 0u64;
+                    let mut block_sum_g = 0u64;
+                    let mut block_sum_b = 0u64;
+                    let mut block_sum_sq = 0u64;
+                    for p in working_pixels {
+                        block_sum_r += p.r; block_sum_g += p.g; block_sum_b += p.b; block_sum_sq += p.sq;
                     }
-
-                    let bg_opt_idx = if let Some(bg_rgb) = bg_opt_rgb {
-                        let bg_u32 = make_rgb_u32(&bg_rgb);
-                        match render {
-                            Render::Ansi => Some(nearest_hex_colour_fast(bg_u32, &ANSI256) as usize),
-                            Render::Irc => Some(nearest_hex_colour_fast(bg_u32, &IRC99) as usize),
-                            _ => None,
-                        }
-                    } else { None };
-
-                    let mut best = (usize::MAX, 0usize, 0u8, 0u8, false);
-                    let color_weight = 1.0; 
 
                     for (gi, fglyph) in glyphs.iter().enumerate() {
-                        for &inv in &[false, true] {
-                            let mut fg_tot: usize = 0;
-                            let mut bg_tot: usize = 0;
-                            let mut fg_cnt = [0usize; 256];
-                            let mut bg_cnt = [0usize; 256];
+                        for inv in [false, true] {
+                            // 1. Determine optimal FG color using average RGB of pixels under 'ones'
+                            let mut sum_ones_r = 0u64;
+                            let mut sum_ones_g = 0u64;
+                            let mut sum_ones_b = 0u64;
+                            let mut sum_ones_sq = 0u64;
+                            let mut count_ones = 0u64;
 
                             for i in 0..bp {
-                                let col_idx = current_block_indices[i] as usize;
                                 if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                                    fg_tot += 1;
-                                    fg_cnt[col_idx] += 1;
-                                } else {
-                                    bg_tot += 1;
-                                    bg_cnt[col_idx] += 1;
+                                    let px = &working_pixels[i];
+                                    sum_ones_r += px.r; sum_ones_g += px.g; sum_ones_b += px.b; sum_ones_sq += px.sq;
+                                    count_ones += 1;
                                 }
                             }
+                            let count_zeros = bp as u64 - count_ones;
+                            let sum_zeros_r = block_sum_r - sum_ones_r;
+                            let sum_zeros_g = block_sum_g - sum_ones_g;
+                            let sum_zeros_b = block_sum_b - sum_ones_b;
+                            let sum_zeros_sq = block_sum_sq - sum_ones_sq;
 
-                            let (fgi, fgm_val) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0));
-                            let (bgi_std, bgm_effective) = if let Some(idx) = bg_opt_idx {
-                                (idx, bg_cnt[idx])
+                            let avg_ones = if count_ones > 0 {
+                                [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8]
+                            } else { [0,0,0] };
+                            let avg_zeros = if count_zeros > 0 {
+                                [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8]
+                            } else { [0,0,0] };
+
+                            let palette: &[u32] = if render == Render::Ansi { &ANSI256 } else { &IRC99 };
+                            
+                            let fg_idx = nearest_hex_colour_fast(make_rgb_u32(&avg_ones), palette);
+                            let bg_idx = if args.fg_only {
+                                bg_opt_idx.unwrap_or(0) as u8
                             } else {
-                                bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0))
+                                nearest_hex_colour_fast(make_rgb_u32(&avg_zeros), palette)
                             };
 
-                            // Calculate cost: number of pixels that don't match drawn color
-                            let cost_base = if args.fg_only {
-                                let mut misses = 0usize;
-                                let fixed_bg_idx = bg_opt_idx.unwrap_or(0); // Assume color 0 (usually black) if no bg_opt
-                                for i in 0..bp {
-                                    let target_idx = current_block_indices[i] as usize;
-                                    let drawn_idx = if fglyph.bitmap[i] ^ (inv as u8) == 1 { fgi } else { fixed_bg_idx };
-                                    if drawn_idx != target_idx {
-                                        misses += 1;
-                                    }
-                                }
-                                misses
-                            } else {
-                                (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective))
+                            let fg_rgb = unpack_rgb(palette[fg_idx as usize]);
+                            let bg_rgb = unpack_rgb(palette[bg_idx as usize]);
+
+                            let fg_p = PrePixel { 
+                                r: fg_rgb[0] as u64, g: fg_rgb[1] as u64, b: fg_rgb[2] as u64, 
+                                sq: (fg_rgb[0] as u64).pow(2) + (fg_rgb[1] as u64).pow(2) + (fg_rgb[2] as u64).pow(2) 
+                            };
+                            let bg_p = PrePixel { 
+                                r: bg_rgb[0] as u64, g: bg_rgb[1] as u64, b: bg_rgb[2] as u64, 
+                                sq: (bg_rgb[0] as u64).pow(2) + (bg_rgb[1] as u64).pow(2) + (bg_rgb[2] as u64).pow(2) 
                             };
 
-                            let cost = (cost_base as f32 * color_weight) as usize;
-                            if cost < best.0 {
-                                best = (cost, gi, fgi as u8, bgi_std as u8, inv);
-                                if cost == 0 { break; }
+                            // Euclidean Error Calculation
+                            let t1_1 = sum_ones_sq;
+                            let t2_1 = 2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b);
+                            let t3_1 = count_ones * fg_p.sq;
+                            let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+
+                            let t1_0 = sum_zeros_sq;
+                            let t2_0 = 2 * (bg_p.r * sum_zeros_r + bg_p.g * sum_zeros_g + bg_p.b * sum_zeros_b);
+                            let t3_0 = count_zeros * bg_p.sq;
+                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+
+                            let cost = c1 + c0;
+
+                            if cost < best_overall_cost {
+                                best_overall_cost = cost;
+                                chosen_glyph_index = gi;
+                                chosen_glyph_inverted = inv;
+                                final_glyph = glyphs[gi].ch;
+                                final_fg = Colour::Index(fg_idx);
+                                final_bg = if args.fg_only { None } else { Some(Colour::Index(bg_idx)) };
+                                best_match_data = (gi, inv, [0,0,0], [0,0,0], fg_idx, bg_idx);
+                                best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                             }
                         }
-                        if best.0 == 0 { break; }
-                    }
-
-                    if (best.0 as u64) < best_overall_cost {
-                        best_overall_cost = best.0 as u64;
-                        chosen_glyph_index = best.1;
-                        let (fg_idx, bg_idx) = if best.4 { (best.3, best.2) } else { (best.2, best.3) };
-                        chosen_glyph_inverted = best.4;
-                        final_glyph = glyphs[best.1].ch;
-                        final_fg = Colour::Index(fg_idx);
-                        final_bg = if args.fg_only { None } else { Some(Colour::Index(bg_idx)) };
-                        best_match_data = (best.1, best.4, [0,0,0], [0,0,0], fg_idx, bg_idx);
-                        best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
                 }
             }
@@ -1338,9 +1316,6 @@ fn render_blocks_smooth(
                     r: locked_bg[0] as u64, g: locked_bg[1] as u64, b: locked_bg[2] as u64, 
                     sq: (locked_bg[0] as u64).pow(2) + (locked_bg[1] as u64).pow(2) + (locked_bg[2] as u64).pow(2) 
                 };
-                let bg_ref = if let Some(bg_c) = bg_opt_rgb { Some(bg_c) } else { None };
-                let use_coverage_heuristic = args.fg_only && bg_ref.is_none();
-                let penalty_per_miss = 1000u64;
 
                 // Pre-calculate per-pixel costs for FG and BG
                 // cost_cache_fg[i] = error if pixel i is FG
@@ -1351,11 +1326,7 @@ fn render_blocks_smooth(
                     let dist_bg = (px.sq + bg_p.sq).saturating_sub(2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b));
                     
                     cost_cache_fg_no_inv[i] = dist_fg;
-                    if use_coverage_heuristic {
-                         cost_cache_bg_no_inv[i] = penalty_per_miss;
-                    } else {
-                         cost_cache_bg_no_inv[i] = dist_bg;
-                    }
+                    cost_cache_bg_no_inv[i] = dist_bg;
                     
                     // For inverted case:
                     // If glyph is inverted, then bitmap 0 -> FG, bitmap 1 -> BG.
@@ -1364,11 +1335,7 @@ fn render_blocks_smooth(
                     //   raw 1 -> visual 0 (BG) -> cost dist_bg
                     //   raw 0 -> visual 1 (FG) -> cost dist_fg
                     
-                    if use_coverage_heuristic {
-                         cost_cache_fg_inv[i] = penalty_per_miss; // visual BG is miss
-                    } else {
-                         cost_cache_fg_inv[i] = dist_bg;
-                    }
+                    cost_cache_fg_inv[i] = dist_bg;
                     cost_cache_bg_inv[i] = dist_fg;
                 }
 
