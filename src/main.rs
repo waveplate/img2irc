@@ -466,7 +466,7 @@ fn process_task(
 
     let metric = match opt_mode {
         args::OptimizationMode::TotalBytes => result.content.len() as f64,
-        args::OptimizationMode::LongestLine => result.content.lines().map(|l| l.len()).max().unwrap_or(0) as f64,
+        args::OptimizationMode::LongestLine => result.content.lines().map(|l: &str| l.len()).max().unwrap_or(0) as f64,
         args::OptimizationMode::BitmapError => {
             if result.total_pixels > 0 {
                 result.error_count as f64 / result.total_pixels as f64
