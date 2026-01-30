@@ -8,6 +8,7 @@ use crate::font::GlyphStore;
 use crate::palette::{IRC99, ANSI256};
 use photon_rs::PhotonImage;
 use image::Rgb;
+use rayon::prelude::*;
 
 #[derive(Clone)]
 pub struct FastGlyph {
@@ -354,19 +355,18 @@ fn render_blocks_connected(
         is_flat: bool,
     }
 
-    let mut grid_data: Vec<BlockData> = Vec::with_capacity(grid_h * grid_w);
-    let mut grid_state: Vec<(usize, bool)> = vec![(0, false); grid_h * grid_w];
-    let mut idx_counter = 0;
-
     let fuzz = args.fuzz.max(0.0);
     let scales = if fuzz > 0.0001 {
         let f = fuzz.max(0.001);
         vec![(1.0, 1.0), (1.0 - f, 1.0), (1.0 + f, 1.0), (1.0, 1.0 - f), (1.0, 1.0 + f)]
     } else { vec![(1.0, 1.0)] };
-    
-    let mut working_pixels_buffer = Vec::with_capacity(bp);
 
-    for block_row in &image.block {
+    // Parallel Processing
+    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = image.block.par_iter().map(|block_row| {
+        let mut row_data = Vec::with_capacity(block_row.len());
+        let mut row_state = Vec::with_capacity(block_row.len());
+        let mut working_pixels_buffer = Vec::with_capacity(bp);
+
         for blk in block_row {
             // 1. Capture Base Pixels
             let mut original_pixels = Vec::with_capacity(bp);
@@ -546,7 +546,7 @@ fn render_blocks_connected(
                            (final_fg[2] as i32 - final_bg[2] as i32).pow(2);
             let is_flat = contrast < 400;
 
-            grid_data.push(BlockData {
+            row_data.push(BlockData {
                 pixels,
                 fg: final_fg,
                 bg: final_bg,
@@ -554,9 +554,16 @@ fn render_blocks_connected(
                 bg_col: bg_obj,
                 is_flat,
             });
-            grid_state[idx_counter] = (best_glyph_idx, best_inv);
-            idx_counter += 1;
+            row_state.push((best_glyph_idx, best_inv));
         }
+        (row_data, row_state)
+    }).collect();
+
+    let mut grid_data = Vec::with_capacity(grid_h * grid_w);
+    let mut grid_state = Vec::with_capacity(grid_h * grid_w);
+    for (r_d, r_s) in rows_results {
+        grid_data.extend(r_d);
+        grid_state.extend(r_s);
     }
 
     // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
