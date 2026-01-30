@@ -96,19 +96,27 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Dithering (Bayer 4x4)
     // Helps smooth gradients and reduce banding/blockiness
-    let bayer_matrix = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-    let bayer_val = (bayer_matrix[(by % 4u) * 4u + (bx % 4u)] / 16.0) - 0.5;
-    let dither_amt = 15.0; // Dither Strength
-    let dither_vec = vec3<f32>(bayer_val * dither_amt);
+    // Bayer 4x4 Matrix (for dithering)
+    let bayer_matrix = array<f32, 16>(
+        0.0, 8.0, 2.0, 10.0,
+        12.0, 4.0, 14.0, 6.0,
+        3.0, 11.0, 1.0, 9.0,
+        15.0, 7.0, 13.0, 5.0
+    );
+    let dither_amt = 12.0; 
 
     for (var y = 0u; y < globals.block_height; y = y + 1u) {
         for (var x = 0u; x < globals.block_width; x = x + 1u) {
             let px = start_x + x;
             let py = start_y + y;
             if (px < globals.img_width && py < globals.img_height) {
-                // Read & Apply Dither to Source Pixel
                 var p = unpack_rgb(pixels[py * globals.img_width + px]);
-                p = clamp(p + dither_vec, vec3<f32>(0.0), vec3<f32>(255.0));
+                
+                // Per-pixel dithering
+                let b_val = (bayer_matrix[(py % 4u) * 4u + (px % 4u)] / 16.0) - 0.5;
+                let d_vec = vec3<f32>(b_val * dither_amt);
+                
+                p = clamp(p + d_vec, vec3<f32>(0.0), vec3<f32>(255.0));
                 
                 if (valid_pixels < 256u) {
                     px_cache[valid_pixels] = p;
