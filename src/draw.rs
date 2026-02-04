@@ -218,28 +218,57 @@ pub fn emit_colourized(
     last_fg: &mut Option<Colour>,
     last_bg: &mut Option<Colour>,
 ) {
-    let mut changed = *first;
-    if last_fg.as_ref() != Some(&fg) { changed = true; *last_fg = Some(fg.clone()); }
-    if last_bg.as_ref() != bg.as_ref() { changed = true; *last_bg = bg.clone(); }
+    let mut fg_changed = *first || last_fg.as_ref() != Some(&fg);
+    let mut bg_changed = *first || last_bg.as_ref() != bg.as_ref();
 
-    if changed {
+    // Optimization: If char is space, we don't need to update FG (in ANSI)
+    // because space makes the FG color invisible.
+    // Also applies to Braille Blank.
+    // For IRC, we can only do this if BG is not being set (fg-only),
+    // otherwise we risk losing the BG color setting in the sequence.
+    let is_space = glyph == ' ' || glyph == '\u{2800}';
+    let can_skip_fg = match render {
+        Render::Ansi | Render::Ansi24 => true,
+        Render::Irc => bg.is_none(),
+    };
+
+    if is_space && can_skip_fg {
+        fg_changed = false;
+    }
+
+    if fg_changed { *last_fg = Some(fg.clone()); }
+    if bg_changed { *last_bg = bg.clone(); }
+
+    if fg_changed || bg_changed {
         match render {
             Render::Ansi | Render::Ansi24 => {
                 if let Some(bg_c) = &bg {
-                    out.push_str("\x1b[0");
-                    match fg {
-                        Colour::Index(i) => write!(out, ";38;5;{}", i).unwrap(),
-                        Colour::RGB([r, g, b]) => write!(out, ";38;2;{};{};{}", r, g, b).unwrap(),
+                    // Optimized ANSI emission: Don't reset (\x1b[0), just overwrite.
+                    out.push_str("\x1b[");
+                    let mut semi = false;
+                    
+                    if fg_changed {
+                        match fg {
+                            Colour::Index(i) => write!(out, "38;5;{}", i).unwrap(),
+                            Colour::RGB([r, g, b]) => write!(out, "38;2;{};{};{}", r, g, b).unwrap(),
+                        }
+                        semi = true;
                     }
-                    match bg_c {
-                        Colour::Index(i) => write!(out, ";48;5;{}", i).unwrap(),
-                        Colour::RGB([r, g, b]) => write!(out, ";48;2;{};{};{}", r, g, b).unwrap(),
+                    
+                    if bg_changed {
+                        if semi { out.push(';'); }
+                        match bg_c {
+                            Colour::Index(i) => write!(out, "48;5;{}", i).unwrap(),
+                            Colour::RGB([r, g, b]) => write!(out, "48;2;{};{};{}", r, g, b).unwrap(),
+                        }
                     }
                     out.push('m');
                 } else {
-                    match fg {
-                        Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
-                        Colour::RGB([r, g, b]) => write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap(),
+                    if fg_changed {
+                        match fg {
+                            Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
+                            Colour::RGB([r, g, b]) => write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap(),
+                        }
                     }
                 }
             },
@@ -443,11 +472,17 @@ fn render_blocks_connected(
                             }
                             let (fgi, fx) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
                             let (bgi, bx) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).unwrap_or((0, &0));
-                            let cost = ((fg_len as u64) - (*fx as u64)) + ((bg_len as u64) - (*bx as u64));
+                            
+                            let cost = if args.fg_only {
+                                ((fg_len as u64) - (*fx as u64)) + (bg_len as u64)
+                            } else {
+                                ((fg_len as u64) - (*fx as u64)) + ((bg_len as u64) - (*bx as u64))
+                            };
 
                             if cost < scale_best_cost {
                                 scale_best_cost = cost; scale_best_glyph = gi; scale_best_inv = inv;
-                                scale_best_fg = unpack_rgb(palette[fgi]); scale_best_bg = unpack_rgb(palette[bgi]);
+                                scale_best_fg = unpack_rgb(palette[fgi]);
+                                scale_best_bg = if args.fg_only { [0,0,0] } else { unpack_rgb(palette[bgi]) };
                             }
                         }
                     }
@@ -478,29 +513,37 @@ fn render_blocks_connected(
                         let avg_ones = if count_ones > 0 { [(sum_ones_r / count_ones) as u8, (sum_ones_g / count_ones) as u8, (sum_ones_b / count_ones) as u8] } else { [0,0,0] };
                         let avg_zeros = if count_zeros > 0 { [(sum_zeros_r / count_zeros) as u8, (sum_zeros_g / count_zeros) as u8, (sum_zeros_b / count_zeros) as u8] } else { [0,0,0] };
 
+                        // FG-Only: Force BG to black and penalize transparency
+                        let (target_bg_norm, penalty_norm) = if args.fg_only { ([0,0,0], count_zeros * 1000) } else { (avg_zeros, 0) };
+                        let (target_bg_inv, penalty_inv) = if args.fg_only { ([0,0,0], count_ones * 1000) } else { (avg_ones, 0) };
+
                         // Normal Error
                         let t1_1 = sum_ones_sq;
                         let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
                         let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
                         let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+                        
                         let t1_0 = sum_zeros_sq;
-                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                        let t2_0 = 2 * (target_bg_norm[0] as u64 * sum_zeros_r + target_bg_norm[1] as u64 * sum_zeros_g + target_bg_norm[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (target_bg_norm[0] as u64 * target_bg_norm[0] as u64 + target_bg_norm[1] as u64 * target_bg_norm[1] as u64 + target_bg_norm[2] as u64 * target_bg_norm[2] as u64);
                         let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                        let cost_normal = c1 + c0;
-                        if cost_normal < scale_best_cost { scale_best_cost = cost_normal; scale_best_glyph = gi; scale_best_inv = false; scale_best_fg = avg_ones; scale_best_bg = avg_zeros; }
+                        
+                        let cost_normal = c1 + c0 + penalty_norm;
+                        if cost_normal < scale_best_cost { scale_best_cost = cost_normal; scale_best_glyph = gi; scale_best_inv = false; scale_best_fg = avg_ones; scale_best_bg = target_bg_norm; }
 
                         // Inverted Error
                         let t1_0 = sum_zeros_sq;
                         let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
                         let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
                         let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                        
                         let t1_1 = sum_ones_sq;
-                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let t2_1 = 2 * (target_bg_inv[0] as u64 * sum_ones_r + target_bg_inv[1] as u64 * sum_ones_g + target_bg_inv[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64 + target_bg_inv[1] as u64 * target_bg_inv[1] as u64 + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
                         let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                        let cost_inverted = c_fg + c_bg;
-                        if cost_inverted < scale_best_cost { scale_best_cost = cost_inverted; scale_best_glyph = gi; scale_best_inv = true; scale_best_fg = avg_zeros; scale_best_bg = avg_ones; }
+                        
+                        let cost_inverted = c_fg + c_bg + penalty_inv;
+                        if cost_inverted < scale_best_cost { scale_best_cost = cost_inverted; scale_best_glyph = gi; scale_best_inv = true; scale_best_fg = avg_zeros; scale_best_bg = target_bg_inv; }
                     }
                     
                     let gain = uniform_cost.saturating_sub(scale_best_cost);
@@ -850,8 +893,15 @@ fn render_blocks_connected(
                  (data.fg_col.clone().unwrap(), data.bg_col.clone(), data.fg, Some(data.bg))
             };
 
-            row_vec.push(RenderedCell { char: ch, fg: draw_fg_raw, bg: draw_bg_raw });
-            emit_colourized(&mut out, render, draw_fg, draw_bg, ch, &mut first, &mut last_fg, &mut last_bg);
+            let mut final_char = ch;
+            if let Some(bg_c) = &draw_bg {
+                if &draw_fg == bg_c {
+                    final_char = ' ';
+                }
+            }
+
+            row_vec.push(RenderedCell { char: final_char, fg: draw_fg_raw, bg: draw_bg_raw });
+            emit_colourized(&mut out, render, draw_fg, draw_bg, final_char, &mut first, &mut last_fg, &mut last_bg);
         }
         if args.fg_only {
             out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[39m\n", Render::Irc => "\x03\n" });
@@ -1239,6 +1289,13 @@ pub fn render_blocks(
                     unpack_rgb(hex)
                 }
             });
+
+            if let Some(bg_c) = &final_bg {
+                if &final_fg == bg_c {
+                    final_glyph = ' ';
+                }
+            }
+
             grid_row.push(RenderedCell { char: final_glyph, fg: fg_rgb, bg: bg_rgb });
 
             emit_colourized(
@@ -1608,8 +1665,15 @@ pub fn render_blocks_smooth(
                 }
             };
 
-            grid_row.push(RenderedCell { char: fglyph.ch, fg: best_fg_c, bg: if args.fg_only { None } else { Some(best_bg_c) } });
-            emit_colourized(&mut out, render, fg_col, bg_col, fglyph.ch, &mut first, &mut last_fg, &mut last_bg);
+            let mut final_char = fglyph.ch;
+            if let Some(bg_c) = &bg_col {
+                if &fg_col == bg_c {
+                    final_char = ' ';
+                }
+            }
+
+            grid_row.push(RenderedCell { char: final_char, fg: best_fg_c, bg: if args.fg_only { None } else { Some(best_bg_c) } });
+            emit_colourized(&mut out, render, fg_col, bg_col, final_char, &mut first, &mut last_fg, &mut last_bg);
         }
         if args.fg_only {
             out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[39m\n", Render::Irc => "\x03\n" });
