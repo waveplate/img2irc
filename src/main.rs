@@ -232,7 +232,6 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         font_size: param_base(&args.font_size) as u32,
         check_char: args.check_char,
         fg_only: args.fg_only,
-        bg_opt: args.bg_opt.clone(),
         grayscale_tolerance: param_base(&args.grayscale_tolerance) as u8,
         
         brightness: param_base(&args.brightness),
@@ -279,6 +278,7 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         solarize: args.solarize,
         edge_detection: args.edge_detection,
         smooth: args.smooth,
+        connected: args.connected,
         fuzz: param_base(&args.fuzz),
     }
 }

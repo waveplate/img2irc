@@ -184,13 +184,7 @@ impl GpuContext {
         
         let mut flags = 0u32;
         if _args.fg_only { flags |= 1; }
-        let mut fixed_bg = 0u32;
-        if let Some(bg_hex) = &_args.bg_opt {
-            if let Ok(rgb) = u32::from_str_radix(bg_hex.trim_start_matches('#'), 16) {
-                fixed_bg = rgb;
-                flags |= 2;
-            }
-        }
+        let fixed_bg = 0u32;
 
         let globals = Globals {
             img_width,
@@ -335,11 +329,11 @@ impl GpuContext {
             let mut grid = Vec::with_capacity(block_rows as usize);
             let mut content = String::new();
             
-            let mut first = true;
-            let mut last_fg: Option<crate::draw::Colour> = None;
-            let mut last_bg: Option<crate::draw::Colour> = None;
-
             for y in 0..block_rows {
+                let mut first = true;
+                let mut last_fg: Option<crate::draw::Colour> = None;
+                let mut last_bg: Option<crate::draw::Colour> = None;
+
                 let mut row_vec = Vec::with_capacity(block_cols as usize);
                 for x in 0..block_cols {
                     let idx = (y * block_cols + x) as usize;
@@ -364,24 +358,24 @@ impl GpuContext {
                             let bg_u32 = crate::draw::make_rgb_u32(&bg_rgb);
                             let fg_idx = crate::draw::nearest_hex_colour_fast(fg_u32, &ANSI256);
                             let bg_idx = crate::draw::nearest_hex_colour_fast(bg_u32, &ANSI256);
-                            (crate::draw::Colour::Index(fg_idx), Some(crate::draw::Colour::Index(bg_idx)))
+                            (crate::draw::Colour::Index(fg_idx), if _args.fg_only { None } else { Some(crate::draw::Colour::Index(bg_idx)) })
                         },
                         Render::Irc => {
                             let fg_u32 = crate::draw::make_rgb_u32(&fg_rgb);
                             let bg_u32 = crate::draw::make_rgb_u32(&bg_rgb);
                             let fg_idx = crate::draw::nearest_hex_colour_fast(fg_u32, &IRC99);
                             let bg_idx = crate::draw::nearest_hex_colour_fast(bg_u32, &IRC99);
-                            (crate::draw::Colour::Index(fg_idx), Some(crate::draw::Colour::Index(bg_idx)))
+                            (crate::draw::Colour::Index(fg_idx), if _args.fg_only { None } else { Some(crate::draw::Colour::Index(bg_idx)) })
                         },
                         Render::Ansi24 => {
-                            (crate::draw::Colour::RGB(fg_rgb), Some(crate::draw::Colour::RGB(bg_rgb)))
+                            (crate::draw::Colour::RGB(fg_rgb), if _args.fg_only { None } else { Some(crate::draw::Colour::RGB(bg_rgb)) })
                         }
                     };
 
                     row_vec.push(RenderedCell {
                         char: glyph_char,
                         fg: fg_rgb,
-                        bg: Some(bg_rgb), 
+                        bg: if _args.fg_only { None } else { Some(bg_rgb) }, 
                     });
                     
                     crate::draw::emit_colourized(
@@ -395,10 +389,17 @@ impl GpuContext {
                         &mut last_bg
                     );
                 }
-                content.push_str(match render_mode {
-                    Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
-                    Render::Irc => "\x0f\n",
-                });
+                if _args.fg_only {
+                    content.push_str(match render_mode {
+                        Render::Ansi | Render::Ansi24 => "\x1b[39m\n",
+                        Render::Irc => "\x03\n",
+                    });
+                } else {
+                    content.push_str(match render_mode {
+                        Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
+                        Render::Irc => "\x0f\n",
+                    });
+                }
                 grid.push(row_vec);
             }
             

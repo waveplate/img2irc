@@ -99,7 +99,6 @@ pub struct RenderArgs {
     pub font_size: u32,
     pub check_char: Option<char>,
     pub fg_only: bool,
-    pub bg_opt: Option<String>,
     pub grayscale_tolerance: u8,
     
     // Numeric params
@@ -147,6 +146,7 @@ pub struct RenderArgs {
     pub solarize: bool,
     pub edge_detection: bool,
     pub smooth: Option<f32>,
+    pub connected: bool,
     pub fuzz: f32,
 }
 
@@ -297,10 +297,6 @@ pub struct Args {
     /// only use foreground colours (transparent background)
     #[arg(long, default_value_t = false)]
     pub fg_only: bool,
-
-    /// optimize glyph selection assuming this background colour (e.g. "000000")
-    #[arg(long)]
-    pub bg_opt: Option<String>,
 
     /// tolerance for considering a colour grayscale (0-255)
     #[arg(long, default_value = "16")]
@@ -514,6 +510,10 @@ pub struct Args {
     /// use GPU for rendering (experimental)
     #[arg(long)]
     pub gpu: bool,
+
+    /// experimental edge-first constraint solving mode
+    #[arg(long, default_value_t = false)]
+    pub connected: bool,
 
     /// save all candidate images to this directory
     #[arg(long)]

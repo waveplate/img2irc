@@ -238,6 +238,7 @@ fn cache_dir() -> PathBuf {
 
 fn hash_context(font_paths: &[String], y_offset: i32, font_size: u32) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    "v3".hash(&mut hasher); // Invalidate old cache
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -265,6 +266,28 @@ fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
     let mut ascender = (metrics.ascender >> 6) as i32;
     let descender = (metrics.descender >> 6) as i32;
     let mut cell_height = (ascender + descender.abs()).max(1) as usize;
+
+    // Calibrate against Full Block (U+2588) to ensure gapless rendering
+    let full_block_char = '█';
+    for path in &ctx.font_paths {
+        if let Some(face) = ctx.user_faces.get(path) {
+             if face.get_char_index(full_block_char as usize) != 0 {
+                 if face.load_char(full_block_char as usize, LoadFlag::RENDER | LoadFlag::TARGET_MONO).is_ok() {
+                    let glyph = face.glyph();
+                    let bitmap = glyph.bitmap();
+                    if bitmap.rows() > 0 {
+                        let new_h = bitmap.rows() as usize;
+                        if new_h != cell_height {
+                             eprintln!("Adjusting cell height from {} to {} (based on Full Block U+2588) to prevent vertical gaps.", cell_height, new_h);
+                        }
+                        cell_height = new_h;
+                        ascender = glyph.bitmap_top();
+                        break; 
+                    }
+                 }
+             }
+        }
+    }
 
     eprintln!("Metrics: Ascender={}, Descender={}, Height={}, Width={}, Y-Offset={}", ascender, descender, cell_height, cell_width, y_offset);
 
