@@ -3,7 +3,7 @@ mod draw;
 mod palette;
 mod effects;
 mod font;
-mod gpu;
+
 
 use reqwest;
 use url::Url;
@@ -63,18 +63,7 @@ async fn main() {
         std::env::set_var("IMG2IRC_FONT", font);
     }
 
-    let gpu_ctx = if args.gpu {
-        eprintln!("Initializing GPU...");
-        match gpu::GpuContext::new().await {
-            Some(ctx) => Some(Arc::new(ctx)),
-            None => {
-                eprintln!("Failed to initialize GPU. Falling back to CPU.");
-                None
-            }
-        }
-    } else {
-        None
-    };
+
 
     match load_image_from_url_or_path(&args.clone().image.unwrap().as_str()).await {
         Ok(image) => {
@@ -104,7 +93,8 @@ async fn main() {
                 m.clone()
             } else {
                 // No optimization requested
-                let result = render_output(&render_args, &glyph_store, image, &glyphs, gpu_ctx.as_deref());
+                // No optimization requested
+                let result = render_output(&render_args, &glyph_store, image, &glyphs);
                 write_encoded_output(&result.content, &args.encoding);
                 if let Some(path) = &args.save {
                     let metadata = format!("{:?}", args);
@@ -129,16 +119,10 @@ async fn main() {
             let progress = AtomicUsize::new(0);
             let best_found_metric = Arc::new(Mutex::new(f64::MAX));
 
-            // Use CPU-side sequential iteration if GPU is used to prevent stalling
-            let best_result = if args.gpu {
-                tasks.iter().map(|task| {
-                    process_task(task, &render_args, &glyph_store, &image, &glyphs, gpu_ctx.as_deref(), &opt_mode, total_steps, &progress, &best_found_metric, &args)
-                }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-            } else {
-                tasks.par_iter().map(|task| {
-                    process_task(task, &render_args, &glyph_store, &image, &glyphs, gpu_ctx.as_deref(), &opt_mode, total_steps, &progress, &best_found_metric, &args)
-                }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-            };
+            // Use CPU-side sequential iteration to prevent stalling
+            let best_result = tasks.par_iter().map(|task| {
+                process_task(task, &render_args, &glyph_store, &image, &glyphs, &opt_mode, total_steps, &progress, &best_found_metric, &args)
+            }).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
             if let Some((best_metric, _, final_render_args)) = best_result {
                 let (final_sx, final_sy) = final_render_args.scale.unwrap_or((1.0, 1.0));
@@ -149,7 +133,7 @@ async fn main() {
                 eprintln!("Scale: {:.3}x{:.3}, Fuzz: {:.3}", final_sx, final_sy, final_fuzz);
                 
                 // Re-render best result on CPU
-                let final_res = render_output(&final_render_args, &glyph_store, image, &glyphs, None);
+                let final_res = render_output(&final_render_args, &glyph_store, image, &glyphs);
 
                 if final_res.dynamic_scaling_count > 0 {
                     eprintln!("Dynamic scaling applied to {} blocks.", final_res.dynamic_scaling_count);
@@ -277,9 +261,8 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         frosted_glass: args.frosted_glass,
         solarize: args.solarize,
         edge_detection: args.edge_detection,
-        smooth: args.smooth,
-        connected: args.connected,
         fuzz: param_base(&args.fuzz),
+        shape: args.shape,
     }
 }
 
@@ -449,7 +432,6 @@ fn process_task(
     glyph_store: &font::GlyphStore,
     image: &PhotonImage,
     glyphs: &[draw::FastGlyph],
-    gpu_ctx: Option<&gpu::GpuContext>,
     opt_mode: &args::OptimizationMode,
     total_steps: usize,
     progress: &AtomicUsize,
@@ -462,7 +444,7 @@ fn process_task(
     // Prepare canvas
     let (canvas, luma_canvas) = prepare_canvas(&loop_args, glyph_store, image.clone());
     
-    let result = render_from_canvas(&loop_args, &canvas, luma_canvas.as_ref(), glyphs, gpu_ctx);
+    let result = render_from_canvas(&loop_args, &canvas, luma_canvas.as_ref(), glyphs);
 
     let metric = match opt_mode {
         args::OptimizationMode::TotalBytes => result.content.len() as f64,
@@ -527,7 +509,7 @@ fn prepare_canvas(args: &RenderArgs, glyphs: &font::GlyphStore, image: PhotonIma
     (canvas, luma_canvas)
 }
 
-fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: Option<&draw::AnsiImage>, glyphs: &[draw::FastGlyph], gpu_ctx: Option<&gpu::GpuContext>) -> draw::RenderResult {
+fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: Option<&draw::AnsiImage>, glyphs: &[draw::FastGlyph]) -> draw::RenderResult {
     if args.braille {
         if let Some(lc) = luma_canvas {
             match args.render {
@@ -539,10 +521,6 @@ fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: 
             draw::RenderResult::from("Error: Braille mode without luma canvas")
         }
     } else {
-        if let Some(ctx) = gpu_ctx {
-            return ctx.render(canvas, glyphs, args, args.render);
-        }
-
         match args.render {
             args::Render::Irc => draw::render_blocks(canvas, args, args::Render::Irc, glyphs),
             args::Render::Ansi => draw::render_blocks(canvas, args, args::Render::Ansi, glyphs),
@@ -551,9 +529,9 @@ fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: 
     }
 }
 
-fn render_output(args: &RenderArgs, glyph_store: &font::GlyphStore, image: PhotonImage, glyphs: &[draw::FastGlyph], gpu_ctx: Option<&gpu::GpuContext>) -> draw::RenderResult {
+fn render_output(args: &RenderArgs, glyph_store: &font::GlyphStore, image: PhotonImage, glyphs: &[draw::FastGlyph]) -> draw::RenderResult {
     let (canvas, luma_canvas) = prepare_canvas(args, glyph_store, image);
-    render_from_canvas(args, &canvas, luma_canvas.as_ref(), glyphs, gpu_ctx)
+    render_from_canvas(args, &canvas, luma_canvas.as_ref(), glyphs)
 }
 
 fn write_encoded_output(content: &str, encoding: &Encoding) {

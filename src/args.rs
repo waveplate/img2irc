@@ -145,9 +145,8 @@ pub struct RenderArgs {
     pub frosted_glass: bool,
     pub solarize: bool,
     pub edge_detection: bool,
-    pub smooth: Option<f32>,
-    pub connected: bool,
     pub fuzz: f32,
+    pub shape: bool,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -475,9 +474,6 @@ pub struct Args {
     #[arg(long="edgedetection", default_value_t = false)]
     pub edge_detection: bool,
 
-    /// prefers characters which result in a smooth image (0.0 to 1.0)
-    #[arg(long, num_args(0..=1), default_missing_value="1.0")]
-    pub smooth: Option<f32>,
 
     /// optimize output size
     #[arg(long="opt", value_enum)]
@@ -507,17 +503,13 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub auto: bool,
 
-    /// use GPU for rendering (experimental)
-    #[arg(long)]
-    pub gpu: bool,
-
-    /// experimental edge-first constraint solving mode
-    #[arg(long, default_value_t = false)]
-    pub connected: bool,
-
     /// save all candidate images to this directory
     #[arg(long)]
     pub save_candidates: Option<String>,
+
+    /// experimental shape context matching mode
+    #[arg(long, default_value_t = false)]
+    pub shape: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
