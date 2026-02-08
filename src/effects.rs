@@ -73,6 +73,15 @@ pub fn apply_effects(
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
 ) -> PhotonImage {
+    if let Some((top, right, bottom, left)) = args.trim {
+        let w = photon_image.get_width();
+        let h = photon_image.get_height();
+        if left + right < w && top + bottom < h {
+            // crop takes x1, y1, x2, y2 (coordinates)
+             photon_image = crop(&mut photon_image, left, top, w - right, h - bottom);
+        }
+    }
+
     let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
         
     if args.rotate != 0.00 {
@@ -270,6 +279,14 @@ pub fn apply_effects(
 }
 
 pub fn apply_luma_effects(args: &args::RenderArgs, glyphs: &GlyphStore, mut photon_image: PhotonImage) -> PhotonImage {
+    if let Some((top, right, bottom, left)) = args.trim {
+        let w = photon_image.get_width();
+        let h = photon_image.get_height();
+        if left + right < w && top + bottom < h {
+             photon_image = crop(&mut photon_image, left, top, w - right, h - bottom);
+        }
+    }
+
     let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
 
     if args.rotate != 0.00 {

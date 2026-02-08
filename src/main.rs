@@ -95,11 +95,20 @@ async fn main() {
                 // No optimization requested
                 // No optimization requested
                 let result = render_output(&render_args, &glyph_store, image, &glyphs);
+                if args.score {
+                    let smoothness = draw::calculate_smoothness(&result, &glyph_store);
+                    eprintln!("Smoothness Score: {:.4} (Lower is smoother)", smoothness);
+                }
                 write_encoded_output(&result.content, &args.encoding);
                 if let Some(path) = &args.save {
+                    let smoothness = draw::calculate_smoothness(&result, &glyph_store);
+                    let final_path = path.replace("%s", &format!("{:.4}", smoothness));
+
                     let metadata = format!("{:?}", args);
-                    if let Err(e) = draw::save_as_png(&result, &glyph_store, path, &metadata) {
+                    if let Err(e) = draw::save_as_png(&result, &glyph_store, &final_path, &metadata) {
                         eprintln!("Failed to save PNG: {}", e);
+                    } else {
+                        eprintln!("Saved image to {}", final_path);
                     }
                 }
                 return;
@@ -201,6 +210,7 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         height: args.height.as_ref().map(|p| param_base(p) as u32),
         scale: Some((sx, sy)),
         crop,
+        trim: args.trim,
         filter: args.filter.clone(),
         rotate: param_base(&args.rotate),
         fliph: args.fliph,
@@ -215,7 +225,6 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         font: args.font.clone(),
         font_size: param_base(&args.font_size) as u32,
         check_char: args.check_char,
-        fg_only: args.fg_only,
         grayscale_tolerance: param_base(&args.grayscale_tolerance) as u8,
         
         brightness: param_base(&args.brightness),
@@ -263,6 +272,10 @@ fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         fuzz: param_base(&args.fuzz),
         shape: args.shape,
+        smooth: args.smooth,
+        score: args.score, // Added score field
+        smooth_candidates: args.smooth_candidates,
+        smooth_threshold: args.smooth_threshold,
     }
 }
 
@@ -521,10 +534,18 @@ fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: 
             draw::RenderResult::from("Error: Braille mode without luma canvas")
         }
     } else {
-        match args.render {
-            args::Render::Irc => draw::render_blocks(canvas, args, args::Render::Irc, glyphs),
-            args::Render::Ansi => draw::render_blocks(canvas, args, args::Render::Ansi, glyphs),
-            args::Render::Ansi24 => draw::render_blocks(canvas, args, args::Render::Ansi24, glyphs),
+        if args.smooth {
+            match args.render {
+                args::Render::Irc => draw::render_blocks_smooth(canvas, args, args::Render::Irc, glyphs),
+                args::Render::Ansi => draw::render_blocks_smooth(canvas, args, args::Render::Ansi, glyphs),
+                args::Render::Ansi24 => draw::render_blocks_smooth(canvas, args, args::Render::Ansi24, glyphs),
+            }
+        } else {
+            match args.render {
+                args::Render::Irc => draw::render_blocks(canvas, args, args::Render::Irc, glyphs),
+                args::Render::Ansi => draw::render_blocks(canvas, args, args::Render::Ansi, glyphs),
+                args::Render::Ansi24 => draw::render_blocks(canvas, args, args::Render::Ansi24, glyphs),
+            }
         }
     }
 }

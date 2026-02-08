@@ -84,6 +84,7 @@ pub struct RenderArgs {
     pub height: Option<u32>,
     pub scale: Option<(f32, f32)>,
     pub crop: Option<(u32, u32, u32, u32)>,
+    pub trim: Option<(u32, u32, u32, u32)>,
     pub filter: SamplingFilter,
     pub rotate: f32,
     pub fliph: bool,
@@ -98,7 +99,6 @@ pub struct RenderArgs {
     pub font: Vec<String>,
     pub font_size: u32,
     pub check_char: Option<char>,
-    pub fg_only: bool,
     pub grayscale_tolerance: u8,
     
     // Numeric params
@@ -147,6 +147,10 @@ pub struct RenderArgs {
     pub edge_detection: bool,
     pub fuzz: f32,
     pub shape: bool,
+    pub smooth: bool,
+    pub score: bool,
+    pub smooth_candidates: usize,
+    pub smooth_threshold: f64,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -216,6 +220,10 @@ pub struct Args {
     /// crop y2
     #[arg(long)]
     pub crop_y2: Option<Param>,
+
+    /// trim image (pixels)
+    #[arg(long, value_parser = parse_trim)]
+    pub trim: Option<(u32, u32, u32, u32)>,
 
     /// sampling filter
     #[arg(long, value_enum, default_value_t = SamplingFilter::Nearest)]
@@ -293,9 +301,7 @@ pub struct Args {
     #[arg(long)]
     pub check_char: Option<char>,
 
-    /// only use foreground colours (transparent background)
-    #[arg(long, default_value_t = false)]
-    pub fg_only: bool,
+
 
     /// tolerance for considering a colour grayscale (0-255)
     #[arg(long, default_value = "16")]
@@ -510,6 +516,22 @@ pub struct Args {
     /// experimental shape context matching mode
     #[arg(long, default_value_t = false)]
     pub shape: bool,
+
+    /// experimental smoothness optimization mode
+    #[arg(long, default_value_t = false)]
+    pub smooth: bool,
+
+    /// print smoothness score
+    #[arg(long, default_value_t = false)]
+    pub score: bool,
+
+    /// number of candidates for smooth optimization
+    #[arg(long, default_value_t = 10)]
+    pub smooth_candidates: usize,
+
+    /// smoothness threshold (skips optimization if score < threshold)
+    #[arg(long, default_value_t = 0.0)]
+    pub smooth_threshold: f64,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
@@ -578,4 +600,40 @@ fn parse_crop_coordinates(s: &str) -> Result<(u32, u32, u32, u32), String> {
     let y2 = coords[3].parse::<u32>().map_err(|_| format!("Invalid y2 value '{}'.", coords[3]))?;
 
     Ok((x1, y1, x2, y2))
+}
+
+fn parse_trim(s: &str) -> Result<(u32, u32, u32, u32), String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    let values_res: Result<Vec<u32>, _> = parts.iter().map(|s| {
+        if s.trim().is_empty() { Ok(0) }
+        else { s.trim().parse::<u32>() }
+    }).collect();
+
+    let values = values_res.map_err(|_| format!("Invalid trim format '{}'. Expected numbers.", s))?;
+
+    match values.len() {
+        1 => {
+            let v = values[0];
+            Ok((v, v, v, v))
+        },
+        2 => {
+            let v = values[0]; // Top/Bottom
+            let h = values[1]; // Left/Right
+            Ok((v, h, v, h))
+        },
+        3 => {
+            let t = values[0];
+            let h = values[1];
+            let b = values[2];
+            Ok((t, h, b, h))
+        },
+        4 => {
+            let t = values[0];
+            let r = values[1];
+            let b = values[2];
+            let l = values[3];
+            Ok((t, r, b, l))
+        },
+        _ => Err(format!("Invalid trim format '{}'. Expected 1, 2, 3, or 4 values.", s)),
+    }
 }

@@ -1,18 +1,6 @@
 warning: unused manifest key: package.github
 warning: unused manifest key: target.x86_64-unknown-linux-musl.linker
     Checking img2irc-rs v1.3.1 (/home/malcom/dev/img2irc)
-error[E0415]: identifier `image` is bound more than once in this parameter list
-   --> src/main.rs:435:5
-    |
-435 |     image: &PhotonImage,
-    |     ^^^^^ used as parameter more than once
-
-error[E0415]: identifier `glyphs` is bound more than once in this parameter list
-   --> src/main.rs:436:5
-    |
-436 |     glyphs: &[draw::FastGlyph],
-    |     ^^^^^^ used as parameter more than once
-
 warning: unused import: `image::Rgb`
   --> src/draw.rs:10:5
    |
@@ -21,55 +9,24 @@ warning: unused import: `image::Rgb`
    |
    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
-warning: unnecessary parentheses around closure body
-    --> src/draw.rs:1300:49
-     |
-1300 | ...4, b: u64, t: f32| (a as f32 * (1.0 - t) + b as f32 * t);
-     |                       ^                                   ^
-     |
-     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
-help: remove these parentheses
-     |
-1300 -             let lerp = |a: u64, b: u64, t: f32| (a as f32 * (1.0 - t) + b as f32 * t);
-1300 +             let lerp = |a: u64, b: u64, t: f32| a as f32 * (1.0 - t) + b as f32 * t ;
-     |
-
-error[E0609]: no field `gap` on type `&RenderArgs`
-   --> src/draw.rs:941:28
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+   --> src/draw.rs:996:35
     |
-941 |     let gap_weight = (args.gap * 1000.0) as u64; // Tunable weight
-    |                            ^^^ unknown field
-    |
-    = note: available fields are: `list_blocks`, `list_ranges`, `print_ranges`, `show_block_bitmaps`, `clear_cache` ... and 67 others
-
-error[E0609]: no field `dev` on type `&RenderArgs`
-   --> src/draw.rs:942:25
-    |
-942 |     let dev_tol = (args.dev * 1000.0) as u64; // Deviation tolerance (not used d...
-    |                         ^^^ unknown field
-    |
-    = note: available fields are: `list_blocks`, `list_ranges`, `print_ranges`, `show_block_bitmaps`, `clear_cache` ... and 67 others
-
-error[E0061]: this function takes 12 arguments but 10 arguments were supplied
-   --> src/main.rs:124:17
-    |
-124 | ...   process_task(task, &render_args, &glyph_store, &image, &glyphs, &opt_mode, total_steps, &...
-    |       ^^^^^^^^^^^^                                                    ---------------------- two arguments of type `&PhotonImage` and `&[FastGlyph]` are missing
+996 | ...turn render_blocks(image, args, render); } //...
+    |         ^^^^^^^^^^^^^--------------------- argument #4 of type `&[FastGlyph]` is missing
     |
 note: function defined here
-   --> src/main.rs:429:4
+   --> src/draw.rs:542:8
     |
-429 | fn process_task(
-    |    ^^^^^^^^^^^^
+542 | pub fn render_blocks(
+    |        ^^^^^^^^^^^^^
 ...
-435 |     image: &PhotonImage,
-    |     -------------------
-436 |     glyphs: &[draw::FastGlyph],
-    |     --------------------------
-help: provide the arguments
+546 |     glyphs: &[FastGlyph],
+    |     --------------------
+help: provide the argument
     |
-124 |                 process_task(task, &render_args, &glyph_store, &image, &glyphs, /* &PhotonImage */, /* &[FastGlyph] */, &opt_mode, total_steps, &progress, &best_found_metric, &args)
-    |                                                                                 +++++++++++++++++++++++++++++++++++++++
+996 |     if k_candidates == 0 { return render_blocks(image, args, render, /* &[FastGlyph] */); } // Fallback if 0
+    |                                                                    ++++++++++++++++++++
 
 warning: unused import: `rayon::prelude`
   --> src/draw.rs:11:5
@@ -78,9 +35,9 @@ warning: unused import: `rayon::prelude`
    |     ^^^^^^^^^^^^^^
 
 warning: variable does not need to be mutable
-   --> src/draw.rs:222:9
+   --> src/draw.rs:380:9
     |
-222 |     let mut bg_changed = *first || last_bg.as_ref() != bg.as_ref();
+380 |     let mut bg_changed = *first || last_bg.as_re...
     |         ----^^^^^^^^^^
     |         |
     |         help: remove this `mut`
@@ -88,60 +45,29 @@ warning: variable does not need to be mutable
     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
 warning: variable `left_neighbor_glyph_idx` is assigned to, but never used
-   --> src/draw.rs:416:13
+   --> src/draw.rs:594:13
     |
-416 |         let mut left_neighbor_glyph_idx: (usize, bool) = (usize::MAX, false);
-    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+594 | ...   let mut left_neighbor_glyph_idx: (usize, b...
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = note: consider using `_left_neighbor_glyph_idx` instead
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
-warning: value assigned to `left_neighbor_glyph_idx` is never read
-   --> src/draw.rs:666:13
+warning: unused variable: `best_glyph`
+   --> src/draw.rs:674:29
     |
-666 |             left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
-    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+674 | ...         let best_glyph = &glyphs[best_glyph_...
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_best_glyph`
+
+warning: value assigned to `left_neighbor_glyph_idx` is never read
+   --> src/draw.rs:882:13
+    |
+882 | ...   left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: maybe it is overwritten before being read?
     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
 
-warning: unused variable: `internal_inv`
-    --> src/draw.rs:1157:22
-     |
-1157 |                  let internal_inv = err_one + err_zero; // Symmetric error for ...
-     |                      ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_internal_inv`
-
-warning: unused variable: `res`
-    --> src/draw.rs:1252:29
-     |
-1252 | pub fn calculate_smoothness(res: &RenderResult, _glyphs: &GlyphStore) -> f64 {
-     |                             ^^^ help: if this is intentional, prefix it with an underscore: `_res`
-
-warning: unused variable: `res`
-    --> src/draw.rs:1256:38
-     |
-1256 | ...ve(res: &RenderResult, glyphs: &GlyphStore) -> f64 {
-     |       ^^^ help: if this is intentional, prefix it with an underscore: `_res`
-
-warning: unused variable: `glyphs`
-    --> src/draw.rs:1256:58
-     |
-1256 | ...lative(res: &RenderResult, glyphs: &GlyphStore) -> f64 {
-     |                               ^^^^^^ help: if this is intentional, prefix it with an underscore: `_glyphs`
-
-warning: unused variable: `image`
-   --> src/main.rs:433:5
-    |
-433 |     image: &PhotonImage,
-    |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_image`
-
-warning: unused variable: `glyphs`
-   --> src/main.rs:434:5
-    |
-434 |     glyphs: &[draw::FastGlyph],
-    |     ^^^^^^ help: if this is intentional, prefix it with an underscore: `_glyphs`
-
-Some errors have detailed explanations: E0061, E0415, E0609.
-For more information about an error, try `rustc --explain E0061`.
-warning: `img2irc-rs` (bin "img2irc") generated 12 warnings
-error: could not compile `img2irc-rs` (bin "img2irc") due to 5 previous errors; 12 warnings emitted
+For more information about this error, try `rustc --explain E0061`.
+warning: `img2irc-rs` (bin "img2irc") generated 6 warnings
+error: could not compile `img2irc-rs` (bin "img2irc") due to 1 previous error; 6 warnings emitted

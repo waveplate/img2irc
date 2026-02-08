@@ -17,52 +17,163 @@ pub struct FastGlyph {
     pub right: Vec<u8>,
     pub coverage: f32,
     pub sc: ShapeContext,
+    pub profile: BoundaryProfile,
 }
 
-pub type ShapeContext = [f32; 24]; // 3 radial bins * 8 angular bins
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BoundaryProfile {
+    pub top: u32,
+    pub bottom: u32,
+    pub left: u32,
+    pub right: u32,
+}
+
+use std::f32::consts::PI;
+
+#[derive(Debug, Clone)]
+pub struct ShapeContext {
+    pub histogram: [f32; 60], // Increased bins for better resolution (e.g., 5 radial * 12 angular)
+}
 
 fn compute_shape_context(bitmap: &[u8], width: usize, height: usize) -> ShapeContext {
-    let mut sc = [0.0; 24];
+    // 1. configuration: Log-Polar setup
+    // Standard SC often uses 5 radial bins and 12 angular bins = 60 dimensions
+    const R_BINS: usize = 5;
+    const A_BINS: usize = 12;
+    let mut sc = [0.0; R_BINS * A_BINS];
+
     let cx = width as f32 / 2.0;
     let cy = height as f32 / 2.0;
-    let max_radius = (width as f32 / 2.0).hypot(height as f32 / 2.0).max(1.0);
     
-    let mut total_points = 0.0;
+    // Normalizing radius: We want the furthest point to define the scale boundary
+    // to make the descriptor scale-invariant.
+    let max_dist = (width as f32 / 2.0).hypot(height as f32 / 2.0);
+    
+    // Pre-compute log base for radial binning
+    // We map log(r) from log(r_min) to log(r_max)
+    let r_min = 1.0f32; // Avoid log(0)
+    let log_r_max = max_dist.ln();
+    let log_r_min = r_min.ln();
+    let r_scale = R_BINS as f32 / (log_r_max - log_r_min);
+
+    let mut total_weight = 0.0;
 
     for y in 0..height {
         for x in 0..width {
-            if bitmap[y * width + x] == 1 {
+            // 2. Edge Detection
+            // Only process if this pixel is ON and implies a boundary
+            // (i.e., it has at least one OFF neighbor or is on the image frame)
+            if bitmap[y * width + x] == 1 && is_edge(bitmap, x, y, width, height) {
+                
                 let dx = x as f32 - cx;
                 let dy = y as f32 - cy;
-                let r = dx.hypot(dy) / max_radius;
-                let theta = dy.atan2(dx); // -PI to PI
+                let r = dx.hypot(dy);
+
+                // Skip center point to avoid singularity
+                if r < r_min { continue; }
+
+                // --- 3. Soft Binning Logic ---
+
+                // Calculate Angular Position (continuous 0..A_BINS)
+                let theta = dy.atan2(dx); 
+                let theta_norm = if theta < 0.0 { theta + 2.0 * PI } else { theta };
+                let a_pos = theta_norm / (2.0 * PI / A_BINS as f32);
                 
-                // Radial Bins: [0, 0.25), [0.25, 0.5), [0.5, 1.0]
-                // 4th bin catch-all if > 1.0 (unlikely with hypot/max)
-                let r_bin = if r < 0.25 { 0 } else if r < 0.5 { 1 } else { 2 };
+                // Calculate Radial Position (continuous 0..R_BINS) based on Log(r)
+                let r_pos = (r.ln() - log_r_min) * r_scale;
+
+                // We distribute the vote (1.0) to the 4 nearest bins (2 angular * 2 radial)
+                // This is "Bilinear Interpolation" in the histogram space.
+                distribute_vote(&mut sc, a_pos, r_pos, A_BINS, R_BINS);
                 
-                // Angular Bins: 8 bins of 45 degrees (PI/4)
-                // Normalize theta to [0, 2PI)
-                let theta_norm = if theta < 0.0 { theta + 2.0 * std::f32::consts::PI } else { theta };
-                let a_bin = (theta_norm / (std::f32::consts::PI / 4.0)).floor() as usize % 8;
-                
-                let bin_idx = r_bin * 8 + a_bin;
-                if bin_idx < 24 {
-                    sc[bin_idx] += 1.0;
-                    total_points += 1.0;
-                }
+                total_weight += 1.0;
             }
         }
     }
 
-    // Normalize
-    if total_points > 0.0 {
-        for i in 0..24 {
-            sc[i] /= total_points;
+    // Normalize (L1 norm ensures scale invariance)
+    if total_weight > 0.0 {
+        for val in sc.iter_mut() {
+            *val /= total_weight;
         }
     }
+
+    ShapeContext { histogram: sc }
+}
+
+// Helper: Simple 4-connectivity edge check
+fn is_edge(bitmap: &[u8], x: usize, y: usize, w: usize, h: usize) -> bool {
+    if x == 0 || y == 0 || x == w - 1 || y == h - 1 { return true; }
     
-    sc
+    // Check 4 neighbors. If any are 0, this is an edge pixel.
+    let idx = y * w + x;
+    if bitmap[idx - 1] == 0 { return true; }     // Left
+    if bitmap[idx + 1] == 0 { return true; }     // Right
+    if bitmap[idx - w] == 0 { return true; }     // Top
+    if bitmap[idx + w] == 0 { return true; }     // Bottom
+    
+    false
+}
+
+// Helper: Distribute weight to neighbors
+fn distribute_vote(
+    sc: &mut [f32], 
+    a_pos: f32, 
+    r_pos: f32, 
+    a_bins: usize, 
+    r_bins: usize
+) {
+    // Angular handling (Cyclic: index 11 wraps to 0)
+    let a_idx0 = a_pos.floor() as usize % a_bins;
+    let a_idx1 = (a_idx0 + 1) % a_bins;
+    let a_w1 = a_pos - a_pos.floor(); // Weight for the next bin
+    let a_w0 = 1.0 - a_w1;            // Weight for current bin
+
+    // Radial handling (Clamped: indices don't wrap)
+    // We clamp r_pos to be within valid range logic
+    let r_clamped = r_pos.max(0.0).min((r_bins - 1) as f32 - 0.0001);
+    let r_idx0 = r_clamped.floor() as usize;
+    let r_idx1 = r_idx0 + 1;
+    let r_w1 = r_clamped - r_clamped.floor();
+    let r_w0 = 1.0 - r_w1;
+
+    // Add weighted contributions to the 4 corners
+    // If r is at the very max, r_idx1 might be out of bounds, so we check.
+    
+    // Bin (r0, a0)
+    sc[r_idx0 * a_bins + a_idx0] += r_w0 * a_w0;
+    
+    // Bin (r0, a1)
+    sc[r_idx0 * a_bins + a_idx1] += r_w0 * a_w1;
+
+    if r_idx1 < r_bins {
+        // Bin (r1, a0)
+        sc[r_idx1 * a_bins + a_idx0] += r_w1 * a_w0;
+        
+        // Bin (r1, a1)
+        sc[r_idx1 * a_bins + a_idx1] += r_w1 * a_w1;
+    }
+}
+
+fn compute_boundary_profile(bitmap: &[u8], width: usize, height: usize) -> BoundaryProfile {
+    let mut top = 0u32;
+    let mut bottom = 0u32;
+    let mut left = 0u32;
+    let mut right = 0u32;
+
+    // Top and Bottom rows
+    for x in 0..width.min(32) {
+        if bitmap[x] == 1 { top |= 1 << x; }
+        if bitmap[(height - 1) * width + x] == 1 { bottom |= 1 << x; }
+    }
+
+    // Left and Right columns
+    for y in 0..height.min(32) {
+        if bitmap[y * width] == 1 { left |= 1 << y; }
+        if bitmap[y * width + (width - 1)] == 1 { right |= 1 << y; }
+    }
+
+    BoundaryProfile { top, bottom, left, right }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,7 +202,10 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     let mut best_d = u32::MAX;
     if palette.is_empty() { return 0; }
 
+    // Better: Just iterate all and skip inside loop for simplicity and performance (branch prediction handles this well)
     for (i, &p) in palette.iter().enumerate() {
+        if palette.len() == 99 && i >= 2 && i < 16 { continue; }
+
         let dr = pr - (((p >> 16) & 0xFF) as i32);
         let dg = pg - (((p >>  8) & 0xFF) as i32);
         let db = pb - (((p >>  0) & 0xFF) as i32);
@@ -319,14 +433,15 @@ pub fn emit_colourized(
             Render::Irc => {
                 out.push('\x03');
                 match fg {
-                    Colour::Index(i) => write!(out, "{}", i % 99).unwrap(),
-                    _ => out.push_str("1"),
+                    Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
+                    _ => out.push_str("01"),
                 }
                 if let Some(bg_c) = &bg {
                     out.push(',');
                     match bg_c {
-                        Colour::Index(i) => write!(out, "{}", i % 99).unwrap(),
-                        _ => out.push_str("0"),
+                        Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
+                        _ => out.push_str("00"),
+
                     }
                 }
             }
@@ -387,6 +502,7 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
             let ones = bitmap.iter().filter(|&&b| b == 1).count();
             let coverage = ones as f32 / bp as f32;
             let sc = compute_shape_context(&bitmap, gw, gh);
+            let profile = compute_boundary_profile(&bitmap, gw, gh);
 
             FastGlyph {
                 ch: *ch,
@@ -394,10 +510,13 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 right,
                 coverage,
                 sc,
+                profile,
             }
         })
         .collect()
 }
+
+
 
 fn get_transformed_block_pixels_into(orig: &[PrePixel], gw: usize, gh: usize, sx: f32, sy: f32, out: &mut Vec<PrePixel>) {
     out.clear();
@@ -529,9 +648,9 @@ pub fn render_blocks(
 
                     for (gi, fglyph) in glyphs.iter().enumerate() {
                         let mut dist = 0.0;
-                        for k in 0..24 {
-                            let a = block_sc[k];
-                            let b = fglyph.sc[k];
+                        for k in 0..60 {
+                            let a = block_sc.histogram[k];
+                            let b = fglyph.sc.histogram[k];
                             if a + b > 1e-6 {
                                 dist += (a - b).powi(2) / (a + b);
                             }
@@ -551,9 +670,29 @@ pub fn render_blocks(
                         chosen_glyph_inverted = false; 
                         final_glyph = glyphs[best_glyph_idx].ch;
                         // Use average color of the block for FG, Black for BG (or transparent)
-                        final_fg = Colour::RGB([255, 255, 255]); 
-                        final_bg = None;
-                        best_match_data = (best_glyph_idx, false, [255, 255, 255], [0, 0, 0], 255, 0);
+                        // Calculate proper colors for the selected glyph
+                        let best_glyph = &glyphs[best_glyph_idx];
+                        // Calculate dominant colors (Mode) for the selected glyph
+                        let best_glyph = &glyphs[best_glyph_idx];
+                        let mut counts_on: HashMap<[u8; 3], usize> = HashMap::new();
+                        let mut counts_off: HashMap<[u8; 3], usize> = HashMap::new();
+
+                        for i in 0..bp {
+                            let px = &working_pixels[i];
+                            let color = [px.r as u8, px.g as u8, px.b as u8];
+                            if best_glyph.bitmap[i] == 1 {
+                                *counts_on.entry(color).or_insert(0) += 1;
+                            } else {
+                                *counts_off.entry(color).or_insert(0) += 1;
+                            }
+                        }
+
+                        let avg_fg = counts_on.into_iter().max_by_key(|&(_, count)| count).map(|(c, _)| c).unwrap_or([255, 255, 255]);
+                        let avg_bg = counts_off.into_iter().max_by_key(|&(_, count)| count).map(|(c, _)| c).unwrap_or([0, 0, 0]);
+
+                        final_fg = Colour::RGB(avg_fg);
+                        final_bg = Some(Colour::RGB(avg_bg));
+                        best_match_data = (best_glyph_idx, false, avg_fg, avg_bg, 0, 0);
                         best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
 
@@ -602,60 +741,45 @@ pub fn render_blocks(
                             [((sum_zeros_r / count_zeros) as u8), ((sum_zeros_g / count_zeros) as u8), ((sum_zeros_b / count_zeros) as u8)]
                         } else { [0,0,0] };
                         
-                        let use_coverage_heuristic = args.fg_only;
-                        let penalty_per_miss = 1000u64;
-                        
                         // Cost Calculation (Normal)
-                        let cost_no_invert = if use_coverage_heuristic {
-                             let term1 = sum_ones_sq;
-                             let term2 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                             let term3 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                             (term1 + term3).saturating_sub(term2) + (count_zeros * penalty_per_miss)
-                        } else {
-                            let target_bg = avg_zeros;
-                            let t1_1 = sum_ones_sq;
-                            let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
-                            let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
-                            let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-                            let t1_0 = sum_zeros_sq;
-                            let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
-                            let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-                            c1 + c0
-                        };
+                        // Assume fg_only is false
+                        let target_bg = avg_zeros;
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (avg_ones[0] as u64 * sum_ones_r + avg_ones[1] as u64 * sum_ones_g + avg_ones[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (avg_ones[0] as u64 * avg_ones[0] as u64 + avg_ones[1] as u64 * avg_ones[1] as u64 + avg_ones[2] as u64 * avg_ones[2] as u64);
+                        let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (target_bg[0] as u64 * sum_zeros_r + target_bg[1] as u64 * sum_zeros_g + target_bg[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                        let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+                        let cost_no_invert = c1 + c0;
 
                         if cost_no_invert < best_cost {
                             best_cost = cost_no_invert;
                             best_glyph_idx = gi;
                             best_chosen_fg_color = avg_ones;
-                            best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { avg_zeros };
+                            best_chosen_bg_color = avg_zeros;
                             best_inv = false;
                         }
 
                         // Cost Calculation (Inverted)
-                        let cost_invert = if use_coverage_heuristic {
-                             let t1_0 = sum_zeros_sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                             let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                             (t1_0 + t3_0).saturating_sub(t2_0) + (count_ones * penalty_per_miss)
-                        } else {
-                             let target_bg = avg_ones;
-                             let t1_0 = sum_zeros_sq;
-                             let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
-                             let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                             let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
-                             let t1_1 = sum_ones_sq;
-                             let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
-                             let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
-                             let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-                             c_fg + c_bg
-                        };
+                        // Assume fg_only is false
+                        let target_bg = avg_ones;
+                        let t1_0 = sum_zeros_sq;
+                        let t2_0 = 2 * (avg_zeros[0] as u64 * sum_zeros_r + avg_zeros[1] as u64 * sum_zeros_g + avg_zeros[2] as u64 * sum_zeros_b);
+                        let t3_0 = count_zeros * (avg_zeros[0] as u64 * avg_zeros[0] as u64 + avg_zeros[1] as u64 * avg_zeros[1] as u64 + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                        let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                        let t1_1 = sum_ones_sq;
+                        let t2_1 = 2 * (target_bg[0] as u64 * sum_ones_r + target_bg[1] as u64 * sum_ones_g + target_bg[2] as u64 * sum_ones_b);
+                        let t3_1 = count_ones * (target_bg[0] as u64 * target_bg[0] as u64 + target_bg[1] as u64 * target_bg[1] as u64 + target_bg[2] as u64 * target_bg[2] as u64);
+                        let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
+                        let cost_invert = c_fg + c_bg;
 
                         if cost_invert < best_cost {
                             best_cost = cost_invert;
                             best_glyph_idx = gi;
-                            best_chosen_fg_color = avg_zeros;
-                            best_chosen_bg_color = if use_coverage_heuristic { [0,0,0] } else { avg_ones };
+                            best_chosen_fg_color = avg_ones;
+                            best_chosen_bg_color = avg_zeros;
                             best_inv = true;
                         }
 
@@ -668,7 +792,7 @@ pub fn render_blocks(
                         chosen_glyph_inverted = best_inv;
                         final_glyph = glyphs[best_glyph_idx].ch;
                         final_fg = Colour::RGB(best_chosen_fg_color);
-                        final_bg = if args.fg_only { None } else { Some(Colour::RGB(best_chosen_bg_color)) };
+                        final_bg = Some(Colour::RGB(best_chosen_bg_color));
                         best_match_data = (best_glyph_idx, best_inv, best_chosen_fg_color, best_chosen_bg_color, 0, 0);
                         best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
@@ -725,13 +849,7 @@ pub fn render_blocks(
                             let (fgi, fgm_val) = fg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0));
                             let (bgi_std, bgm_effective) = bg_cnt.iter().enumerate().max_by_key(|&(_, c)| c).map(|(i, c)| (i, *c)).unwrap_or((0,0));
 
-                            let cost_base = if args.fg_only {
-                                let total = bp;
-                                let score = (2 * fgm_val as isize) - (fg_tot as isize);
-                                ((total as isize) - score) as usize
-                            } else {
-                                (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective))
-                            };
+                            let cost_base = (fg_tot.saturating_sub(fgm_val)) + (bg_tot.saturating_sub(bgm_effective));
 
                             let cost = (cost_base as f32 * color_weight) as usize;
                             if cost < best.0 {
@@ -749,7 +867,7 @@ pub fn render_blocks(
                         chosen_glyph_inverted = best.4;
                         final_glyph = glyphs[best.1].ch;
                         final_fg = Colour::Index(fg_idx);
-                        final_bg = if args.fg_only { None } else { Some(Colour::Index(bg_idx)) };
+                        final_bg = Some(Colour::Index(bg_idx));
                         best_match_data = (best.1, best.4, [0,0,0], [0,0,0], fg_idx, bg_idx);
                         best_scale_is_identity = *sx == 1.0 && *sy == 1.0;
                     }
@@ -789,7 +907,7 @@ pub fn render_blocks(
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
                     
                     if bit == 1 { if dist_bg < dist_fg { block_error += 1; } } 
-                    else { if !args.fg_only { if dist_fg < dist_bg { block_error += 1; } } } 
+                    else { if dist_fg < dist_bg { block_error += 1; } } 
                 }
             } else {
                 let fg_idx = best_match_data.4 as usize;
@@ -802,7 +920,7 @@ pub fn render_blocks(
                     
                     let bit = fglyph.bitmap[i] ^ (inv as u8);
                     if bit == 1 { if col_idx != fg_idx { block_error += 1; } } 
-                    else { if !args.fg_only { if col_idx != bg_idx { block_error += 1; } } } 
+                    else { if col_idx != bg_idx { block_error += 1; } } 
                 }
             }
             total_error += block_error;
@@ -847,11 +965,7 @@ pub fn render_blocks(
                 &mut last_bg,
             );
         }
-        if args.fg_only {
-            out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[39m\n", Render::Irc => "\x03\n" });
-        } else {
-            out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
-        }
+        out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
         grid.push(grid_row);
     }
     RenderResult {
@@ -859,6 +973,390 @@ pub fn render_blocks(
         error_count: total_error,
         total_pixels: total_pixels,
         dynamic_scaling_count,
+        grid,
+    }
+}
+
+pub fn render_blocks_smooth(
+    image: &AnsiImage,
+    args: &RenderArgs,
+    render: Render,
+    glyphs: &[FastGlyph],
+) -> RenderResult {
+    let (gh, gw) = image.glyphs.metrics;
+    let h = image.bitmap.len();
+    let w = image.bitmap[0].len();
+    let rows = h / gh;
+    let cols = w / gw;
+    let bp = gh * gw;
+
+    // 1. Pre-calculate candidates (Top K)
+    // 1. Pre-calculate candidates (Top K)
+    let k_candidates = args.smooth_candidates;
+    if k_candidates == 0 { return render_blocks(image, args, render, glyphs); } // Fallback if 0
+    // Use serial iterator to ensure perfect determinism, or carefully check parallel logic.
+    // Switching to serial for stability debugging.
+    let candidates_grid: Vec<Vec<Vec<(usize, bool, f32)>>> = (0..rows).map(|r| {
+        (0..cols).map(|c| {
+            // Extract block
+            // Extract block and perform K-Means binarization
+            let mut block_bitmap = vec![0u8; bp];
+            let y_base = r * gh;
+            let x_base = c * gw;
+            let mut pixels = Vec::with_capacity(bp);
+
+            for y in 0..gh {
+                for x in 0..gw {
+                    if y_base + y < h && x_base + x < w {
+                         let px = &image.bitmap[y_base + y][x_base + x];
+                         pixels.push(unpack_rgb(*px));
+                    } else {
+                        pixels.push([0, 0, 0]); // Padding
+                    }
+                }
+            }
+
+            // Init K-Means (Min/Max Luma seed)
+            let mut c1 = [0u8; 3];
+            let mut c2 = [255u8; 3];
+            let mut min_l = 255;
+            let mut max_l = 0;
+            
+            for &p in &pixels {
+                let l = luma(&p);
+                if l < min_l { min_l = l; c1 = p; }
+                if l > max_l { max_l = l; c2 = p; }
+            }
+            if min_l == max_l { c2 = [255 - c1[0], 255 - c1[1], 255 - c1[2]]; } // Degenerate case
+
+            // 2 Iterations
+            for _ in 0..2 {
+                let mut sum1 = [0u32; 3]; let mut cnt1 = 0;
+                let mut sum2 = [0u32; 3]; let mut cnt2 = 0;
+                
+                for &p in &pixels {
+                    let d1 = (p[0] as i32 - c1[0] as i32).pow(2) + (p[1] as i32 - c1[1] as i32).pow(2) + (p[2] as i32 - c1[2] as i32).pow(2);
+                    let d2 = (p[0] as i32 - c2[0] as i32).pow(2) + (p[1] as i32 - c2[1] as i32).pow(2) + (p[2] as i32 - c2[2] as i32).pow(2);
+                    if d1 < d2 {
+                        sum1[0] += p[0] as u32; sum1[1] += p[1] as u32; sum1[2] += p[2] as u32; cnt1 += 1;
+                    } else {
+                        sum2[0] += p[0] as u32; sum2[1] += p[1] as u32; sum2[2] += p[2] as u32; cnt2 += 1;
+                    }
+                }
+                if cnt1 > 0 { c1 = [(sum1[0]/cnt1) as u8, (sum1[1]/cnt1) as u8, (sum1[2]/cnt1) as u8]; }
+                if cnt2 > 0 { c2 = [(sum2[0]/cnt2) as u8, (sum2[1]/cnt2) as u8, (sum2[2]/cnt2) as u8]; }
+            }
+
+            // Assign bits (Use C2 as "1" - convention usually brighter/fg)
+            // But we can check which is dominant or brighter. Let's assume lighter is FG (1).
+            let use_c2_as_1 = luma(&c2) > luma(&c1);
+
+            for (i, &p) in pixels.iter().enumerate() {
+                let d1 = (p[0] as i32 - c1[0] as i32).pow(2) + (p[1] as i32 - c1[1] as i32).pow(2) + (p[2] as i32 - c1[2] as i32).pow(2);
+                let d2 = (p[0] as i32 - c2[0] as i32).pow(2) + (p[1] as i32 - c2[1] as i32).pow(2) + (p[2] as i32 - c2[2] as i32).pow(2);
+                if (d2 < d1) == use_c2_as_1 {
+                    block_bitmap[i] = 1;
+                }
+            }
+            
+            // Compute SC if needed
+            let sc_opt = if args.shape {
+                 Some(compute_shape_context(&block_bitmap, gw, gh))
+            } else { None };
+
+            // Score all glyphs
+            let mut scores: Vec<(usize, bool, f32)> = Vec::with_capacity(glyphs.len() * 2);
+            
+            for (gi, glyph) in glyphs.iter().enumerate() {
+                for &inv in &[false, true] {
+                    let cost = if args.shape {
+                         // Chi-squared distance
+                         let mut d = 0.0;
+                         let target_sc = sc_opt.as_ref().unwrap();
+                         // Invert logic for SC is tricky if precomputed.
+                         // For now, assume SC is rotation/scale invariant enough or ignore invert for SC match
+                         // OR: Compute SC for inverted block?
+                         // "Inverted" SC is just SC of inverted bitmap.
+                         // If we want to support invert with SC, we need inverted matching.
+                         // For simplicity, let's treat SC as "shape" and ignore color inversion for shape logic
+                         // but BoundaryProfile needs invert.
+                         // Let's stick to non-inverted for SC shape matching primarily, or handle invert.
+                         // Just use non-inverted SC for now as "shape" usually implies positive shape.
+                         if inv { 1e9 } else {
+                             for k in 0..60 {
+                                 let a = target_sc.histogram[k];
+                                 let b = glyph.sc.histogram[k];
+                                 if a + b > 1e-4 {
+                                     d += (a - b).powi(2) / (a + b);
+                                 }
+                             }
+                             d * 0.5
+                         }
+                    } else {
+                        // Pixel error
+                        let mut err = 0.0;
+                        for i in 0..bp {
+                            let bit = glyph.bitmap[i] ^ (inv as u8);
+                             if bit != block_bitmap[i] { err += 1.0; }
+                        }
+                        err
+                    };
+                    scores.push((gi, inv, cost));
+                }
+            }
+            // Sort and keep top K
+            scores.sort_by(|a, b| {
+                a.2.partial_cmp(&b.2)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0)) // Tie-breaker: Glyph Index
+            });
+            scores.truncate(k_candidates);
+            scores
+        }).collect()
+    }).collect();
+
+    // 2. Initialize grid
+    let mut grid_indices: Vec<Vec<(usize, bool)>> = candidates_grid.iter().map(|row| {
+        row.iter().map(|cands| (cands[0].0, cands[0].1)).collect()
+    }).collect();
+
+    // 3. Iterative Optimization (ICM)
+    let lambda = 5.0; // Smoothness weight (Increased)
+    let iterations = 6; // Even number for balance
+
+    for iter in 0..iterations {
+        let forward = iter % 2 == 0;
+        let row_iter: Vec<usize> = if forward { (0..rows).collect() } else { (0..rows).rev().collect() };
+        
+        for &r in &row_iter {
+            let col_iter: Vec<usize> = if forward { (0..cols).collect() } else { (0..cols).rev().collect() };
+            for &c in &col_iter {
+                let candidates = &candidates_grid[r][c];
+                
+                // Get neighbors' profiles
+                let top_p = if r > 0 { Some(glyphs[grid_indices[r-1][c].0].profile) } else { None };
+                let left_p = if c > 0 { Some(glyphs[grid_indices[r][c-1].0].profile) } else { None };
+                let bottom_p = if r < rows - 1 { Some(glyphs[grid_indices[r+1][c].0].profile) } else { None };
+                let right_p = if c < cols - 1 { Some(glyphs[grid_indices[r][c+1].0].profile) } else { None };
+                
+                let top_inv = if r > 0 { grid_indices[r-1][c].1 } else { false };
+                let left_inv = if c > 0 { grid_indices[r][c-1].1 } else { false };
+                let bottom_inv = if r < rows - 1 { grid_indices[r+1][c].1 } else { false };
+                let right_inv = if c < cols - 1 { grid_indices[r][c+1].1 } else { false };
+
+                // Adaptive Threshold Check
+                if args.smooth_threshold > 0.0 {
+                    let (cur_gi, cur_inv) = grid_indices[r][c];
+                    let gp = glyphs[cur_gi].profile;
+                    let mut cur_boundary_cost = 0.0;
+                    
+                    // Top
+                    if let Some(tp) = top_p {
+                        let my_top = if cur_inv { !gp.top } else { gp.top };
+                        let mask = (1 << gw) - 1;
+                        let my_top_masked = my_top & mask;
+                        let neighbor_bottom = if top_inv { !tp.bottom } else { tp.bottom };
+                        let diff = my_top_masked ^ (neighbor_bottom & mask);
+                        cur_boundary_cost += diff.count_ones() as f32;
+                    }
+                    // Left
+                    if let Some(lp) = left_p {
+                        let my_left = if cur_inv { !gp.left } else { gp.left };
+                        let mask = (1 << gh) - 1;
+                        let diff = (my_left & mask) ^ ((if left_inv { !lp.right } else { lp.right }) & mask);
+                        cur_boundary_cost += diff.count_ones() as f32;
+                    }
+                    // Bottom
+                    if r < rows - 1 {
+                        let (b_gi, b_inv) = grid_indices[r+1][c];
+                        let bp = glyphs[b_gi].profile;
+                        let my_bottom = if cur_inv { !gp.bottom } else { gp.bottom };
+                        let mask = (1 << gw) - 1;
+                        let diff = (my_bottom & mask) ^ ((if b_inv { !bp.top } else { bp.top }) & mask);
+                        cur_boundary_cost += diff.count_ones() as f32;
+                    }
+                    // Right
+                     if c < cols - 1 {
+                        let (r_gi, r_inv) = grid_indices[r][c+1];
+                        let rp_ = glyphs[r_gi].profile;
+                        let my_right = if cur_inv { !gp.right } else { gp.right };
+                        let mask = (1 << gh) - 1;
+                        let diff = (my_right & mask) ^ ((if r_inv { !rp_.left } else { rp_.left }) & mask);
+                        cur_boundary_cost += diff.count_ones() as f32;
+                    }
+
+                    if cur_boundary_cost < args.smooth_threshold as f32 {
+                        continue;
+                    }
+                }
+
+                let mut best_local_cost = f32::MAX;
+                let mut best_idx = (0, false);
+
+                for &(gi, inv, base_cost) in candidates {
+                    let gp = glyphs[gi].profile;
+                    let mut boundary_cost = 0.0;
+                    
+                    // Top Boundary
+                    if let Some(tp) = top_p {
+                        let my_top = if inv { !gp.top } else { gp.top }; // bitwise NOT for invert? 
+                        // Wait, !u32 flips all bits. We only care about width bits.
+                        // Mask: (1 << gw) - 1
+                        let mask = (1 << gw) - 1;
+                        let my_top_masked = my_top & mask;
+                        let neighbor_bottom = if top_inv { !tp.bottom } else { tp.bottom };
+                        let neighbor_bottom_masked = neighbor_bottom & mask;
+                        
+                        // Hamming distance
+                        let diff = my_top_masked ^ neighbor_bottom_masked;
+                        boundary_cost += diff.count_ones() as f32;
+                    }
+                    
+                    // Left Boundary
+                    if let Some(lp) = left_p {
+                        let my_left = if inv { !gp.left } else { gp.left };
+                        let mask = (1 << gh) - 1;
+                        let my_left_masked = my_left & mask;
+                        let neighbor_right = if left_inv { !lp.right } else { lp.right };
+                        let neighbor_right_masked = neighbor_right & mask;
+                        
+                        boundary_cost += (my_left_masked ^ neighbor_right_masked).count_ones() as f32;
+                    }
+
+                    // Bottom and Right (lookahead for symmetry or just lag? in ICM we use current state of neighbors)
+                    if let Some(bp) = bottom_p {
+                         let my_bot = if inv { !gp.bottom } else { gp.bottom };
+                         let mask = (1 << gw) - 1;
+                         let n_top = if bottom_inv { !bp.top } else { bp.top };
+                         boundary_cost += ((my_bot & mask) ^ (n_top & mask)).count_ones() as f32;
+                    }
+                    
+                    if let Some(rp) = right_p {
+                        let my_right = if inv { !gp.right } else { gp.right };
+                        let mask = (1 << gh) - 1;
+                        let n_left = if right_inv { !rp.left } else { rp.left };
+                         boundary_cost += ((my_right & mask) ^ (n_left & mask)).count_ones() as f32;
+                    }
+
+                    let total_cost = base_cost + lambda * boundary_cost;
+                    if total_cost < best_local_cost {
+                        best_local_cost = total_cost;
+                        best_idx = (gi, inv);
+                    }
+                }
+                grid_indices[r][c] = best_idx;
+            }
+        }
+    }
+
+    // 4. Render Final
+    let mut out = String::new();
+    let mut grid = Vec::new();
+
+    for r in 0..rows {
+        let mut first = true;
+        let mut last_fg = None;
+        let mut last_bg = None;
+        let mut row_vec = Vec::new();
+        
+        for c in 0..cols {
+            let (gi, inv) = grid_indices[r][c];
+            let raw_glyph = &glyphs[gi];
+            let ch = raw_glyph.ch;
+            
+            // Color Logic (Dominant)
+            // Need pixel loop again? Or just use average/mode logic.
+            // For speed, let's reuse mode logic here.
+            
+            let y_base = r * gh;
+            let x_base = c * gw;
+            let mut counts_on: HashMap<[u8; 3], usize> = HashMap::new();
+            let mut counts_off: HashMap<[u8; 3], usize> = HashMap::new();
+
+            // Extract pixels and count
+            for y in 0..gh {
+                for x in 0..gw {
+                    if y_base + y < h && x_base + x < w {
+                         let px = &image.bitmap[y_base + y][x_base + x];
+                         let color = unpack_rgb(*px);
+                         let bit = raw_glyph.bitmap[y * gw + x] ^ (inv as u8);
+                         if bit == 1 {
+                             *counts_on.entry(color).or_insert(0) += 1;
+                         } else {
+                             *counts_off.entry(color).or_insert(0) += 1;
+                         }
+                    }
+                }
+            }
+            
+            let fg_rgb = counts_on.into_iter()
+                .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+                .map(|(c, _)| c)
+                .unwrap_or([255, 255, 255]);
+                
+            let bg_rgb = counts_off.into_iter()
+                .max_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+                .map(|(c, _)| c)
+                .unwrap_or([0, 0, 0]);
+            
+            let (mut final_fg, mut final_bg) = if inv {
+                (Colour::RGB(bg_rgb), Some(Colour::RGB(fg_rgb)))
+            } else {
+                (Colour::RGB(fg_rgb), Some(Colour::RGB(bg_rgb)))
+            };
+
+            if render == Render::Irc {
+                if let Colour::RGB(c) = final_fg {
+                    let idx = nearest_hex_colour_fast(make_rgb_u32(&c), &IRC99);
+                    final_fg = Colour::Index(idx);
+                }
+                if let Some(Colour::RGB(c)) = final_bg {
+                    let idx = nearest_hex_colour_fast(make_rgb_u32(&c), &IRC99);
+                    final_bg = Some(Colour::Index(idx));
+                }
+            } else if render == Render::Ansi {
+                if let Colour::RGB(c) = final_fg {
+                    let idx = nearest_hex_colour_fast(make_rgb_u32(&c), &ANSI256);
+                    final_fg = Colour::Index(idx);
+                }
+                if let Some(Colour::RGB(c)) = final_bg {
+                    let idx = nearest_hex_colour_fast(make_rgb_u32(&c), &ANSI256);
+                    final_bg = Some(Colour::Index(idx));
+                }
+            }
+            
+
+            
+            // Sync grid colors with quantized colors
+            let grid_fg = match final_fg.clone() {
+                Colour::Index(i) => {
+                    let p: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                    if (i as usize) < p.len() { unpack_rgb(p[i as usize]) } else { fg_rgb }
+                },
+                Colour::RGB(c) => c,
+            };
+            
+            let grid_bg = final_bg.clone().map(|c| match c {
+                 Colour::Index(i) => {
+                    let p: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                    if (i as usize) < p.len() { unpack_rgb(p[i as usize]) } else { [0,0,0] }
+                },
+                Colour::RGB(c) => c,
+            }).unwrap_or(bg_rgb);
+
+            row_vec.push(RenderedCell { char: ch, fg: grid_fg, bg: Some(grid_bg) });
+            
+            emit_colourized(&mut out, render, final_fg, final_bg, ch, &mut first, &mut last_fg, &mut last_bg);
+        }
+        out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
+        grid.push(row_vec);
+    }
+
+    RenderResult {
+        content: out.trim_end_matches('\n').into(),
+        error_count: 0,
+        total_pixels: (h * w) as u64,
+        dynamic_scaling_count: 0,
         grid,
     }
 }
@@ -922,11 +1420,7 @@ pub fn render_braille(
             let glyph = std::char::from_u32(braille).unwrap_or(' ');
             emit_colourized(&mut out, render, fg, None, glyph, &mut first, &mut last_fg, &mut last_bg);
         }
-        if args.fg_only {
-            out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[39m\n", Render::Irc => "\x03\n" });
-        } else {
-            out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
-        }
+        out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
     }
 
     RenderResult {
@@ -957,8 +1451,52 @@ fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
     }
 }
 
-pub fn calculate_smoothness(_result: &RenderResult, _glyphs: &GlyphStore) -> f64 {
-    0.0
+pub fn calculate_smoothness(result: &RenderResult, _glyphs: &GlyphStore) -> f64 {
+    if result.grid.is_empty() { return 0.0; }
+    let rows = result.grid.len();
+    let cols = result.grid[0].len();
+    if rows == 0 || cols == 0 { return 0.0; }
+
+    let mut total_diff = 0.0;
+    let mut count = 0;
+
+    for r in 0..rows {
+        for c in 0..cols {
+            let cell = &result.grid[r][c];
+            // Reconstruct the average "color" of the cell.
+            // Simplified: treat FG as the dominant color.
+            // Better: We don't have per-pixel info here easily without re-rendering the glyph.
+            // Let's rely on the FG/BG continuity. 
+            // Smoothness = (Difference with Right neighbor) + (Difference with Bottom neighbor)
+            
+            let my_color = cell.fg; // Treating FG as the representative color for now
+            let [r1, g1, b1] = [my_color[0] as f64, my_color[1] as f64, my_color[2] as f64];
+
+            // Right neighbor
+            if c + 1 < cols {
+                let right_cell = &result.grid[r][c+1];
+                let right_color = right_cell.fg;
+                let [r2, g2, b2] = [right_color[0] as f64, right_color[1] as f64, right_color[2] as f64];
+                total_diff += ((r1-r2).powi(2) + (g1-g2).powi(2) + (b1-b2).powi(2)).sqrt();
+                count += 1;
+            }
+
+            // Bottom neighbor
+            if r + 1 < rows {
+                let bottom_cell = &result.grid[r+1][c];
+                let bottom_color = bottom_cell.fg;
+                let [r2, g2, b2] = [bottom_color[0] as f64, bottom_color[1] as f64, bottom_color[2] as f64];
+                total_diff += ((r1-r2).powi(2) + (g1-g2).powi(2) + (b1-b2).powi(2)).sqrt();
+                count += 1;
+            }
+        }
+    }
+
+    if count > 0 {
+        total_diff / count as f64 // Average difference. Lower is smoother.
+    } else {
+        0.0
+    }
 }
 
 pub fn calculate_smoothness_relative(_result: &RenderResult, _glyphs: &GlyphStore) -> f64 {
