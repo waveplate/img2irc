@@ -21,6 +21,7 @@ use img2irc_rs::{args::{RenderArgs, Render, SamplingFilter, ColourSpace, Encodin
 use clap::Parser;
 use ansi_to_tui::IntoText;
 use tokio::sync::{mpsc, watch};
+use ratatui_explorer::{FileExplorer, Theme as ExplorerTheme};
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 const BG: Color = Color::Rgb(22, 22, 30);
@@ -63,7 +64,7 @@ struct ControlDef {
 }
 
 // ── App State ────────────────────────────────────────────────────────────────
-enum InputMode { Normal, Editing }
+enum InputMode { Normal, Editing, FileBrowser }
 
 struct App {
     render_args: RenderArgs,
@@ -73,13 +74,19 @@ struct App {
     scroll: u16,
 
     tx_args: watch::Sender<RenderArgs>,
-    rx_result: mpsc::Receiver<String>,
+    rx_result: mpsc::Receiver<draw::RenderResult>,
     cached_render: String,
+    cached_result: Option<draw::RenderResult>,
     is_rendering: Arc<AtomicBool>,
     render_tick: usize,
+    dragged_control: Option<usize>,
 
     show_save_dialog: bool,
     save_input: String,
+    file_explorer: Option<FileExplorer>,
+
+    // Shared state for PNG saving
+    arc_glyphs: Option<Arc<font::GlyphStore>>,
 
     // Image path
     image_path: String,
@@ -148,7 +155,7 @@ struct App {
 }
 
 impl App {
-    fn new(render_args: RenderArgs, tx_args: watch::Sender<RenderArgs>, rx_result: mpsc::Receiver<String>) -> App {
+    fn new(render_args: RenderArgs, tx_args: watch::Sender<RenderArgs>, rx_result: mpsc::Receiver<draw::RenderResult>) -> App {
         let (blocks_map, _) = img2irc_rs::font::load_blocks_config();
         let mut available_blocks: Vec<String> = blocks_map.keys().cloned().collect();
         available_blocks.sort();
@@ -162,10 +169,14 @@ impl App {
             tx_args,
             rx_result,
             cached_render: String::new(),
+            cached_result: None,
             is_rendering: Arc::new(AtomicBool::new(true)),
             render_tick: 0,
+            dragged_control: None,
             show_save_dialog: false,
             save_input: String::new(),
+            file_explorer: None,
+            arc_glyphs: None,
 
             image_path: render_args.image.clone().unwrap_or_default(),
             width: render_args.width.unwrap_or(80) as i32,
@@ -613,28 +624,52 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let arc_glyphs = Arc::new(glyph_store);
 
     let (tx_args, mut rx_args) = watch::channel(render_args.clone());
-    let (tx_result, rx_result) = mpsc::channel(1);
+    let (tx_result, rx_result): (mpsc::Sender<draw::RenderResult>, mpsc::Receiver<draw::RenderResult>) = mpsc::channel(1);
     let rendering_flag = Arc::new(AtomicBool::new(true));
     let rendering_flag2 = rendering_flag.clone();
+    let arc_glyphs_shared = arc_glyphs.clone();
+
+    let initial_image_path = render_args.image.clone();
 
     tokio::spawn(async move {
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
+        let mut arc_image = arc_image;
+        let mut current_image_path = initial_image_path;
+
         loop {
             rendering_flag2.store(true, Ordering::Relaxed);
             let current_args = { rx_args.borrow_and_update().clone() };
+
+            // Reload image if path changed
+            if current_args.image != current_image_path {
+                if let Some(path) = &current_args.image {
+                    match img2irc_rs::load_image_from_url_or_path(path, &current_args, &arc_glyphs).await {
+                        Ok(img) => {
+                            arc_image = Arc::new(img);
+                            current_image_path = Some(path.clone());
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to reload image: {}", e);
+                            // Keep old image
+                        }
+                    }
+                }
+            }
+
             if fast_glyphs_store.is_none() {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &current_args));
             }
             let glyphs = fast_glyphs_store.as_ref().unwrap();
             let result = img2irc_rs::render_output(&current_args, &arc_glyphs, (*arc_image).clone(), glyphs);
             rendering_flag2.store(false, Ordering::Relaxed);
-            if tx_result.send(result.content).await.is_err() { break; }
+            if tx_result.send(result).await.is_err() { break; }
             if rx_args.changed().await.is_err() { break; }
         }
     });
 
     let mut app = App::new(render_args, tx_args, rx_result);
     app.is_rendering = rendering_flag;
+    app.arc_glyphs = Some(arc_glyphs_shared);
     app.update_render_args();
 
     enable_raw_mode()?;
@@ -657,8 +692,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         app.render_tick = app.render_tick.wrapping_add(1);
-        while let Ok(content) = app.rx_result.try_recv() {
-            app.cached_render = content;
+        while let Ok(result) = app.rx_result.try_recv() {
+            app.cached_render = result.content.clone();
+            app.cached_result = Some(result);
         }
 
         terminal.draw(|f| ui(f, &mut app))?;
@@ -674,57 +710,88 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         MouseEventKind::ScrollDown => {
                             app.scroll = app.scroll.saturating_add(3);
                         }
-                        MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
-                            // Check tab clicks (only on Down, not Drag)
-                            if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                                for (i, area) in app.tab_areas.iter().enumerate() {
-                                    if mouse.column >= area.x && mouse.column < area.x + area.width
-                                        && mouse.row >= area.y && mouse.row < area.y + area.height
-                                    {
-                                        app.current_tab = i;
-                                        app.selected_control = 0;
-                                        break;
-                                    }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            app.dragged_control = None;
+                            // Check tab clicks
+                            for (i, area) in app.tab_areas.iter().enumerate() {
+                                if mouse.column >= area.x && mouse.column < area.x + area.width
+                                    && mouse.row >= area.y && mouse.row < area.y + area.height
+                                {
+                                    app.current_tab = i;
+                                    app.selected_control = 0;
+                                    break;
                                 }
                             }
-                            // Check control clicks/drags
+                            // Check control clicks
                             for (i, area) in app.control_areas.iter().enumerate() {
                                 if area.width == 0 { continue; }
                                 if mouse.column >= area.x && mouse.column < area.x + area.width
                                     && mouse.row >= area.y && mouse.row < area.y + area.height
                                 {
                                     app.selected_control = i;
+                                    app.dragged_control = Some(i);
                                     let controls = app.tab_controls(app.current_tab);
                                     if let Some(ctrl) = controls.get(i) {
                                         match &ctrl.kind {
                                             ControlKind::Slider { min, max } => {
-                                                // Map mouse x position to value
                                                 let rel_x = (mouse.column - area.x) as f64;
                                                 let ratio = (rel_x / area.width as f64).clamp(0.0, 1.0);
                                                 let new_val = *min + (((*max - *min) as f64) * ratio) as i32;
                                                 set_control_value(&mut app, i, new_val.clamp(*min, *max));
                                             }
-                                            ControlKind::Toggle => {
-                                                if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                                                    toggle_control(&mut app);
-                                                }
-                                            }
-                                            ControlKind::Enum { .. } => {
-                                                if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                                                    toggle_control(&mut app);
-                                                }
-                                            }
+                                            ControlKind::Toggle => toggle_control(&mut app),
+                                            ControlKind::Enum { .. } => toggle_control(&mut app),
                                         }
                                     }
                                     break;
                                 }
                             }
                         }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            // Only drag the originally-clicked control
+                            if let Some(locked_idx) = app.dragged_control {
+                                if let Some(area) = app.control_areas.get(locked_idx) {
+                                    if area.width > 0 {
+                                        let controls = app.tab_controls(app.current_tab);
+                                        if let Some(ctrl) = controls.get(locked_idx) {
+                                            if let ControlKind::Slider { min, max } = &ctrl.kind {
+                                                let rel_x = (mouse.column as i32 - area.x as i32).max(0) as f64;
+                                                let ratio = (rel_x / area.width as f64).clamp(0.0, 1.0);
+                                                let new_val = *min + (((*max - *min) as f64) * ratio) as i32;
+                                                set_control_value(&mut app, locked_idx, new_val.clamp(*min, *max));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            app.dragged_control = None;
+                        }
                         _ => {}
                     }
                 }
                 Event::Key(key) => {
                     match app.input_mode {
+                        InputMode::FileBrowser => {
+                            if let Some(ref mut explorer) = app.file_explorer {
+                                if key.code == KeyCode::Esc {
+                                    app.file_explorer = None;
+                                    app.input_mode = InputMode::Normal;
+                                } else if key.code == KeyCode::Enter {
+                                    let path = explorer.current().path().to_path_buf();
+                                    if path.is_file() {
+                                        app.image_path = path.to_string_lossy().to_string();
+                                        app.render_args.image = Some(app.image_path.clone());
+                                        app.file_explorer = None;
+                                        app.input_mode = InputMode::Normal;
+                                        app.update_render_args();
+                                    }
+                                } else {
+                                    let _ = explorer.handle(&event);
+                                }
+                            }
+                        }
                         InputMode::Editing => {
                             match key.code {
                                 KeyCode::Esc => {
@@ -733,9 +800,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Enter => {
                                     if !app.save_input.is_empty() {
-                                        let path = &app.save_input;
-                                        if let Err(e) = std::fs::write(path, &app.cached_render) {
-                                            eprintln!("Failed to save: {}", e);
+                                        let path = app.save_input.clone();
+                                        // Save text output
+                                        if let Err(e) = std::fs::write(&path, &app.cached_render) {
+                                            eprintln!("Failed to save text: {}", e);
+                                        }
+                                        // Also save PNG if we have the result grid
+                                        if let (Some(result), Some(glyphs)) = (&app.cached_result, &app.arc_glyphs) {
+                                            let png_path = if path.ends_with(".txt") || path.ends_with(".irc") || path.ends_with(".ans") {
+                                                format!("{}.png", &path[..path.len()-4])
+                                            } else {
+                                                format!("{}.png", path)
+                                            };
+                                            if let Err(e) = draw::save_as_png(result, glyphs, &png_path, "") {
+                                                eprintln!("Failed to save PNG: {}", e);
+                                            }
                                         }
                                     }
                                     app.input_mode = InputMode::Normal;
@@ -758,6 +837,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Char('r') | KeyCode::Delete => {
                                     reset_control(&mut app);
+                                }
+                                KeyCode::Char('o') => {
+                                    let theme = ExplorerTheme::default().add_default_title();
+                                    if let Ok(explorer) = FileExplorer::with_theme(theme) {
+                                        app.file_explorer = Some(explorer);
+                                        app.input_mode = InputMode::FileBrowser;
+                                    }
                                 }
                                 KeyCode::Tab => {
                                     app.current_tab = (app.current_tab + 1) % 3;
@@ -1043,12 +1129,19 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     if app.show_save_dialog {
         render_save_dialog(f, app);
     }
+
+    // ── File browser overlay ──
+    if let Some(ref explorer) = app.file_explorer {
+        let browser_area = centered_rect(70, 80, area);
+        f.render_widget(Clear, browser_area);
+        f.render_widget(&explorer.widget(), browser_area);
+    }
 }
 
 fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let layout = Layout::horizontal([
         Constraint::Length(10),  // app title
-        Constraint::Min(0),     // tabs + file
+        Constraint::Min(0),     // tabs + file + spinner
     ]).split(area);
 
     // App title
@@ -1058,7 +1151,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     );
     f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
 
-    // Tabs + filename
+    // Tabs + filename + spinner
     let tab_names = ["  Main  ", " Effects ", "  Data  "];
     let mut tab_rects = Vec::new();
 
@@ -1087,13 +1180,26 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Show image path after tabs
     x += 1;
     let path_display = format!("📁 {}", app.image_path);
-    let avail = (layout[1].x + layout[1].width).saturating_sub(x) as usize;
+    let right_edge = layout[1].x + layout[1].width;
+    let avail = right_edge.saturating_sub(x) as usize;
     let truncated = if path_display.len() > avail {
         format!("…{}", &app.image_path[app.image_path.len().saturating_sub(avail.saturating_sub(3))..])
     } else {
         path_display
     };
     buf.set_string(x, layout[1].y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
+
+    // Loading spinner in top-right
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+    if is_rendering {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
+        let label = format!(" {} Rendering ", spinner_ch);
+        let lw = label.len() as u16;
+        let sx = right_edge.saturating_sub(lw);
+        buf.set_string(sx, layout[1].y, &label,
+            Style::new().fg(Color::Yellow).bg(BG).add_modifier(Modifier::BOLD));
+    }
 
     app.tab_areas = tab_rects;
 }
@@ -1112,7 +1218,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let controls = app.tab_controls(app.current_tab);
     let avail_height = inner.height as usize;
-    let item_height: u16 = 1; // single-row controls
+    let item_height: u16 = 2; // 1 row content + 1 row spacing
     let max_visible = avail_height / item_height as usize;
 
     // Scrolling offset for controls
@@ -1135,7 +1241,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             continue; 
         }
 
-        let ctrl_area = Rect::new(inner.x, y, inner.width, item_height);
+        let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
         let selected = i == app.selected_control;
 
         match &ctrl.kind {
@@ -1178,20 +1284,13 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_output(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let is_loading = app.is_rendering.load(Ordering::Relaxed) && app.cached_render.is_empty();
-    let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
-
     // Compute output stats
     let line_count = app.cached_render.lines().count();
     let max_bytes = app.cached_render.lines().map(|l| l.len()).max().unwrap_or(0);
-
-    let title_right = if is_loading {
-        format!(" {} Rendering... ", spinner_ch)
-    } else if app.is_rendering.load(Ordering::Relaxed) {
-        format!(" {} Updating... │ {}×{} │ {}B ", spinner_ch, max_bytes, line_count, app.cached_render.len())
-    } else {
+    let title_right = if !app.cached_render.is_empty() {
         format!(" {}×{} │ {}B ", max_bytes, line_count, app.cached_render.len())
+    } else {
+        String::new()
     };
 
     let block = Block::default()
@@ -1202,7 +1301,9 @@ fn render_output(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .title_bottom(Line::from(Span::styled(title_right, Style::new().fg(TEXT_DIM))))
         .style(Style::new().bg(BG));
 
-    if is_loading {
+    if app.cached_render.is_empty() {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
         let loading_text = format!("\n\n\n      {} Rendering image...", spinner_ch);
         let p = Paragraph::new(loading_text)
             .block(block)
