@@ -16,7 +16,7 @@ use ratatui::{
     Terminal,
     symbols,
 };
-use img2irc_rs::{args::{RenderArgs, Render}, font, draw};
+use img2irc_rs::{args::{RenderArgs, Render, SamplingFilter, ColourSpace, Encoding}, font, draw};
 use clap::Parser;
 use ansi_to_tui::IntoText;
 use tokio::sync::{mpsc, watch};
@@ -78,6 +78,9 @@ struct App {
     show_save_dialog: bool,
     save_input: String,
 
+    // Image path
+    image_path: String,
+
     // Control values
     width: i32,
     render_mode_idx: usize,
@@ -90,6 +93,20 @@ struct App {
     saturation: i32,
     gamma: i32,
     hue: i32,
+    crop_x1: i32,
+    crop_y1: i32,
+    crop_x2: i32,
+    crop_y2: i32,
+    fliph: bool,
+    flipv: bool,
+    rotate: i32,
+    scalex: i32,  // percentage, 100 = 1.0
+    scaley: i32,
+    font_size: i32,
+    filter_idx: usize,
+    grayscale_tolerance: i32,
+    colorspace_idx: usize,
+    encoding_idx: usize,
 
     // Effects
     pixelize: i32,
@@ -145,6 +162,7 @@ impl App {
             show_save_dialog: false,
             save_input: String::new(),
 
+            image_path: render_args.image.clone().unwrap_or_default(),
             width: render_args.width.unwrap_or(80) as i32,
             render_mode_idx: match render_args.render {
                 Render::Irc => 0, Render::Ansi => 1, Render::Ansi24 => 2, Render::Preview => 3,
@@ -158,6 +176,31 @@ impl App {
             saturation: 0,
             gamma: render_args.gamma as i32,
             hue: render_args.hue as i32,
+            crop_x1: render_args.crop.map(|c| c.0 as i32).unwrap_or(0),
+            crop_y1: render_args.crop.map(|c| c.1 as i32).unwrap_or(0),
+            crop_x2: render_args.crop.map(|c| c.2 as i32).unwrap_or(0),
+            crop_y2: render_args.crop.map(|c| c.3 as i32).unwrap_or(0),
+            fliph: render_args.fliph,
+            flipv: render_args.flipv,
+            rotate: render_args.rotate as i32,
+            scalex: render_args.scale.map(|s| (s.0 * 100.0) as i32).unwrap_or(100),
+            scaley: render_args.scale.map(|s| (s.1 * 100.0) as i32).unwrap_or(100),
+            font_size: render_args.font_size as i32,
+            filter_idx: match render_args.filter {
+                SamplingFilter::Nearest => 0, SamplingFilter::Triangle => 1,
+                SamplingFilter::CatmullRom => 2, SamplingFilter::Gaussian => 3,
+                SamplingFilter::Lanczos3 => 4,
+            },
+            grayscale_tolerance: render_args.grayscale_tolerance as i32,
+            colorspace_idx: match render_args.colorspace {
+                ColourSpace::HSL => 0, ColourSpace::HSV => 1,
+                ColourSpace::HSLUV => 2, ColourSpace::LCH => 3,
+            },
+            encoding_idx: match render_args.encoding {
+                Encoding::Utf8 => 0, Encoding::Utf16 => 1,
+                Encoding::Utf16be => 2, Encoding::Utf16le => 3,
+                Encoding::Cesu8 => 4,
+            },
 
             pixelize: render_args.pixelize,
             gaussian_blur: render_args.gaussian_blur,
@@ -206,6 +249,20 @@ impl App {
                 ControlDef { label: "Saturation", kind: ControlKind::Slider { min: -255, max: 255 } },
                 ControlDef { label: "Gamma",      kind: ControlKind::Slider { min: 0, max: 255 } },
                 ControlDef { label: "Hue",        kind: ControlKind::Slider { min: 0, max: 360 } },
+                ControlDef { label: "Crop X1",    kind: ControlKind::Slider { min: 0, max: 4000 } },
+                ControlDef { label: "Crop Y1",    kind: ControlKind::Slider { min: 0, max: 4000 } },
+                ControlDef { label: "Crop X2",    kind: ControlKind::Slider { min: 0, max: 4000 } },
+                ControlDef { label: "Crop Y2",    kind: ControlKind::Slider { min: 0, max: 4000 } },
+                ControlDef { label: "Flip H",     kind: ControlKind::Toggle },
+                ControlDef { label: "Flip V",     kind: ControlKind::Toggle },
+                ControlDef { label: "Rotate",     kind: ControlKind::Slider { min: 0, max: 360 } },
+                ControlDef { label: "Scale X %",  kind: ControlKind::Slider { min: 10, max: 500 } },
+                ControlDef { label: "Scale Y %",  kind: ControlKind::Slider { min: 10, max: 500 } },
+                ControlDef { label: "Font Size",  kind: ControlKind::Slider { min: 8, max: 64 } },
+                ControlDef { label: "Filter",     kind: ControlKind::Enum { options: vec!["Nearest", "Triangle", "CatmullRom", "Gaussian", "Lanczos3"] } },
+                ControlDef { label: "Gray Tol",   kind: ControlKind::Slider { min: 0, max: 255 } },
+                ControlDef { label: "Colorspace", kind: ControlKind::Enum { options: vec!["HSL", "HSV", "HSLUV", "LCH"] } },
+                ControlDef { label: "Encoding",   kind: ControlKind::Enum { options: vec!["UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "CESU-8"] } },
             ],
             1 => {
                 let mut v = vec![
@@ -234,7 +291,7 @@ impl App {
 
     fn control_count(&self) -> usize {
         match self.current_tab {
-            0 => 11,
+            0 => 25,
             1 => 26,
             2 => self.available_blocks.len(),
             _ => 0,
@@ -255,6 +312,20 @@ impl App {
                 8 => self.saturation,
                 9 => self.gamma,
                 10 => self.hue,
+                11 => self.crop_x1,
+                12 => self.crop_y1,
+                13 => self.crop_x2,
+                14 => self.crop_y2,
+                15 => self.fliph as i32,
+                16 => self.flipv as i32,
+                17 => self.rotate,
+                18 => self.scalex,
+                19 => self.scaley,
+                20 => self.font_size,
+                21 => self.filter_idx as i32,
+                22 => self.grayscale_tolerance,
+                23 => self.colorspace_idx as i32,
+                24 => self.encoding_idx as i32,
                 _ => 0,
             }
         } else if tab == 1 {
@@ -338,6 +409,31 @@ impl App {
         self.render_args.render = match self.render_mode_idx {
             0 => Render::Irc, 1 => Render::Ansi, 2 => Render::Ansi24, _ => Render::Preview,
         };
+        self.render_args.fliph = self.fliph;
+        self.render_args.flipv = self.flipv;
+        self.render_args.rotate = self.rotate as f32;
+        self.render_args.scale = Some((self.scalex as f32 / 100.0, self.scaley as f32 / 100.0));
+        self.render_args.font_size = self.font_size as u32;
+        self.render_args.filter = match self.filter_idx {
+            0 => SamplingFilter::Nearest, 1 => SamplingFilter::Triangle,
+            2 => SamplingFilter::CatmullRom, 3 => SamplingFilter::Gaussian,
+            _ => SamplingFilter::Lanczos3,
+        };
+        self.render_args.grayscale_tolerance = self.grayscale_tolerance as u8;
+        self.render_args.colorspace = match self.colorspace_idx {
+            0 => ColourSpace::HSL, 1 => ColourSpace::HSV,
+            2 => ColourSpace::HSLUV, _ => ColourSpace::LCH,
+        };
+        self.render_args.encoding = match self.encoding_idx {
+            0 => Encoding::Utf8, 1 => Encoding::Utf16,
+            2 => Encoding::Utf16be, 3 => Encoding::Utf16le,
+            _ => Encoding::Cesu8,
+        };
+        if self.crop_x2 > 0 || self.crop_y2 > 0 {
+            self.render_args.crop = Some((self.crop_x1 as u32, self.crop_y1 as u32, self.crop_x2 as u32, self.crop_y2 as u32));
+        } else {
+            self.render_args.crop = None;
+        }
         let _ = self.tx_args.send(self.render_args.clone());
     }
 }
@@ -374,7 +470,7 @@ fn render_bar(buf: &mut Buffer, area: Rect, label: &str, value: i32, min: i32, m
     // Draw label on the left
     let label_text = format!(" {}", label);
     let lx = area.x + 1;
-    let ly = area.y + area.height / 2;
+    let ly = area.y + area.height.saturating_sub(1) / 2;
     for (i, ch) in label_text.chars().enumerate() {
         let x = lx + i as u16;
         if x >= area.x + area.width { break; }
@@ -411,7 +507,7 @@ fn render_enum(buf: &mut Buffer, area: Rect, label: &str, options: &[&str], valu
     let bg = if selected { SELECTED_BG } else { SURFACE };
     buf.set_style(area, Style::new().bg(bg));
 
-    let ly = area.y + area.height / 2;
+    let ly = area.y + area.height.saturating_sub(1) / 2;
     let label_text = format!(" {}", label);
     for (i, ch) in label_text.chars().enumerate() {
         let x = area.x + 1 + i as u16;
@@ -447,7 +543,7 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
     let bg = if selected { SELECTED_BG } else { SURFACE };
     buf.set_style(area, Style::new().bg(bg));
 
-    let ly = area.y + area.height / 2;
+    let ly = area.y + area.height.saturating_sub(1) / 2;
 
     // Label
     let label_text = format!(" {}", label);
@@ -567,31 +663,46 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         MouseEventKind::ScrollDown => {
                             app.scroll = app.scroll.saturating_add(3);
                         }
-                        MouseEventKind::Down(MouseButton::Left) => {
-                            // Check tab clicks
-                            for (i, area) in app.tab_areas.iter().enumerate() {
-                                if mouse.column >= area.x && mouse.column < area.x + area.width
-                                    && mouse.row >= area.y && mouse.row < area.y + area.height
-                                {
-                                    app.current_tab = i;
-                                    app.selected_control = 0;
-                                    break;
+                        MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left) => {
+                            // Check tab clicks (only on Down, not Drag)
+                            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                                for (i, area) in app.tab_areas.iter().enumerate() {
+                                    if mouse.column >= area.x && mouse.column < area.x + area.width
+                                        && mouse.row >= area.y && mouse.row < area.y + area.height
+                                    {
+                                        app.current_tab = i;
+                                        app.selected_control = 0;
+                                        break;
+                                    }
                                 }
                             }
-                            // Check control clicks
+                            // Check control clicks/drags
                             for (i, area) in app.control_areas.iter().enumerate() {
+                                if area.width == 0 { continue; }
                                 if mouse.column >= area.x && mouse.column < area.x + area.width
                                     && mouse.row >= area.y && mouse.row < area.y + area.height
                                 {
                                     app.selected_control = i;
-                                    // If it's a toggle, also toggle it
                                     let controls = app.tab_controls(app.current_tab);
                                     if let Some(ctrl) = controls.get(i) {
                                         match &ctrl.kind {
-                                            ControlKind::Toggle => {
-                                                toggle_control(&mut app);
+                                            ControlKind::Slider { min, max } => {
+                                                // Map mouse x position to value
+                                                let rel_x = (mouse.column - area.x) as f64;
+                                                let ratio = (rel_x / area.width as f64).clamp(0.0, 1.0);
+                                                let new_val = *min + (((*max - *min) as f64) * ratio) as i32;
+                                                set_control_value(&mut app, i, new_val.clamp(*min, *max));
                                             }
-                                            _ => {}
+                                            ControlKind::Toggle => {
+                                                if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                                                    toggle_control(&mut app);
+                                                }
+                                            }
+                                            ControlKind::Enum { .. } => {
+                                                if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                                                    toggle_control(&mut app);
+                                                }
+                                            }
                                         }
                                     }
                                     break;
@@ -697,6 +808,27 @@ fn adjust_control(app: &mut App, delta: i32) {
             8 => app.saturation = (app.saturation + delta).clamp(-255, 255),
             9 => app.gamma = (app.gamma + delta).clamp(0, 255),
             10 => app.hue = (app.hue + delta).clamp(0, 360),
+            11 => app.crop_x1 = (app.crop_x1 + delta).clamp(0, 4000),
+            12 => app.crop_y1 = (app.crop_y1 + delta).clamp(0, 4000),
+            13 => app.crop_x2 = (app.crop_x2 + delta).clamp(0, 4000),
+            14 => app.crop_y2 = (app.crop_y2 + delta).clamp(0, 4000),
+            17 => app.rotate = (app.rotate + delta).clamp(0, 360),
+            18 => app.scalex = (app.scalex + delta).clamp(10, 500),
+            19 => app.scaley = (app.scaley + delta).clamp(10, 500),
+            20 => app.font_size = (app.font_size + delta).clamp(8, 64),
+            21 => {
+                if delta > 0 { app.filter_idx = (app.filter_idx + 1) % 5; }
+                else { app.filter_idx = (app.filter_idx + 4) % 5; }
+            }
+            22 => app.grayscale_tolerance = (app.grayscale_tolerance + delta).clamp(0, 255),
+            23 => {
+                if delta > 0 { app.colorspace_idx = (app.colorspace_idx + 1) % 4; }
+                else { app.colorspace_idx = (app.colorspace_idx + 3) % 4; }
+            }
+            24 => {
+                if delta > 0 { app.encoding_idx = (app.encoding_idx + 1) % 5; }
+                else { app.encoding_idx = (app.encoding_idx + 4) % 5; }
+            }
             _ => {} // toggles ignore adjust
         }
     } else if app.current_tab == 1 {
@@ -709,13 +841,49 @@ fn adjust_control(app: &mut App, delta: i32) {
     app.update_render_args();
 }
 
+fn set_control_value(app: &mut App, idx: usize, val: i32) {
+    if app.current_tab == 0 {
+        match idx {
+            0 => app.width = val,
+            2 => app.dither = val,
+            6 => app.brightness = val,
+            7 => app.contrast = val,
+            8 => app.saturation = val,
+            9 => app.gamma = val,
+            10 => app.hue = val,
+            11 => app.crop_x1 = val,
+            12 => app.crop_y1 = val,
+            13 => app.crop_x2 = val,
+            14 => app.crop_y2 = val,
+            17 => app.rotate = val,
+            18 => app.scalex = val,
+            19 => app.scaley = val,
+            20 => app.font_size = val,
+            22 => app.grayscale_tolerance = val,
+            _ => {}
+        }
+    } else if app.current_tab == 1 {
+        match idx {
+            0 => app.pixelize = val,
+            1 => app.gaussian_blur = val,
+            _ => {}
+        }
+    }
+    app.update_render_args();
+}
+
 fn toggle_control(app: &mut App) {
     if app.current_tab == 0 {
         match app.selected_control {
-            1 => { app.render_mode_idx = (app.render_mode_idx + 1) % 4; } // cycle enum
+            1 => { app.render_mode_idx = (app.render_mode_idx + 1) % 4; }
             3 => app.smooth = !app.smooth,
             4 => app.invert = !app.invert,
             5 => app.grayscale = !app.grayscale,
+            15 => app.fliph = !app.fliph,
+            16 => app.flipv = !app.flipv,
+            21 => { app.filter_idx = (app.filter_idx + 1) % 5; }
+            23 => { app.colorspace_idx = (app.colorspace_idx + 1) % 4; }
+            24 => { app.encoding_idx = (app.encoding_idx + 1) % 5; }
             _ => {}
         }
     } else if app.current_tab == 1 {
@@ -777,6 +945,20 @@ fn reset_control(app: &mut App) {
             8 => app.saturation = 0,
             9 => app.gamma = 0,
             10 => app.hue = 0,
+            11 => app.crop_x1 = 0,
+            12 => app.crop_y1 = 0,
+            13 => app.crop_x2 = 0,
+            14 => app.crop_y2 = 0,
+            15 => app.fliph = false,
+            16 => app.flipv = false,
+            17 => app.rotate = 0,
+            18 => app.scalex = 100,
+            19 => app.scaley = 100,
+            20 => app.font_size = 24,
+            21 => app.filter_idx = 0,
+            22 => app.grayscale_tolerance = 0,
+            23 => app.colorspace_idx = 1,
+            24 => app.encoding_idx = 0,
             _ => {}
         }
     } else if app.current_tab == 1 {
@@ -854,7 +1036,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let layout = Layout::horizontal([
         Constraint::Length(10),  // app title
-        Constraint::Min(0),     // tabs
+        Constraint::Min(0),     // tabs + file
     ]).split(area);
 
     // App title
@@ -864,14 +1046,12 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     );
     f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
 
-    // Tabs
+    // Tabs + filename
     let tab_names = ["  Main  ", " Effects ", "  Data  "];
     let mut tab_rects = Vec::new();
 
-    // Calculate tab positions
     let mut x = layout[1].x;
     let buf = f.buffer_mut();
-    // Fill tab background
     buf.set_style(layout[1], Style::new().bg(BG));
 
     for (i, name) in tab_names.iter().enumerate() {
@@ -885,11 +1065,23 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             (TEXT_DIM, TAB_INACTIVE)
         };
 
-        buf.set_style(tab_area, Style::new().fg(fg).bg(bg_color).add_modifier(if i == app.current_tab { Modifier::BOLD } else { Modifier::empty() }));
-        buf.set_string(x, tab_area.y, name, Style::new().fg(fg).bg(bg_color).add_modifier(if i == app.current_tab { Modifier::BOLD } else { Modifier::empty() }));
+        let style = Style::new().fg(fg).bg(bg_color).add_modifier(if i == app.current_tab { Modifier::BOLD } else { Modifier::empty() });
+        buf.set_style(tab_area, style);
+        buf.set_string(x, tab_area.y, name, style);
 
-        x += w + 1; // gap between tabs
+        x += w + 1;
     }
+
+    // Show image path after tabs
+    x += 1;
+    let path_display = format!("📁 {}", app.image_path);
+    let avail = (layout[1].x + layout[1].width).saturating_sub(x) as usize;
+    let truncated = if path_display.len() > avail {
+        format!("…{}", &app.image_path[app.image_path.len().saturating_sub(avail.saturating_sub(3))..])
+    } else {
+        path_display
+    };
+    buf.set_string(x, layout[1].y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
 
     app.tab_areas = tab_rects;
 }
