@@ -1,4 +1,5 @@
 use std::{error::Error, io, time::Duration, sync::Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
@@ -74,6 +75,8 @@ struct App {
     tx_args: watch::Sender<RenderArgs>,
     rx_result: mpsc::Receiver<String>,
     cached_render: String,
+    is_rendering: Arc<AtomicBool>,
+    render_tick: usize,
 
     show_save_dialog: bool,
     save_input: String,
@@ -159,6 +162,8 @@ impl App {
             tx_args,
             rx_result,
             cached_render: String::new(),
+            is_rendering: Arc::new(AtomicBool::new(true)),
+            render_tick: 0,
             show_save_dialog: false,
             save_input: String::new(),
 
@@ -609,22 +614,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let (tx_args, mut rx_args) = watch::channel(render_args.clone());
     let (tx_result, rx_result) = mpsc::channel(1);
+    let rendering_flag = Arc::new(AtomicBool::new(true));
+    let rendering_flag2 = rendering_flag.clone();
 
     tokio::spawn(async move {
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
         loop {
+            rendering_flag2.store(true, Ordering::Relaxed);
             let current_args = { rx_args.borrow_and_update().clone() };
             if fast_glyphs_store.is_none() {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &current_args));
             }
             let glyphs = fast_glyphs_store.as_ref().unwrap();
             let result = img2irc_rs::render_output(&current_args, &arc_glyphs, (*arc_image).clone(), glyphs);
+            rendering_flag2.store(false, Ordering::Relaxed);
             if tx_result.send(result.content).await.is_err() { break; }
             if rx_args.changed().await.is_err() { break; }
         }
     });
 
     let mut app = App::new(render_args, tx_args, rx_result);
+    app.is_rendering = rendering_flag;
     app.update_render_args();
 
     enable_raw_mode()?;
@@ -646,6 +656,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 // ── App Loop ─────────────────────────────────────────────────────────────────
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
+        app.render_tick = app.render_tick.wrapping_add(1);
         while let Ok(content) = app.rx_result.try_recv() {
             app.cached_render = content;
         }
@@ -722,9 +733,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Enter => {
                                     if !app.save_input.is_empty() {
-                                        let mut args = app.render_args.clone();
-                                        args.save = Some(app.save_input.clone());
-                                        app.tx_args.send(args).ok();
+                                        let path = &app.save_input;
+                                        if let Err(e) = std::fs::write(path, &app.cached_render) {
+                                            eprintln!("Failed to save: {}", e);
+                                        }
                                     }
                                     app.input_mode = InputMode::Normal;
                                     app.show_save_dialog = false;
@@ -1025,7 +1037,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     render_output(f, app, main[1]);
 
     // ── Status bar ──
-    render_status_bar(f, root[2]);
+    render_status_bar(f, app, root[2]);
 
     // ── Save dialog overlay ──
     if app.show_save_dialog {
@@ -1100,7 +1112,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let controls = app.tab_controls(app.current_tab);
     let avail_height = inner.height as usize;
-    let item_height: u16 = 2; // each control is 2 rows tall (compact)
+    let item_height: u16 = 1; // single-row controls
     let max_visible = avail_height / item_height as usize;
 
     // Scrolling offset for controls
@@ -1166,32 +1178,57 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_output(f: &mut ratatui::Frame, app: &App, area: Rect) {
+    let is_loading = app.is_rendering.load(Ordering::Relaxed) && app.cached_render.is_empty();
+    let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
+
+    // Compute output stats
+    let line_count = app.cached_render.lines().count();
+    let max_bytes = app.cached_render.lines().map(|l| l.len()).max().unwrap_or(0);
+
+    let title_right = if is_loading {
+        format!(" {} Rendering... ", spinner_ch)
+    } else if app.is_rendering.load(Ordering::Relaxed) {
+        format!(" {} Updating... │ {}×{} │ {}B ", spinner_ch, max_bytes, line_count, app.cached_render.len())
+    } else {
+        format!(" {}×{} │ {}B ", max_bytes, line_count, app.cached_render.len())
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(BORDER))
         .border_set(symbols::border::ROUNDED)
         .title(Span::styled(" Output ", Style::new().fg(TEXT).add_modifier(Modifier::BOLD)))
+        .title_bottom(Line::from(Span::styled(title_right, Style::new().fg(TEXT_DIM))))
         .style(Style::new().bg(BG));
 
-    let text = app.cached_render.as_bytes().into_text().unwrap_or_else(|_| {
-        ratatui::text::Text::from(app.cached_render.clone())
-    });
-
-    let output = Paragraph::new(text)
-        .block(block)
-        .alignment(Alignment::Center)
-        .scroll((app.scroll, 0));
-
-    f.render_widget(output, area);
+    if is_loading {
+        let loading_text = format!("\n\n\n      {} Rendering image...", spinner_ch);
+        let p = Paragraph::new(loading_text)
+            .block(block)
+            .alignment(Alignment::Center)
+            .style(Style::new().fg(ACCENT));
+        f.render_widget(p, area);
+    } else {
+        let text = app.cached_render.as_bytes().into_text().unwrap_or_else(|_| {
+            ratatui::text::Text::from(app.cached_render.clone())
+        });
+        let output = Paragraph::new(text)
+            .block(block)
+            .alignment(Alignment::Center)
+            .scroll((app.scroll, 0));
+        f.render_widget(output, area);
+    }
 }
 
-fn render_status_bar(f: &mut ratatui::Frame, area: Rect) {
+fn render_status_bar(f: &mut ratatui::Frame, _app: &App, area: Rect) {
     let keys = [
         ("Tab", "Switch"),
         ("↑↓", "Navigate"),
         ("←→", "Adjust"),
         ("Space", "Toggle"),
         ("Del", "Reset"),
+        ("Shift", "×10"),
         ("Ctrl+S", "Save"),
         ("Q", "Quit"),
     ];
