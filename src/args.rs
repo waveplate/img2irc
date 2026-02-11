@@ -252,15 +252,11 @@ pub struct Args {
         value_delimiter = ',',
         num_args = 0..,
         default_values = &[
-            "full",
+            "polygons",
+            "eighth",
+            "space",
             "half",
             "quarter",
-            "eighth",
-            "triangle",
-            "corner",
-            "geometric",
-            "box",
-            "legacy",
         ],
         conflicts_with = "braille",
     )]

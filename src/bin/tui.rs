@@ -1330,6 +1330,7 @@ fn render_status_bar(f: &mut ratatui::Frame, _app: &App, area: Rect) {
         ("Space", "Toggle"),
         ("Del", "Reset"),
         ("Shift", "×10"),
+        ("O", "Open"),
         ("Ctrl+S", "Save"),
         ("Q", "Quit"),
     ];
