@@ -33,6 +33,7 @@ pub enum Render {
     Irc,
     Ansi,
     Ansi24,
+    Preview,
 }
 
 #[derive(Clone, Debug)]
@@ -78,7 +79,7 @@ pub struct RenderArgs {
     pub print_ranges: bool,
     pub show_block_bitmaps: bool,
     pub clear_cache: bool,
-    pub y_offset: i32,
+
     pub image: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -98,7 +99,6 @@ pub struct RenderArgs {
     pub exclude: Vec<char>,
     pub font: Vec<String>,
     pub font_size: u32,
-    pub check_char: Option<char>,
     pub grayscale_tolerance: u8,
     
     // Numeric params
@@ -146,8 +146,8 @@ pub struct RenderArgs {
     pub solarize: bool,
     pub edge_detection: bool,
     pub smooth: bool,
-    pub experimental_score: bool,
     pub score: bool,
+    pub save: Option<String>,
 }
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -172,9 +172,7 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub clear_cache: bool,
 
-    /// manual vertical offset for glyph rendering
-    #[arg(long, default_value_t = 0)]
-    pub y_offset: i32,
+
 
     #[arg(required_unless_present_any=["list_blocks", "list_ranges", "print_ranges", "show_block_bitmaps", "clear_cache"])]
     pub image: Option<String>,
@@ -292,9 +290,7 @@ pub struct Args {
     #[arg(long, default_value = "24")]
     pub font_size: Param,
 
-    /// check specific character details (debug)
-    #[arg(long)]
-    pub check_char: Option<char>,
+
 
 
 
@@ -479,11 +475,10 @@ pub struct Args {
     #[arg(long, default_value_t = false, alias = "connected")]
     pub smooth: bool,
 
-    #[arg(long, default_value_t = false)]
-    pub experimental_score: bool,
+
 
     /// print smoothness score
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     pub score: bool,
 
     /// save output as PNG (path or directory)

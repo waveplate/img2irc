@@ -309,7 +309,7 @@ pub fn emit_colourized(
 
     let is_space = glyph == ' ' || glyph == '\u{2800}';
     let can_skip_fg = match render {
-        Render::Ansi | Render::Ansi24 => true,
+        Render::Ansi | Render::Ansi24 | Render::Preview => true,
         Render::Irc => bg.is_none(),
     };
 
@@ -322,7 +322,7 @@ pub fn emit_colourized(
 
     if fg_changed || bg_changed {
         match render {
-            Render::Ansi | Render::Ansi24 => {
+            Render::Ansi | Render::Ansi24 | Render::Preview => {
                 if let Some(bg_c) = &bg {
                     out.push_str("\x1b[");
                     let mut semi = false;
@@ -507,7 +507,7 @@ pub fn render_blocks_smooth(
                         let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
                         let idx = match render {
                             Render::Ansi => nearest_strict_partitioned_hex_colour(rgb_u32, &ANSI256, args.grayscale_tolerance),
-                            Render::Irc => nearest_strict_partitioned_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance),
+                            Render::Irc | Render::Preview => nearest_strict_partitioned_hex_colour(rgb_u32, &IRC99, args.grayscale_tolerance),
                             _ => 0,
                         };
                         indices.push(idx);
@@ -617,6 +617,14 @@ pub fn render_blocks_smooth(
 
             let (final_fg, final_bg, fg_obj, bg_obj) = if render == Render::Ansi24 {
                 (best_fg_rgb, best_bg_rgb, Some(Colour::RGB(best_fg_rgb)), Some(Colour::RGB(best_bg_rgb)))
+            } else if render == Render::Preview {
+                let col_hi = make_rgb_u32(&best_fg_rgb);
+                let col_lo = make_rgb_u32(&best_bg_rgb);
+                let hi_idx = nearest_strict_partitioned_hex_colour(col_hi, &IRC99, args.grayscale_tolerance);
+                let lo_idx = nearest_strict_partitioned_hex_colour(col_lo, &IRC99, args.grayscale_tolerance);
+                let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
+                let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+                (hi_rgb, lo_rgb, Some(Colour::RGB(hi_rgb)), Some(Colour::RGB(lo_rgb)))
             } else if render == Render::Irc {
                 let col_hi = make_rgb_u32(&best_fg_rgb);
                 let col_lo = make_rgb_u32(&best_bg_rgb);
@@ -702,7 +710,7 @@ pub fn render_blocks_smooth(
                 if changed {
                     grid_data[idx].fg = new_fg;
                     grid_data[idx].bg = new_bg;
-                    if render == Render::Ansi24 {
+                    if render == Render::Ansi24 || render == Render::Preview {
                         grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
                         grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
                     }
@@ -740,7 +748,7 @@ pub fn render_blocks_smooth(
 
                 let mut best_cost = u64::MAX;
                 let mut best_choice = grid_state[curr_idx];
-                let mut candidates: Vec<(u64, usize, bool)> = if args.experimental_score { Vec::with_capacity(32) } else { Vec::new() };
+                let mut candidates: Vec<(u64, usize, bool)> = Vec::new();
 
                 for (gi, fglyph) in glyphs.iter().enumerate() {
                     for inv in [false, true] {
@@ -831,7 +839,7 @@ pub fn render_blocks_smooth(
                         }
 
                         let edge_cost = current_edge_error * edge_importance_weight;
-                        if !args.experimental_score && edge_cost >= best_cost { continue; } 
+                        if edge_cost >= best_cost { continue; }
 
                         let mut sum_ones_r = 0u64; let mut sum_ones_g = 0u64; let mut sum_ones_b = 0u64; let mut sum_ones_sq = 0u64; let mut count_ones = 0u64;
                         for i in 0..bp {
@@ -847,44 +855,10 @@ pub fn render_blocks_smooth(
                         
                         let total = edge_cost + c1 + c0;
                         
-                        if args.experimental_score {
-                            candidates.push((total, gi, inv));
-                        } else {
                             if total < best_cost { best_cost = total; best_choice = (gi, inv); }
-                        }
                     }
                 }
 
-                if args.experimental_score {
-                    candidates.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-                    
-                    let mut best_combined_score = f64::MAX;
-                    // Check top 5
-                    for &(base_cost, gi, inv) in candidates.iter().take(5) {
-                        let wiggle = crate::draw_helpers::calculate_local_wiggle(
-                            &grid_state, 
-                            curr_idx, 
-                            gi, 
-                            inv, 
-                            gw, 
-                            gh, 
-                            grid_w, 
-                            grid_h, 
-                            glyphs
-                        );
-                        
-                        // Wiggle is normalized 0-100 (Dimensionless).
-                        // Base cost scales with Area (bp).
-                        // To keep balance across font sizes, weight wiggle by Area.
-                        // Factor 5.0 tuned for approximate parity with base cost.
-                        let combined = base_cost as f64 + (wiggle as f64 * bp as f64 * 5.0);
-                        
-                        if combined < best_combined_score {
-                            best_combined_score = combined;
-                            best_choice = (gi, inv);
-                        }
-                    }
-                }
                 grid_state[curr_idx] = best_choice;
             }
         }
@@ -950,7 +924,7 @@ pub fn render_blocks_smooth(
             row_vec.push(RenderedCell { char: final_char, fg: draw_fg_raw, bg: draw_bg_raw, inverted: inv });
             emit_colourized(&mut out, render, draw_fg, draw_bg, final_char, &mut first, &mut last_fg, &mut last_bg);
         }
-        out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
+        out.push_str(match render { Render::Ansi | Render::Ansi24 | Render::Preview => "\x1b[0m\n", Render::Irc => "\x0f\n" });
         grid_out.push(row_vec);
     }
     RenderResult { content: out.trim_end_matches('\n').into(), error_count: total_error, total_pixels: (bp * grid_h * grid_w) as u64, dynamic_scaling_count: 0, grid: grid_out }
@@ -981,10 +955,10 @@ pub fn render_braille(image_luma: &AnsiImage, image_chroma: &AnsiImage, args: &R
                     }
                 }
             }
-            let fg = counts.into_iter().max_by_key(|&(_, count)| count).map(|(c, _)| c).unwrap_or(match render { Render::Ansi | Render::Irc => Colour::Index(0), Render::Ansi24 => Colour::RGB([0,0,0]) });
+            let fg = counts.into_iter().max_by_key(|&(_, count)| count).map(|(c, _)| c).unwrap_or(match render { Render::Ansi | Render::Irc => Colour::Index(0), Render::Ansi24 | Render::Preview => Colour::RGB([0,0,0]) });
             emit_colourized(&mut out, render, fg, None, std::char::from_u32(braille).unwrap_or(' '), &mut first, &mut last_fg, &mut last_bg);
         }
-        out.push_str(match render { Render::Ansi | Render::Ansi24 => "\x1b[0m\n", Render::Irc => "\x0f\n" });
+        out.push_str(match render { Render::Ansi | Render::Ansi24 | Render::Preview => "\x1b[0m\n", Render::Irc => "\x0f\n" });
     }
     RenderResult { content: out.trim_end_matches('\n').to_string(), error_count: 0, total_pixels: (h*w) as u64, dynamic_scaling_count: 0, grid: Vec::new() }
 }
@@ -996,6 +970,10 @@ fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
         Render::Ansi => Colour::Index(if args.nograyscale && distinct { pixel.ansi_ng } else { pixel.ansi_std }),
         Render::Irc => Colour::Index(if args.nograyscale && distinct { pixel.irc_ng } else { pixel.irc_std }),
         Render::Ansi24 => Colour::RGB(unpack_rgb(pixel.orig)),
+        Render::Preview => {
+            let idx = if args.nograyscale && distinct { pixel.irc_ng } else { pixel.irc_std };
+            Colour::RGB(unpack_rgb(IRC99[idx as usize]))
+        },
     }
 }
 

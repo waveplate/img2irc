@@ -42,7 +42,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         print_ranges: args.print_ranges,
         show_block_bitmaps: args.show_block_bitmaps,
         clear_cache: args.clear_cache,
-        y_offset: args.y_offset,
+
         image: args.image.clone(),
         width: args.width.as_ref().map(|p| param_base(p) as u32),
         height: args.height.as_ref().map(|p| param_base(p) as u32),
@@ -62,7 +62,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         exclude: args.exclude.clone(),
         font: args.font.clone(),
         font_size: param_base(&args.font_size) as u32,
-        check_char: args.check_char,
+
         grayscale_tolerance: param_base(&args.grayscale_tolerance) as u8,
         
         brightness: param_base(&args.brightness),
@@ -109,7 +109,8 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         solarize: args.solarize,
         edge_detection: args.edge_detection,
         smooth: args.smooth,
-        experimental_score: args.experimental_score,
+        save: args.save.clone(),
+
         score: args.score,
     }
 }
@@ -123,6 +124,11 @@ pub fn param_base(p: &Param) -> f32 {
 
 pub fn prepare_canvas(args: &RenderArgs, glyphs: &font::GlyphStore, image: PhotonImage) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = effects::apply_effects(args, glyphs, image);
+    
+    if let Some(path) = &args.save {
+        let _ = photon_rs::native::save_image(image.clone(), path);
+    }
+
     let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance);
     
     let luma_canvas = if args.braille {
@@ -139,7 +145,10 @@ pub fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canv
         if let Some(lc) = luma_canvas {
             match args.render {
                 crate::args::Render::Irc => draw::render_braille(lc, canvas, args, crate::args::Render::Irc),
-                crate::args::Render::Ansi => draw::render_braille(lc, canvas, args, crate::args::Render::Ansi),
+                // For Preview in braille, we fallback to Ansi behaviors (or Ansi24) since we didn't implement specialized Preview logic for braille yet.
+                // Preview implies viewing IRC constraints. Braille on IRC is... text. So Ansi with IRC colors?
+                // Let's map Preview to Ansi rendering for now in Braille to avoid crash.
+                crate::args::Render::Ansi | crate::args::Render::Preview => draw::render_braille(lc, canvas, args, crate::args::Render::Ansi),
                 crate::args::Render::Ansi24 => draw::render_braille(lc, canvas, args, crate::args::Render::Ansi24),
             }
         } else {
@@ -151,12 +160,14 @@ pub fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canv
                 crate::args::Render::Irc => draw::render_blocks_smooth(canvas, args, crate::args::Render::Irc, glyphs),
                 crate::args::Render::Ansi => draw::render_blocks_smooth(canvas, args, crate::args::Render::Ansi, glyphs),
                 crate::args::Render::Ansi24 => draw::render_blocks_smooth(canvas, args, crate::args::Render::Ansi24, glyphs),
+                crate::args::Render::Preview => draw::render_blocks_smooth(canvas, args, crate::args::Render::Preview, glyphs),
             }
         } else {
             match args.render {
                 crate::args::Render::Irc => draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs),
                 crate::args::Render::Ansi => draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs),
                 crate::args::Render::Ansi24 => draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs),
+                crate::args::Render::Preview => draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs),
             }
         }
     }

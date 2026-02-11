@@ -25,7 +25,6 @@ struct CachedMetrics {
     cell_height: usize,
     ascender: i32,
     descender: i32,
-    y_offset: i32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,7 +117,7 @@ fn get_fallback_font_path(ch: char) -> Option<String> {
     None
 }
 
-fn load_blocks_config() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSet<char>) {
+pub fn load_blocks_config() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
         let path = Path::new(&config_dir).join("blocks.toml");
@@ -183,7 +182,7 @@ fn load_blocks_config() -> (HashMap<String, Vec<std::ops::RangeInclusive<u32>>>,
     (groups, chars)
 }
 
-fn render_glyph_from_face(face: &mut freetype::Face, ch: char, cell_width: usize, cell_height: usize, global_ascender: i32, y_offset: i32) -> GlyphBitmap {
+fn render_glyph_from_face(face: &mut freetype::Face, ch: char, cell_width: usize, cell_height: usize, global_ascender: i32) -> GlyphBitmap {
     face.load_char(ch as usize, LoadFlag::RENDER | LoadFlag::TARGET_MONO)
         .unwrap_or_else(|_| panic!("Failed to load glyph {}", ch));
 
@@ -207,7 +206,7 @@ fn render_glyph_from_face(face: &mut freetype::Face, ch: char, cell_width: usize
             let bit = 7 - (bit_idx % 8);
             if row_data[byte_index] & (1 << bit) != 0 {
                 let x = left + bit_idx as i32;
-                let y = global_ascender - glyph_ascender + row as i32 + y_offset;
+                let y = global_ascender - glyph_ascender + row as i32;
                 
                 if x >= 0 && x < cell_width as i32 && y >= 0 && y < cell_height as i32 {
                     cell[y as usize][x as usize] = 1;
@@ -236,19 +235,18 @@ fn cache_dir() -> PathBuf {
     }
 }
 
-fn hash_context(font_paths: &[String], y_offset: i32, font_size: u32) -> String {
+fn hash_context(font_paths: &[String], font_size: u32) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     "v3".hash(&mut hasher); // Invalidate old cache
     for p in font_paths {
         p.hash(&mut hasher);
     }
-    y_offset.hash(&mut hasher);
     font_size.hash(&mut hasher);
     format!("{:x}", hasher.finish())
 }
 
-fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
-    let hash = hash_context(&ctx.font_paths, y_offset, ctx.font_size);
+fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
+    let hash = hash_context(&ctx.font_paths, ctx.font_size);
     let path = cache_dir().join(format!("metrics_{}.bin", hash));
 
     if path.exists() {
@@ -289,14 +287,13 @@ fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
         }
     }
 
-    eprintln!("Metrics: Ascender={}, Descender={}, Height={}, Width={}, Y-Offset={}", ascender, descender, cell_height, cell_width, y_offset);
+    eprintln!("Metrics: Ascender={}, Descender={}, Height={}, Width={}", ascender, descender, cell_height, cell_width);
 
     let metrics = CachedMetrics {
         cell_width,
         cell_height,
         ascender,
         descender,
-        y_offset,
     };
 
     if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
@@ -308,7 +305,7 @@ fn get_metrics(ctx: &mut FontContext, y_offset: i32) -> CachedMetrics {
 }
 
 fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], metrics: &CachedMetrics) -> Vec<(char, GlyphBitmap)> {
-    let hash = hash_context(&ctx.font_paths, metrics.y_offset, ctx.font_size);
+    let hash = hash_context(&ctx.font_paths, ctx.font_size);
     let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
 
     if path.exists() {
@@ -335,7 +332,7 @@ fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], met
         for path in &ctx.font_paths {
             if let Some(face) = ctx.user_faces.get_mut(path) {
                  if face.get_char_index(ch as usize) != 0 {
-                    let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender, metrics.y_offset);
+                    let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender);
                     glyphs.push((ch, bitmap));
                     found = true;
                     break;
@@ -354,7 +351,7 @@ fn get_block_glyphs(ctx: &mut FontContext, block_name: &str, chars: &[char], met
              }
              if let Some(face) = ctx.fallback_faces.get_mut(&path) {
                  if face.get_char_index(ch as usize) != 0 {
-                      let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender, metrics.y_offset);
+                      let bitmap = render_glyph_from_face(face, ch, metrics.cell_width, metrics.cell_height, metrics.ascender);
                       glyphs.push((ch, bitmap));
                       found = true;
                  }
@@ -391,11 +388,10 @@ pub fn glyph_store(
     include_ranges: &[String],
     include_chars: Option<&String>,
     fonts: &[String],
-    y_offset: i32,
-    font_size: u32
+    font_size: u32,
 ) -> GlyphStore {
     let mut ctx = FontContext::new(fonts, font_size);
-    let metrics = get_metrics(&mut ctx, y_offset);
+    let metrics = get_metrics(&mut ctx);
     let (config_groups, _) = load_blocks_config();
 
     let mut all_glyphs = BTreeMap::new();

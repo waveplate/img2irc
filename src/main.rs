@@ -38,7 +38,6 @@ async fn main() {
             &render_args.include_range,
             render_args.include.as_ref(),
             &render_args.font,
-            render_args.y_offset,
             render_args.font_size
         );
         img2irc_rs::write_encoded_output(&font::print_block_bitmaps(&glyphs), &args.encoding);
@@ -59,7 +58,6 @@ async fn main() {
         &render_args.include_range,
         render_args.include.as_ref(),
         &render_args.font,
-        render_args.y_offset,
         render_args.font_size
     );            
     eprintln!("Loaded {} glyphs", glyph_store.glyphs.len());
