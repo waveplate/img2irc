@@ -1,0 +1,594 @@
+use clap::Parser;
+use std::str::FromStr;
+use std::fmt;
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum SamplingFilter {
+    Nearest,
+    Triangle, 
+    CatmullRom,
+    Gaussian,
+    Lanczos3,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum ColourSpace {
+    HSL,
+    HSV, 
+    HSLUV,
+    LCH,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum Encoding {
+    Utf8,
+    Utf16,
+    Utf16be,
+    Utf16le,
+    Cesu8,
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
+pub enum Render {
+    Irc,
+    Ansi,
+    Ansi24,
+}
+
+#[derive(Clone, Debug)]
+pub enum Param {
+    Fixed(f32),
+    Range { start: f32, end: f32, step: f32 },
+}
+
+impl FromStr for Param {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.contains(':') {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 3 {
+                return Err(format!("Invalid range format '{}'. Expected 'start:end:step' (e.g. '20:40:1')", s));
+            }
+            let start = parts[0].parse().map_err(|e| format!("Invalid start: {}", e))?;
+            let end = parts[1].parse().map_err(|e| format!("Invalid end: {}", e))?;
+            let step = parts[2].parse().map_err(|e| format!("Invalid step: {}", e))?;
+            if step == 0.0 { return Err("Step cannot be zero".into()); }
+            Ok(Param::Range { start, end, step })
+        } else {
+            let val = s.parse().map_err(|e| format!("Invalid number: {}", e))?;
+            Ok(Param::Fixed(val))
+        }
+    }
+}
+
+impl fmt::Display for Param {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Param::Fixed(v) => write!(f, "{}", v),
+            Param::Range { start, end, step } => write!(f, "{}:{}:{}", start, end, step),
+        }
+    }
+}
+
+// Struct used for actual rendering (all values resolved to f32)
+#[derive(Clone, Debug)]
+pub struct RenderArgs {
+    pub list_blocks: bool,
+    pub list_ranges: bool,
+    pub print_ranges: bool,
+    pub show_block_bitmaps: bool,
+    pub clear_cache: bool,
+    pub y_offset: i32,
+    pub image: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub scale: Option<(f32, f32)>,
+    pub crop: Option<(u32, u32, u32, u32)>,
+    pub filter: SamplingFilter,
+    pub rotate: f32,
+    pub fliph: bool,
+    pub flipv: bool,
+    pub render: Render,
+    pub braille: bool,
+    pub blocks: Vec<String>,
+    pub include_range: Vec<String>,
+    pub include: Option<String>,
+    pub exclude_range: Vec<String>,
+    pub exclude: Vec<char>,
+    pub font: Vec<String>,
+    pub font_size: u32,
+    pub check_char: Option<char>,
+    pub fg_only: bool,
+    pub grayscale_tolerance: u8,
+    
+    // Numeric params
+    pub brightness: f32,
+    pub contrast: f32,
+    pub gamma: f32,
+    pub saturation: f32,
+    pub hue: f32,
+    pub invert: bool,
+    pub dither: u32,
+    pub luma_brightness: f32,
+    pub luma_contrast: f32,
+    pub luma_gamma: f32,
+    pub luma_saturation: f32,
+    pub luma_invert: bool,
+    pub colorspace: ColourSpace,
+    pub encoding: Encoding,
+    pub grayscale: bool,
+    pub nograyscale: bool,
+    pub pixelize: i32,
+    pub box_blur: bool,
+    pub gaussian_blur: i32,
+    pub luma_blur: i32,
+    pub oil: Option<String>,
+    pub halftone: bool,
+    pub sepia: bool,
+    pub normalize: bool,
+    pub noise: bool,
+    pub emboss: bool,
+    pub identity: bool,
+    pub laplace: bool,
+    pub noise_reduction: bool,
+    pub sharpen: bool,
+    pub cali: bool,
+    pub dramatic: bool,
+    pub firenze: bool,
+    pub golden: bool,
+    pub lix: bool,
+    pub lofi: bool,
+    pub neue: bool,
+    pub obsidian: bool,
+    pub pastel_pink: bool,
+    pub ryo: bool,
+    pub frosted_glass: bool,
+    pub solarize: bool,
+    pub edge_detection: bool,
+    pub smooth: Option<f32>,
+    pub score: bool,
+    pub connected: bool,
+    pub fuzz: f32,
+}
+
+#[derive(Parser, Clone, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// list available blocks
+    #[arg(long, default_value_t = false)]
+    pub list_blocks: bool,
+
+    /// list available unicode ranges
+    #[arg(long, default_value_t = false)]
+    pub list_ranges: bool,
+
+    /// print all characters in each range
+    #[arg(long, default_value_t = false)]
+    pub print_ranges: bool,
+
+    /// show bitmaps for characters in blocks
+    #[arg(long, default_value_t = false)]
+    pub show_block_bitmaps: bool,
+
+    /// clear the font cache
+    #[arg(long, default_value_t = false)]
+    pub clear_cache: bool,
+
+    /// manual vertical offset for glyph rendering
+    #[arg(long, default_value_t = 0)]
+    pub y_offset: i32,
+
+    /// image url or file path
+    #[arg(required_unless_present_any=["list_blocks", "list_ranges", "print_ranges", "show_block_bitmaps", "clear_cache"])]
+    pub image: Option<String>,
+
+    /// output image width in columns
+    #[arg(short = 'w', long)]
+    pub width: Option<Param>,
+
+    /// output image height in rows
+    #[arg(short = 'H', long)]
+    pub height: Option<Param>,
+
+    /// scaling factors (x:y, e.g., "2:2")
+    #[arg(long, value_parser = parse_xy_pair)]
+    pub scale: Option<(f32, f32)>,
+
+    /// scale x (or start:end:step)
+    #[arg(long)]
+    pub scalex: Option<Param>,
+
+    /// scale y (or start:end:step)
+    #[arg(long)]
+    pub scaley: Option<Param>,
+
+    /// crop image (x1,y1,x2,y2)
+    #[arg(long, value_parser = parse_crop_coordinates)]
+    pub crop: Option<(u32, u32, u32, u32)>,
+
+    /// crop x1
+    #[arg(long)]
+    pub crop_x1: Option<Param>,
+    /// crop y1
+    #[arg(long)]
+    pub crop_y1: Option<Param>,
+    /// crop x2
+    #[arg(long)]
+    pub crop_x2: Option<Param>,
+    /// crop y2
+    #[arg(long)]
+    pub crop_y2: Option<Param>,
+
+    /// sampling filter
+    #[arg(long, value_enum, default_value_t = SamplingFilter::Nearest)]
+    pub filter: SamplingFilter,
+
+    /// rotate degrees
+    #[arg(long, default_value = "0.0")]
+    pub rotate: Param,
+
+    /// flip horizontal
+    #[arg(long, default_value_t = false)]
+    pub fliph: bool,
+
+    /// flip vertical 
+    #[arg(long, default_value_t = false)]
+    pub flipv: bool,
+
+    /// colour mode to use
+    #[arg(long, value_enum, default_value_t = Render::Ansi)]
+    pub render: Render,
+
+    /// use braille pixels
+    #[arg(
+        long,
+        default_value_t = false,
+        conflicts_with = "blocks",
+    )]
+    pub braille: bool,
+ 
+    /// use blocks
+    #[arg(
+        long,
+        value_delimiter = ',',
+        num_args = 0..,
+        default_values = &[
+            "full",
+            "half",
+            "quarter",
+            "eighth",
+            "triangle",
+            "corner",
+            "geometric",
+            "box",
+            "legacy",
+        ],
+        conflicts_with = "braille",
+    )]
+    pub blocks: Vec<String>,
+
+    /// include unicode range (e.g. "2600-26FF")
+    #[arg(long)]
+    pub include_range: Vec<String>,
+
+    /// include specific characters (e.g. "abcde")
+    #[arg(long)]
+    pub include: Option<String>,
+
+    /// exclude unicode range (e.g. "2600-26FF")
+    #[arg(short = 'E', long)]
+    pub exclude_range: Vec<String>,
+
+    /// exclude specific character
+    #[arg(short = 'e', long)]
+    pub exclude: Vec<char>,
+
+    /// specify font (can be used multiple times)
+    #[arg(long)]
+    pub font: Vec<String>,
+
+    /// font size (height in pixels)
+    #[arg(long, default_value = "24")]
+    pub font_size: Param,
+
+    /// check specific character details (debug)
+    #[arg(long)]
+    pub check_char: Option<char>,
+
+    /// only use foreground colours (transparent background)
+    #[arg(long, default_value_t = false)]
+    pub fg_only: bool,
+
+    /// tolerance for considering a colour grayscale (0-255)
+    #[arg(long, default_value = "16")]
+    pub grayscale_tolerance: Param,
+
+    // Iteratable params
+    /// adjust brightness (0 = no change, or start:end:step)
+    #[arg(short = 'b', long, default_value = "0.0", allow_hyphen_values = true)]    
+    pub brightness: Param,
+
+    /// adjust contrast (0 = no change, or start:end:step)
+    #[arg(short = 'c', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub contrast: Param,
+
+    /// adjust gamma (0 to 255, or start:end:step)
+    #[arg(short = 'g', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub gamma: Param,
+
+    /// adjust saturation (0 = no change, or start:end:step)
+    #[arg(short = 's', long, default_value = "0.0", allow_hyphen_values = true)]
+    pub saturation: Param,
+
+    /// rotate hue (0 to 360, or start:end:step)
+    #[arg(short = 'u', long, default_value = "0.0")]
+    pub hue: Param,
+
+    /// colors are inverted, opposite on the color wheel
+    #[arg(short = 'i', long, default_value_t = false)]
+    pub invert: bool,
+
+    /// dithering (1 to 8)
+    #[arg(long, short = 'd', long, default_value_t = 0)]
+    pub dither: u32,
+
+    /// adjust luma brightness (braille only)
+    #[arg(short = 'B', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_brightness: Param,
+
+    /// adjust luma contrast (braille only)
+    #[arg(short = 'C', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_contrast: Param,
+
+    /// adjust luma gamma (braille only)
+    #[arg(short = 'G', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_gamma: Param,
+
+    /// adjust luma saturation (braille only)
+    #[arg(short = 'S', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    pub luma_saturation: Param,
+
+    /// luminance is inverted
+    #[arg(short = 'I', long, default_value_t = false, requires = "braille")]
+    pub luma_invert: bool,
+
+    /// colour space
+    #[arg(long, value_enum, default_value_t = ColourSpace::HSV)]
+    pub colorspace: ColourSpace,
+
+    /// output encoding
+    #[arg(long, value_enum, default_value_t = Encoding::Utf8)]
+    pub encoding: Encoding,
+
+    /// exclude grayscale when picking nearest colour in palette (unless already grayscale)
+    #[arg(long, default_value_t = false, group = "grayscale_opts")]
+    pub grayscale: bool,
+
+    /// exclude grayscale colours from the palette
+    #[arg(long, default_value_t = false, group = "grayscale_opts")]
+    pub nograyscale: bool,
+
+    /// pixelize pixel size
+    #[arg(long, default_value = "0")]
+    pub pixelize: Param,
+
+    /// simple average of all the neighboring pixels surrounding a given pixel
+    #[arg(long="boxblur", default_value_t = false)]
+    pub box_blur: bool,
+
+    /// gaussian blur radius
+    #[arg(long="gaussianblur", default_value = "0")]
+    pub gaussian_blur: Param,
+
+    /// gaussian blur radius (only luminance)
+    #[arg(long="lumablur", default_value = "0")]
+    pub luma_blur: Param,
+
+    /// oil filter ("[radius],[intensity]")
+    #[arg(long)]
+    pub oil: Option<String>,
+
+    /// made up of small dots creating a continuous-tone illusion
+    #[arg(long, default_value_t = false)]
+    pub halftone: bool,
+
+    /// brownish, aged appearance like old photographs
+    #[arg(long, default_value_t = false)]
+    pub sepia: bool,
+
+    /// adjusts brightness and contrast for better image quality
+    #[arg(long, default_value_t = false)]
+    pub normalize: bool,
+
+    /// random variations in brightness and color like film grain
+    #[arg(long, default_value_t = false)]
+    pub noise: bool,
+
+    /// gives a raised, 3d appearance
+    #[arg(long, default_value_t = false)]
+    pub emboss: bool,
+
+    /// no modifications, unchanged image
+    #[arg(long, default_value_t = false)]
+    pub identity: bool,
+
+    /// enhances edges and boundaries in an image
+    #[arg(long, default_value_t = false)]
+    pub laplace: bool,
+
+    /// reduces noise for a cleaner, clearer image
+    #[arg(long="denoise", default_value_t = false)]
+    pub noise_reduction: bool,
+
+    /// increases clarity and definition, making edges and details more distinct
+    #[arg(long, default_value_t = false)]
+    pub sharpen: bool,
+
+    /// cool blue tone with increased contrast
+    #[arg(long, default_value_t = false)]
+    pub cali: bool,
+
+    /// high contrast and vivid colors for a dramatic effect
+    #[arg(long, default_value_t = false)]
+    pub dramatic: bool,
+
+    /// warm, earthy tones reminiscent of tuscan landscapes
+    #[arg(long, default_value_t = false)]
+    pub firenze: bool,
+
+    /// warm, golden glow like sunset light
+    #[arg(long, default_value_t = false)]
+    pub golden: bool,
+
+    /// high-contrast black and white appearance with increased sharpness
+    #[arg(long, default_value_t = false)]
+    pub lix: bool,
+
+    /// low-fidelity, retro appearance like old photographs or film
+    #[arg(long, default_value_t = false)]
+    pub lofi: bool,
+
+    /// clean, modern appearance with neutral colors and simple design
+    #[arg(long, default_value_t = false)]
+    pub neue: bool,
+
+    /// dark, monochromatic appearance with black and gray shades
+    #[arg(long, default_value_t = false)]
+    pub obsidian: bool,
+
+    /// soft, delicate pink tint like pastel colors
+    #[arg(long="pastelpink", default_value_t = false)]
+    pub pastel_pink: bool,
+
+    /// bright, high-contrast appearance with vivid colors and sharp details
+    #[arg(long, default_value_t = false)]
+    pub ryo: bool,
+
+    /// blurred, frosted appearance as if viewed through semi-transparent surface
+    #[arg(long="frostedglass", default_value_t = false)]
+    pub frosted_glass: bool,
+
+    /// strange, otherworldly appearance with inverted colors and surreal atmosphere
+    #[arg(long, default_value_t = false)]
+    pub solarize: bool,
+
+    /// highlights edges and boundaries in an image
+    #[arg(long="edgedetection", default_value_t = false)]
+    pub edge_detection: bool,
+
+    /// prefers characters which result in a smooth image (0.0 to 1.0)
+    #[arg(long, num_args(0..=1), default_missing_value="1.0")]
+    pub smooth: Option<f32>,
+
+    /// print smoothness score
+    #[arg(long, default_value_t = false)]
+    pub score: bool,
+
+    /// optimize output size
+    #[arg(long="opt", value_enum)]
+    pub opt: Option<OptimizationMode>,
+
+    /// axis/parameter to optimize
+    #[arg(long, value_enum, default_value_t = OptimizeAxis::X)]
+    pub axis: OptimizeAxis,
+
+    /// search range for optimization in percent (e.g. 10 = +/- 10%)
+    #[arg(long, default_value_t = 0.0)]
+    pub range: f32,
+
+    /// step size for optimization in percent
+    #[arg(long, default_value_t = 1.0)]
+    pub step: f32,
+
+    /// dynamic scaling aggressiveness (0.0 to 0.5)
+    #[arg(long, num_args(0..=1), default_missing_value="0.1", default_value = "0.0")]
+    pub fuzz: Param,
+
+    /// save output as PNG (path or directory)
+    #[arg(long)]
+    pub save: Option<String>,
+
+    /// automatically find optimal geometric parameters (2-pass search)
+    #[arg(long, default_value_t = false)]
+    pub auto: bool,
+
+    /// use GPU for rendering (experimental)
+    #[arg(long)]
+    pub gpu: bool,
+
+    /// experimental edge-first constraint solving mode
+    #[arg(long, default_value_t = false)]
+    pub connected: bool,
+
+    /// save all candidate images to this directory
+    #[arg(long)]
+    pub save_candidates: Option<String>,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum OptimizeAxis {
+    X,
+    Y,
+    Fuzz,
+    All,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+pub enum OptimizationMode {
+    TotalBytes,
+    LongestLine,
+    BitmapError,
+    Smoothness,
+    Relative,
+    Frequency,
+}
+
+pub fn parse_args() -> Args {
+    Args::parse()
+}
+
+fn parse_xy_pair(s: &str) -> Result<(f32, f32), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid format. Expected 'value1:value2', got '{}'",
+            s
+        ));
+    }
+
+    let first = parts[0].parse::<f32>().map_err(|e| {
+        format!(
+            "Failed to parse the first value ('{}') as f32: {}",
+            parts[0], e
+        )
+    })?;
+    let second = parts[1].parse::<f32>().map_err(|e| {
+        format!(
+            "Failed to parse the second value ('{}') as f32: {}",
+            parts[1], e
+        )
+    })?;
+
+    if first <= 0.0 || second <= 0.0 {
+        return Err("Both values must be positive numbers.".to_string());
+    }
+
+    Ok((first, second))
+}
+
+fn parse_crop_coordinates(s: &str) -> Result<(u32, u32, u32, u32), String> {
+    let coords: Vec<&str> = s.split(',').collect();
+    if coords.len() != 4 {
+        return Err(format!(
+            "Invalid crop format '{}'. Expected 'x1,y1,x2,y2' (e.g., '50,50,200,200').",
+            s
+        ));
+    }
+
+    let x1 = coords[0].parse::<u32>().map_err(|_| format!("Invalid x1 value '{}'.", coords[0]))?;
+    let y1 = coords[1].parse::<u32>().map_err(|_| format!("Invalid y1 value '{}'.", coords[1]))?;
+    let x2 = coords[2].parse::<u32>().map_err(|_| format!("Invalid x2 value '{}'.", coords[2]))?;
+    let y2 = coords[3].parse::<u32>().map_err(|_| format!("Invalid y2 value '{}'.", coords[3]))?;
+
+    Ok((x1, y1, x2, y2))
+}

@@ -9,24 +9,21 @@ warning: unused import: `image::Rgb`
    |
    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
-error[E0061]: this function takes 4 arguments but 3 arguments were supplied
-   --> src/draw.rs:996:35
-    |
-996 | ...turn render_blocks(image, args, render); } //...
-    |         ^^^^^^^^^^^^^--------------------- argument #4 of type `&[FastGlyph]` is missing
-    |
-note: function defined here
-   --> src/draw.rs:542:8
-    |
-542 | pub fn render_blocks(
-    |        ^^^^^^^^^^^^^
-...
-546 |     glyphs: &[FastGlyph],
-    |     --------------------
-help: provide the argument
-    |
-996 |     if k_candidates == 0 { return render_blocks(image, args, render, /* &[FastGlyph] */); } // Fallback if 0
-    |                                                                    ++++++++++++++++++++
+error[E0609]: no field `ch` on type `&(char, Vec<Vec<u8>>)`
+    --> src/draw.rs:1625:30
+     |
+1625 |         profile_map.insert(g.ch, &g.profile);
+     |                              ^^ unknown field
+     |
+     = note: available fields are: `0`, `1`
+
+error[E0609]: no field `profile` on type `&(char, Vec<Vec<u8>>)`
+    --> src/draw.rs:1625:37
+     |
+1625 |         profile_map.insert(g.ch, &g.profile);
+     |                                     ^^^^^^^ unknown field
+     |
+     = note: available fields are: `0`, `1`
 
 warning: unused import: `rayon::prelude`
   --> src/draw.rs:11:5
@@ -44,30 +41,45 @@ warning: variable does not need to be mutable
     |
     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
-warning: variable `left_neighbor_glyph_idx` is assigned to, but never used
-   --> src/draw.rs:594:13
+warning: unused variable: `best_glyph`
+   --> src/draw.rs:684:29
     |
-594 | ...   let mut left_neighbor_glyph_idx: (usize, b...
-    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+684 | ...         let best_glyph = &glyphs[best_glyph_...
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_best_glyph`
     |
-    = note: consider using `_left_neighbor_glyph_idx` instead
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
-warning: unused variable: `best_glyph`
-   --> src/draw.rs:674:29
-    |
-674 | ...         let best_glyph = &glyphs[best_glyph_...
-    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_best_glyph`
-
 warning: value assigned to `left_neighbor_glyph_idx` is never read
-   --> src/draw.rs:882:13
+   --> src/draw.rs:604:58
     |
-882 | ...   left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
-    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+604 | ...ize, bool) = (usize::MAX, false);
+    |                 ^^^^^^^^^^^^^^^^^^^
     |
     = help: maybe it is overwritten before being read?
     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
 
-For more information about this error, try `rustc --explain E0061`.
-warning: `img2irc-rs` (bin "img2irc") generated 6 warnings
-error: could not compile `img2irc-rs` (bin "img2irc") due to 1 previous error; 6 warnings emitted
+warning: value assigned to `left_neighbor_glyph_idx` is never read
+    --> src/draw.rs:1004:13
+     |
+1004 | ...   left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
+     |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+    --> src/draw.rs:1159:17
+     |
+1159 | ...   let mut scores: Vec<(usize, bool, f32)> =...
+     |           ----^^^^^^
+     |           |
+     |           help: remove this `mut`
+
+warning: unused variable: `scores`
+    --> src/draw.rs:1159:17
+     |
+1159 |             let mut scores: Vec<(usize, bool, f...
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_scores`
+
+For more information about this error, try `rustc --explain E0609`.
+warning: `img2irc-rs` (bin "img2irc") generated 8 warnings
+error: could not compile `img2irc-rs` (bin "img2irc") due to 2 previous errors; 8 warnings emitted

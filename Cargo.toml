@@ -10,10 +10,16 @@ readme = "README.md"
 edition = "2021"
 
 [profile.release]
-lto = true
-codegen-units = 1
-opt-level = "z"
-strip = true  # Automatically strip symbols from the binary.
+#lto = true
+#codegen-units = 1
+#opt-level = "z"
+#strip = true  # Automatically strip symbols from the binary.
+split-debuginfo = "unpacked"
+opt-level = 3
+
+[profile.release.package."*"]
+opt-level = 3
+
 
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
@@ -40,6 +46,8 @@ image = "0.25.9"
 png = "0.18.0"
 wgpu = "27.0.1"
 bytemuck = { version = "1.24.0", features = ["derive"] }
+resvg = "0.41.0"
+tiny-skia = "0.11.0"
 base64 = "0.22.1"
 
 [target.'cfg(target_env = "musl")'.dependencies]

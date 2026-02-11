@@ -4,9 +4,9 @@ use photon_rs::{colour_spaces, channels, conv, effects, filters, monochrome, noi
 use photon_rs::transform::{SamplingFilter, resize, crop, rotate, flipv, fliph};
 use photon_rs::PhotonImage;
 
-fn calculate_dimensions(args: &args::RenderArgs, glyphs: &GlyphStore, image: &PhotonImage) -> (u32, u32) {
-    let orig_w = image.get_width()  as f32;
-    let orig_h = image.get_height() as f32;
+pub fn calculate_dimensions(args: &args::RenderArgs, glyphs: &GlyphStore, width: f32, height: f32) -> (u32, u32) {
+    let orig_w = width;
+    let orig_h = height;
 
     // determine per‐cell pixel factor:
     // braille cells cover 2×4 pixels; block cells use glyph bitmap size
@@ -17,49 +17,59 @@ fn calculate_dimensions(args: &args::RenderArgs, glyphs: &GlyphStore, image: &Ph
         (gw as f32, gh as f32)
     };
 
+
+    eprintln!("factor_x: {}", factor_x);
+    eprintln!("factor_y: {}", factor_y);
+
+    eprintln!("img width: {}", orig_w);
+    eprintln!("img height: {}", orig_h);
+
     let (mut pw, mut ph) = match (args.width, args.height) {
         (Some(wc), Some(hc)) => (
             wc as f32 * factor_x,
             hc as f32 * factor_y,
         ),
 
-        // only width in characters → width*factor_x pixels, height by original aspect
+        // "if the user supplied only the width: scale the height according to the original images aspect ratio"
+        //(Some(wc), None) => {
+        //    let pw = wc as f32 * factor_x;
+        //    let ph = pw * (orig_h / orig_w);
+        //    (pw, ph)
+        //}
+
         (Some(wc), None) => {
             let pw = wc as f32 * factor_x;
             let ph = pw * (orig_h / orig_w);
             (pw, ph)
         }
 
-        // only height in characters → height*factor_y pixels, width by original aspect
+        // "if the user suppplied onyl the heighT: scale the width according to the origina laspec tratio"
         (None, Some(hc)) => {
             let ph = hc as f32 * factor_y;
             let pw = ph * (orig_w / orig_h);
             (pw, ph)
         }
 
-        // neither specified → keep original pixel dimensions
-        (None, None) => (orig_w, orig_h),
+        // "if neither width nor height are supplied, then divide the height of the image by the heiht of the glyph to get the output height, use the image aspect ratio to get thew idth"
+        (None, None) => {
+            // Height in chars = Image Height / Glyph Height
+            // Output Pixel Height = Height in Chars * Glyph Height = Image Height
+            let ph = orig_h;
+            
+            // Output Pixel Width based on visual aspect ratio
+            // Visual Aspect = pw / ph = orig_w / orig_h
+            // pw = ph * (orig_w / orig_h)
+            let pw = ph * (orig_w / orig_h);
+            (pw, ph)
+        },
     };
+
+    eprintln!("pw: {}", pw);
+    eprintln!("ph: {}", ph);
 
     if let Some((sx, sy)) = args.scale {
         pw *= sx;
         ph *= sy;
-    }
-
-    // braille aspect tweak: if only one dimension was specified,
-    // shrink the other by 10% to compensate cell shape
-    if args.braille {
-        match (args.width.is_some(), args.height.is_some()) {
-            (true, false) => {
-                // width fixed → reduce height
-                ph *= 0.9;
-            }
-            (false, true) => {
-                // height fixed → reduce width
-                pw *= 1.11;
-            }
-            _ => {}
-        }
     }
 
     let out_w = pw.round().max(1.0) as u32;
@@ -82,7 +92,7 @@ pub fn apply_effects(
         }
     }
 
-    let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
+    let (width, height) = calculate_dimensions(args, glyphs, photon_image.get_width() as f32, photon_image.get_height() as f32);
         
     if args.rotate != 0.00 {
         photon_image = rotate(&photon_image, args.rotate);
@@ -96,13 +106,19 @@ pub fn apply_effects(
         flipv(&mut photon_image);
     }
 
-    photon_image = resize(&photon_image, width, height, match args.filter {
-        args::SamplingFilter::Nearest => SamplingFilter::Nearest,
-        args::SamplingFilter::Triangle => SamplingFilter::Triangle,
-        args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
-        args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
-        args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
-    });
+    let filter = if args.render == crate::args::Render::Ansi24 {
+        SamplingFilter::Nearest
+    } else {
+        match args.filter {
+            args::SamplingFilter::Nearest => SamplingFilter::Nearest,
+            args::SamplingFilter::Triangle => SamplingFilter::Triangle,
+            args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
+            args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
+            args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
+        }
+    };
+
+    photon_image = resize(&photon_image, width, height, filter);
 
     type ColourFunc = fn(&mut PhotonImage, &str, f32);
 
@@ -287,7 +303,7 @@ pub fn apply_luma_effects(args: &args::RenderArgs, glyphs: &GlyphStore, mut phot
         }
     }
 
-    let (width, height) = calculate_dimensions(args, glyphs, &photon_image);
+    let (width, height) = calculate_dimensions(args, glyphs, photon_image.get_width() as f32, photon_image.get_height() as f32);
 
     if args.rotate != 0.00 {
         photon_image = rotate(&photon_image, args.rotate);

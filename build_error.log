@@ -1,0 +1,79 @@
+warning: unused manifest key: package.github
+warning: unused manifest key: target.x86_64-unknown-linux-musl.linker
+    Checking img2irc-rs v1.3.1 (/home/malcom/dev/img2irc)
+error[E0428]: the name `compute_boundary_profile` is defined multiple times
+   --> src/draw.rs:435:1
+    |
+ 77 | fn compu...) -> BoundaryProfile {
+    | --------...-------------------- previous definition of the value `compute_boundary_profile` here
+...
+435 | fn compu...) -> BoundaryProfile {
+    | ^^^^^^^^...^^^^^^^^^^^^^^^^^^^^ `compute_boundary_profile` redefined here
+    |
+    = note: `compute_boundary_profile` must be defined only once in the value namespace of this module
+
+warning: unused import: `image::Rgb`
+  --> src/draw.rs:10:5
+   |
+10 | use image::Rgb;
+   |     ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0308]: mismatched types
+   --> src/main.rs:177:40
+    |
+177 | fn args_to_render_args(args: &Args) -> RenderArgs {
+    |    -------------------                 ^^^^^^^^^^ expected `RenderArgs`, found `()`
+    |    |
+    |    implicitly returns `()` as its body has no tail or `return` expression
+...
+266 |     };
+    |      - help: remove this semicolon to return this value
+
+warning: variable does not need to be mutable
+   --> src/draw.rs:296:9
+    |
+296 |     let mut bg_changed = *first || last_b...
+    |         ----^^^^^^^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `left_neighbor_glyph_idx` is assigned to, but never used
+   --> src/draw.rs:529:13
+    |
+529 | ...   let mut left_neighbor_glyph_idx: (u...
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: consider using `_left_neighbor_glyph_idx` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `best_glyph`
+   --> src/draw.rs:609:29
+    |
+609 | ...       let best_glyph = &glyphs[best_g...
+    |               ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_best_glyph`
+
+warning: value assigned to `left_neighbor_glyph_idx` is never read
+   --> src/draw.rs:818:13
+    |
+818 | ...   left_neighbor_glyph_idx = (chosen_glyph_index, chosen_glyph_inverted);
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `best_chosen_fg_color` is never read
+   --> src/draw.rs:716:29
+    |
+716 | ...   best_chosen_fg_color = avg_zeros;
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+Some errors have detailed explanations: E0308, E0428.
+For more information about an error, try `rustc --explain E0308`.
+warning: `img2irc-rs` (bin "img2irc") generated 6 warnings
+error: could not compile `img2irc-rs` (bin "img2irc") due to 2 previous errors; 6 warnings emitted
