@@ -798,13 +798,17 @@ impl App {
                 8 => self.rotate,
                 9 => self.scalex,
                 10 => self.scaley,
-                11 => self.brightness,
-                12 => self.contrast,
-                13 => self.saturation,
-                14 => self.gamma,
-                15 => self.hue,
-                16 => self.colorspace_idx as i32,
-                17 => self.encoding_idx as i32,
+                11 => self.font_size as i32,
+                12 => self.font_idx as i32,
+                13 => self.filter_idx as i32,
+                14 => self.grayscale_tolerance as i32,
+                15 => self.brightness,
+                16 => self.contrast,
+                17 => self.saturation,
+                18 => self.gamma,
+                19 => self.hue,
+                20 => self.colorspace_idx as i32,
+                21 => self.encoding_idx as i32,
                 _ => 0,
             }
         } else if tab == 1 {
@@ -2156,14 +2160,9 @@ fn adjust_control(app: &mut App, delta: i32) {
         match real_idx {
             0 => app.dither = (app.dither + delta).clamp(0, 8),
             // 1, 2, 3 toggles
-            4 => app.brightness = (app.brightness + delta).clamp(-255, 255),
-            5 => app.contrast = (app.contrast + delta).clamp(-255, 255),
-            6 => app.saturation = (app.saturation + delta).clamp(-255, 255),
-            7 => app.gamma = (app.gamma + delta).clamp(0, 255),
-            8 => app.hue = (app.hue + delta).clamp(0, 360),
-            9 => app.pixelize = (app.pixelize + delta).clamp(0, 100),
-            10 => app.gaussian_blur = (app.gaussian_blur + delta).clamp(0, 100),
-            _ => {} // toggles
+            4 => app.pixelize = (app.pixelize + delta).clamp(0, 100),
+            5 => app.gaussian_blur = (app.gaussian_blur + delta).clamp(0, 100),
+            _ => {}
         }
     }
     log::info!(
