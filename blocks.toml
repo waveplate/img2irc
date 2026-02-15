@@ -1,129 +1,38 @@
-[space]
-start = 0x20
-end = 0x20
+[ascii.space]
+glyphs = [0x20]
 
-[uppercase]
-start = 0x41
-end = 0x5A
+[blocks.full]
+glyphs = [0x2588]
 
-[custom]
-start = 0x61
-end   = 0x7A
+[blocks.half]
+glyphs = [0x2580]
 
-[full]
-start = 0x2588
-end   = 0x2588
+[blocks.quarter]
+ranges = [[0x2596, 0x259F]]
 
-[[default]]
-start = 0x1FB3C
-end   = 0x1FB6F
+[blocks.eighth]
+ranges = [
+    [0x2581, 0x2587],
+    [0x2589, 0x258F],
+    [0x2594, 0x2595]
+]
 
-[[default]]
-start = 0x2581
-end = 0x2587
+[legacy.base.polygons]
+ranges = [[0x1FB3C, 0x1FB6F]]
 
-[[default]]
-start = 0x2588
-end = 0x2588
+[legacy.base.sextants]
+ranges = [[0x1FB00, 0x1FB3B]]
 
-[[default]]
-start = 0x2589
-end = 0x258F
+[default]
+include = [
+    "ascii.space",
+    "blocks.full",
+    "blocks.half",
+    "blocks.quarter",
+    "blocks.eighth",
+    "legacy.base.polygons"
+]
 
-[[default]]
-start = 0x2594
-end = 0x2595
-
-# triangles
-[[default]]
-start = 0x25E2
-nd = 0x25E5
-
-# left and right solid semicircle
-[[default]]
-start = 0x25D6
-end = 0x25D7
-
-[[default]]
-start = 0x1FB70
-end = 0x1FB7B
-
-[half]
-start = 0x2580
-end = 0x2580
-
-[quarter]
-start = 0x2596
-end = 0x259F
-
-[[eighth]]
-start = 0x2581
-end = 0x2587
-
-[[eighth]]
-start = 0x2589
-end = 0x258F
-
-[[eighth]]
-start = 0x2594
-end = 0x2595
-
-[[triangle]]
-start = 0x25B2
-end = 0x25B2
-
-[[triangle]]
-start = 0x25B6
-end = 0x25B6
-
-[[triangle]]
-start = 0x25BC
-end = 0x25BC
-
-[[triangle]]
-start = 0x25C0
-end = 0x25C0
-
-[corner]
-start = 0x25E2
-end = 0x25E5
-
-[geometric]
-start = 0x25A0
-end = 0x25FD
-
-[legacy]
-start = 0x1FB00
-end = 0x1FBFF
-
-[legacy2]
-start = 0x1CD00
-end   = 0x1CDE5
-
-[sextants1]
-start = 0x1FB00
-end   = 0x1FB3B
-
-[polygons]
-start = 0x1FB3C
-end   = 0x1FB6F
-
-[octants]
-start = 0x1CD00
-end   = 0x1CDE5
-
-[sextants2]
-start = 0x1CE51
-end   = 0x1CE8F
-
-[box]
-start = 0x2500
-end = 0x257F
-
-[braille]
-start = 0x2800
-end = 0x28FF
-
-[braille2]
-start = 0x2801
-end = 0x28FF
+[all]
+include = ["default", "legacy.base.sextants"]
+exclude = [0x20]

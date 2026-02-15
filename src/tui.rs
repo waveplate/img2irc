@@ -1,0 +1,3009 @@
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    error::Error,
+    io::{self},
+    sync::Arc,
+    time::Duration,
+};
+
+use ansi_to_tui::IntoText;
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseButton, MouseEventKind,
+    },
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use photon_rs::PhotonImage;
+
+use crate::{
+    args::{ColourSpace, Encoding, Render, RenderArgs, SamplingFilter},
+    draw, font,
+};
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    buffer::Buffer,
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    symbols,
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget},
+    Terminal,
+};
+use ratatui_explorer::FileExplorer;
+use ratatui_image::{
+    picker::Picker, protocol::StatefulProtocol, Resize, ResizeEncodeRender, StatefulImage,
+};
+use simplelog::*;
+use std::fs::File;
+use std::process::Command;
+use std::time::Instant;
+use tokio::sync::{mpsc, watch};
+use tui_textarea::TextArea;
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+const BG: Color = Color::Rgb(22, 22, 30);
+const SURFACE: Color = Color::Rgb(30, 30, 42);
+const BORDER: Color = Color::Rgb(60, 60, 80);
+const TEXT: Color = Color::Rgb(200, 200, 220);
+const TEXT_DIM: Color = Color::Rgb(110, 110, 140);
+const ACCENT: Color = Color::Rgb(130, 140, 255);
+const ACCENT_DIM: Color = Color::Rgb(80, 85, 160);
+const BAR_FG: Color = Color::Rgb(100, 120, 255);
+const BAR_BG: Color = Color::Rgb(40, 40, 58);
+const TOGGLE_ON: Color = Color::Rgb(70, 190, 120);
+const TOGGLE_OFF: Color = Color::Rgb(70, 70, 90);
+const SELECTED_BG: Color = Color::Rgb(50, 50, 72);
+const TAB_ACTIVE: Color = Color::Rgb(130, 140, 255);
+const TAB_INACTIVE: Color = Color::Rgb(80, 80, 100);
+const STATUS_BG: Color = Color::Rgb(35, 35, 50);
+
+// ── Control types ────────────────────────────────────────────────────────────
+#[derive(Clone)]
+enum ControlKind {
+    Slider { min: i32, max: i32 },
+    Toggle,
+    Enum { options: Vec<&'static str> },
+    FontSelector,
+}
+
+#[derive(Clone)]
+struct ControlDef {
+    label: &'static str,
+    kind: ControlKind,
+}
+
+// ── App State ────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Normal,
+    Explorer,
+}
+struct ExplorerDialog {
+    explorer: FileExplorer,
+    mode: ExplorerMode,
+    name_input: TextArea<'static>,
+    focus_on_input: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExplorerMode {
+    Open,
+    SaveText,
+    SavePng,
+}
+
+#[derive(Clone, Debug)]
+struct TreeNode {
+    name: String,
+    full_path: String,
+    children: Vec<TreeNode>,
+    expanded: bool,
+    level: usize,
+    is_leaf: bool,
+}
+
+struct TreeState {
+    root: Vec<TreeNode>,
+    selected_idx: usize,
+    scroll: u16,
+}
+
+impl TreeState {
+    fn new(blocks: &[String]) -> Self {
+        let mut root = Vec::new();
+        for path in blocks {
+            Self::insert_path(&mut root, path, path, 0);
+        }
+        Self::sort_tree(&mut root);
+        TreeState {
+            root,
+            selected_idx: 0,
+            scroll: 0,
+        }
+    }
+
+    fn insert_path(nodes: &mut Vec<TreeNode>, path: &str, full_path: &str, level: usize) {
+        let (head, tail) = match path.split_once('.') {
+            Some((h, t)) => (h, Some(t)),
+            None => (path, None),
+        };
+
+        let mut idx = None;
+        for (i, node) in nodes.iter().enumerate() {
+            if node.name == head {
+                idx = Some(i);
+                break;
+            }
+        }
+
+        if idx.is_none() {
+            let node = TreeNode {
+                name: head.to_string(),
+                full_path: if tail.is_none() {
+                    full_path.to_string()
+                } else {
+                    String::new()
+                },
+                children: Vec::new(),
+                expanded: true, // Default expanded? Or collapsed? User prefers expanded usually.
+                level,
+                is_leaf: tail.is_none(),
+            };
+            nodes.push(node);
+            idx = Some(nodes.len() - 1);
+        }
+
+        let node_idx = idx.unwrap();
+        if let Some(t) = tail {
+            Self::insert_path(&mut nodes[node_idx].children, t, full_path, level + 1);
+        } else {
+            // It's a leaf content. Mark the existing node as leaf.
+            nodes[node_idx].is_leaf = true;
+            nodes[node_idx].full_path = full_path.to_string();
+        }
+    }
+
+    fn sort_tree(nodes: &mut Vec<TreeNode>) {
+        nodes.sort_by(|a, b| {
+            if a.is_leaf != b.is_leaf {
+                // folders before files
+                return a.is_leaf.cmp(&b.is_leaf);
+            }
+            a.name.cmp(&b.name)
+        });
+        for node in nodes {
+            Self::sort_tree(&mut node.children);
+        }
+    }
+
+    fn flatten(&self) -> Vec<&TreeNode> {
+        let mut result = Vec::new();
+        for node in &self.root {
+            Self::flatten_recursive(node, &mut result);
+        }
+        result
+    }
+
+    fn flatten_recursive<'a>(node: &'a TreeNode, result: &mut Vec<&'a TreeNode>) {
+        result.push(node);
+        if node.expanded {
+            for child in &node.children {
+                Self::flatten_recursive(child, result);
+            }
+        }
+    }
+
+    fn select_next(&mut self) {
+        let count = self.flatten().len();
+        if self.selected_idx + 1 < count {
+            self.selected_idx += 1;
+        }
+    }
+
+    fn select_prev(&mut self) {
+        if self.selected_idx > 0 {
+            self.selected_idx -= 1;
+        }
+    }
+
+    fn toggle_expand(&mut self) {
+        let target = self.selected_idx;
+        let mut count = 0;
+        for node in &mut self.root {
+            if Self::toggle_recursive(node, &mut count, target) {
+                return;
+            }
+        }
+    }
+
+    fn toggle_recursive(node: &mut TreeNode, count: &mut usize, target: usize) -> bool {
+        if *count == target {
+            node.expanded = !node.expanded;
+            return true;
+        }
+        *count += 1;
+        if node.expanded {
+            for child in &mut node.children {
+                if Self::toggle_recursive(child, count, target) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn expand_selected(&mut self) {
+        if let Some(node) = self.get_selected_node_mut() {
+            if !node.is_leaf {
+                node.expanded = true;
+            }
+        }
+    }
+
+    fn collapse_selected(&mut self) {
+        if let Some(node) = self.get_selected_node_mut() {
+            if !node.is_leaf {
+                node.expanded = false;
+            }
+        }
+    }
+
+    fn get_selected_node_mut(&mut self) -> Option<&mut TreeNode> {
+        let target = self.selected_idx;
+        let mut count = 0;
+        for node in &mut self.root {
+            if let Some(n) = Self::get_node_recursive(node, &mut count, target) {
+                return Some(n);
+            }
+        }
+        None
+    }
+
+    fn get_node_recursive<'a>(
+        node: &'a mut TreeNode,
+        count: &mut usize,
+        target: usize,
+    ) -> Option<&'a mut TreeNode> {
+        if *count == target {
+            return Some(node);
+        }
+        *count += 1;
+        if node.expanded {
+            for child in &mut node.children {
+                if let Some(n) = Self::get_node_recursive(child, count, target) {
+                    return Some(n);
+                }
+            }
+        }
+        None
+    }
+
+    fn get_selected_node(&self) -> Option<&TreeNode> {
+        self.flatten().into_iter().nth(self.selected_idx)
+    }
+}
+
+impl App {
+    fn toggle_tree_selection(&mut self) {
+        if let Some(node) = self.tree_state.get_selected_node() {
+            let target = if !node.full_path.is_empty() {
+                node.full_path.clone()
+            } else {
+                node.name.clone()
+            };
+            let is_leaf = node.is_leaf;
+
+            // If leaf, toggle it
+            if is_leaf {
+                if let Some(pos) = self.render_args.blocks.iter().position(|x| *x == target) {
+                    self.render_args.blocks.remove(pos);
+                } else {
+                    self.render_args.blocks.push(target);
+                }
+            } else {
+                // Group selection: toggle all children
+                let mut leaves = Vec::new();
+                Self::collect_leaves(node, &mut leaves);
+
+                // if all leaves are present, remove all. else add all missing.
+                let all_present = leaves.iter().all(|l| self.render_args.blocks.contains(l));
+
+                if all_present {
+                    // Remove all
+                    self.render_args.blocks.retain(|b| !leaves.contains(b));
+                } else {
+                    // Add missing
+                    for leaf in leaves {
+                        if !self.render_args.blocks.contains(&leaf) {
+                            self.render_args.blocks.push(leaf);
+                        }
+                    }
+                }
+            }
+        }
+        self.mark_args_dirty();
+    }
+
+    fn collect_leaves(node: &TreeNode, leaves: &mut Vec<String>) {
+        if node.is_leaf {
+            leaves.push(node.full_path.clone());
+        } else {
+            for child in &node.children {
+                Self::collect_leaves(child, leaves);
+            }
+        }
+    }
+
+    fn control_is_font_selector(&self) -> bool {
+        if self.current_tab == 0 {
+            let real_idx = self.selected_control;
+            real_idx == 12
+        } else {
+            false
+        }
+    }
+}
+
+struct App {
+    render_args: RenderArgs,
+    input_mode: InputMode,
+    selected_control: usize,
+    current_tab: usize,
+    scroll: u16,
+
+    // Cancellation & Debouncing
+    tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
+    current_cancel_flag: Arc<AtomicBool>,
+    args_dirty: bool,
+    last_args_change: Option<Instant>,
+
+    rx_result: mpsc::Receiver<(draw::RenderResult, Arc<font::GlyphStore>)>,
+    cached_render: String,
+    cached_result: Option<draw::RenderResult>,
+    is_rendering: Arc<AtomicBool>,
+    render_tick: usize,
+    dragged_control: Option<usize>,
+
+    effects_pipeline: Vec<usize>,
+    reordering_grabbed: Option<usize>,
+
+    // Shared state for PNG saving
+    arc_glyphs: Option<Arc<font::GlyphStore>>,
+
+    // Font Picker State
+    show_font_picker: bool,
+    font_search: String,
+    font_list_state: ListState,
+
+    // Image path
+    image_path: String,
+
+    // Control values
+    width: i32,
+    render_mode_idx: usize,
+    dither: i32,
+    smooth: bool,
+    invert: bool,
+    grayscale: bool,
+    brightness: i32,
+    contrast: i32,
+    saturation: i32,
+    gamma: i32,
+    hue: i32,
+    trim_top: i32,
+    trim_right: i32,
+    trim_bottom: i32,
+    trim_left: i32,
+    fliph: bool,
+    flipv: bool,
+    rotate: i32,
+    scalex: i32, // percentage, 100 = 1.0
+    scaley: i32,
+    font_size: i32,
+    fonts: Vec<String>,
+    font_idx: usize,
+    filter_idx: usize,
+    grayscale_tolerance: i32,
+    colorspace_idx: usize,
+    encoding_idx: usize,
+
+    // Effects
+    pixelize: i32,
+    gaussian_blur: i32,
+    box_blur: bool,
+    oil: bool,
+    halftone: bool,
+    sepia: bool,
+    normalize: bool,
+    noise: bool,
+    emboss: bool,
+    identity: bool,
+    laplace: bool,
+    noise_reduction: bool,
+    sharpen: bool,
+    cali: bool,
+    dramatic: bool,
+    firenze: bool,
+    golden: bool,
+    lix: bool,
+    lofi: bool,
+    neue: bool,
+    obsidian: bool,
+    pastel_pink: bool,
+    ryo: bool,
+    frosted_glass: bool,
+    solarize: bool,
+    edge_detection: bool,
+
+    // Blocks
+    available_blocks: Vec<String>,
+    block_list_state: ListState,
+    tree_state: TreeState,
+    glyph_list_state: ListState,
+    show_block_editor: bool,
+
+    // Explorer dialog state
+    explorer_dialog: Option<ExplorerDialog>,
+
+    // Track rendered control areas for mouse
+    control_areas: Vec<Rect>,
+    tab_areas: Vec<Rect>,
+
+    // Image preview for xplr
+    image_preview_protocol: Option<StatefulProtocol>,
+    preview_picker: Picker,
+    last_preview_path: Option<String>,
+}
+
+impl App {
+    fn new(
+        render_args: RenderArgs,
+        tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
+        rx_result: mpsc::Receiver<(draw::RenderResult, Arc<font::GlyphStore>)>,
+        initial_flag: Arc<AtomicBool>,
+    ) -> App {
+        let (blocks_map, _) = crate::font::load_blocks_config();
+        let mut available_blocks: Vec<String> = blocks_map.keys().cloned().collect();
+        available_blocks.sort();
+        let tree_state = TreeState::new(&available_blocks);
+
+        App {
+            render_args: render_args.clone(),
+            input_mode: InputMode::Normal,
+            selected_control: 0,
+            current_tab: 0,
+            scroll: 0,
+            tx_args,
+            current_cancel_flag: initial_flag,
+            args_dirty: false,
+            last_args_change: None,
+            rx_result,
+            cached_render: String::new(),
+            cached_result: None,
+            is_rendering: Arc::new(AtomicBool::new(true)),
+            render_tick: 0,
+            dragged_control: None,
+            arc_glyphs: None,
+
+            image_preview_protocol: None,
+            preview_picker: Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
+            last_preview_path: None,
+
+            show_font_picker: false,
+            font_search: String::new(),
+            font_list_state: ListState::default(),
+
+            block_list_state: ListState::default(),
+            tree_state,
+            glyph_list_state: ListState::default(),
+            show_block_editor: false,
+
+            image_path: render_args.image.clone().unwrap_or_default(),
+            width: render_args.width.unwrap_or(80) as i32,
+            render_mode_idx: match render_args.render {
+                Render::Irc => 0,
+                Render::Ansi => 1,
+                Render::Ansi24 => 2,
+                Render::Preview => 3,
+            },
+            dither: render_args.dither as i32,
+            smooth: render_args.smooth,
+            invert: render_args.invert,
+            grayscale: render_args.grayscale,
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            gamma: render_args.gamma as i32,
+            hue: render_args.hue as i32,
+            trim_top: render_args.trim.map(|t| t.0 as i32).unwrap_or(0),
+            trim_right: render_args.trim.map(|t| t.1 as i32).unwrap_or(0),
+            trim_bottom: render_args.trim.map(|t| t.2 as i32).unwrap_or(0),
+            trim_left: render_args.trim.map(|t| t.3 as i32).unwrap_or(0),
+            fliph: render_args.fliph,
+            flipv: render_args.flipv,
+            rotate: render_args.rotate as i32,
+            scalex: render_args
+                .scale
+                .map(|s| (s.0 * 100.0) as i32)
+                .unwrap_or(100),
+            scaley: render_args
+                .scale
+                .map(|s| (s.1 * 100.0) as i32)
+                .unwrap_or(100),
+            font_size: render_args.font_size as u32 as i32,
+            fonts: list_system_fonts(),
+            font_idx: 0, // initialized below
+            filter_idx: match render_args.filter {
+                SamplingFilter::Nearest => 0,
+                SamplingFilter::Triangle => 1,
+                SamplingFilter::CatmullRom => 2,
+                SamplingFilter::Gaussian => 3,
+                SamplingFilter::Lanczos3 => 4,
+            },
+            grayscale_tolerance: render_args.grayscale_tolerance as i32,
+            colorspace_idx: match render_args.colorspace {
+                ColourSpace::HSL => 0,
+                ColourSpace::HSV => 1,
+                ColourSpace::HSLUV => 2,
+                ColourSpace::LCH => 3,
+            },
+            encoding_idx: match render_args.encoding {
+                Encoding::Utf8 => 0,
+                Encoding::Utf16 => 1,
+                Encoding::Utf16be => 2,
+                Encoding::Utf16le => 3,
+                Encoding::Cesu8 => 4,
+            },
+
+            pixelize: render_args.pixelize,
+            gaussian_blur: render_args.gaussian_blur,
+            box_blur: render_args.box_blur,
+            oil: render_args.oil.is_some(),
+            halftone: render_args.halftone,
+            sepia: render_args.sepia,
+            normalize: render_args.normalize,
+            noise: render_args.noise,
+            emboss: render_args.emboss,
+            identity: render_args.identity,
+            laplace: render_args.laplace,
+            noise_reduction: render_args.noise_reduction,
+            sharpen: render_args.sharpen,
+            cali: render_args.cali,
+            dramatic: render_args.dramatic,
+            firenze: render_args.firenze,
+            golden: render_args.golden,
+            lix: render_args.lix,
+            lofi: render_args.lofi,
+            neue: render_args.neue,
+            obsidian: render_args.obsidian,
+            pastel_pink: render_args.pastel_pink,
+            ryo: render_args.ryo,
+            frosted_glass: render_args.frosted_glass,
+            solarize: render_args.solarize,
+            edge_detection: render_args.edge_detection,
+
+            effects_pipeline: (0..26).collect(),
+            reordering_grabbed: None,
+
+            available_blocks,
+            explorer_dialog: None,
+            control_areas: Vec::new(),
+            tab_areas: Vec::new(),
+        }
+    }
+
+    fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
+        match tab {
+            0 => vec![
+                ControlDef {
+                    label: "Width",
+                    kind: ControlKind::Slider { min: 10, max: 300 },
+                },
+                ControlDef {
+                    label: "Mode",
+                    kind: ControlKind::Enum {
+                        options: vec!["IRC", "ANSI", "ANSI24"],
+                    },
+                },
+                ControlDef {
+                    label: "Crop Top",
+                    kind: ControlKind::Slider { min: 0, max: 2000 },
+                },
+                ControlDef {
+                    label: "Crop Right",
+                    kind: ControlKind::Slider { min: 0, max: 2000 },
+                },
+                ControlDef {
+                    label: "Crop Bottom",
+                    kind: ControlKind::Slider { min: 0, max: 2000 },
+                },
+                ControlDef {
+                    label: "Crop Left",
+                    kind: ControlKind::Slider { min: 0, max: 2000 },
+                },
+                ControlDef {
+                    label: "Flip H",
+                    kind: ControlKind::Toggle,
+                },
+                ControlDef {
+                    label: "Flip V",
+                    kind: ControlKind::Toggle,
+                },
+                ControlDef {
+                    label: "Rotate",
+                    kind: ControlKind::Slider {
+                        min: -180,
+                        max: 180,
+                    },
+                },
+                ControlDef {
+                    label: "Scale X %",
+                    kind: ControlKind::Slider { min: 10, max: 500 },
+                },
+                ControlDef {
+                    label: "Scale Y %",
+                    kind: ControlKind::Slider { min: 10, max: 500 },
+                },
+                ControlDef {
+                    label: "Font Size",
+                    kind: ControlKind::Slider { min: 8, max: 64 },
+                },
+                ControlDef {
+                    label: "Font",
+                    kind: ControlKind::FontSelector,
+                },
+                ControlDef {
+                    label: "Filter",
+                    kind: ControlKind::Enum {
+                        options: vec!["Nearest", "Triangle", "CatmullRom", "Gaussian", "Lanczos3"],
+                    },
+                },
+                ControlDef {
+                    label: "Gray Tol",
+                    kind: ControlKind::Slider { min: 0, max: 255 },
+                },
+                ControlDef {
+                    label: "Brightness",
+                    kind: ControlKind::Slider {
+                        min: -255,
+                        max: 255,
+                    },
+                },
+                ControlDef {
+                    label: "Contrast",
+                    kind: ControlKind::Slider {
+                        min: -255,
+                        max: 255,
+                    },
+                },
+                ControlDef {
+                    label: "Saturation",
+                    kind: ControlKind::Slider {
+                        min: -255,
+                        max: 255,
+                    },
+                },
+                ControlDef {
+                    label: "Gamma",
+                    kind: ControlKind::Slider { min: 0, max: 255 },
+                },
+                ControlDef {
+                    label: "Hue",
+                    kind: ControlKind::Slider { min: 0, max: 360 },
+                },
+                ControlDef {
+                    label: "Colorspace",
+                    kind: ControlKind::Enum {
+                        options: vec!["HSL", "HSV", "HSLUV", "LCH"],
+                    },
+                },
+                ControlDef {
+                    label: "Encoding",
+                    kind: ControlKind::Enum {
+                        options: vec!["UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "CESU-8"],
+                    },
+                },
+            ],
+            1 => {
+                let mut v = vec![
+                    ControlDef {
+                        label: "Dither",
+                        kind: ControlKind::Slider { min: 0, max: 8 },
+                    },
+                    ControlDef {
+                        label: "Smooth",
+                        kind: ControlKind::Toggle,
+                    },
+                    ControlDef {
+                        label: "Invert",
+                        kind: ControlKind::Toggle,
+                    },
+                    ControlDef {
+                        label: "Grayscale",
+                        kind: ControlKind::Toggle,
+                    },
+                    ControlDef {
+                        label: "Pixelize",
+                        kind: ControlKind::Slider { min: 0, max: 100 },
+                    },
+                    ControlDef {
+                        label: "Gauss Blur",
+                        kind: ControlKind::Slider { min: 0, max: 100 },
+                    },
+                ];
+                let toggles = [
+                    "Box Blur",
+                    "Oil",
+                    "Halftone",
+                    "Sepia",
+                    "Normalize",
+                    "Noise",
+                    "Emboss",
+                    "Identity",
+                    "Laplace",
+                    "Denoise",
+                    "Sharpen",
+                    "Cali",
+                    "Dramatic",
+                    "Firenze",
+                    "Golden",
+                    "Lix",
+                    "Lofi",
+                    "Neue",
+                    "Obsidian",
+                    "PastelPink",
+                    "Ryo",
+                    "FrostGlass",
+                    "Solarize",
+                    "EdgeDetect",
+                ];
+                for t in toggles {
+                    v.push(ControlDef {
+                        label: t,
+                        kind: ControlKind::Toggle,
+                    });
+                }
+                v
+            }
+            2 => self
+                .available_blocks
+                .iter()
+                .map(|_name| ControlDef {
+                    label: "block",
+                    kind: ControlKind::Toggle,
+                })
+                .collect(),
+            _ => vec![],
+        }
+    }
+
+    fn control_count(&self) -> usize {
+        self.tab_controls(self.current_tab).len()
+    }
+
+    fn get_control_value(&self, tab: usize, idx: usize) -> i32 {
+        if tab == 0 {
+            match idx {
+                0 => self.width,
+                1 => self.render_mode_idx as i32,
+                2 => self.trim_top,
+                3 => self.trim_right,
+                4 => self.trim_bottom,
+                5 => self.trim_left,
+                6 => self.fliph as i32,
+                7 => self.flipv as i32,
+                8 => self.rotate,
+                9 => self.scalex,
+                10 => self.scaley,
+                11 => self.brightness,
+                12 => self.contrast,
+                13 => self.saturation,
+                14 => self.gamma,
+                15 => self.hue,
+                16 => self.colorspace_idx as i32,
+                17 => self.encoding_idx as i32,
+                _ => 0,
+            }
+        } else if tab == 1 {
+            match idx {
+                0 => self.dither,
+                1 => self.smooth as i32,
+                2 => self.invert as i32,
+                3 => self.grayscale as i32,
+                4 => self.pixelize,
+                5 => self.gaussian_blur,
+                _ => {
+                    // Toggles start at 6
+                    match idx {
+                        6 => self.box_blur as i32,
+                        7 => self.oil as i32,
+                        8 => self.halftone as i32,
+                        9 => self.sepia as i32,
+                        10 => self.normalize as i32,
+                        11 => self.noise as i32,
+                        12 => self.emboss as i32,
+                        13 => self.identity as i32,
+                        14 => self.laplace as i32,
+                        15 => self.noise_reduction as i32,
+                        16 => self.sharpen as i32,
+                        17 => self.cali as i32,
+                        18 => self.dramatic as i32,
+                        19 => self.firenze as i32,
+                        20 => self.golden as i32,
+                        21 => self.lix as i32,
+                        22 => self.lofi as i32,
+                        23 => self.neue as i32,
+                        24 => self.obsidian as i32,
+                        25 => self.pastel_pink as i32,
+                        26 => self.ryo as i32,
+                        27 => self.frosted_glass as i32,
+                        28 => self.solarize as i32,
+                        29 => self.edge_detection as i32,
+                        _ => 0,
+                    }
+                }
+            }
+        } else {
+            // For blocks tab, checked = 1
+            if idx < self.available_blocks.len() {
+                let name = &self.available_blocks[idx];
+                if self.render_args.blocks.is_empty() {
+                    1
+                }
+                // all on
+                else if self.render_args.blocks.contains(name) {
+                    1
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        }
+    }
+
+    fn mark_args_dirty(&mut self) {
+        self.args_dirty = true;
+        self.last_args_change = Some(Instant::now());
+    }
+
+    fn flush_render_args(&mut self) {
+        if !self.args_dirty {
+            return;
+        }
+
+        self.render_args.brightness = self.brightness as f32;
+        self.render_args.contrast = self.contrast as f32;
+        self.render_args.saturation = self.saturation as f32;
+        self.render_args.gamma = self.gamma as f32;
+        self.render_args.hue = self.hue as f32;
+        self.render_args.width = Some(self.width as u32);
+        self.render_args.dither = self.dither as u32;
+        self.render_args.invert = self.invert;
+        self.render_args.grayscale = self.grayscale;
+        self.render_args.smooth = self.smooth;
+        self.render_args.pixelize = self.pixelize;
+        self.render_args.gaussian_blur = self.gaussian_blur;
+        self.render_args.box_blur = self.box_blur;
+        self.render_args.oil = if self.oil {
+            Some("2,20.0".to_string())
+        } else {
+            None
+        };
+        self.render_args.halftone = self.halftone;
+        self.render_args.sepia = self.sepia;
+        self.render_args.normalize = self.normalize;
+        self.render_args.noise = self.noise;
+        self.render_args.emboss = self.emboss;
+        self.render_args.identity = self.identity;
+        self.render_args.laplace = self.laplace;
+        self.render_args.noise_reduction = self.noise_reduction;
+        self.render_args.sharpen = self.sharpen;
+        self.render_args.cali = self.cali;
+        self.render_args.dramatic = self.dramatic;
+        self.render_args.firenze = self.firenze;
+        self.render_args.golden = self.golden;
+        self.render_args.lix = self.lix;
+        self.render_args.lofi = self.lofi;
+        self.render_args.neue = self.neue;
+        self.render_args.obsidian = self.obsidian;
+        self.render_args.pastel_pink = self.pastel_pink;
+        self.render_args.ryo = self.ryo;
+        self.render_args.frosted_glass = self.frosted_glass;
+        self.render_args.solarize = self.solarize;
+        self.render_args.edge_detection = self.edge_detection;
+        self.render_args.render = match self.render_mode_idx {
+            0 => Render::Preview, // Map "IRC" to Preview for display
+            1 => Render::Ansi,    // "ANSI"
+            _ => Render::Ansi24,  // "ANSI24"
+        };
+        self.render_args.fliph = self.fliph;
+        self.render_args.flipv = self.flipv;
+        self.render_args.rotate = self.rotate as f32;
+        self.render_args.scale = Some((self.scalex as f32 / 100.0, self.scaley as f32 / 100.0));
+        self.render_args.font_size = self.font_size as u32;
+        if !self.fonts.is_empty() && self.font_idx < self.fonts.len() {
+            let selected = &self.fonts[self.font_idx];
+            if selected == "Default" {
+                self.render_args.font = Vec::new();
+            } else {
+                self.render_args.font = vec![selected.clone()];
+            }
+        }
+        self.render_args.filter = match self.filter_idx {
+            0 => SamplingFilter::Nearest,
+            1 => SamplingFilter::Triangle,
+            2 => SamplingFilter::CatmullRom,
+            3 => SamplingFilter::Gaussian,
+            _ => SamplingFilter::Lanczos3,
+        };
+        self.render_args.grayscale_tolerance = self.grayscale_tolerance as u8;
+        self.render_args.colorspace = match self.colorspace_idx {
+            0 => ColourSpace::HSL,
+            1 => ColourSpace::HSV,
+            2 => ColourSpace::HSLUV,
+            _ => ColourSpace::LCH,
+        };
+        self.render_args.encoding = match self.encoding_idx {
+            0 => Encoding::Utf8,
+            1 => Encoding::Utf16,
+            2 => Encoding::Utf16be,
+            3 => Encoding::Utf16le,
+            _ => Encoding::Cesu8,
+        };
+        if self.trim_top > 0 || self.trim_right > 0 || self.trim_bottom > 0 || self.trim_left > 0 {
+            self.render_args.trim = Some((
+                self.trim_top as u32,
+                self.trim_right as u32,
+                self.trim_bottom as u32,
+                self.trim_left as u32,
+            ));
+        } else {
+            self.render_args.trim = None;
+        }
+        self.render_args.crop = None; // Disable crop as we use trim now
+
+        // Pipeline
+        let tab1_controls = self.tab_controls(1);
+        let mut pipeline = vec![
+            "Dither".to_string(),
+            "Brightness".to_string(),
+            "Saturation".to_string(),
+            "Contrast".to_string(),
+            "Hue".to_string(),
+            "Gamma".to_string(),
+            "Invert".to_string(),
+            "Grayscale".to_string(),
+        ];
+        for &idx in &self.effects_pipeline {
+            pipeline.push(tab1_controls[idx].label.to_string());
+        }
+        self.render_args.pipeline = pipeline;
+
+        // Cancel previous render
+        self.current_cancel_flag.store(true, Ordering::Relaxed);
+        // Create new flag
+        let new_flag = Arc::new(AtomicBool::new(false));
+        self.current_cancel_flag = new_flag.clone();
+
+        let _ = self.tx_args.send((self.render_args.clone(), new_flag));
+        log::info!(
+            "Flushing render args: width={}, scale={:?}, font={:?}",
+            self.width,
+            self.render_args.scale,
+            self.render_args.font
+        );
+        self.args_dirty = false;
+        self.last_args_change = None;
+    }
+
+    fn open_explorer(&mut self, mode: ExplorerMode) {
+        if let Ok(mut explorer) = FileExplorer::new() {
+            if matches!(mode, ExplorerMode::Open) {
+                let filter = Arc::new(|file: &ratatui_explorer::File| {
+                    if file.is_dir() {
+                        return true;
+                    }
+                    let ext = file
+                        .path()
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default()
+                        .to_lowercase();
+                    matches!(
+                        ext.as_str(),
+                        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff"
+                    )
+                });
+                explorer = explorer.with_filter(filter).unwrap();
+            }
+
+            let mut name_input = TextArea::default();
+            name_input.set_block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Filename (Enter to Save) "),
+            );
+            name_input.set_cursor_line_style(Style::default());
+
+            // If we have a current image path, maybe suggest a default name for saving
+            if !matches!(mode, ExplorerMode::Open) {
+                let default_name = Path::new(&self.image_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("output")
+                    .to_string();
+                name_input.insert_str(default_name);
+            }
+
+            self.explorer_dialog = Some(ExplorerDialog {
+                explorer,
+                mode,
+                name_input,
+                focus_on_input: matches!(mode, ExplorerMode::SaveText | ExplorerMode::SavePng),
+            });
+            self.input_mode = InputMode::Explorer;
+        }
+    }
+
+    fn handle_explorer_result(&mut self, mode: ExplorerMode, path: String) {
+        if path.is_empty() {
+            return;
+        }
+
+        match mode {
+            ExplorerMode::Open => {
+                self.image_path = path.clone();
+                self.render_args.image = Some(path);
+                self.mark_args_dirty();
+            }
+            ExplorerMode::SaveText => {
+                let save_data = self
+                    .cached_result
+                    .as_ref()
+                    .and_then(|r| r.save_content.as_ref())
+                    .unwrap_or(&self.cached_render);
+                if let Err(e) = std::fs::write(&path, save_data) {
+                    log::info!("Failed to save text: {}", e);
+                }
+            }
+            ExplorerMode::SavePng => {
+                if let (Some(result), Some(glyphs)) = (&self.cached_result, &self.arc_glyphs) {
+                    let png_path = if path.ends_with(".png") {
+                        path
+                    } else {
+                        format!("{}.png", path)
+                    };
+                    if let Err(e) = draw::save_as_png(result, glyphs, &png_path, "") {
+                        log::info!("Failed to save PNG: {}", e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn list_system_fonts() -> Vec<String> {
+    // Try to use fc-list
+    if let Ok(output) = Command::new("fc-list").arg(":family").output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            let mut fonts: Vec<String> = s
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(|l| {
+                    // Clean up font name: remove path, take first family name
+                    // e.g. "/usr/share/fonts/TTF/CascadiaCode.ttf: Cascadia Code" -> "Cascadia Code"
+                    // e.g. "Cascadia Code,Cascadia Mono:style=Regular" -> "Cascadia Code"
+                    l.split(':')
+                        .skip(1)
+                        .next()
+                        .unwrap_or(l) // everything after first : (path separator)
+                        .split(',')
+                        .next()
+                        .unwrap_or(l) // everything before first ,
+                        .trim()
+                        .to_string()
+                })
+                .collect();
+            fonts.sort();
+            fonts.dedup();
+            // Move Monospace to top if exists, but we want "Default" first
+            if let Some(pos) = fonts
+                .iter()
+                .position(|x| x.eq_ignore_ascii_case("monospace"))
+            {
+                let f = fonts.remove(pos);
+                fonts.insert(0, f);
+            }
+            fonts.insert(0, "Default".to_string());
+            if !fonts.is_empty() {
+                return fonts;
+            }
+        }
+    }
+    vec!["Default".to_string(), "Monospace".to_string()]
+}
+
+// ── Custom Widgets ───────────────────────────────────────────────────────────
+
+/// A gauge-style slider bar. Value is rendered inside the filled portion.
+fn render_bar(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    value: i32,
+    min: i32,
+    max: i32,
+    selected: bool,
+) {
+    if area.height < 1 || area.width < 4 {
+        return;
+    }
+
+    let range = (max - min).max(1) as f64;
+    let ratio = ((value - min) as f64 / range).clamp(0.0, 1.0);
+    let filled_width = ((area.width as f64) * ratio) as u16;
+
+    let bg_style = if selected {
+        Style::new().bg(SELECTED_BG)
+    } else {
+        Style::new().bg(SURFACE)
+    };
+    buf.set_style(area, bg_style);
+
+    // Draw filled portion
+    let bar_style = Style::new()
+        .bg(if selected { BAR_FG } else { ACCENT_DIM })
+        .fg(Color::White);
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + filled_width.min(area.width) {
+            buf.set_string(x, y, " ", bar_style);
+        }
+    }
+
+    // Draw unfilled portion
+    let empty_style = Style::new().bg(BAR_BG).fg(TEXT_DIM);
+    for y in area.y..area.y + area.height {
+        for x in (area.x + filled_width)..area.x + area.width {
+            buf.set_string(x, y, " ", empty_style);
+        }
+    }
+
+    // Draw label on the left
+    let label_text = format!(" {}", label);
+    let lx = area.x + 1;
+    let ly = area.y + area.height.saturating_sub(1) / 2;
+    for (i, ch) in label_text.chars().enumerate() {
+        let x = lx + i as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        cell.set_style(Style::new().fg(Color::White).add_modifier(Modifier::BOLD));
+    }
+
+    // Draw value on the right
+    let value_text = format!("{} ", value);
+    let vx = area.x + area.width - value_text.len() as u16;
+    for (i, ch) in value_text.chars().enumerate() {
+        let x = vx + i as u16;
+        if x < area.x || x >= area.x + area.width {
+            continue;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        let style = if value != 0 {
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(TEXT_DIM)
+        };
+        cell.set_style(style);
+    }
+
+    // Border highlight for selected
+    if selected {
+        // Draw left accent line
+        let accent_style = Style::new().bg(ACCENT).fg(ACCENT);
+        for y in area.y..area.y + area.height {
+            buf.set_string(area.x, y, "▎", accent_style);
+        }
+    }
+}
+
+/// An enum selector (< Option >)
+fn render_enum(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    options: &[&str],
+    value: usize,
+    selected: bool,
+) {
+    if area.height < 1 || area.width < 4 {
+        return;
+    }
+
+    let bg = if selected { SELECTED_BG } else { SURFACE };
+    buf.set_style(area, Style::new().bg(bg));
+
+    let ly = area.y + area.height.saturating_sub(1) / 2;
+    let label_text = format!(" {}", label);
+    for (i, ch) in label_text.chars().enumerate() {
+        let x = area.x + 1 + i as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        cell.set_style(
+            Style::new()
+                .fg(if selected { Color::White } else { TEXT })
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+
+    let opt = options.get(value).unwrap_or(&"?");
+    let val_text = format!("◂ {} ▸ ", opt);
+    let vx = area.x + area.width - val_text.len() as u16;
+    for (i, ch) in val_text.chars().enumerate() {
+        let x = vx + i as u16;
+        if x < area.x || x >= area.x + area.width {
+            continue;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        cell.set_style(Style::new().fg(ACCENT).add_modifier(Modifier::BOLD));
+    }
+
+    if selected {
+        let accent_style = Style::new().bg(ACCENT).fg(ACCENT);
+        for y in area.y..area.y + area.height {
+            buf.set_string(area.x, y, "▎", accent_style);
+        }
+    }
+}
+
+/// A toggle switch
+fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: bool) {
+    if area.height < 1 || area.width < 4 {
+        return;
+    }
+
+    let bg = if selected { SELECTED_BG } else { SURFACE };
+    buf.set_style(area, Style::new().bg(bg));
+
+    let ly = area.y + area.height.saturating_sub(1) / 2;
+
+    // Label
+    let label_text = format!(" {}", label);
+    for (i, ch) in label_text.chars().enumerate() {
+        let x = area.x + 1 + i as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        cell.set_style(Style::new().fg(if selected { Color::White } else { TEXT }));
+    }
+
+    // Toggle indicator on the right
+    let (indicator, color) = if on {
+        (" ● ON ", TOGGLE_ON)
+    } else {
+        (" ○ OFF", TOGGLE_OFF)
+    };
+    let vx = area.x + area.width - indicator.len() as u16 - 1;
+    for (i, ch) in indicator.chars().enumerate() {
+        let x = vx + i as u16;
+        if x < area.x || x >= area.x + area.width {
+            continue;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        cell.set_style(Style::new().fg(color).add_modifier(Modifier::BOLD));
+    }
+
+    if selected {
+        let accent_style = Style::new().bg(ACCENT).fg(ACCENT);
+        for y in area.y..area.y + area.height {
+            buf.set_string(area.x, y, "▎", accent_style);
+        }
+    }
+}
+
+// ── Main Entry Point ─────────────────────────────────────────────────────────
+pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
+    // Initialize logging to file
+    let _ = WriteLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        File::create("img2irc.log").unwrap(),
+    );
+
+    std::panic::set_hook(Box::new(|panic_info| {
+        let message = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            &s[..]
+        } else {
+            "Unknown panic"
+        };
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        log::error!("PANIC at {}: {}", location, message);
+        eprintln!("PANIC at {}: {}", location, message);
+    }));
+
+    log::info!("Starting img2irc TUI...");
+
+    if render_args.width.is_none() {
+        render_args.width = Some(80);
+    }
+    render_args.render = Render::Ansi;
+
+    let glyph_store = font::glyph_store(
+        &render_args.blocks,
+        &render_args.exclude_range,
+        &render_args.exclude,
+        &render_args.include_range,
+        render_args.include.as_ref(),
+        &render_args.font,
+        render_args.font_size,
+        true,
+    );
+
+    let image = if let Some(path) = &render_args.image {
+        match crate::load_image_from_url_or_path(path, &render_args, &glyph_store).await {
+            Ok(img) => img,
+            Err(e) => {
+                log::info!("Failed to load image: {}", e);
+                PhotonImage::new(vec![0; 4], 1, 1)
+            }
+        }
+    } else {
+        PhotonImage::new(vec![0; 4], 1, 1)
+    };
+
+    let arc_image = Arc::new(image);
+    let arc_glyphs = Arc::new(glyph_store);
+
+    let initial_flag = Arc::new(AtomicBool::new(false));
+    let (tx_args, mut rx_args) = watch::channel((render_args.clone(), initial_flag.clone()));
+    let (tx_result, rx_result) = mpsc::channel(1);
+    let rendering_flag = Arc::new(AtomicBool::new(true));
+    let rendering_flag2 = rendering_flag.clone();
+    let arc_glyphs_shared = arc_glyphs.clone();
+
+    let initial_image_path = render_args.image.clone();
+    let thread_render_args = render_args.clone();
+
+    tokio::spawn(async move {
+        let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
+        let mut arc_image = arc_image;
+        let mut current_image_path = initial_image_path;
+
+        // Use thread_render_args here instead of capturing render_args
+        let mut arc_glyphs = arc_glyphs;
+        let mut last_font = thread_render_args.font.clone();
+        let mut last_font_size = thread_render_args.font_size;
+        let mut last_blocks = thread_render_args.blocks.clone();
+
+        loop {
+            // Signal rendering start
+            rendering_flag2.store(true, Ordering::Relaxed);
+
+            let (current_args, cancel_flag) = { rx_args.borrow_and_update().clone() };
+
+            // Reload image if path changed
+            if current_args.image != current_image_path {
+                if let Some(path) = &current_args.image {
+                    match crate::load_image_from_url_or_path(path, &current_args, &arc_glyphs).await
+                    {
+                        Ok(img) => {
+                            arc_image = Arc::new(img);
+                            current_image_path = Some(path.clone());
+                        }
+                        Err(e) => {
+                            log::info!("Failed to reload image: {}", e);
+                            // Keep old image
+                        }
+                    }
+                }
+            }
+
+            // Reload font/glyphs if changed
+            if current_args.font != last_font
+                || current_args.font_size != last_font_size
+                || current_args.blocks != last_blocks
+            {
+                let new_store = font::glyph_store(
+                    &current_args.blocks,
+                    &current_args.exclude_range,
+                    &current_args.exclude,
+                    &current_args.include_range,
+                    current_args.include.as_ref(),
+                    &current_args.font,
+                    current_args.font_size,
+                    true,
+                );
+                arc_glyphs = Arc::new(new_store);
+                fast_glyphs_store = None;
+                last_font = current_args.font.clone();
+                last_font_size = current_args.font_size;
+                last_blocks = current_args.blocks.clone();
+            }
+
+            if fast_glyphs_store.is_none() {
+                fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &current_args));
+            }
+
+            // Render!
+            let glyphs = fast_glyphs_store.as_ref().unwrap();
+            log::info!("Starting render optimization... ({} glyphs)", glyphs.len());
+            let start = Instant::now();
+            let result = crate::render_output(
+                &current_args,
+                &arc_glyphs,
+                (*arc_image).clone(),
+                glyphs,
+                Some(cancel_flag),
+            );
+            log::info!("Render finished in {:?}", start.elapsed());
+
+            rendering_flag2.store(false, Ordering::Relaxed);
+
+            // Only send if not cancelled (though render output might say cancelled)
+            if tx_result.send((result, arc_glyphs.clone())).await.is_err() {
+                break;
+            }
+            if rx_args.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut app = App::new(render_args, tx_args, rx_result, initial_flag);
+    app.is_rendering = rendering_flag;
+    app.arc_glyphs = Some(arc_glyphs_shared);
+    // Don't trigger update immediately here, we have initial args
+    // However, we want to ensure any logic in update_render_args runs, so lets run flush
+    // Actually just mark dirty and let loop handle it
+    app.mark_args_dirty();
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let res = run_app(&mut terminal, app).await;
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    if let Err(err) = res {
+        println!("{:?}", err);
+    }
+    Ok(())
+}
+
+// ── App Loop ─────────────────────────────────────────────────────────────────
+async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
+    loop {
+        app.render_tick = app.render_tick.wrapping_add(1);
+        while let Ok((result, glyphs)) = app.rx_result.try_recv() {
+            if result.content == "Cancelled" {
+                continue;
+            }
+            app.cached_render = result.content.clone();
+            app.cached_result = Some(result);
+            app.arc_glyphs = Some(glyphs);
+        }
+
+        terminal.draw(|f| ui(f, &mut app))?;
+
+        if crossterm::event::poll(Duration::from_millis(50))? {
+            let event = event::read()?;
+
+            if app.input_mode == InputMode::Explorer {
+                if let Event::Key(key) = event {
+                    if let Some(mut dialog) = app.explorer_dialog.take() {
+                        if key.code == KeyCode::Tab {
+                            if !matches!(dialog.mode, ExplorerMode::Open) {
+                                dialog.focus_on_input = !dialog.focus_on_input;
+                            }
+                            app.explorer_dialog = Some(dialog);
+                        } else if dialog.focus_on_input {
+                            if key.code == KeyCode::Enter {
+                                // Perform Save
+                                let filename = dialog.name_input.lines()[0].clone();
+                                let mut path = dialog.explorer.cwd().clone();
+                                path.push(filename);
+                                let path_str = path.to_string_lossy().to_string();
+                                let mode = dialog.mode;
+                                app.handle_explorer_result(mode, path_str);
+                                app.input_mode = InputMode::Normal;
+                                app.explorer_dialog = None;
+                            } else if key.code == KeyCode::Esc {
+                                app.input_mode = InputMode::Normal;
+                                app.explorer_dialog = None;
+                            } else {
+                                dialog.name_input.input(key);
+                                app.explorer_dialog = Some(dialog);
+                            }
+                        } else {
+                            // Focus on Explorer
+                            if (key.code == KeyCode::Enter || key.code == KeyCode::Char('l'))
+                                && dialog.explorer.current().is_file()
+                            {
+                                if matches!(dialog.mode, ExplorerMode::Open) {
+                                    let path = dialog
+                                        .explorer
+                                        .current()
+                                        .path()
+                                        .to_string_lossy()
+                                        .to_string();
+                                    let mode = dialog.mode;
+                                    app.handle_explorer_result(mode, path);
+                                    app.input_mode = InputMode::Normal;
+                                    app.explorer_dialog = None;
+                                } else {
+                                    // In Save mode, enter on file copies name to input
+                                    let name = dialog.explorer.current().name().replace("/", "");
+                                    dialog.name_input = TextArea::new(vec![name]);
+                                    dialog.name_input.set_block(
+                                        Block::default()
+                                            .borders(Borders::ALL)
+                                            .title(" Filename (Enter to Save) "),
+                                    );
+                                    dialog.name_input.set_cursor_line_style(Style::default());
+                                    dialog.focus_on_input = true;
+                                    app.explorer_dialog = Some(dialog);
+                                }
+                            } else if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+                                app.input_mode = InputMode::Normal;
+                                app.explorer_dialog = None;
+                            } else {
+                                // Let explorer handle the key
+                                let _ = dialog.explorer.handle(&event);
+                                app.explorer_dialog = Some(dialog);
+                            }
+                        }
+                    } else {
+                        app.input_mode = InputMode::Normal;
+                    }
+                }
+                continue; // Consume event
+            }
+
+            match event {
+                Event::Mouse(mouse) => {
+                    if app.show_font_picker {
+                        if let Ok(size) = terminal.size() {
+                            let area =
+                                centered_rect(60, 50, Rect::new(0, 0, size.width, size.height));
+                            // Simple hit test: if outside, close?
+                            // For now just handle scrolling
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    let i = match app.font_list_state.selected() {
+                                        Some(i) => {
+                                            if i == 0 {
+                                                0
+                                            } else {
+                                                i - 1
+                                            }
+                                        }
+                                        None => 0,
+                                    };
+                                    app.font_list_state.select(Some(i));
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    let query = app.font_search.to_lowercase();
+                                    let count = app
+                                        .fonts
+                                        .iter()
+                                        .filter(|f| f.to_lowercase().contains(&query))
+                                        .count();
+                                    if count > 0 {
+                                        let i = match app.font_list_state.selected() {
+                                            Some(i) => {
+                                                if i >= count - 1 {
+                                                    i
+                                                } else {
+                                                    i + 1
+                                                }
+                                            }
+                                            None => 0,
+                                        };
+                                        app.font_list_state.select(Some(i));
+                                    }
+                                }
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    // Check if click is outside -> close
+                                    if mouse.column < area.x
+                                        || mouse.column >= area.x + area.width
+                                        || mouse.row < area.y
+                                        || mouse.row >= area.y + area.height
+                                    {
+                                        app.show_font_picker = false;
+                                    } else {
+                                        // Clicked inside.
+                                        // TODO: Calculate index. For now just Select/Confirm if double click?
+                                        // Or just let them click 'Enter'.
+                                        // User asked for "selection". Clicking an item to select it is expected.
+                                        // Approximating list row:
+                                        // Header is 3 rows (borders+search). List starts at area.y + 4?
+                                        // area includes border. blocks(borders) -> inner.
+                                        // chunks split that inner.
+                                        // chunks[0] height 3.
+                                        // chunks[1] is the rest.
+                                        // So list starts at: area.y + 1 + 3 = area.y + 4.
+
+                                        let list_y = area.y + 4;
+                                        if mouse.row >= list_y
+                                            && mouse.row < area.y + area.height - 1
+                                        {
+                                            let _row_idx = (mouse.row - list_y) as usize;
+                                            // This is relative to the *visible* top.
+                                            // We don't know the scroll offset easily here without tracking it separately.
+                                            // `List` widget handles offset internally unless we manage `offset` in state manually.
+                                            // `ListState` has `offset` but it's private/renderer-controlled usually?
+                                            // actually ListState has `offset` field which is readable? No, `offset` is u32 but private?
+                                            // In minimal tui, we might effectively be stuck just doing scrolling.
+
+                                            // Let's at least implement "Click to select currently highlighted" if we properly highlighted it...
+                                            // or just ignore precise row clicking to avoid bugs.
+
+                                            // However, users expect clicking a row to work.
+                                            // Since we can't do it perfectly without more refactoring, let's stick to scrolling
+                                            // and "Click outside to close" which is nice.
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue; // Consume event
+                    }
+
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.scroll = app.scroll.saturating_sub(3);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.scroll = app.scroll.saturating_add(3);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            app.dragged_control = None;
+                            // Check tab clicks
+                            for (i, area) in app.tab_areas.iter().enumerate() {
+                                if mouse.column >= area.x
+                                    && mouse.column < area.x + area.width
+                                    && mouse.row >= area.y
+                                    && mouse.row < area.y + area.height
+                                {
+                                    app.current_tab = i;
+                                    app.selected_control = 0;
+                                    break;
+                                }
+                            }
+                            // Check control clicks
+                            for (i, area) in app.control_areas.iter().enumerate() {
+                                if area.width == 0 {
+                                    continue;
+                                }
+                                if mouse.column >= area.x
+                                    && mouse.column < area.x + area.width
+                                    && mouse.row >= area.y
+                                    && mouse.row < area.y + area.height
+                                {
+                                    app.selected_control = i;
+                                    if app.current_tab == 1 && mouse.column < area.x + 4 {
+                                        app.reordering_grabbed = Some(i);
+                                    } else {
+                                        app.dragged_control = Some(i);
+                                        let controls = app.tab_controls(app.current_tab);
+                                        let real_idx = if app.current_tab == 1 {
+                                            app.effects_pipeline[i]
+                                        } else {
+                                            i
+                                        };
+                                        if let Some(ctrl) = controls.get(real_idx) {
+                                            match &ctrl.kind {
+                                                ControlKind::Slider { min, max } => {
+                                                    let rel_x = (mouse.column - area.x) as f64;
+                                                    let ratio =
+                                                        (rel_x / area.width as f64).clamp(0.0, 1.0);
+                                                    let new_val = *min
+                                                        + (((*max - *min) as f64) * ratio) as i32;
+                                                    set_control_value(
+                                                        &mut app,
+                                                        i,
+                                                        new_val.clamp(*min, *max),
+                                                    );
+                                                }
+                                                ControlKind::Toggle => toggle_control(&mut app),
+                                                ControlKind::Enum { .. } => {
+                                                    toggle_control(&mut app)
+                                                }
+                                                ControlKind::FontSelector => {
+                                                    app.show_font_picker = true;
+                                                    app.font_search.clear();
+                                                    app.font_list_state.select(Some(0));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            if let Some(f) = app.reordering_grabbed {
+                                for (t, to_area) in app.control_areas.iter().enumerate() {
+                                    if to_area.width > 0
+                                        && mouse.row >= to_area.y
+                                        && mouse.row < to_area.y + to_area.height
+                                    {
+                                        if f != t {
+                                            let real_item = app.effects_pipeline.remove(f);
+                                            app.effects_pipeline.insert(t, real_item);
+                                            app.reordering_grabbed = Some(t);
+                                            app.selected_control = t;
+                                            app.mark_args_dirty();
+                                        }
+                                        break;
+                                    }
+                                }
+                            } else if let Some(visual_idx) = app.dragged_control {
+                                // Only drag the originally-clicked control
+                                if let Some(area) = app.control_areas.get(visual_idx) {
+                                    if area.width > 0 {
+                                        let controls = app.tab_controls(app.current_tab);
+                                        let real_idx = if app.current_tab == 1 {
+                                            app.effects_pipeline[visual_idx]
+                                        } else {
+                                            visual_idx
+                                        };
+                                        if let Some(ctrl) = controls.get(real_idx) {
+                                            if let ControlKind::Slider { min, max } = &ctrl.kind {
+                                                let rel_x = (mouse.column as i32 - area.x as i32)
+                                                    .max(0)
+                                                    as f64;
+                                                let ratio =
+                                                    (rel_x / area.width as f64).clamp(0.0, 1.0);
+                                                let new_val =
+                                                    *min + (((*max - *min) as f64) * ratio) as i32;
+                                                set_control_value(
+                                                    &mut app,
+                                                    visual_idx,
+                                                    new_val.clamp(*min, *max),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            app.dragged_control = None;
+                            app.reordering_grabbed = None;
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Press {
+                        if app.show_font_picker {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    if let Some(idx) = app.font_list_state.selected() {
+                                        // Map the filtered index back to the real font list
+                                        // We need to re-filter to find the name
+                                        let query = app.font_search.to_lowercase();
+                                        let filtered: Vec<&String> = app
+                                            .fonts
+                                            .iter()
+                                            .filter(|f| f.to_lowercase().contains(&query))
+                                            .collect();
+
+                                        if let Some(font_name) = filtered.get(idx) {
+                                            if let Some(real_idx) =
+                                                app.fonts.iter().position(|f| f == *font_name)
+                                            {
+                                                app.font_idx = real_idx;
+                                                app.mark_args_dirty();
+                                            }
+                                        }
+                                    }
+                                    app.show_font_picker = false;
+                                }
+                                KeyCode::Esc => {
+                                    app.show_font_picker = false;
+                                }
+                                KeyCode::Up => {
+                                    let query = app.font_search.to_lowercase();
+                                    let count = app
+                                        .fonts
+                                        .iter()
+                                        .filter(|f| f.to_lowercase().contains(&query))
+                                        .count();
+                                    if count > 0 {
+                                        let i = match app.font_list_state.selected() {
+                                            Some(i) => {
+                                                if i == 0 {
+                                                    count - 1
+                                                } else {
+                                                    i - 1
+                                                }
+                                            }
+                                            None => 0,
+                                        };
+                                        app.font_list_state.select(Some(i));
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    let query = app.font_search.to_lowercase();
+                                    let count = app
+                                        .fonts
+                                        .iter()
+                                        .filter(|f| f.to_lowercase().contains(&query))
+                                        .count();
+                                    if count > 0 {
+                                        let i = match app.font_list_state.selected() {
+                                            Some(i) => {
+                                                if i >= count - 1 {
+                                                    0
+                                                } else {
+                                                    i + 1
+                                                }
+                                            }
+                                            None => 0,
+                                        };
+                                        app.font_list_state.select(Some(i));
+                                    }
+                                }
+                                KeyCode::PageUp => {
+                                    let query = app.font_search.to_lowercase();
+                                    let count = app
+                                        .fonts
+                                        .iter()
+                                        .filter(|f| f.to_lowercase().contains(&query))
+                                        .count();
+                                    if count > 0 {
+                                        let i = match app.font_list_state.selected() {
+                                            Some(i) => i.saturating_sub(10),
+                                            None => 0,
+                                        };
+                                        app.font_list_state.select(Some(i.min(count - 1)));
+                                    }
+                                }
+                                KeyCode::PageDown => {
+                                    let query = app.font_search.to_lowercase();
+                                    let count = app
+                                        .fonts
+                                        .iter()
+                                        .filter(|f| f.to_lowercase().contains(&query))
+                                        .count();
+                                    if count > 0 {
+                                        let i = match app.font_list_state.selected() {
+                                            Some(i) => i + 10,
+                                            None => 0,
+                                        };
+                                        app.font_list_state.select(Some(i.min(count - 1)));
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    app.font_search.push(c);
+                                    // Reset selection on filter change
+                                    app.font_list_state.select(Some(0));
+                                }
+                                KeyCode::Backspace => {
+                                    app.font_search.pop();
+                                    app.font_list_state.select(Some(0));
+                                }
+                                // KeyCode::Esc is already handled above, this is a duplicate
+                                // KeyCode::Esc => {
+                                //     app.show_font_picker = false;
+                                //     app.font_search.clear();
+                                // }
+                                _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Tab => {
+                                    if app.current_tab == 2 {
+                                        // Switch focus between Tree (0) and Glyphs List (untracked/implicit)
+                                        // Actually, let's use selected_control to track focus?
+                                        // 0 = Tree, 1 = Glyphs List
+                                        app.selected_control = (app.selected_control + 1) % 2;
+                                    } else {
+                                        // Cycle tabs? Or just let Ctrl+Left/Right handle tabs?
+                                        // User asked for TAB to change focus to "Glyphs" pane.
+                                    }
+                                }
+                                KeyCode::BackTab => {
+                                    if app.current_tab == 2 {
+                                        app.selected_control = (app.selected_control + 1) % 2;
+                                        // Toggle 0/1
+                                    }
+                                }
+                                KeyCode::Char('q') => {
+                                    return Ok(());
+                                }
+                                KeyCode::Char('r') | KeyCode::Delete => {
+                                    reset_control(&mut app);
+                                }
+                                KeyCode::Char('o') => {
+                                    app.open_explorer(ExplorerMode::Open);
+                                }
+                                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    app.current_tab = (app.current_tab + 2) % 3;
+                                    app.selected_control = 0;
+                                }
+                                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                    app.current_tab = (app.current_tab + 1) % 3;
+                                    app.selected_control = 0;
+                                }
+                                KeyCode::Esc => {
+                                    // "Back" logic
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 1 {
+                                            // If in glyphs list, back to tree
+                                            app.selected_control = 0;
+                                        } else {
+                                            // Collapse current node
+                                            app.tree_state.collapse_selected();
+                                        }
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 0 {
+                                            app.tree_state.select_next();
+                                        } else {
+                                            // Navigate glyph list
+                                            let i = match app.glyph_list_state.selected() {
+                                                Some(i) => i + 1,
+                                                None => 0,
+                                            };
+                                            app.glyph_list_state.select(Some(i));
+                                        }
+                                    } else if app.current_tab == 1
+                                        && key.modifiers.contains(KeyModifiers::SHIFT)
+                                    {
+                                        let f = app.selected_control;
+                                        if f < app.effects_pipeline.len() - 1 {
+                                            app.effects_pipeline.swap(f, f + 1);
+                                            app.selected_control += 1;
+                                            app.mark_args_dirty();
+                                        }
+                                    } else {
+                                        let count = app.control_count();
+                                        if count > 0 {
+                                            app.selected_control =
+                                                (app.selected_control + 1) % count;
+                                        }
+                                    }
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 0 {
+                                            app.tree_state.select_prev();
+                                        } else {
+                                            let i = match app.glyph_list_state.selected() {
+                                                Some(i) => i.saturating_sub(1),
+                                                None => 0,
+                                            };
+                                            app.glyph_list_state.select(Some(i));
+                                        }
+                                    } else if app.current_tab == 1
+                                        && key.modifiers.contains(KeyModifiers::SHIFT)
+                                    {
+                                        let f = app.selected_control;
+                                        if f > 0 {
+                                            app.effects_pipeline.swap(f, f - 1);
+                                            app.selected_control -= 1;
+                                            app.mark_args_dirty();
+                                        }
+                                    } else {
+                                        let count = app.control_count();
+                                        if count > 0 {
+                                            app.selected_control =
+                                                (app.selected_control + count - 1) % count;
+                                        }
+                                    }
+                                }
+                                KeyCode::Left | KeyCode::Char('h') => {
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 0 {
+                                            app.tree_state.collapse_selected();
+                                        }
+                                    } else {
+                                        adjust_control(&mut app, -1);
+                                    }
+                                }
+                                KeyCode::Right | KeyCode::Char('l') => {
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 0 {
+                                            app.tree_state.expand_selected();
+                                        }
+                                    } else {
+                                        adjust_control(&mut app, 1);
+                                    }
+                                }
+                                KeyCode::Char(' ') | KeyCode::Enter => {
+                                    if app.current_tab == 2 {
+                                        if app.selected_control == 0 {
+                                            app.toggle_tree_selection();
+                                        }
+                                    } else {
+                                        // Check if current control is FontSelector
+                                        if app.control_is_font_selector() {
+                                            app.show_font_picker = true;
+                                            app.font_search.clear();
+                                            app.font_list_state.select(Some(0));
+                                        } else {
+                                            toggle_control(&mut app);
+                                        }
+                                    }
+                                }
+                                KeyCode::PageUp => {
+                                    app.scroll = app.scroll.saturating_sub(10);
+                                }
+                                KeyCode::PageDown => {
+                                    app.scroll = app.scroll.saturating_add(10);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if app.args_dirty {
+            if let Some(last) = app.last_args_change {
+                if last.elapsed() >= std::time::Duration::from_millis(500) {
+                    app.flush_render_args();
+                }
+            }
+        }
+    }
+}
+
+// ── Control Logic ────────────────────────────────────────────────────────────
+fn adjust_control(app: &mut App, delta: i32) {
+    let real_idx = if app.current_tab == 1 {
+        app.effects_pipeline[app.selected_control.min(app.effects_pipeline.len() - 1)]
+    } else {
+        app.selected_control
+    };
+
+    if app.current_tab == 0 {
+        match real_idx {
+            0 => app.width = (app.width + delta).clamp(10, 300),
+            1 => {
+                if delta > 0 {
+                    app.render_mode_idx = (app.render_mode_idx + 1) % 3;
+                } else {
+                    app.render_mode_idx = (app.render_mode_idx + 2) % 3;
+                }
+            }
+            2 => app.trim_top = (app.trim_top + delta).clamp(0, 2000),
+            3 => app.trim_right = (app.trim_right + delta).clamp(0, 2000),
+            4 => app.trim_bottom = (app.trim_bottom + delta).clamp(0, 2000),
+            5 => app.trim_left = (app.trim_left + delta).clamp(0, 2000),
+            // 6, 7 are toggles (Flip)
+            8 => app.rotate = (app.rotate + delta).clamp(-180, 180),
+            9 => app.scalex = (app.scalex + delta).clamp(10, 500),
+            10 => app.scaley = (app.scaley + delta).clamp(10, 500),
+            11 => app.font_size = (app.font_size + delta).clamp(8, 64),
+            12 => {
+                let count = app.fonts.len();
+                if count > 0 {
+                    if delta > 0 {
+                        app.font_idx = (app.font_idx + 1) % count;
+                    } else {
+                        app.font_idx = (app.font_idx + count - 1) % count;
+                    }
+                }
+            }
+            13 => {
+                if delta > 0 {
+                    app.filter_idx = (app.filter_idx + 1) % 5;
+                } else {
+                    app.filter_idx = (app.filter_idx + 4) % 5;
+                }
+            }
+            14 => app.grayscale_tolerance = (app.grayscale_tolerance + delta).clamp(0, 255),
+            15 => app.brightness = (app.brightness + delta).clamp(-255, 255),
+            16 => app.contrast = (app.contrast + delta).clamp(-255, 255),
+            17 => app.saturation = (app.saturation + delta).clamp(-255, 255),
+            18 => app.gamma = (app.gamma + delta).clamp(0, 255),
+            19 => app.hue = (app.hue + delta).clamp(0, 360),
+            20 => {
+                if delta > 0 {
+                    app.colorspace_idx = (app.colorspace_idx + 1) % 4;
+                } else {
+                    app.colorspace_idx = (app.colorspace_idx + 3) % 4;
+                }
+            }
+            21 => {
+                if delta > 0 {
+                    app.encoding_idx = (app.encoding_idx + 1) % 5;
+                } else {
+                    app.encoding_idx = (app.encoding_idx + 4) % 5;
+                }
+            }
+            _ => {}
+        }
+    } else if app.current_tab == 1 {
+        match real_idx {
+            0 => app.dither = (app.dither + delta).clamp(0, 8),
+            // 1, 2, 3 toggles
+            4 => app.brightness = (app.brightness + delta).clamp(-255, 255),
+            5 => app.contrast = (app.contrast + delta).clamp(-255, 255),
+            6 => app.saturation = (app.saturation + delta).clamp(-255, 255),
+            7 => app.gamma = (app.gamma + delta).clamp(0, 255),
+            8 => app.hue = (app.hue + delta).clamp(0, 360),
+            9 => app.pixelize = (app.pixelize + delta).clamp(0, 100),
+            10 => app.gaussian_blur = (app.gaussian_blur + delta).clamp(0, 100),
+            _ => {} // toggles
+        }
+    }
+    log::info!(
+        "TUI Adjusted: tab={}, ctrl={}, real={}",
+        app.current_tab,
+        app.selected_control,
+        real_idx
+    );
+    app.mark_args_dirty();
+}
+
+fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
+    let real_idx = if app.current_tab == 1 {
+        app.effects_pipeline[visual_idx.min(app.effects_pipeline.len() - 1)]
+    } else {
+        visual_idx
+    };
+
+    if app.current_tab == 0 {
+        match real_idx {
+            0 => app.width = val,
+            2 => app.trim_top = val,
+            3 => app.trim_right = val,
+            4 => app.trim_bottom = val,
+            5 => app.trim_left = val,
+            8 => app.rotate = val,
+            9 => app.scalex = val,
+            10 => app.scaley = val,
+            11 => app.font_size = val,
+            14 => app.grayscale_tolerance = val,
+            _ => {}
+        }
+    } else if app.current_tab == 1 {
+        match real_idx {
+            0 => app.dither = val,
+            4 => app.brightness = val,
+            5 => app.contrast = val,
+            6 => app.saturation = val,
+            7 => app.gamma = val,
+            8 => app.hue = val,
+            9 => app.pixelize = val,
+            10 => app.gaussian_blur = val,
+            _ => {}
+        }
+    }
+    log::info!(
+        "Value set: tab={}, visual={}, real={}, val={}",
+        app.current_tab,
+        visual_idx,
+        real_idx,
+        val
+    );
+    app.mark_args_dirty(); // Reset is immediate
+}
+
+fn toggle_control(app: &mut App) {
+    let real_idx = if app.current_tab == 1 {
+        app.effects_pipeline[app.selected_control.min(app.effects_pipeline.len() - 1)]
+    } else {
+        app.selected_control
+    };
+
+    if app.current_tab == 0 {
+        match real_idx {
+            1 => {
+                app.render_mode_idx = (app.render_mode_idx + 1) % 3;
+            }
+            6 => app.fliph = !app.fliph,
+            7 => app.flipv = !app.flipv,
+            12 => {
+                if !app.fonts.is_empty() {
+                    app.font_idx = (app.font_idx + 1) % app.fonts.len();
+                }
+            }
+            13 => app.filter_idx = (app.filter_idx + 1) % 5,
+            20 => app.colorspace_idx = (app.colorspace_idx + 1) % 4,
+            21 => app.encoding_idx = (app.encoding_idx + 1) % 5,
+            _ => {}
+        }
+    } else if app.current_tab == 1 {
+        match real_idx {
+            1 => app.smooth = !app.smooth,
+            2 => app.invert = !app.invert,
+            3 => app.grayscale = !app.grayscale,
+            // Toggles start at 6
+            6 => app.box_blur = !app.box_blur,
+            7 => app.oil = !app.oil,
+            8 => app.halftone = !app.halftone,
+            9 => app.sepia = !app.sepia,
+            10 => app.normalize = !app.normalize,
+            11 => app.noise = !app.noise,
+            12 => app.emboss = !app.emboss,
+            13 => app.identity = !app.identity,
+            14 => app.laplace = !app.laplace,
+            15 => app.noise_reduction = !app.noise_reduction,
+            16 => app.sharpen = !app.sharpen,
+            17 => app.cali = !app.cali,
+            18 => app.dramatic = !app.dramatic,
+            19 => app.firenze = !app.firenze,
+            20 => app.golden = !app.golden,
+            21 => app.lix = !app.lix,
+            22 => app.lofi = !app.lofi,
+            23 => app.neue = !app.neue,
+            24 => app.obsidian = !app.obsidian,
+            25 => app.pastel_pink = !app.pastel_pink,
+            26 => app.ryo = !app.ryo,
+            27 => app.frosted_glass = !app.frosted_glass,
+            28 => app.solarize = !app.solarize,
+            29 => app.edge_detection = !app.edge_detection,
+            _ => {}
+        }
+    } else if app.current_tab == 2 {
+        if app.selected_control < app.available_blocks.len() {
+            // Block toggling logic usually handled by Enter in tree, but keep specifically for list if used
+            // Currently tree is key
+        }
+    }
+    log::info!(
+        "TUI Toggled: tab={}, visual={}, real={}",
+        app.current_tab,
+        app.selected_control,
+        real_idx
+    );
+    app.mark_args_dirty();
+}
+
+fn reset_control(app: &mut App) {
+    if app.current_tab == 0 {
+        match app.selected_control {
+            0 => app.width = 80,
+            1 => app.render_mode_idx = 1,
+            2 => app.trim_top = 0,
+            3 => app.trim_right = 0,
+            4 => app.trim_bottom = 0,
+            5 => app.trim_left = 0,
+            6 => app.fliph = false,
+            7 => app.flipv = false,
+            8 => app.rotate = 0,
+            9 => app.scalex = 100,
+            10 => app.scaley = 100,
+            11 => app.font_size = 20,
+            12 => {} // font
+            13 => app.filter_idx = 4,
+            14 => app.grayscale_tolerance = 0,
+            15 => app.colorspace_idx = 0,
+            16 => app.encoding_idx = 0,
+            _ => {}
+        }
+    } else if app.current_tab == 1 {
+        match app.selected_control {
+            0 => app.dither = 0,
+            1 => app.smooth = false,
+            2 => app.invert = false,
+            3 => app.grayscale = false,
+            4 => app.brightness = 0,
+            5 => app.contrast = 0,
+            6 => app.saturation = 0,
+            7 => app.gamma = 0,
+            8 => app.hue = 0,
+            9 => app.pixelize = 0,
+            10 => app.gaussian_blur = 0,
+            11 => app.box_blur = false,
+            12 => app.oil = false,
+            13 => app.halftone = false,
+            14 => app.sepia = false,
+            15 => app.normalize = false,
+            16 => app.noise = false,
+            17 => app.emboss = false,
+            18 => app.identity = false,
+            19 => app.laplace = false,
+            20 => app.noise_reduction = false,
+            21 => app.sharpen = false,
+            22 => app.cali = false,
+            23 => app.dramatic = false,
+            24 => app.firenze = false,
+            25 => app.golden = false,
+            26 => app.lix = false,
+            27 => app.lofi = false,
+            28 => app.neue = false,
+            29 => app.obsidian = false,
+            30 => app.pastel_pink = false,
+            31 => app.ryo = false,
+            32 => app.frosted_glass = false,
+            33 => app.solarize = false,
+            34 => app.edge_detection = false,
+            _ => {}
+        }
+    }
+    log::info!(
+        "Control reset: tab={}, control={}",
+        app.current_tab,
+        app.selected_control
+    );
+    app.mark_args_dirty();
+}
+
+// ── UI Rendering ─────────────────────────────────────────────────────────────
+fn ui(f: &mut ratatui::Frame, app: &mut App) {
+    let area = f.area();
+
+    // Background
+    f.render_widget(Block::default().style(Style::new().bg(BG)), area);
+
+    // Layout: [title_bar | main_content | status_bar]
+    let root = Layout::vertical([
+        Constraint::Length(1), // title/tabs
+        Constraint::Min(0),    // content
+        Constraint::Length(1), // status bar
+    ])
+    .split(area);
+
+    // ── Title bar with tabs ──
+    render_title_bar(f, app, root[0]);
+
+    // ── Main content: left panel + output ──
+    let main = Layout::horizontal([
+        Constraint::Length(44), // left panel
+        Constraint::Min(0),     // output
+    ])
+    .split(root[1]);
+
+    // ── Left panel: controls ──
+    render_controls(f, app, main[0]);
+
+    // ── Right panel: output ──
+    render_output(f, app, main[1]);
+
+    // ── Status bar ──
+    render_status_bar(f, app, root[2]);
+
+    // ── Font Picker Overlay ──
+    if app.show_font_picker {
+        let output_area = main[1];
+        let height = (output_area.height / 2).max(5);
+        let area = Rect::new(
+            output_area.x,
+            output_area.y + output_area.height - height,
+            output_area.width,
+            height,
+        );
+
+        f.render_widget(Clear, area);
+
+        let title = if app.font_search.is_empty() {
+            " Select Font ".to_string()
+        } else {
+            format!(" Select Font (Search: {}) ", app.font_search)
+        };
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT) // Maybe just TOP?
+            .style(Style::new().bg(SURFACE));
+
+        // List
+        let query = app.font_search.to_lowercase();
+        let items: Vec<ListItem> = app
+            .fonts
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.to_lowercase().contains(&query))
+            .map(|(i, f)| {
+                let is_selected = app.font_idx == i; // Visual check? No, font_list_state handles selection.
+                                                     // But we want to indicate the *current* font too?
+                                                     // The list allows picking a NEW font.
+                ListItem::new(f.as_str()).style(Style::new().fg(TEXT))
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
+
+        f.render_stateful_widget(list, area, &mut app.font_list_state);
+    }
+}
+
+fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let layout = Layout::horizontal([
+        Constraint::Length(10), // app title
+        Constraint::Min(0),     // tabs + file + spinner
+    ])
+    .split(area);
+
+    // App title
+    let title = Span::styled(
+        " img2irc ",
+        Style::new()
+            .fg(Color::White)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
+
+    // Tabs + filename + spinner
+    let tab_names = [" General ", " Effects ", " Glyphs "];
+    let mut tab_rects = Vec::new();
+
+    let mut x = layout[1].x;
+    let buf = f.buffer_mut();
+    buf.set_style(layout[1], Style::new().bg(BG));
+
+    for (i, name) in tab_names.iter().enumerate() {
+        let w = name.len() as u16;
+        let tab_area = Rect::new(x, layout[1].y, w, 1);
+        tab_rects.push(tab_area);
+
+        let (fg, bg_color) = if i == app.current_tab {
+            (Color::White, TAB_ACTIVE)
+        } else {
+            (TEXT_DIM, TAB_INACTIVE)
+        };
+
+        let style = Style::new()
+            .fg(fg)
+            .bg(bg_color)
+            .add_modifier(if i == app.current_tab {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            });
+        buf.set_style(tab_area, style);
+        buf.set_string(x, tab_area.y, name, style);
+
+        x += w + 1;
+    }
+
+    // Show image path after tabs
+    x += 1;
+    let path_display = format!("📁 {}", app.image_path);
+    let right_edge = layout[1].x + layout[1].width;
+    let avail = right_edge.saturating_sub(x) as usize;
+    let truncated = if path_display.len() > avail {
+        format!(
+            "…{}",
+            &app.image_path[app.image_path.len().saturating_sub(avail.saturating_sub(3))..]
+        )
+    } else {
+        path_display
+    };
+    buf.set_string(x, layout[1].y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
+
+    // Loading spinner in top-right
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+    if is_rendering {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
+        let label = format!(" {} Rendering ", spinner_ch);
+        let lw = label.len() as u16;
+        let sx = right_edge.saturating_sub(lw);
+        buf.set_string(
+            sx,
+            layout[1].y,
+            &label,
+            Style::new()
+                .fg(Color::Yellow)
+                .bg(BG)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+
+    app.tab_areas = tab_rects;
+}
+
+fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Panel border
+    let panel = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER))
+        .border_set(symbols::border::ROUNDED)
+        .style(Style::new().bg(SURFACE));
+    let inner = panel.inner(area);
+    f.render_widget(panel, area);
+
+    if app.current_tab == 2 {
+        render_tree(f, app, inner);
+        return;
+    }
+
+    let buf = f.buffer_mut();
+
+    let controls = app.tab_controls(app.current_tab);
+    let avail_height = inner.height as usize;
+    let item_height: u16 = 2; // 1 row content + 1 row spacing
+    let max_visible = avail_height / item_height as usize;
+
+    // Scrolling offset for controls
+    let scroll_offset = if app.selected_control >= max_visible {
+        app.selected_control - max_visible + 1
+    } else {
+        0
+    };
+
+    let mut control_rects = Vec::new();
+    let mut y = inner.y;
+
+    let ordered_indices: Vec<usize> = if app.current_tab == 1 {
+        app.effects_pipeline.clone()
+    } else {
+        (0..controls.len()).collect()
+    };
+
+    for (v_idx, &i) in ordered_indices.iter().enumerate() {
+        let ctrl = &controls[i];
+        if v_idx < scroll_offset {
+            control_rects.push(Rect::default());
+            continue;
+        }
+        if y + item_height > inner.y + inner.height {
+            control_rects.push(Rect::default());
+            continue;
+        }
+
+        let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
+        let selected = v_idx == app.selected_control;
+
+        let label_text = if app.current_tab == 1 {
+            format!("≡ {}", ctrl.label)
+        } else if app.current_tab == 2 && i < app.available_blocks.len() {
+            app.available_blocks[i].clone()
+        } else {
+            ctrl.label.to_string()
+        };
+
+        match &ctrl.kind {
+            ControlKind::Slider { min, max } => {
+                let value = app.get_control_value(app.current_tab, i);
+                render_bar(buf, ctrl_area, &label_text, value, *min, *max, selected);
+            }
+            ControlKind::Enum { options } => {
+                let value = app.get_control_value(app.current_tab, i) as usize;
+                render_enum(buf, ctrl_area, &label_text, options, value, selected);
+            }
+            ControlKind::Toggle => {
+                let on = app.get_control_value(app.current_tab, i) != 0;
+                render_toggle(buf, ctrl_area, &label_text, on, selected);
+            }
+            ControlKind::FontSelector => {
+                let ly = ctrl_area.y + ctrl_area.height.saturating_sub(1) / 2;
+                let font_name = if app.font_idx < app.fonts.len() {
+                    &app.fonts[app.font_idx]
+                } else {
+                    "Default"
+                };
+                let display_text = format!("{}: {}", label_text, font_name);
+                let _ = buf.set_stringn(
+                    ctrl_area.x + 1,
+                    ly,
+                    display_text,
+                    ctrl_area.width as usize - 2,
+                    Style::new().fg(TEXT),
+                );
+            }
+        }
+
+        control_rects.push(ctrl_area);
+        y += item_height;
+    }
+
+    app.control_areas = control_rects;
+
+    // Draw scroll indicator if needed
+    let total = controls.len();
+    if total > max_visible {
+        let indicator = format!(" {}/{} ", app.selected_control + 1, total);
+        let ix = inner.x + inner.width - indicator.len() as u16 - 1;
+        let iy = inner.y + inner.height - 1;
+        if iy < area.y + area.height {
+            buf.set_string(ix, iy, &indicator, Style::new().fg(TEXT_DIM).bg(SURFACE));
+        }
+    }
+}
+
+fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let buf = f.buffer_mut();
+    // Get flattened nodes (this might be expensive to do every frame, but fine for now)
+    // 1. Update Scroll
+    {
+        let nodes = app.tree_state.flatten();
+        let total = nodes.len();
+        let height = area.height as usize;
+        let selected = app.tree_state.selected_idx;
+        let current_scroll = app.tree_state.scroll as usize;
+
+        if selected >= current_scroll + height {
+            app.tree_state.scroll = (selected - height + 1) as u16;
+        } else if selected < current_scroll {
+            app.tree_state.scroll = selected as u16;
+        }
+    }
+
+    // 2. Render
+    let nodes = app.tree_state.flatten();
+    let total = nodes.len();
+    let start_idx = app.tree_state.scroll as usize;
+    let end_idx = (start_idx + area.height as usize).min(total);
+
+    let visible_nodes = nodes
+        .iter()
+        .skip(start_idx)
+        .take(end_idx - start_idx)
+        .enumerate();
+
+    for (i, node) in visible_nodes {
+        let y = area.y + i as u16;
+        if y >= area.y + area.height {
+            break;
+        }
+
+        // Calculate actual index for selection check
+        let actual_idx = start_idx + i;
+        let selected = actual_idx == app.tree_state.selected_idx;
+
+        let style = if selected {
+            Style::new().bg(SURFACE).fg(Color::White)
+        } else {
+            Style::new().fg(TEXT)
+        };
+
+        // Background for the whole line
+        for x in area.x..area.x + area.width {
+            buf.get_mut(x, y).set_style(style);
+        }
+
+        // Indentation
+        let indent_len = (node.level as u16) * 2;
+        let x = area.x + indent_len;
+
+        // Marker
+        let marker = if !node.is_leaf {
+            if node.expanded {
+                "▼ "
+            } else {
+                "▶ "
+            }
+        } else {
+            // Check if selected in render_args
+            let name = &node.full_path;
+            if app.render_args.blocks.contains(name) {
+                "☑ "
+            } else {
+                "☐ "
+            }
+        };
+
+        // Draw marker
+        buf.set_string(x, y, marker, style.fg(ACCENT));
+
+        // Draw name
+        // +2 for marker width
+        buf.set_string(x + 2, y, &node.name, style);
+    }
+}
+
+fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.current_tab == 2 {
+        render_glyphs_tab(f, app, area);
+        return;
+    }
+
+    if let Some(dialog) = &mut app.explorer_dialog {
+        f.render_widget(Clear, area);
+
+        let main_chunks = if matches!(dialog.mode, ExplorerMode::Open) {
+            let layout = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            // Use bottom half
+            vec![layout[1]]
+        } else {
+            Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
+                .split(area)
+                .to_vec()
+        };
+
+        let explorer_area = main_chunks[0];
+
+        let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(explorer_area);
+
+        // Explorer border
+        let mut explorer_block = Block::default().borders(Borders::ALL).title(" Explorer ");
+        if !dialog.focus_on_input {
+            explorer_block = explorer_block.border_style(Style::default().fg(ACCENT));
+        }
+        // Apply the highlight block to the explorer widget (if possible)
+        // Since we can't easily modify the internal theme without set_theme,
+        // let's just render a colored border around the chunk.
+        f.render_widget(&dialog.explorer.widget(), chunks[0]);
+        if !dialog.focus_on_input {
+            f.render_widget(explorer_block, chunks[0]);
+        }
+
+        // Preview in right half
+        let file = dialog.explorer.current();
+        let path = file.path();
+        let is_image = path.to_string_lossy().to_lowercase().ends_with(".png")
+            || path.to_string_lossy().to_lowercase().ends_with(".jpg")
+            || path.to_string_lossy().to_lowercase().ends_with(".jpeg")
+            || path.to_string_lossy().to_lowercase().ends_with(".gif")
+            || path.to_string_lossy().to_lowercase().ends_with(".bmp")
+            || path.to_string_lossy().to_lowercase().ends_with(".webp");
+
+        if is_image {
+            let path_str = path.to_string_lossy().into_owned();
+            if app.last_preview_path.as_ref() != Some(&path_str) {
+                if let Ok(img) = image::open(&path_str) {
+                    let protocol = app.preview_picker.new_resize_protocol(img);
+                    app.image_preview_protocol = Some(protocol);
+                    app.last_preview_path = Some(path_str);
+                }
+            }
+
+            if let Some(protocol) = &mut app.image_preview_protocol {
+                let inner_area = chunks[1].inner(ratatui::layout::Margin {
+                    vertical: 1,
+                    horizontal: 1,
+                });
+                protocol.resize_encode(&Resize::Fit(None), inner_area);
+                let widget = StatefulImage::default();
+                f.render_stateful_widget(widget, inner_area, protocol);
+            }
+        } else {
+            f.render_widget(
+                Paragraph::new("No preview available").alignment(Alignment::Center),
+                chunks[1],
+            );
+        }
+
+        if !matches!(dialog.mode, ExplorerMode::Open) {
+            let input_block = Block::default().borders(Borders::ALL).title(" Filename ");
+            let input_area = main_chunks[1];
+            let p = Paragraph::new(dialog.name_input.lines()[0].as_str())
+                .block(input_block)
+                .style(if dialog.focus_on_input {
+                    Style::default().fg(ACCENT)
+                } else {
+                    Style::default()
+                });
+            f.render_widget(p, input_area);
+        }
+        return;
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER))
+        .border_set(symbols::border::ROUNDED)
+        .title(Span::styled(
+            " Output ",
+            Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
+        ));
+
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+    if is_rendering || app.cached_render.is_empty() {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
+        let loading_text = format!("\n\n\n      {} Rendering image...", spinner_ch);
+        let p = Paragraph::new(loading_text)
+            .block(block) // Render block here is fine for loading state
+            .alignment(Alignment::Center)
+            .style(Style::new().fg(ACCENT));
+        f.render_widget(p, area);
+    } else {
+        // Compute output stats
+        let line_count = app.cached_render.lines().count();
+        let max_bytes = app
+            .cached_render
+            .lines()
+            .map(|l| l.len())
+            .max()
+            .unwrap_or(0);
+        let title_right = format!(
+            " {}×{} │ {}B ",
+            max_bytes,
+            line_count,
+            app.cached_render.len()
+        );
+
+        let block_with_bottom_title = block
+            .title_bottom(Line::from(Span::styled(
+                title_right,
+                Style::new().fg(TEXT_DIM),
+            )))
+            .style(Style::new().bg(BG));
+
+        // Render the block border/title separately
+        let inner = block_with_bottom_title.inner(area);
+        f.render_widget(block_with_bottom_title, area);
+
+        let text = app
+            .cached_render
+            .as_bytes()
+            .into_text()
+            .unwrap_or_else(|_| ratatui::text::Text::from(app.cached_render.clone()));
+
+        // Vertical center calculation
+        let line_count = app.cached_render.lines().count() as u16;
+        let pad_y = inner.height.saturating_sub(line_count).saturating_div(2);
+
+        let layout = Layout::vertical([Constraint::Length(pad_y), Constraint::Min(0)]).split(inner);
+
+        let output = Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .scroll((app.scroll, 0));
+
+        f.render_widget(output, layout[1]);
+    }
+}
+
+fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+
+    let glyph_block = Block::default().borders(Borders::ALL).title(" Glyphs ");
+
+    if let Some(node) = app.tree_state.get_selected_node() {
+        let (config_groups, _) = crate::font::load_blocks_config();
+
+        let target_key = if !node.full_path.is_empty() {
+            &node.full_path
+        } else {
+            &node.name
+        };
+
+        if let Some(codes) = config_groups.get(target_key) {
+            let items: Vec<ListItem> = codes
+                .iter()
+                .map(|&code| {
+                    let ch = char::from_u32(code).unwrap_or('?');
+                    ListItem::new(format!("{} U+{:04X}", ch, code))
+                })
+                .collect();
+
+            let list = List::new(items)
+                .block(glyph_block)
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            f.render_stateful_widget(list, chunks[0], &mut app.glyph_list_state);
+
+            // Preview
+            let idx = app.glyph_list_state.selected().unwrap_or(0);
+            if let Some(&code) = codes.get(idx) {
+                if let Some(ch) = char::from_u32(code) {
+                    render_block_bitmap(f, app, chunks[1], ch);
+                }
+            }
+        } else {
+            f.render_widget(
+                Paragraph::new("No known glyphs").block(glyph_block),
+                chunks[0],
+            );
+        }
+    }
+}
+
+fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: char) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Preview: {} ", ch));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Use current store to find bitmap
+    if let Some(g) = &app.arc_glyphs {
+        if let Some(bitmap) = g.glyphs.iter().find(|(c, _)| *c == ch).map(|(_, b)| b) {
+            let mut text = String::new();
+            for row in bitmap {
+                for &pixel in row {
+                    if pixel > 0 {
+                        text.push_str("██");
+                    } else {
+                        text.push_str("  ");
+                    }
+                }
+                text.push('\n');
+            }
+            let p = Paragraph::new(text).style(Style::new().fg(ACCENT));
+            f.render_widget(p, inner);
+        } else {
+            // Not in current store, maybe need to reload or it's just missing
+            let p =
+                Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
+                    .alignment(Alignment::Center);
+            f.render_widget(p, inner);
+        }
+    }
+}
+
+fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let keys = [
+        ("Tab", "Switch"),
+        ("↑↓", "Navigate"),
+        ("←→", "Adjust"),
+        ("Space", "Toggle"),
+        ("Del", "Reset"),
+        ("Shift", "×10"),
+        ("O", "Open"),
+        ("Ctrl+S", "Save"),
+        ("Ctrl+P", "Png"),
+        ("Q", "Quit"),
+    ];
+
+    // Add technical info if available
+    let info_text = if let Some(g) = &app.arc_glyphs {
+        let (gw, gh) = g.metrics;
+        format!(" | Cell: {}x{} | ", gw, gh)
+    } else {
+        " | ".to_string()
+    };
+
+    let spans: Vec<Span> = keys
+        .iter()
+        .flat_map(|(key, desc)| {
+            vec![
+                Span::styled(format!(" {} ", key), Style::new().fg(SURFACE).bg(ACCENT)),
+                Span::styled(format!(" {} ", desc), Style::new().fg(TEXT).bg(SURFACE)),
+                Span::raw(" "),
+            ]
+        })
+        .collect();
+
+    let mut full_spans = spans;
+    full_spans.push(Span::raw(info_text));
+
+    let line = Line::from(full_spans);
+    let bar = Paragraph::new(line).style(Style::new().bg(STATUS_BG));
+    f.render_widget(bar, area);
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup[1])[1]
+}

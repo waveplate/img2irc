@@ -1,11 +1,11 @@
 use clap::Parser;
-use std::str::FromStr;
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum SamplingFilter {
     Nearest,
-    Triangle, 
+    Triangle,
     CatmullRom,
     Gaussian,
     Lanczos3,
@@ -14,7 +14,7 @@ pub enum SamplingFilter {
 #[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
 pub enum ColourSpace {
     HSL,
-    HSV, 
+    HSV,
     HSLUV,
     LCH,
 }
@@ -48,12 +48,23 @@ impl FromStr for Param {
         if s.contains(':') {
             let parts: Vec<&str> = s.split(':').collect();
             if parts.len() != 3 {
-                return Err(format!("Invalid range format '{}'. Expected 'start:end:step' (e.g. '20:40:1')", s));
+                return Err(format!(
+                    "Invalid range format '{}'. Expected 'start:end:step' (e.g. '20:40:1')",
+                    s
+                ));
             }
-            let start = parts[0].parse().map_err(|e| format!("Invalid start: {}", e))?;
-            let end = parts[1].parse().map_err(|e| format!("Invalid end: {}", e))?;
-            let step = parts[2].parse().map_err(|e| format!("Invalid step: {}", e))?;
-            if step == 0.0 { return Err("Step cannot be zero".into()); }
+            let start = parts[0]
+                .parse()
+                .map_err(|e| format!("Invalid start: {}", e))?;
+            let end = parts[1]
+                .parse()
+                .map_err(|e| format!("Invalid end: {}", e))?;
+            let step = parts[2]
+                .parse()
+                .map_err(|e| format!("Invalid step: {}", e))?;
+            if step == 0.0 {
+                return Err("Step cannot be zero".into());
+            }
             Ok(Param::Range { start, end, step })
         } else {
             let val = s.parse().map_err(|e| format!("Invalid number: {}", e))?;
@@ -100,7 +111,7 @@ pub struct RenderArgs {
     pub font: Vec<String>,
     pub font_size: u32,
     pub grayscale_tolerance: u8,
-    
+
     // Numeric params
     pub brightness: f32,
     pub contrast: f32,
@@ -148,7 +159,9 @@ pub struct RenderArgs {
     pub smooth: bool,
     pub score: bool,
     pub save: Option<String>,
+    pub pipeline: Vec<String>,
 }
+
 #[derive(Parser, Clone, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -172,9 +185,11 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub clear_cache: bool,
 
+    /// launch the TUI
+    #[arg(long, default_value_t = false)]
+    pub tui: bool,
 
-
-    #[arg(required_unless_present_any=["list_blocks", "list_ranges", "print_ranges", "show_block_bitmaps", "clear_cache"])]
+    #[arg(help = "input image path or URL")]
     pub image: Option<String>,
 
     /// output image width in columns
@@ -230,7 +245,7 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub fliph: bool,
 
-    /// flip vertical 
+    /// flip vertical
     #[arg(long, default_value_t = false)]
     pub flipv: bool,
 
@@ -239,13 +254,9 @@ pub struct Args {
     pub render: Render,
 
     /// use braille pixels
-    #[arg(
-        long,
-        default_value_t = false,
-        conflicts_with = "blocks",
-    )]
+    #[arg(long, default_value_t = false, conflicts_with = "blocks")]
     pub braille: bool,
- 
+
     /// use blocks
     #[arg(
         long,
@@ -286,17 +297,13 @@ pub struct Args {
     #[arg(long, default_value = "24")]
     pub font_size: Param,
 
-
-
-
-
     /// tolerance for considering a colour grayscale (0-255)
     #[arg(long, default_value = "0")]
     pub grayscale_tolerance: Param,
 
     // Iteratable params
     /// adjust brightness (0 = no change, or start:end:step)
-    #[arg(short = 'b', long, default_value = "0.0", allow_hyphen_values = true)]    
+    #[arg(short = 'b', long, default_value = "0.0", allow_hyphen_values = true)]
     pub brightness: Param,
 
     /// adjust contrast (0 = no change, or start:end:step)
@@ -324,19 +331,43 @@ pub struct Args {
     pub dither: u32,
 
     /// adjust luma brightness (braille only)
-    #[arg(short = 'B', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    #[arg(
+        short = 'B',
+        long,
+        default_value = "0.0",
+        allow_hyphen_values = true,
+        requires = "braille"
+    )]
     pub luma_brightness: Param,
 
     /// adjust luma contrast (braille only)
-    #[arg(short = 'C', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    #[arg(
+        short = 'C',
+        long,
+        default_value = "0.0",
+        allow_hyphen_values = true,
+        requires = "braille"
+    )]
     pub luma_contrast: Param,
 
     /// adjust luma gamma (braille only)
-    #[arg(short = 'G', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    #[arg(
+        short = 'G',
+        long,
+        default_value = "0.0",
+        allow_hyphen_values = true,
+        requires = "braille"
+    )]
     pub luma_gamma: Param,
 
     /// adjust luma saturation (braille only)
-    #[arg(short = 'S', long, default_value = "0.0", allow_hyphen_values = true, requires = "braille")]
+    #[arg(
+        short = 'S',
+        long,
+        default_value = "0.0",
+        allow_hyphen_values = true,
+        requires = "braille"
+    )]
     pub luma_saturation: Param,
 
     /// luminance is inverted
@@ -364,15 +395,15 @@ pub struct Args {
     pub pixelize: Param,
 
     /// simple average of all the neighboring pixels surrounding a given pixel
-    #[arg(long="boxblur", default_value_t = false)]
+    #[arg(long = "boxblur", default_value_t = false)]
     pub box_blur: bool,
 
     /// gaussian blur radius
-    #[arg(long="gaussianblur", default_value = "0")]
+    #[arg(long = "gaussianblur", default_value = "0")]
     pub gaussian_blur: Param,
 
     /// gaussian blur radius (only luminance)
-    #[arg(long="lumablur", default_value = "0")]
+    #[arg(long = "lumablur", default_value = "0")]
     pub luma_blur: Param,
 
     /// oil filter ("[radius],[intensity]")
@@ -408,7 +439,7 @@ pub struct Args {
     pub laplace: bool,
 
     /// reduces noise for a cleaner, clearer image
-    #[arg(long="denoise", default_value_t = false)]
+    #[arg(long = "denoise", default_value_t = false)]
     pub noise_reduction: bool,
 
     /// increases clarity and definition, making edges and details more distinct
@@ -448,7 +479,7 @@ pub struct Args {
     pub obsidian: bool,
 
     /// soft, delicate pink tint like pastel colors
-    #[arg(long="pastelpink", default_value_t = false)]
+    #[arg(long = "pastelpink", default_value_t = false)]
     pub pastel_pink: bool,
 
     /// bright, high-contrast appearance with vivid colors and sharp details
@@ -456,7 +487,7 @@ pub struct Args {
     pub ryo: bool,
 
     /// blurred, frosted appearance as if viewed through semi-transparent surface
-    #[arg(long="frostedglass", default_value_t = false)]
+    #[arg(long = "frostedglass", default_value_t = false)]
     pub frosted_glass: bool,
 
     /// strange, otherworldly appearance with inverted colors and surreal atmosphere
@@ -464,14 +495,12 @@ pub struct Args {
     pub solarize: bool,
 
     /// highlights edges and boundaries in an image
-    #[arg(long="edgedetection", default_value_t = false)]
+    #[arg(long = "edgedetection", default_value_t = false)]
     pub edge_detection: bool,
 
     /// experimental smoothness optimization mode
     #[arg(long, default_value_t = false, alias = "connected")]
     pub smooth: bool,
-
-
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]
@@ -481,7 +510,6 @@ pub struct Args {
     #[arg(long)]
     pub save: Option<String>,
 }
-
 
 pub fn parse_args() -> Args {
     Args::parse()
@@ -525,46 +553,64 @@ fn parse_crop_coordinates(s: &str) -> Result<(u32, u32, u32, u32), String> {
         ));
     }
 
-    let x1 = coords[0].parse::<u32>().map_err(|_| format!("Invalid x1 value '{}'.", coords[0]))?;
-    let y1 = coords[1].parse::<u32>().map_err(|_| format!("Invalid y1 value '{}'.", coords[1]))?;
-    let x2 = coords[2].parse::<u32>().map_err(|_| format!("Invalid x2 value '{}'.", coords[2]))?;
-    let y2 = coords[3].parse::<u32>().map_err(|_| format!("Invalid y2 value '{}'.", coords[3]))?;
+    let x1 = coords[0]
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid x1 value '{}'.", coords[0]))?;
+    let y1 = coords[1]
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid y1 value '{}'.", coords[1]))?;
+    let x2 = coords[2]
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid x2 value '{}'.", coords[2]))?;
+    let y2 = coords[3]
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid y2 value '{}'.", coords[3]))?;
 
     Ok((x1, y1, x2, y2))
 }
 
 fn parse_trim(s: &str) -> Result<(u32, u32, u32, u32), String> {
     let parts: Vec<&str> = s.split(',').collect();
-    let values_res: Result<Vec<u32>, _> = parts.iter().map(|s| {
-        if s.trim().is_empty() { Ok(0) }
-        else { s.trim().parse::<u32>() }
-    }).collect();
+    let values_res: Result<Vec<u32>, _> = parts
+        .iter()
+        .map(|s| {
+            if s.trim().is_empty() {
+                Ok(0)
+            } else {
+                s.trim().parse::<u32>()
+            }
+        })
+        .collect();
 
-    let values = values_res.map_err(|_| format!("Invalid trim format '{}'. Expected numbers.", s))?;
+    let values =
+        values_res.map_err(|_| format!("Invalid trim format '{}'. Expected numbers.", s))?;
 
     match values.len() {
         1 => {
             let v = values[0];
             Ok((v, v, v, v))
-        },
+        }
         2 => {
             let v = values[0]; // Top/Bottom
             let h = values[1]; // Left/Right
             Ok((v, h, v, h))
-        },
+        }
         3 => {
             let t = values[0];
             let h = values[1];
             let b = values[2];
             Ok((t, h, b, h))
-        },
+        }
         4 => {
             let t = values[0];
             let r = values[1];
             let b = values[2];
             let l = values[3];
             Ok((t, r, b, l))
-        },
-        _ => Err(format!("Invalid trim format '{}'. Expected 1, 2, 3, or 4 values.", s)),
+        }
+        _ => Err(format!(
+            "Invalid trim format '{}'. Expected 1, 2, 3, or 4 values.",
+            s
+        )),
     }
 }

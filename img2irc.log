@@ -1,0 +1,158 @@
+00:56:35 [INFO] Starting img2irc TUI...
+00:56:35 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+00:56:35 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:56:35 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:56:35 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:56:35 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:56:35 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:56:35 [INFO] Starting render optimization... (0 glyphs)
+00:56:35 [INFO] factor_x: 14
+00:56:35 [INFO] factor_y: 32
+00:56:35 [INFO] img width: 1
+00:56:35 [INFO] img height: 1
+00:56:35 [INFO] pw: 1120
+00:56:35 [INFO] ph: 1120
+00:56:35 [INFO] Final target dimensions (pixels): 1120x1120
+00:56:35 [INFO] Render finished in 77.442548ms
+00:56:36 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:56:36 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+00:56:36 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:56:36 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:56:36 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:56:36 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:56:36 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:56:36 [INFO] Starting render optimization... (0 glyphs)
+00:56:36 [INFO] factor_x: 14
+00:56:36 [INFO] factor_y: 32
+00:56:36 [INFO] img width: 1
+00:56:36 [INFO] img height: 1
+00:56:36 [INFO] pw: 1120
+00:56:36 [INFO] ph: 1120
+00:56:36 [INFO] Final target dimensions (pixels): 1120x1120
+00:56:36 [INFO] Render finished in 71.000457ms
+00:57:52 [INFO] TUI Toggled: tab=2, visual=1, real=1
+00:57:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:57:53 [INFO] Starting render optimization... (0 glyphs)
+00:57:53 [INFO] factor_x: 14
+00:57:53 [INFO] factor_y: 32
+00:57:53 [INFO] img width: 1
+00:57:53 [INFO] img height: 1
+00:57:53 [INFO] pw: 1120
+00:57:53 [INFO] ph: 1120
+00:57:53 [INFO] Final target dimensions (pixels): 1120x1120
+00:57:53 [INFO] Render finished in 64.368327ms
+00:58:01 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:58:01 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+00:58:01 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:58:01 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:58:01 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:58:01 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:58:01 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:58:01 [INFO] Starting render optimization... (16 glyphs)
+00:58:01 [INFO] factor_x: 14
+00:58:01 [INFO] factor_y: 32
+00:58:01 [INFO] img width: 1
+00:58:01 [INFO] img height: 1
+00:58:01 [INFO] pw: 1120
+00:58:01 [INFO] ph: 1120
+00:58:01 [INFO] Final target dimensions (pixels): 1120x1120
+00:58:01 [INFO] DEBUG: Original Pixel at (0,0) = 000000 RGB(0,0,0)
+00:58:01 [INFO] Render finished in 84.924182ms
+00:58:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:58:03 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+00:58:03 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:58:03 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:58:03 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:58:03 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:58:03 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:58:03 [INFO] Starting render optimization... (0 glyphs)
+00:58:03 [INFO] factor_x: 14
+00:58:03 [INFO] factor_y: 32
+00:58:03 [INFO] img width: 1
+00:58:03 [INFO] img height: 1
+00:58:03 [INFO] pw: 1120
+00:58:03 [INFO] ph: 1120
+00:58:03 [INFO] Final target dimensions (pixels): 1120x1120
+00:58:03 [INFO] Render finished in 59.235186ms
+00:58:04 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:58:04 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+00:58:04 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:58:04 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:58:04 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:58:04 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:58:04 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:58:04 [INFO] Starting render optimization... (16 glyphs)
+00:58:04 [INFO] factor_x: 14
+00:58:04 [INFO] factor_y: 32
+00:58:04 [INFO] img width: 1
+00:58:04 [INFO] img height: 1
+00:58:04 [INFO] pw: 1120
+00:58:04 [INFO] ph: 1120
+00:58:04 [INFO] Final target dimensions (pixels): 1120x1120
+00:58:04 [INFO] Render finished in 76.967323ms
+00:58:09 [INFO] TUI Toggled: tab=2, visual=2, real=2
+00:58:10 [INFO] TUI Toggled: tab=2, visual=3, real=3
+00:58:10 [INFO] TUI Toggled: tab=2, visual=3, real=3
+00:58:10 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:58:10 [INFO] Starting render optimization... (16 glyphs)
+00:58:10 [INFO] factor_x: 14
+00:58:10 [INFO] factor_y: 32
+00:58:10 [INFO] img width: 1
+00:58:10 [INFO] img height: 1
+00:58:10 [INFO] pw: 1120
+00:58:10 [INFO] ph: 1120
+00:58:10 [INFO] Final target dimensions (pixels): 1120x1120
+00:58:11 [INFO] Render finished in 77.741667ms
+00:58:20 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:58:20 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+00:58:20 [INFO] Warning: Block 'eighth' not defined in blocks.toml
+00:58:20 [INFO] Warning: Block 'half' not defined in blocks.toml
+00:58:20 [INFO] Warning: Block 'polygons' not defined in blocks.toml
+00:58:20 [INFO] Warning: Block 'quarter' not defined in blocks.toml
+00:58:20 [INFO] Warning: Block 'space' not defined in blocks.toml
+00:58:20 [INFO] Starting render optimization... (0 glyphs)
+00:58:20 [INFO] factor_x: 14
+00:58:20 [INFO] factor_y: 32
+00:58:20 [INFO] img width: 1
+00:58:20 [INFO] img height: 1
+00:58:20 [INFO] pw: 1120
+00:58:20 [INFO] ph: 1120
+00:58:20 [INFO] Final target dimensions (pixels): 1120x1120
+00:58:20 [INFO] Render finished in 59.058534ms
+00:59:52 [INFO] TUI Toggled: tab=2, visual=2, real=2
+00:59:52 [INFO] TUI Toggled: tab=2, visual=2, real=2
+00:59:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+00:59:53 [INFO] Starting render optimization... (0 glyphs)
+00:59:53 [INFO] factor_x: 14
+00:59:53 [INFO] factor_y: 32
+00:59:53 [INFO] img width: 1
+00:59:53 [INFO] img height: 1
+00:59:53 [INFO] pw: 1120
+00:59:53 [INFO] ph: 1120
+00:59:53 [INFO] Final target dimensions (pixels): 1120x1120
+00:59:53 [INFO] Render finished in 75.323956ms
+01:00:06 [INFO] TUI Toggled: tab=2, visual=6, real=6
+01:00:06 [INFO] TUI Toggled: tab=2, visual=3, real=3
+01:00:06 [INFO] TUI Toggled: tab=2, visual=3, real=3
+01:00:07 [INFO] TUI Toggled: tab=2, visual=3, real=3
+01:00:07 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+01:00:07 [INFO] Starting render optimization... (0 glyphs)
+01:00:07 [INFO] factor_x: 14
+01:00:07 [INFO] factor_y: 32
+01:00:07 [INFO] img width: 1
+01:00:07 [INFO] img height: 1
+01:00:07 [INFO] pw: 1120
+01:00:07 [INFO] ph: 1120
+01:00:07 [INFO] Final target dimensions (pixels): 1120x1120
+01:00:07 [INFO] Render finished in 60.600134ms
+01:01:14 [INFO] TUI Toggled: tab=2, visual=1, real=1
+01:01:15 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=[]
+01:01:15 [INFO] Starting render optimization... (0 glyphs)
+01:01:15 [INFO] factor_x: 14
+01:01:15 [INFO] factor_y: 32
+01:01:15 [INFO] img width: 1
+01:01:15 [INFO] img height: 1
+01:01:15 [INFO] pw: 1120
+01:01:15 [INFO] ph: 1120
+01:01:15 [INFO] Final target dimensions (pixels): 1120x1120
+01:01:15 [INFO] Render finished in 59.005683ms

@@ -1,0 +1,4 @@
+
+thread 'tokio-runtime-worker' (3187125) panicked at src/draw.rs:796:60:
+index out of bounds: the len is 34 but the index is 34
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

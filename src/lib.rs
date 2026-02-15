@@ -1,41 +1,60 @@
 pub mod args;
+pub mod config;
 pub mod draw;
-pub mod palette;
+pub mod draw_helpers;
 pub mod effects;
 pub mod font;
-pub mod draw_helpers;
+pub mod palette;
 
+pub mod tui;
 
-use reqwest;
-use url::Url;
+use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
-use std::{error::Error, io::{Cursor, Write}, process::exit};
-use crate::args::{Encoding, Param, RenderArgs, Args};
+use reqwest;
+use std::{
+    error::Error,
+    io::{Cursor, Write},
+};
+use url::Url;
 
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use resvg;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Mutex;
 use tiny_skia;
-
 
 // Main execution logic moved to binary files
 
-
 pub fn args_to_render_args(args: &Args) -> RenderArgs {
     let (mut sx, mut sy) = args.scale.unwrap_or((1.0, 1.0));
-    if let Some(p) = &args.scalex { sx = param_base(p); }
-    if let Some(p) = &args.scaley { sy = param_base(p); }
+    if let Some(p) = &args.scalex {
+        sx = param_base(p);
+    }
+    if let Some(p) = &args.scaley {
+        sy = param_base(p);
+    }
 
     let mut crop = args.crop;
-    if args.crop_x1.is_some() || args.crop_y1.is_some() || args.crop_x2.is_some() || args.crop_y2.is_some() {
+    if args.crop_x1.is_some()
+        || args.crop_y1.is_some()
+        || args.crop_x2.is_some()
+        || args.crop_y2.is_some()
+    {
         let (mut x1, mut y1, mut x2, mut y2) = crop.unwrap_or((0, 0, 0, 0));
-        if let Some(p) = &args.crop_x1 { x1 = param_base(p) as u32; }
-        if let Some(p) = &args.crop_y1 { y1 = param_base(p) as u32; }
-        if let Some(p) = &args.crop_x2 { x2 = param_base(p) as u32; }
-        if let Some(p) = &args.crop_y2 { y2 = param_base(p) as u32; }
+        if let Some(p) = &args.crop_x1 {
+            x1 = param_base(p) as u32;
+        }
+        if let Some(p) = &args.crop_y1 {
+            y1 = param_base(p) as u32;
+        }
+        if let Some(p) = &args.crop_x2 {
+            x2 = param_base(p) as u32;
+        }
+        if let Some(p) = &args.crop_y2 {
+            y2 = param_base(p) as u32;
+        }
         crop = Some((x1, y1, x2, y2));
     }
-    
+
     RenderArgs {
         list_blocks: args.list_blocks,
         list_ranges: args.list_ranges,
@@ -64,7 +83,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         font_size: param_base(&args.font_size) as u32,
 
         grayscale_tolerance: param_base(&args.grayscale_tolerance) as u8,
-        
+
         brightness: param_base(&args.brightness),
         contrast: param_base(&args.contrast),
         gamma: param_base(&args.gamma),
@@ -112,6 +131,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         save: args.save.clone(),
 
         score: args.score,
+        pipeline: Vec::new(),
     }
 }
 
@@ -122,34 +142,51 @@ pub fn param_base(p: &Param) -> f32 {
     }
 }
 
-pub fn prepare_canvas(args: &RenderArgs, glyphs: &font::GlyphStore, image: PhotonImage) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
+pub fn prepare_canvas(
+    args: &RenderArgs,
+    glyphs: &font::GlyphStore,
+    image: PhotonImage,
+) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = effects::apply_effects(args, glyphs, image);
-    
+
     if let Some(path) = &args.save {
         let _ = photon_rs::native::save_image(image.clone(), path);
     }
 
     let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance);
-    
+
     let luma_canvas = if args.braille {
         let image_luma = effects::apply_luma_effects(args, glyphs, image);
-        Some(draw::AnsiImage::new(image_luma, glyphs.clone(), args.grayscale_tolerance))
+        Some(draw::AnsiImage::new(
+            image_luma,
+            glyphs.clone(),
+            args.grayscale_tolerance,
+        ))
     } else {
         None
     };
     (canvas, luma_canvas)
 }
 
-pub fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canvas: Option<&draw::AnsiImage>, glyphs: &[draw::FastGlyph]) -> draw::RenderResult {
+pub fn render_from_canvas(
+    args: &RenderArgs,
+    canvas: &draw::AnsiImage,
+    luma_canvas: Option<&draw::AnsiImage>,
+    glyphs: &[draw::FastGlyph],
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> draw::RenderResult {
     if args.braille {
         if let Some(lc) = luma_canvas {
             match args.render {
-                crate::args::Render::Irc => draw::render_braille(lc, canvas, args, crate::args::Render::Irc),
-                // For Preview in braille, we fallback to Ansi behaviors (or Ansi24) since we didn't implement specialized Preview logic for braille yet.
-                // Preview implies viewing IRC constraints. Braille on IRC is... text. So Ansi with IRC colors?
-                // Let's map Preview to Ansi rendering for now in Braille to avoid crash.
-                crate::args::Render::Ansi | crate::args::Render::Preview => draw::render_braille(lc, canvas, args, crate::args::Render::Ansi),
-                crate::args::Render::Ansi24 => draw::render_braille(lc, canvas, args, crate::args::Render::Ansi24),
+                crate::args::Render::Irc => {
+                    draw::render_braille(lc, canvas, args, crate::args::Render::Irc)
+                }
+                crate::args::Render::Ansi | crate::args::Render::Preview => {
+                    draw::render_braille(lc, canvas, args, crate::args::Render::Ansi)
+                }
+                crate::args::Render::Ansi24 => {
+                    draw::render_braille(lc, canvas, args, crate::args::Render::Ansi24)
+                }
             }
         } else {
             draw::RenderResult::from("Error: Braille mode without luma canvas")
@@ -157,25 +194,68 @@ pub fn render_from_canvas(args: &RenderArgs, canvas: &draw::AnsiImage, luma_canv
     } else {
         if args.smooth {
             match args.render {
-                crate::args::Render::Irc => draw::render_blocks_smooth(canvas, args, crate::args::Render::Irc, glyphs),
-                crate::args::Render::Ansi => draw::render_blocks_smooth(canvas, args, crate::args::Render::Ansi, glyphs),
-                crate::args::Render::Ansi24 => draw::render_blocks_smooth(canvas, args, crate::args::Render::Ansi24, glyphs),
-                crate::args::Render::Preview => draw::render_blocks_smooth(canvas, args, crate::args::Render::Preview, glyphs),
+                crate::args::Render::Irc => draw::render_blocks_smooth(
+                    canvas,
+                    args,
+                    crate::args::Render::Irc,
+                    glyphs,
+                    abort_flag,
+                ),
+                crate::args::Render::Ansi => draw::render_blocks_smooth(
+                    canvas,
+                    args,
+                    crate::args::Render::Ansi,
+                    glyphs,
+                    abort_flag,
+                ),
+                crate::args::Render::Ansi24 => draw::render_blocks_smooth(
+                    canvas,
+                    args,
+                    crate::args::Render::Ansi24,
+                    glyphs,
+                    abort_flag,
+                ),
+                crate::args::Render::Preview => draw::render_blocks_smooth(
+                    canvas,
+                    args,
+                    crate::args::Render::Preview,
+                    glyphs,
+                    abort_flag,
+                ),
             }
         } else {
             match args.render {
-                crate::args::Render::Irc => draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs),
-                crate::args::Render::Ansi => draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs),
-                crate::args::Render::Ansi24 => draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs),
-                crate::args::Render::Preview => draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs),
+                crate::args::Render::Irc => {
+                    draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
+                }
+                crate::args::Render::Ansi => {
+                    draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
+                }
+                crate::args::Render::Ansi24 => {
+                    draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
+                }
+                crate::args::Render::Preview => {
+                    draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs)
+                }
             }
         }
     }
 }
 
-pub fn render_output(args: &RenderArgs, glyph_store: &font::GlyphStore, image: PhotonImage, glyphs: &[draw::FastGlyph]) -> draw::RenderResult {
+pub fn render_output(
+    args: &RenderArgs,
+    glyph_store: &font::GlyphStore,
+    image: PhotonImage,
+    glyphs: &[draw::FastGlyph],
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> draw::RenderResult {
+    if let Some(flag) = &abort_flag {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return draw::RenderResult::from("Cancelled");
+        }
+    }
     let (canvas, luma_canvas) = prepare_canvas(args, glyph_store, image);
-    render_from_canvas(args, &canvas, luma_canvas.as_ref(), glyphs)
+    render_from_canvas(args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag)
 }
 
 pub fn write_encoded_output(content: &str, encoding: &crate::args::Encoding) {
@@ -185,7 +265,11 @@ pub fn write_encoded_output(content: &str, encoding: &crate::args::Encoding) {
     let _ = handle.flush();
 }
 
-pub fn write_encoded_to<W: Write>(content: &str, encoding: &crate::args::Encoding, handle: &mut W) -> std::io::Result<()> {
+pub fn write_encoded_to<W: Write>(
+    content: &str,
+    encoding: &crate::args::Encoding,
+    handle: &mut W,
+) -> std::io::Result<()> {
     match encoding {
         crate::args::Encoding::Utf8 => {
             writeln!(handle, "{}", content)?;
@@ -220,10 +304,7 @@ pub fn write_encoded_to<W: Write>(content: &str, encoding: &crate::args::Encodin
                 if u <= 0x7F {
                     handle.write_all(&[u as u8])?;
                 } else if u <= 0x7FF {
-                    handle.write_all(&[
-                        0xC0 | ((u >> 6) as u8),
-                        0x80 | ((u & 0x3F) as u8),
-                    ])?;
+                    handle.write_all(&[0xC0 | ((u >> 6) as u8), 0x80 | ((u & 0x3F) as u8)])?;
                 } else {
                     handle.write_all(&[
                         0xE0 | ((u >> 12) as u8),
@@ -238,45 +319,48 @@ pub fn write_encoded_to<W: Write>(content: &str, encoding: &crate::args::Encodin
     Ok(())
 }
 
-pub async fn load_image_from_url_or_path(image: &str, args: &RenderArgs, glyphs: &font::GlyphStore) -> Result<PhotonImage, Box<dyn Error>> {
+pub async fn load_image_from_url_or_path(
+    image: &str,
+    args: &RenderArgs,
+    glyphs: &font::GlyphStore,
+) -> Result<PhotonImage, Box<dyn Error>> {
     let bytes = match Url::parse(image) {
         Ok(url) => {
             let response = reqwest::get(url).await?;
             response.bytes().await?.to_vec()
         }
-        Err(_) => {
-            std::fs::read(image)?
-        }
+        Err(_) => std::fs::read(image)?,
     };
 
     // Try detecting SVG
     let opt = resvg::usvg::Options::default();
     let mut fontdb = resvg::usvg::fontdb::Database::new();
     fontdb.load_system_fonts(); // Load system fonts to support text in SVGs
-    
+
     if let Ok(tree) = resvg::usvg::Tree::from_data(&bytes, &opt, &fontdb) {
         let size = tree.size();
         let (w, h) = effects::calculate_dimensions(args, glyphs, size.width(), size.height());
-        
-        eprintln!("Detected SVG. Rendering at {}x{}", w, h);
-        
+
+        log::info!("Detected SVG. Rendering at {}x{}", w, h);
+
         let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or("Failed to create SVG pixmap")?;
-        let render_ts = tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
-        
+        let render_ts =
+            tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+
         resvg::render(&tree, render_ts, &mut pixmap.as_mut());
-        
+
         // Convert RGBA buffer to PhotonImage
         // tiny-skia uses premultiplied alpha. We might need to demultiply if strict correctness is required, but for
         // terminal output, it's often negligible. However, let's demultiply to be safe for effects.
         let mut data = pixmap.data().to_vec();
         for chunk in data.chunks_mut(4) {
-             let a = chunk[3];
-             if a > 0 && a < 255 {
-                 let scale = 255.0 / a as f32;
-                 chunk[0] = (chunk[0] as f32 * scale).min(255.0) as u8;
-                 chunk[1] = (chunk[1] as f32 * scale).min(255.0) as u8;
-                 chunk[2] = (chunk[2] as f32 * scale).min(255.0) as u8;
-             }
+            let a = chunk[3];
+            if a > 0 && a < 255 {
+                let scale = 255.0 / a as f32;
+                chunk[0] = (chunk[0] as f32 * scale).min(255.0) as u8;
+                chunk[1] = (chunk[1] as f32 * scale).min(255.0) as u8;
+                chunk[2] = (chunk[2] as f32 * scale).min(255.0) as u8;
+            }
         }
 
         Ok(PhotonImage::new(data, w, h))
