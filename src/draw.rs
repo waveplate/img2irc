@@ -7,6 +7,7 @@ use photon_rs::PhotonImage;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::f32::consts::PI as F32_PI;
+// Removed redundant debug imports
 use std::f64::consts::PI as F64_PI;
 use std::fmt::Write as _;
 use std::iter::repeat;
@@ -38,23 +39,34 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
     let (gw, gh) = glyphs.metrics;
     let bp = gh * gw;
 
-    let has_selection = !glyphs.selected.is_empty();
+    // We consider "filtering" active if the user provided specific blocks or inclusions.
+    let is_filtering =
+        !args.blocks.is_empty() || args.include.is_some() || !args.include_range.is_empty();
 
-    glyphs
+    let mut filtered_glyphs: Vec<_> = glyphs
         .glyphs
         .iter()
-        .filter(|(ch, _)| !has_selection || glyphs.selected.contains(ch))
         .filter(|(ch, _)| {
-            if *ch == ' ' && !args.blocks.is_empty() {
-                return args.blocks.iter().any(|block| {
-                    glyphs
-                        .groups
-                        .get(&block.to_lowercase())
-                        .map_or(false, |chars| chars.contains(&' '))
-                });
+            if !is_filtering {
+                return true;
             }
-            true
+            // If filtering, include selected chars plus spaces for background
+            glyphs.selected.contains(ch) || *ch == ' ' || *ch == '\u{2800}'
         })
+        .collect();
+
+    // Fallback: if filtering resulted in no non-whitespace glyphs, use all available glyphs
+    // This prevents "no glyphs available" error if a block doesn't load correctly.
+    if filtered_glyphs.len() <= 2
+        && filtered_glyphs
+            .iter()
+            .all(|(ch, _)| *ch == ' ' || *ch == '\u{2800}')
+    {
+        filtered_glyphs = glyphs.glyphs.iter().collect();
+    }
+
+    filtered_glyphs
+        .into_iter()
         .map(|(ch, bmp)| {
             let mut bitmap = Vec::with_capacity(bp);
             for row in bmp {
@@ -564,22 +576,6 @@ pub fn render_blocks_smooth(
                     for x in 0..gw {
                         let px_orig = blk.pixels[y][x].orig;
                         let rgb = unpack_rgb(px_orig);
-
-                        // DEBUG
-                        use std::sync::atomic::{AtomicBool, Ordering};
-                        static PRINTED_PX: AtomicBool = AtomicBool::new(false);
-                        if !PRINTED_PX.swap(true, Ordering::SeqCst) {
-                            log::info!(
-                                "DEBUG: Original Pixel at ({},{}) = {:06x} RGB({},{},{})",
-                                x,
-                                y,
-                                px_orig,
-                                rgb[0],
-                                rgb[1],
-                                rgb[2]
-                            );
-                        }
-
                         let p = PrePixel {
                             r: rgb[0] as u64,
                             g: rgb[1] as u64,

@@ -1899,6 +1899,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('o') => {
                                 app.open_explorer(ExplorerMode::Open);
                             }
+                            KeyCode::Char('s') => {
+                                app.open_explorer(ExplorerMode::SaveText);
+                            }
+                            KeyCode::Char('p') => {
+                                app.open_explorer(ExplorerMode::SavePng);
+                            }
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.current_tab = (app.current_tab + 2) % 3;
                                 app.selected_control = 0;
@@ -1992,7 +1998,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.tree_state.collapse_selected();
                                     }
                                 } else {
-                                    adjust_control(&mut app, -1);
+                                    let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        10
+                                    } else {
+                                        1
+                                    };
+                                    adjust_control(&mut app, -d);
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
@@ -2001,7 +2012,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.tree_state.expand_selected();
                                     }
                                 } else {
-                                    adjust_control(&mut app, 1);
+                                    let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        10
+                                    } else {
+                                        1
+                                    };
+                                    adjust_control(&mut app, d);
                                 }
                             }
                             KeyCode::Char(' ') | KeyCode::Enter => {
@@ -2667,97 +2683,114 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
 fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.output_area = area;
-    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+
+    // 1. Render normal background content (Image or Glyphs tab)
     if app.current_tab == 2 {
         render_glyphs_tab(f, app, area);
-        return;
+    } else {
+        render_normal_output_content(f, app, area);
     }
 
-    if let Some(dialog) = &mut app.explorer_dialog {
-        f.render_widget(Clear, area);
+    // 2. Overlay Explorer if active
+    if app.explorer_dialog.is_some() {
+        let mut dialog = app.explorer_dialog.take().unwrap();
+        let layout =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+        let overlay_area = layout[1];
 
-        let main_chunks = if matches!(dialog.mode, ExplorerMode::Open) {
-            let layout = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(area);
-            // Use bottom half
-            vec![layout[1]]
-        } else {
-            Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
-                .split(area)
-                .to_vec()
-        };
+        f.render_widget(Clear, overlay_area);
+        render_explorer_dialog(f, app, &mut dialog, overlay_area);
+        app.explorer_dialog = Some(dialog);
+    }
+}
 
-        let explorer_area = main_chunks[0];
+fn render_explorer_dialog(
+    f: &mut ratatui::Frame,
+    app: &mut App,
+    dialog: &mut ExplorerDialog,
+    area: Rect,
+) {
+    let main_chunks = if matches!(dialog.mode, ExplorerMode::Open) {
+        vec![area]
+    } else {
+        Layout::vertical([Constraint::Min(0), Constraint::Length(3)])
+            .split(area)
+            .to_vec()
+    };
 
-        let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(explorer_area);
+    let explorer_area = main_chunks[0];
+    let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(explorer_area);
 
-        // Explorer border
-        let mut explorer_block = Block::default().borders(Borders::ALL).title(" Explorer ");
-        if !dialog.focus_on_input {
-            explorer_block = explorer_block.border_style(Style::default().fg(ACCENT));
-        }
-        // Apply the highlight block to the explorer widget (if possible)
-        // Since we can't easily modify the internal theme without set_theme,
-        // let's just render a colored border around the chunk.
-        f.render_widget(&dialog.explorer.widget(), chunks[0]);
-        if !dialog.focus_on_input {
-            f.render_widget(explorer_block, chunks[0]);
-        }
+    // Explorer border
+    let mut explorer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(symbols::border::ROUNDED)
+        .title(" Explorer ");
 
-        // Preview in right half
-        let file = dialog.explorer.current();
-        let path = file.path();
-        let is_image = path.to_string_lossy().to_lowercase().ends_with(".png")
-            || path.to_string_lossy().to_lowercase().ends_with(".jpg")
-            || path.to_string_lossy().to_lowercase().ends_with(".jpeg")
-            || path.to_string_lossy().to_lowercase().ends_with(".gif")
-            || path.to_string_lossy().to_lowercase().ends_with(".bmp")
-            || path.to_string_lossy().to_lowercase().ends_with(".webp");
+    if !dialog.focus_on_input {
+        explorer_block = explorer_block.border_style(Style::default().fg(ACCENT));
+    }
 
-        if is_image {
-            let path_str = path.to_string_lossy().into_owned();
-            if app.last_preview_path.as_ref() != Some(&path_str) {
-                if let Ok(img) = image::open(&path_str) {
-                    let protocol = app.preview_picker.new_resize_protocol(img);
-                    app.image_preview_protocol = Some(protocol);
-                    app.last_preview_path = Some(path_str);
-                }
+    f.render_widget(&dialog.explorer.widget(), chunks[0]);
+    f.render_widget(explorer_block, chunks[0]);
+
+    // Preview in right half
+    let file = dialog.explorer.current();
+    let path = file.path();
+    let is_image = path.to_string_lossy().to_lowercase().ends_with(".png")
+        || path.to_string_lossy().to_lowercase().ends_with(".jpg")
+        || path.to_string_lossy().to_lowercase().ends_with(".jpeg")
+        || path.to_string_lossy().to_lowercase().ends_with(".gif")
+        || path.to_string_lossy().to_lowercase().ends_with(".bmp")
+        || path.to_string_lossy().to_lowercase().ends_with(".webp");
+
+    if is_image {
+        let path_str = path.to_string_lossy().into_owned();
+        if app.last_preview_path.as_ref() != Some(&path_str) {
+            if let Ok(img) = image::open(&path_str) {
+                let protocol = app.preview_picker.new_resize_protocol(img);
+                app.image_preview_protocol = Some(protocol);
+                app.last_preview_path = Some(path_str);
             }
+        }
 
-            if let Some(protocol) = &mut app.image_preview_protocol {
-                let inner_area = chunks[1].inner(ratatui::layout::Margin {
-                    vertical: 1,
-                    horizontal: 1,
-                });
-                protocol.resize_encode(&Resize::Fit(None), inner_area);
-                let widget = StatefulImage::default();
-                f.render_stateful_widget(widget, inner_area, protocol);
-            }
-        } else {
-            f.render_widget(
-                Paragraph::new("No preview available").alignment(Alignment::Center),
-                chunks[1],
+        if let Some(protocol) = &mut app.image_preview_protocol {
+            let inner_area = chunks[1].inner(ratatui::layout::Margin {
+                vertical: 1,
+                horizontal: 1,
+            });
+            protocol.resize_encode(&Resize::Fit(None), inner_area);
+            let widget = StatefulImage::default();
+            f.render_stateful_widget(widget, inner_area, protocol);
+        }
+    } else {
+        f.render_widget(
+            Paragraph::new("No preview available").alignment(Alignment::Center),
+            chunks[1],
+        );
+    }
+
+    if !matches!(dialog.mode, ExplorerMode::Open) {
+        let input_area = main_chunks[1];
+        if dialog.focus_on_input {
+            dialog.name_input.set_block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(ACCENT))
+                    .title(" Filename (Enter to Save) "),
             );
+        } else {
+            dialog
+                .name_input
+                .set_block(Block::default().borders(Borders::ALL).title(" Filename "));
         }
-
-        if !matches!(dialog.mode, ExplorerMode::Open) {
-            let input_block = Block::default().borders(Borders::ALL).title(" Filename ");
-            let input_area = main_chunks[1];
-            let p = Paragraph::new(dialog.name_input.lines()[0].as_str())
-                .block(input_block)
-                .style(if dialog.focus_on_input {
-                    Style::default().fg(ACCENT)
-                } else {
-                    Style::default()
-                });
-            f.render_widget(p, input_area);
-        }
-        return;
+        f.render_widget(&dialog.name_input, input_area);
     }
+}
 
+fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let is_rendering = app.is_rendering.load(Ordering::Relaxed);
-
     // Title with status
     let title_status = if is_rendering {
         let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
