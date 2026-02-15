@@ -38,10 +38,12 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
     let (gw, gh) = glyphs.metrics;
     let bp = gh * gw;
 
+    let has_selection = !glyphs.selected.is_empty();
+
     glyphs
         .glyphs
         .iter()
-        .filter(|(ch, _)| glyphs.selected.contains(ch))
+        .filter(|(ch, _)| !has_selection || glyphs.selected.contains(ch))
         .filter(|(ch, _)| {
             if *ch == ' ' && !args.blocks.is_empty() {
                 return args.blocks.iter().any(|block| {

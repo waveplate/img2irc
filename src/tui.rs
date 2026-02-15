@@ -1638,7 +1638,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if line_count > app.output_area.height {
                                     app.scroll = app.scroll.saturating_sub(3);
                                 }
-                                return Ok(());
+                                continue;
                             }
 
                             if app.current_tab == 2 {
@@ -1668,7 +1668,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if line_count > app.output_area.height {
                                     app.scroll = app.scroll.saturating_add(3);
                                 }
-                                return Ok(());
+                                continue;
                             }
 
                             if app.current_tab == 2 {
@@ -1700,7 +1700,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     name_input: TextArea::default(),
                                     focus_on_input: false,
                                 });
-                                return Ok(());
+                                continue;
                             }
 
                             // Check glyph tab special areas
@@ -1741,7 +1741,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 && mouse.row
                                     < app.options_pane_area.y + app.options_pane_area.height
                             {
-                                for (i, area) in app.options_areas.iter().enumerate() {
+                                for i in 0..app.options_areas.len() {
+                                    let area = app.options_areas[i];
                                     if mouse.column >= area.x
                                         && mouse.column < area.x + area.width
                                         && mouse.row == area.y
@@ -1755,13 +1756,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.font_idx = i;
                                         }
                                         app.mark_args_dirty();
-                                        return Ok(());
+                                        continue;
                                     }
                                 }
                             }
 
                             // Check tab clicks
-                            for (i, area) in app.tab_areas.iter().enumerate() {
+                            for i in 0..app.tab_areas.len() {
+                                let area = app.tab_areas[i];
                                 if mouse.column >= area.x
                                     && mouse.column < area.x + area.width
                                     && mouse.row >= area.y
@@ -1773,7 +1775,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             // Check control clicks
-                            for (i, area) in app.control_areas.iter().enumerate() {
+                            for i in 0..app.control_areas.len() {
+                                let area = app.control_areas[i];
                                 if area.width == 0 {
                                     continue;
                                 }
@@ -1913,8 +1916,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
-                            KeyCode::Down | KeyCode::Char('j') => {
-                                if app.current_tab == 2 {
+                            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                                if (key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.code == KeyCode::Char('J'))
+                                    && app.current_tab == 1
+                                {
+                                    let i = app.selected_control;
+                                    if i + 1 < app.effects_pipeline.len() {
+                                        app.effects_pipeline.swap(i, i + 1);
+                                        app.selected_control += 1;
+                                        app.mark_args_dirty();
+                                    }
+                                } else if app.current_tab == 2 {
                                     match app.selected_control {
                                         0 => app.tree_state.select_next(),
                                         1 => {
@@ -1937,8 +1950,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
-                            KeyCode::Up | KeyCode::Char('k') => {
-                                if app.current_tab == 2 {
+                            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                                if (key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.code == KeyCode::Char('K'))
+                                    && app.current_tab == 1
+                                {
+                                    let i = app.selected_control;
+                                    if i > 0 {
+                                        app.effects_pipeline.swap(i, i - 1);
+                                        app.selected_control -= 1;
+                                        app.mark_args_dirty();
+                                    }
+                                } else if app.current_tab == 2 {
                                     match app.selected_control {
                                         0 => app.tree_state.select_prev(),
                                         1 => {
@@ -2533,20 +2556,12 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 render_toggle(buf, ctrl_area, &label_text, on, selected);
             }
             ControlKind::FontSelector => {
-                let ly = ctrl_area.y + ctrl_area.height.saturating_sub(1) / 2;
                 let font_name = if app.font_idx < app.fonts.len() {
                     &app.fonts[app.font_idx]
                 } else {
                     "Default"
                 };
-                let display_text = format!("{}: {}", label_text, font_name);
-                let _ = buf.set_stringn(
-                    ctrl_area.x + 1,
-                    ly,
-                    display_text,
-                    ctrl_area.width as usize - 2,
-                    Style::new().fg(TEXT),
-                );
+                render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
             }
         }
 
