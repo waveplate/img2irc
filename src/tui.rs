@@ -451,6 +451,13 @@ struct App {
     // Track rendered control areas for mouse
     control_areas: Vec<Rect>,
     tab_areas: Vec<Rect>,
+    path_area: Rect,
+    tree_area: Rect,
+    glyph_list_area: Rect,
+    preview_area: Rect,
+    output_area: Rect,
+    options_pane_area: Rect,
+    options_areas: Vec<Rect>,
 
     // Image preview for xplr
     image_preview_protocol: Option<StatefulProtocol>,
@@ -470,8 +477,13 @@ impl App {
         available_blocks.sort();
         let tree_state = TreeState::new(&available_blocks);
 
+        let mut ra_final = render_args.clone();
+        if ra_final.blocks.is_empty() {
+            ra_final.blocks = available_blocks.clone();
+        }
+
         App {
-            render_args: render_args.clone(),
+            render_args: ra_final,
             input_mode: InputMode::Normal,
             selected_control: 0,
             current_tab: 0,
@@ -592,6 +604,13 @@ impl App {
             explorer_dialog: None,
             control_areas: Vec::new(),
             tab_areas: Vec::new(),
+            path_area: Rect::default(),
+            tree_area: Rect::default(),
+            glyph_list_area: Rect::default(),
+            preview_area: Rect::default(),
+            output_area: Rect::default(),
+            options_pane_area: Rect::default(),
+            options_areas: Vec::new(),
         }
     }
 
@@ -1188,7 +1207,12 @@ fn render_bar(
         }
         let cell = &mut buf[(x, ly)];
         cell.set_char(ch);
-        cell.set_style(Style::new().fg(Color::White).add_modifier(Modifier::BOLD));
+        let style = if value != 0 {
+            Style::new().fg(Color::White).add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(TEXT)
+        };
+        cell.set_style(style);
     }
 
     // Draw value on the right
@@ -1244,11 +1268,14 @@ fn render_enum(
         }
         let cell = &mut buf[(x, ly)];
         cell.set_char(ch);
-        cell.set_style(
+        let style = if value > 0 {
             Style::new()
                 .fg(if selected { Color::White } else { TEXT })
-                .add_modifier(Modifier::BOLD),
-        );
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(if selected { Color::White } else { TEXT })
+        };
+        cell.set_style(style);
     }
 
     let opt = options.get(value).unwrap_or(&"?");
@@ -1296,10 +1323,15 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
     }
 
     // Toggle indicator on the right
-    let (indicator, color) = if on {
-        (" ● ON ", TOGGLE_ON)
+    let (indicator, color, bold) = if on {
+        (" ● ON ", TOGGLE_ON, true)
     } else {
-        (" ○ OFF", TOGGLE_OFF)
+        (" ○ OFF ", TOGGLE_OFF, false)
+    };
+    let style = if bold {
+        Style::new().fg(color).add_modifier(Modifier::BOLD)
+    } else {
+        Style::new().fg(color)
     };
     let vx = area.x + area.width - indicator.len() as u16 - 1;
     for (i, ch) in indicator.chars().enumerate() {
@@ -1309,7 +1341,7 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
         }
         let cell = &mut buf[(x, ly)];
         cell.set_char(ch);
-        cell.set_style(Style::new().fg(color).add_modifier(Modifier::BOLD));
+        cell.set_style(style);
     }
 
     if selected {
@@ -1594,104 +1626,140 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
             match event {
                 Event::Mouse(mouse) => {
-                    if app.show_font_picker {
-                        if let Ok(size) = terminal.size() {
-                            let area =
-                                centered_rect(60, 50, Rect::new(0, 0, size.width, size.height));
-                            // Simple hit test: if outside, close?
-                            // For now just handle scrolling
-                            match mouse.kind {
-                                MouseEventKind::ScrollUp => {
-                                    let i = match app.font_list_state.selected() {
-                                        Some(i) => {
-                                            if i == 0 {
-                                                0
-                                            } else {
-                                                i - 1
-                                            }
-                                        }
-                                        None => 0,
-                                    };
-                                    app.font_list_state.select(Some(i));
-                                }
-                                MouseEventKind::ScrollDown => {
-                                    let query = app.font_search.to_lowercase();
-                                    let count = app
-                                        .fonts
-                                        .iter()
-                                        .filter(|f| f.to_lowercase().contains(&query))
-                                        .count();
-                                    if count > 0 {
-                                        let i = match app.font_list_state.selected() {
-                                            Some(i) => {
-                                                if i >= count - 1 {
-                                                    i
-                                                } else {
-                                                    i + 1
-                                                }
-                                            }
-                                            None => 0,
-                                        };
-                                        app.font_list_state.select(Some(i));
-                                    }
-                                }
-                                MouseEventKind::Down(MouseButton::Left) => {
-                                    // Check if click is outside -> close
-                                    if mouse.column < area.x
-                                        || mouse.column >= area.x + area.width
-                                        || mouse.row < area.y
-                                        || mouse.row >= area.y + area.height
-                                    {
-                                        app.show_font_picker = false;
-                                    } else {
-                                        // Clicked inside.
-                                        // TODO: Calculate index. For now just Select/Confirm if double click?
-                                        // Or just let them click 'Enter'.
-                                        // User asked for "selection". Clicking an item to select it is expected.
-                                        // Approximating list row:
-                                        // Header is 3 rows (borders+search). List starts at area.y + 4?
-                                        // area includes border. blocks(borders) -> inner.
-                                        // chunks split that inner.
-                                        // chunks[0] height 3.
-                                        // chunks[1] is the rest.
-                                        // So list starts at: area.y + 1 + 3 = area.y + 4.
-
-                                        let list_y = area.y + 4;
-                                        if mouse.row >= list_y
-                                            && mouse.row < area.y + area.height - 1
-                                        {
-                                            let _row_idx = (mouse.row - list_y) as usize;
-                                            // This is relative to the *visible* top.
-                                            // We don't know the scroll offset easily here without tracking it separately.
-                                            // `List` widget handles offset internally unless we manage `offset` in state manually.
-                                            // `ListState` has `offset` but it's private/renderer-controlled usually?
-                                            // actually ListState has `offset` field which is readable? No, `offset` is u32 but private?
-                                            // In minimal tui, we might effectively be stuck just doing scrolling.
-
-                                            // Let's at least implement "Click to select currently highlighted" if we properly highlighted it...
-                                            // or just ignore precise row clicking to avoid bugs.
-
-                                            // However, users expect clicking a row to work.
-                                            // Since we can't do it perfectly without more refactoring, let's stick to scrolling
-                                            // and "Click outside to close" which is nice.
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        continue; // Consume event
-                    }
-
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
-                            app.scroll = app.scroll.saturating_sub(3);
+                            // Check if over output area
+                            if mouse.column >= app.output_area.x
+                                && mouse.column < app.output_area.x + app.output_area.width
+                                && mouse.row >= app.output_area.y
+                                && mouse.row <= app.output_area.y + app.output_area.height
+                            {
+                                let line_count = app.cached_render.lines().count() as u16;
+                                if line_count > app.output_area.height {
+                                    app.scroll = app.scroll.saturating_sub(3);
+                                }
+                                return Ok(());
+                            }
+
+                            if app.current_tab == 2 {
+                                // Scroll focused pane in Glyphs tab
+                                match app.selected_control {
+                                    0 => app.tree_state.select_prev(),
+                                    1 => {
+                                        let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                        app.glyph_list_state.select(Some(curr.saturating_sub(1)));
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                if app.selected_control > 0 {
+                                    app.selected_control -= 1;
+                                }
+                            }
                         }
                         MouseEventKind::ScrollDown => {
-                            app.scroll = app.scroll.saturating_add(3);
+                            // Check if over output area
+                            if mouse.column >= app.output_area.x
+                                && mouse.column < app.output_area.x + app.output_area.width
+                                && mouse.row >= app.output_area.y
+                                && mouse.row <= app.output_area.y + app.output_area.height
+                            {
+                                let line_count = app.cached_render.lines().count() as u16;
+                                if line_count > app.output_area.height {
+                                    app.scroll = app.scroll.saturating_add(3);
+                                }
+                                return Ok(());
+                            }
+
+                            if app.current_tab == 2 {
+                                // Scroll focused pane in Glyphs tab
+                                match app.selected_control {
+                                    0 => app.tree_state.select_next(),
+                                    1 => {
+                                        let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                        app.glyph_list_state.select(Some(curr + 1));
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                app.selected_control += 1;
+                            }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             app.dragged_control = None;
+
+                            // Check path click
+                            if mouse.column >= app.path_area.x
+                                && mouse.column < app.path_area.x + app.path_area.width
+                                && mouse.row == app.path_area.y
+                            {
+                                app.input_mode = InputMode::Explorer;
+                                app.explorer_dialog = Some(ExplorerDialog {
+                                    explorer: FileExplorer::new().unwrap(),
+                                    mode: ExplorerMode::Open,
+                                    name_input: TextArea::default(),
+                                    focus_on_input: false,
+                                });
+                                return Ok(());
+                            }
+
+                            // Check glyph tab special areas
+                            if app.current_tab == 2 {
+                                if mouse.column >= app.tree_area.x
+                                    && mouse.column < app.tree_area.x + app.tree_area.width
+                                    && mouse.row >= app.tree_area.y
+                                    && mouse.row < app.tree_area.y + app.tree_area.height
+                                {
+                                    app.selected_control = 0;
+                                    let row = (mouse.row - app.tree_area.y) as usize;
+                                    let scroll = app.tree_state.scroll as usize;
+                                    app.tree_state.selected_idx = scroll + row;
+                                } else if mouse.column >= app.glyph_list_area.x
+                                    && mouse.column
+                                        < app.glyph_list_area.x + app.glyph_list_area.width
+                                    && mouse.row >= app.glyph_list_area.y
+                                    && mouse.row
+                                        < app.glyph_list_area.y + app.glyph_list_area.height
+                                {
+                                    app.selected_control = 1;
+                                    let row = (mouse.row - app.glyph_list_area.y) as usize;
+                                    app.glyph_list_state.select(Some(row));
+                                } else if mouse.column >= app.preview_area.x
+                                    && mouse.column < app.preview_area.x + app.preview_area.width
+                                    && mouse.row >= app.preview_area.y
+                                    && mouse.row < app.preview_area.y + app.preview_area.height
+                                {
+                                    app.selected_control = 2;
+                                }
+                            }
+
+                            // Check options pane click
+                            if mouse.column >= app.options_pane_area.x
+                                && mouse.column
+                                    < app.options_pane_area.x + app.options_pane_area.width
+                                && mouse.row >= app.options_pane_area.y
+                                && mouse.row
+                                    < app.options_pane_area.y + app.options_pane_area.height
+                            {
+                                for (i, area) in app.options_areas.iter().enumerate() {
+                                    if mouse.column >= area.x
+                                        && mouse.column < area.x + area.width
+                                        && mouse.row == area.y
+                                    {
+                                        let ctrl_idx = if app.current_tab == 1 {
+                                            app.effects_pipeline[app.selected_control]
+                                        } else {
+                                            app.selected_control
+                                        };
+                                        if ctrl_idx == 12 {
+                                            app.font_idx = i;
+                                        }
+                                        app.mark_args_dirty();
+                                        return Ok(());
+                                    }
+                                }
+                            }
+
                             // Check tab clicks
                             for (i, area) in app.tab_areas.iter().enumerate() {
                                 if mouse.column >= area.x
@@ -1744,9 +1812,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     toggle_control(&mut app)
                                                 }
                                                 ControlKind::FontSelector => {
-                                                    app.show_font_picker = true;
-                                                    app.font_search.clear();
-                                                    app.font_list_state.select(Some(0));
+                                                    app.selected_control = i;
                                                 }
                                             }
                                         }
@@ -1773,7 +1839,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             } else if let Some(visual_idx) = app.dragged_control {
-                                // Only drag the originally-clicked control
                                 if let Some(area) = app.control_areas.get(visual_idx) {
                                     if area.width > 0 {
                                         let controls = app.tab_controls(app.current_tab);
@@ -1811,268 +1876,133 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 }
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
-                        if app.show_font_picker {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    if let Some(idx) = app.font_list_state.selected() {
-                                        // Map the filtered index back to the real font list
-                                        // We need to re-filter to find the name
-                                        let query = app.font_search.to_lowercase();
-                                        let filtered: Vec<&String> = app
-                                            .fonts
-                                            .iter()
-                                            .filter(|f| f.to_lowercase().contains(&query))
-                                            .collect();
-
-                                        if let Some(font_name) = filtered.get(idx) {
-                                            if let Some(real_idx) =
-                                                app.fonts.iter().position(|f| f == *font_name)
-                                            {
-                                                app.font_idx = real_idx;
-                                                app.mark_args_dirty();
-                                            }
-                                        }
-                                    }
-                                    app.show_font_picker = false;
+                        match key.code {
+                            KeyCode::Tab => {
+                                if app.current_tab == 2 {
+                                    app.selected_control = (app.selected_control + 1) % 3;
                                 }
-                                KeyCode::Esc => {
-                                    app.show_font_picker = false;
-                                }
-                                KeyCode::Up => {
-                                    let query = app.font_search.to_lowercase();
-                                    let count = app
-                                        .fonts
-                                        .iter()
-                                        .filter(|f| f.to_lowercase().contains(&query))
-                                        .count();
-                                    if count > 0 {
-                                        let i = match app.font_list_state.selected() {
-                                            Some(i) => {
-                                                if i == 0 {
-                                                    count - 1
-                                                } else {
-                                                    i - 1
-                                                }
-                                            }
-                                            None => 0,
-                                        };
-                                        app.font_list_state.select(Some(i));
-                                    }
-                                }
-                                KeyCode::Down => {
-                                    let query = app.font_search.to_lowercase();
-                                    let count = app
-                                        .fonts
-                                        .iter()
-                                        .filter(|f| f.to_lowercase().contains(&query))
-                                        .count();
-                                    if count > 0 {
-                                        let i = match app.font_list_state.selected() {
-                                            Some(i) => {
-                                                if i >= count - 1 {
-                                                    0
-                                                } else {
-                                                    i + 1
-                                                }
-                                            }
-                                            None => 0,
-                                        };
-                                        app.font_list_state.select(Some(i));
-                                    }
-                                }
-                                KeyCode::PageUp => {
-                                    let query = app.font_search.to_lowercase();
-                                    let count = app
-                                        .fonts
-                                        .iter()
-                                        .filter(|f| f.to_lowercase().contains(&query))
-                                        .count();
-                                    if count > 0 {
-                                        let i = match app.font_list_state.selected() {
-                                            Some(i) => i.saturating_sub(10),
-                                            None => 0,
-                                        };
-                                        app.font_list_state.select(Some(i.min(count - 1)));
-                                    }
-                                }
-                                KeyCode::PageDown => {
-                                    let query = app.font_search.to_lowercase();
-                                    let count = app
-                                        .fonts
-                                        .iter()
-                                        .filter(|f| f.to_lowercase().contains(&query))
-                                        .count();
-                                    if count > 0 {
-                                        let i = match app.font_list_state.selected() {
-                                            Some(i) => i + 10,
-                                            None => 0,
-                                        };
-                                        app.font_list_state.select(Some(i.min(count - 1)));
-                                    }
-                                }
-                                KeyCode::Char(c) => {
-                                    app.font_search.push(c);
-                                    // Reset selection on filter change
-                                    app.font_list_state.select(Some(0));
-                                }
-                                KeyCode::Backspace => {
-                                    app.font_search.pop();
-                                    app.font_list_state.select(Some(0));
-                                }
-                                // KeyCode::Esc is already handled above, this is a duplicate
-                                // KeyCode::Esc => {
-                                //     app.show_font_picker = false;
-                                //     app.font_search.clear();
-                                // }
-                                _ => {}
                             }
-                        } else {
-                            match key.code {
-                                KeyCode::Tab => {
-                                    if app.current_tab == 2 {
-                                        // Switch focus between Tree (0) and Glyphs List (untracked/implicit)
-                                        // Actually, let's use selected_control to track focus?
-                                        // 0 = Tree, 1 = Glyphs List
-                                        app.selected_control = (app.selected_control + 1) % 2;
+                            KeyCode::BackTab => {
+                                if app.current_tab == 2 {
+                                    app.selected_control = (app.selected_control + 2) % 3;
+                                }
+                            }
+                            KeyCode::Char('q') => {
+                                return Ok(());
+                            }
+                            KeyCode::Char('r') | KeyCode::Delete => {
+                                reset_control(&mut app);
+                            }
+                            KeyCode::Char('o') => {
+                                app.open_explorer(ExplorerMode::Open);
+                            }
+                            KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.current_tab = (app.current_tab + 2) % 3;
+                                app.selected_control = 0;
+                            }
+                            KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.current_tab = (app.current_tab + 1) % 3;
+                                app.selected_control = 0;
+                            }
+                            KeyCode::Esc => {
+                                if app.current_tab == 2 {
+                                    if app.selected_control > 0 {
+                                        app.selected_control = 0;
                                     } else {
-                                        // Cycle tabs? Or just let Ctrl+Left/Right handle tabs?
-                                        // User asked for TAB to change focus to "Glyphs" pane.
+                                        app.tree_state.collapse_selected();
                                     }
                                 }
-                                KeyCode::BackTab => {
-                                    if app.current_tab == 2 {
-                                        app.selected_control = (app.selected_control + 1) % 2;
-                                        // Toggle 0/1
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if app.current_tab == 2 {
+                                    match app.selected_control {
+                                        0 => app.tree_state.select_next(),
+                                        1 => {
+                                            let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                            app.glyph_list_state.select(Some(curr + 1));
+                                        }
+                                        2 => {
+                                            let line_count =
+                                                app.cached_render.lines().count() as u16;
+                                            if line_count > app.output_area.height {
+                                                app.scroll = app.scroll.saturating_add(3);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    let count = app.control_count();
+                                    if count > 0 {
+                                        app.selected_control = (app.selected_control + 1) % count;
                                     }
                                 }
-                                KeyCode::Char('q') => {
-                                    return Ok(());
-                                }
-                                KeyCode::Char('r') | KeyCode::Delete => {
-                                    reset_control(&mut app);
-                                }
-                                KeyCode::Char('o') => {
-                                    app.open_explorer(ExplorerMode::Open);
-                                }
-                                KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    app.current_tab = (app.current_tab + 2) % 3;
-                                    app.selected_control = 0;
-                                }
-                                KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                    app.current_tab = (app.current_tab + 1) % 3;
-                                    app.selected_control = 0;
-                                }
-                                KeyCode::Esc => {
-                                    // "Back" logic
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 1 {
-                                            // If in glyphs list, back to tree
-                                            app.selected_control = 0;
-                                        } else {
-                                            // Collapse current node
-                                            app.tree_state.collapse_selected();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if app.current_tab == 2 {
+                                    match app.selected_control {
+                                        0 => app.tree_state.select_prev(),
+                                        1 => {
+                                            let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                            app.glyph_list_state
+                                                .select(Some(curr.saturating_sub(1)));
                                         }
+                                        2 => {
+                                            let line_count =
+                                                app.cached_render.lines().count() as u16;
+                                            if line_count > app.output_area.height {
+                                                app.scroll = app.scroll.saturating_sub(3);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    let count = app.control_count();
+                                    if count > 0 {
+                                        app.selected_control =
+                                            (app.selected_control + count - 1) % count;
                                     }
                                 }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 0 {
-                                            app.tree_state.select_next();
-                                        } else {
-                                            // Navigate glyph list
-                                            let i = match app.glyph_list_state.selected() {
-                                                Some(i) => i + 1,
-                                                None => 0,
-                                            };
-                                            app.glyph_list_state.select(Some(i));
-                                        }
-                                    } else if app.current_tab == 1
-                                        && key.modifiers.contains(KeyModifiers::SHIFT)
-                                    {
-                                        let f = app.selected_control;
-                                        if f < app.effects_pipeline.len() - 1 {
-                                            app.effects_pipeline.swap(f, f + 1);
-                                            app.selected_control += 1;
-                                            app.mark_args_dirty();
-                                        }
-                                    } else {
-                                        let count = app.control_count();
-                                        if count > 0 {
-                                            app.selected_control =
-                                                (app.selected_control + 1) % count;
-                                        }
+                            }
+                            KeyCode::Left | KeyCode::Char('h') => {
+                                if app.current_tab == 2 {
+                                    if app.selected_control == 0 {
+                                        app.tree_state.collapse_selected();
                                     }
+                                } else {
+                                    adjust_control(&mut app, -1);
                                 }
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 0 {
-                                            app.tree_state.select_prev();
-                                        } else {
-                                            let i = match app.glyph_list_state.selected() {
-                                                Some(i) => i.saturating_sub(1),
-                                                None => 0,
-                                            };
-                                            app.glyph_list_state.select(Some(i));
-                                        }
-                                    } else if app.current_tab == 1
-                                        && key.modifiers.contains(KeyModifiers::SHIFT)
-                                    {
-                                        let f = app.selected_control;
-                                        if f > 0 {
-                                            app.effects_pipeline.swap(f, f - 1);
-                                            app.selected_control -= 1;
-                                            app.mark_args_dirty();
-                                        }
-                                    } else {
-                                        let count = app.control_count();
-                                        if count > 0 {
-                                            app.selected_control =
-                                                (app.selected_control + count - 1) % count;
-                                        }
+                            }
+                            KeyCode::Right | KeyCode::Char('l') => {
+                                if app.current_tab == 2 {
+                                    if app.selected_control == 0 {
+                                        app.tree_state.expand_selected();
                                     }
+                                } else {
+                                    adjust_control(&mut app, 1);
                                 }
-                                KeyCode::Left | KeyCode::Char('h') => {
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 0 {
-                                            app.tree_state.collapse_selected();
-                                        }
-                                    } else {
-                                        adjust_control(&mut app, -1);
+                            }
+                            KeyCode::Char(' ') | KeyCode::Enter => {
+                                if app.current_tab == 2 {
+                                    if app.selected_control == 0 {
+                                        app.toggle_tree_selection();
                                     }
+                                } else {
+                                    toggle_control(&mut app);
                                 }
-                                KeyCode::Right | KeyCode::Char('l') => {
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 0 {
-                                            app.tree_state.expand_selected();
-                                        }
-                                    } else {
-                                        adjust_control(&mut app, 1);
-                                    }
-                                }
-                                KeyCode::Char(' ') | KeyCode::Enter => {
-                                    if app.current_tab == 2 {
-                                        if app.selected_control == 0 {
-                                            app.toggle_tree_selection();
-                                        }
-                                    } else {
-                                        // Check if current control is FontSelector
-                                        if app.control_is_font_selector() {
-                                            app.show_font_picker = true;
-                                            app.font_search.clear();
-                                            app.font_list_state.select(Some(0));
-                                        } else {
-                                            toggle_control(&mut app);
-                                        }
-                                    }
-                                }
-                                KeyCode::PageUp => {
+                            }
+                            KeyCode::PageUp => {
+                                let line_count = app.cached_render.lines().count() as u16;
+                                if line_count > app.output_area.height {
                                     app.scroll = app.scroll.saturating_sub(10);
                                 }
-                                KeyCode::PageDown => {
+                            }
+                            KeyCode::PageDown => {
+                                let line_count = app.cached_render.lines().count() as u16;
+                                if line_count > app.output_area.height {
                                     app.scroll = app.scroll.saturating_add(10);
                                 }
-                                _ => {}
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -2193,18 +2123,18 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
             10 => app.scaley = val,
             11 => app.font_size = val,
             14 => app.grayscale_tolerance = val,
+            15 => app.brightness = val,
+            16 => app.contrast = val,
+            17 => app.saturation = val,
+            18 => app.gamma = val,
+            19 => app.hue = val,
             _ => {}
         }
     } else if app.current_tab == 1 {
         match real_idx {
             0 => app.dither = val,
-            4 => app.brightness = val,
-            5 => app.contrast = val,
-            6 => app.saturation = val,
-            7 => app.gamma = val,
-            8 => app.hue = val,
-            9 => app.pixelize = val,
-            10 => app.gaussian_blur = val,
+            4 => app.pixelize = val,
+            5 => app.gaussian_blur = val,
             _ => {}
         }
     }
@@ -2503,6 +2433,8 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     } else {
         path_display
     };
+    let path_area = Rect::new(x, layout[1].y, truncated.len() as u16, 1);
+    app.path_area = path_area;
     buf.set_string(x, layout[1].y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
 
     // Loading spinner in top-right
@@ -2637,6 +2569,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.tree_area = area;
     let buf = f.buffer_mut();
     // Get flattened nodes (this might be expensive to do every frame, but fine for now)
     // 1. Update Scroll
@@ -2718,6 +2651,8 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.output_area = area;
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
     if app.current_tab == 2 {
         render_glyphs_tab(f, app, area);
         return;
@@ -2806,22 +2741,31 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+
+    // Title with status
+    let title_status = if is_rendering {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner = spinners[(app.render_tick / 3) % spinners.len()];
+        format!(" Output {} ", spinner)
+    } else {
+        " Output ".to_string()
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(BORDER))
         .border_set(symbols::border::ROUNDED)
         .title(Span::styled(
-            " Output ",
+            title_status,
             Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
         ));
 
-    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
-    if is_rendering || app.cached_render.is_empty() {
-        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
-        let loading_text = format!("\n\n\n      {} Rendering image...", spinner_ch);
+    if app.cached_render.is_empty() && is_rendering {
+        // Only show full-panel spinner if no content yet
+        let loading_text = format!("\n\n\n      Rendering...");
         let p = Paragraph::new(loading_text)
-            .block(block) // Render block here is fine for loading state
+            .block(block)
             .alignment(Alignment::Center)
             .style(Style::new().fg(ACCENT));
         f.render_widget(p, area);
@@ -2848,7 +2792,6 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             )))
             .style(Style::new().bg(BG));
 
-        // Render the block border/title separately
         let inner = block_with_bottom_title.inner(area);
         f.render_widget(block_with_bottom_title, area);
 
@@ -2860,7 +2803,11 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
         // Vertical center calculation
         let line_count = app.cached_render.lines().count() as u16;
-        let pad_y = inner.height.saturating_sub(line_count).saturating_div(2);
+        let pad_y = if line_count < inner.height {
+            inner.height.saturating_sub(line_count).saturating_div(2)
+        } else {
+            0
+        };
 
         let layout = Layout::vertical([Constraint::Length(pad_y), Constraint::Min(0)]).split(inner);
 
@@ -2869,12 +2816,94 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             .scroll((app.scroll, 0));
 
         f.render_widget(output, layout[1]);
+
+        // Selection Pane at bottom of output
+        render_options_panel(f, app, inner);
+    }
+}
+
+fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let controls = app.tab_controls(app.current_tab);
+    let real_idx = if app.current_tab == 1 {
+        if let Some(&ridx) = app.effects_pipeline.get(app.selected_control) {
+            ridx
+        } else {
+            return;
+        }
+    } else {
+        app.selected_control
+    };
+
+    let ctrl = if let Some(c) = controls.get(real_idx) {
+        c
+    } else {
+        return;
+    };
+    let (options, current) = match &ctrl.kind {
+        ControlKind::Enum { options } => (
+            options.iter().map(|&s| s.to_string()).collect::<Vec<_>>(),
+            app.get_control_value(app.current_tab, app.selected_control) as usize,
+        ),
+        ControlKind::FontSelector => (app.fonts.clone(), app.font_idx),
+        _ => return,
+    };
+
+    // Use bottom 3 rows of output
+    let pane_height = 3;
+    let pane_area = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(pane_height),
+        area.width,
+        pane_height,
+    );
+    app.options_pane_area = pane_area;
+    app.options_areas.clear();
+    f.render_widget(Clear, pane_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} Options ", ctrl.label))
+        .border_style(Style::new().fg(ACCENT));
+    f.render_widget(&block, pane_area);
+
+    let inner = block.inner(pane_area);
+    let mut x = inner.x;
+
+    // We want to show options around the current one
+    let visible_count = inner.width as usize / 12; // estimate more space
+    let start = current.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(options.len());
+
+    for (i, opt) in options.iter().enumerate().skip(start).take(end - start) {
+        let is_selected = i == current;
+        let style = if is_selected {
+            Style::new()
+                .bg(ACCENT)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(TEXT)
+        };
+        let text = format!(" {} ", opt);
+        if x + text.len() as u16 > inner.x + inner.width {
+            break;
+        }
+        let opt_area = Rect::new(x, inner.y, text.len() as u16, 1);
+        if app.options_areas.len() <= i {
+            app.options_areas.resize(i + 1, Rect::default());
+        }
+        app.options_areas[i] = opt_area;
+        f.render_widget(Paragraph::new(text.clone()).style(style), opt_area);
+        x += text.len() as u16 + 1;
     }
 }
 
 fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let chunks =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+
+    app.glyph_list_area = chunks[0];
+    app.preview_area = chunks[1];
 
     let glyph_block = Block::default().borders(Borders::ALL).title(" Glyphs ");
 
@@ -2918,27 +2947,36 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: char) {
+    let font_name = if app.font_idx < app.fonts.len() {
+        &app.fonts[app.font_idx]
+    } else {
+        "Default"
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Preview: {} ", ch));
+        .title(format!(" Preview: {} ({}) ", ch, font_name));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     // Use current store to find bitmap
     if let Some(g) = &app.arc_glyphs {
         if let Some(bitmap) = g.glyphs.iter().find(|(c, _)| *c == ch).map(|(_, b)| b) {
-            let mut text = String::new();
+            let mut text = ratatui::text::Text::default();
             for row in bitmap {
+                let mut line = Line::from(vec![]);
                 for &pixel in row {
                     if pixel > 0 {
-                        text.push_str("██");
+                        line.spans
+                            .push(Span::styled("██", Style::new().fg(Color::Cyan)));
                     } else {
-                        text.push_str("  ");
+                        // eye friendly distinct background color
+                        line.spans
+                            .push(Span::styled("░░", Style::new().fg(Color::Rgb(60, 60, 80))));
                     }
                 }
-                text.push('\n');
+                text.lines.push(line);
             }
-            let p = Paragraph::new(text).style(Style::new().fg(ACCENT));
+            let p = Paragraph::new(text);
             f.render_widget(p, inner);
         } else {
             // Not in current store, maybe need to reload or it's just missing
