@@ -23,6 +23,9 @@ ranges = [[0x1FB3C, 0x1FB6F]]
 [legacy.base.sextants]
 ranges = [[0x1FB00, 0x1FB3B]]
 
+[legacy.supp]
+ranges = [[0x1CC00, 0x1CEBF]]
+
 [default]
 include = [
     "ascii.space",
