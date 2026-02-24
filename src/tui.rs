@@ -61,18 +61,444 @@ const TAB_INACTIVE: Color = Color::Rgb(80, 80, 100);
 const STATUS_BG: Color = Color::Rgb(35, 35, 50);
 
 // ── Control types ────────────────────────────────────────────────────────────
-#[derive(Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ControlId {
+    Width,
+    RenderMode,
+    Smooth,
+    TrimTop,
+    TrimRight,
+    TrimBottom,
+    TrimLeft,
+    FlipH,
+    FlipV,
+    Rotate,
+    ScaleX,
+    ScaleY,
+    FontSize,
+    Font,
+    Filter,
+    GrayTol,
+    Brightness,
+    Contrast,
+    Saturation,
+    Gamma,
+    Hue,
+    Colorspace,
+    Encoding,
+
+    Dither,
+    Invert,
+    Grayscale,
+    Pixelize,
+    GaussianBlur,
+    BoxBlur,
+    Oil,
+    Halftone,
+    Sepia,
+    Normalize,
+    Noise,
+    Emboss,
+    Identity,
+    Laplace,
+    NoiseReduction,
+    Sharpen,
+    Cali,
+    Dramatic,
+    Firenze,
+    Golden,
+    Lix,
+    Lofi,
+    Neue,
+    Obsidian,
+    PastelPink,
+    Ryo,
+    FrostedGlass,
+    Solarize,
+    EdgeDetection,
+}
+
+#[derive(Clone, Copy)]
 enum ControlKind {
-    Slider { min: i32, max: i32 },
-    Toggle,
-    Enum { options: Vec<&'static str> },
+    Slider {
+        min: i32,
+        max: i32,
+        default: i32,
+    },
+    Toggle {
+        default: bool,
+    },
+    Enum {
+        options: &'static [&'static str],
+        default: usize,
+    },
     FontSelector,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct ControlDef {
+    id: ControlId,
     label: &'static str,
     kind: ControlKind,
+}
+
+const GENERAL_CONTROLS: &[ControlDef] = &[
+    ControlDef {
+        id: ControlId::Width,
+        label: "Width",
+        kind: ControlKind::Slider {
+            min: 10,
+            max: 300,
+            default: 80,
+        },
+    },
+    ControlDef {
+        id: ControlId::RenderMode,
+        label: "Mode",
+        kind: ControlKind::Enum {
+            options: &["IRC", "ANSI", "ANSI24"],
+            default: 1,
+        },
+    },
+    ControlDef {
+        id: ControlId::Smooth,
+        label: "Smooth",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::TrimTop,
+        label: "Crop Top",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 2000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimRight,
+        label: "Crop Right",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 2000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimBottom,
+        label: "Crop Bottom",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 2000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimLeft,
+        label: "Crop Left",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 2000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::FlipH,
+        label: "Flip H",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::FlipV,
+        label: "Flip V",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Rotate,
+        label: "Rotate",
+        kind: ControlKind::Slider {
+            min: -180,
+            max: 180,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::ScaleX,
+        label: "Scale X %",
+        kind: ControlKind::Slider {
+            min: 10,
+            max: 500,
+            default: 100,
+        },
+    },
+    ControlDef {
+        id: ControlId::ScaleY,
+        label: "Scale Y %",
+        kind: ControlKind::Slider {
+            min: 10,
+            max: 500,
+            default: 100,
+        },
+    },
+    ControlDef {
+        id: ControlId::FontSize,
+        label: "Font Size",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 64,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Font,
+        label: "Font",
+        kind: ControlKind::FontSelector,
+    },
+    ControlDef {
+        id: ControlId::Filter,
+        label: "Filter",
+        kind: ControlKind::Enum {
+            options: &["Nearest", "Triangle", "CatmullRom", "Gaussian", "Lanczos3"],
+            default: 4,
+        },
+    },
+    ControlDef {
+        id: ControlId::GrayTol,
+        label: "Gray Tol",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Brightness,
+        label: "Brightness",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Contrast,
+        label: "Contrast",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Saturation,
+        label: "Saturation",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Gamma,
+        label: "Gamma",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Hue,
+        label: "Hue",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 360,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Colorspace,
+        label: "Colorspace",
+        kind: ControlKind::Enum {
+            options: &["HSL", "HSV", "HSLUV", "LCH"],
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Encoding,
+        label: "Encoding",
+        kind: ControlKind::Enum {
+            options: &["UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "CESU-8"],
+            default: 0,
+        },
+    },
+];
+
+const EFFECT_CONTROLS: &[ControlDef] = &[
+    ControlDef {
+        id: ControlId::Dither,
+        label: "Dither",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 8,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Invert,
+        label: "Invert",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Grayscale,
+        label: "Grayscale",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Pixelize,
+        label: "Pixelize",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::GaussianBlur,
+        label: "Gauss Blur",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::BoxBlur,
+        label: "Box Blur",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Oil,
+        label: "Oil",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Halftone,
+        label: "Halftone",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Sepia,
+        label: "Sepia",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Normalize,
+        label: "Normalize",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Noise,
+        label: "Noise",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Emboss,
+        label: "Emboss",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Identity,
+        label: "Identity",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Laplace,
+        label: "Laplace",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::NoiseReduction,
+        label: "Denoise",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Sharpen,
+        label: "Sharpen",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Cali,
+        label: "Cali",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Dramatic,
+        label: "Dramatic",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Firenze,
+        label: "Firenze",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Golden,
+        label: "Golden",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Lix,
+        label: "Lix",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Lofi,
+        label: "Lofi",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Neue,
+        label: "Neue",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Obsidian,
+        label: "Obsidian",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::PastelPink,
+        label: "PastelPink",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Ryo,
+        label: "Ryo",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::FrostedGlass,
+        label: "FrostGlass",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::Solarize,
+        label: "Solarize",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::EdgeDetection,
+        label: "EdgeDetect",
+        kind: ControlKind::Toggle { default: false },
+    },
+];
+
+fn get_control_def(id: ControlId) -> ControlDef {
+    GENERAL_CONTROLS
+        .iter()
+        .chain(EFFECT_CONTROLS.iter())
+        .find(|c| c.id == id)
+        .copied()
+        .expect("Control ID not found")
 }
 
 // ── App State ────────────────────────────────────────────────────────────────
@@ -336,15 +762,6 @@ impl App {
             }
         }
     }
-
-    fn control_is_font_selector(&self) -> bool {
-        if self.current_tab == 0 {
-            let real_idx = self.selected_control;
-            real_idx == 12
-        } else {
-            false
-        }
-    }
 }
 
 struct App {
@@ -367,7 +784,7 @@ struct App {
     render_tick: usize,
     dragged_control: Option<usize>,
 
-    effects_pipeline: Vec<usize>,
+    effects_pipeline: Vec<ControlId>,
     reordering_grabbed: Option<usize>,
 
     // Shared state for PNG saving
@@ -516,10 +933,10 @@ impl App {
             image_path: render_args.image.clone().unwrap_or_default(),
             width: render_args.width.unwrap_or(80) as i32,
             render_mode_idx: match render_args.render {
-                Render::Irc => 0,
+                Render::Preview => 0,
                 Render::Ansi => 1,
                 Render::Ansi24 => 2,
-                Render::Preview => 3,
+                Render::Irc => 0,
             },
             dither: render_args.dither as i32,
             smooth: render_args.smooth,
@@ -545,7 +962,7 @@ impl App {
                 .scale
                 .map(|s| (s.1 * 100.0) as i32)
                 .unwrap_or(100),
-            font_size: render_args.font_size as u32 as i32,
+            font_size: render_args.font_size as i32,
             fonts: list_system_fonts(),
             font_idx: 0, // initialized below
             filter_idx: match render_args.filter {
@@ -597,7 +1014,7 @@ impl App {
             solarize: render_args.solarize,
             edge_detection: render_args.edge_detection,
 
-            effects_pipeline: (0..26).collect(),
+            effects_pipeline: EFFECT_CONTROLS.iter().map(|c| c.id).collect(),
             reordering_grabbed: None,
 
             available_blocks,
@@ -614,185 +1031,145 @@ impl App {
         }
     }
 
+    fn get_current_control_id(&self) -> ControlId {
+        if self.current_tab == 0 {
+            GENERAL_CONTROLS[self.selected_control.min(GENERAL_CONTROLS.len() - 1)].id
+        } else {
+            self.effects_pipeline[self.selected_control.min(self.effects_pipeline.len() - 1)]
+        }
+    }
+
+    fn get_value(&self, id: ControlId) -> i32 {
+        match id {
+            ControlId::Width => self.width,
+            ControlId::RenderMode => self.render_mode_idx as i32,
+            ControlId::TrimTop => self.trim_top,
+            ControlId::TrimRight => self.trim_right,
+            ControlId::TrimBottom => self.trim_bottom,
+            ControlId::TrimLeft => self.trim_left,
+            ControlId::FlipH => self.fliph as i32,
+            ControlId::FlipV => self.flipv as i32,
+            ControlId::Rotate => self.rotate,
+            ControlId::ScaleX => self.scalex,
+            ControlId::ScaleY => self.scaley,
+            ControlId::FontSize => self.font_size,
+            ControlId::Font => self.font_idx as i32,
+            ControlId::Filter => self.filter_idx as i32,
+            ControlId::GrayTol => self.grayscale_tolerance,
+            ControlId::Brightness => self.brightness,
+            ControlId::Contrast => self.contrast,
+            ControlId::Saturation => self.saturation,
+            ControlId::Gamma => self.gamma,
+            ControlId::Hue => self.hue,
+            ControlId::Colorspace => self.colorspace_idx as i32,
+            ControlId::Encoding => self.encoding_idx as i32,
+
+            ControlId::Dither => self.dither,
+            ControlId::Smooth => self.smooth as i32,
+            ControlId::Invert => self.invert as i32,
+            ControlId::Grayscale => self.grayscale as i32,
+            ControlId::Pixelize => self.pixelize,
+            ControlId::GaussianBlur => self.gaussian_blur,
+            ControlId::BoxBlur => self.box_blur as i32,
+            ControlId::Oil => self.oil as i32,
+            ControlId::Halftone => self.halftone as i32,
+            ControlId::Sepia => self.sepia as i32,
+            ControlId::Normalize => self.normalize as i32,
+            ControlId::Noise => self.noise as i32,
+            ControlId::Emboss => self.emboss as i32,
+            ControlId::Identity => self.identity as i32,
+            ControlId::Laplace => self.laplace as i32,
+            ControlId::NoiseReduction => self.noise_reduction as i32,
+            ControlId::Sharpen => self.sharpen as i32,
+            ControlId::Cali => self.cali as i32,
+            ControlId::Dramatic => self.dramatic as i32,
+            ControlId::Firenze => self.firenze as i32,
+            ControlId::Golden => self.golden as i32,
+            ControlId::Lix => self.lix as i32,
+            ControlId::Lofi => self.lofi as i32,
+            ControlId::Neue => self.neue as i32,
+            ControlId::Obsidian => self.obsidian as i32,
+            ControlId::PastelPink => self.pastel_pink as i32,
+            ControlId::Ryo => self.ryo as i32,
+            ControlId::FrostedGlass => self.frosted_glass as i32,
+            ControlId::Solarize => self.solarize as i32,
+            ControlId::EdgeDetection => self.edge_detection as i32,
+        }
+    }
+
+    fn set_value(&mut self, id: ControlId, val: i32) {
+        match id {
+            ControlId::Width => self.width = val,
+            ControlId::RenderMode => self.render_mode_idx = val as usize,
+            ControlId::TrimTop => self.trim_top = val,
+            ControlId::TrimRight => self.trim_right = val,
+            ControlId::TrimBottom => self.trim_bottom = val,
+            ControlId::TrimLeft => self.trim_left = val,
+            ControlId::FlipH => self.fliph = val != 0,
+            ControlId::FlipV => self.flipv = val != 0,
+            ControlId::Rotate => self.rotate = val,
+            ControlId::ScaleX => self.scalex = val,
+            ControlId::ScaleY => self.scaley = val,
+            ControlId::FontSize => self.font_size = val.clamp(0, 64),
+            ControlId::Font => self.font_idx = val as usize,
+            ControlId::Filter => self.filter_idx = val as usize,
+            ControlId::GrayTol => self.grayscale_tolerance = val,
+            ControlId::Brightness => self.brightness = val,
+            ControlId::Contrast => self.contrast = val,
+            ControlId::Saturation => self.saturation = val,
+            ControlId::Gamma => self.gamma = val,
+            ControlId::Hue => self.hue = val,
+            ControlId::Colorspace => self.colorspace_idx = val as usize,
+            ControlId::Encoding => self.encoding_idx = val as usize,
+
+            ControlId::Dither => self.dither = val,
+            ControlId::Smooth => self.smooth = val != 0,
+            ControlId::Invert => self.invert = val != 0,
+            ControlId::Grayscale => self.grayscale = val != 0,
+            ControlId::Pixelize => self.pixelize = val,
+            ControlId::GaussianBlur => self.gaussian_blur = val,
+            ControlId::BoxBlur => self.box_blur = val != 0,
+            ControlId::Oil => self.oil = val != 0,
+            ControlId::Halftone => self.halftone = val != 0,
+            ControlId::Sepia => self.sepia = val != 0,
+            ControlId::Normalize => self.normalize = val != 0,
+            ControlId::Noise => self.noise = val != 0,
+            ControlId::Emboss => self.emboss = val != 0,
+            ControlId::Identity => self.identity = val != 0,
+            ControlId::Laplace => self.laplace = val != 0,
+            ControlId::NoiseReduction => self.noise_reduction = val != 0,
+            ControlId::Sharpen => self.sharpen = val != 0,
+            ControlId::Cali => self.cali = val != 0,
+            ControlId::Dramatic => self.dramatic = val != 0,
+            ControlId::Firenze => self.firenze = val != 0,
+            ControlId::Golden => self.golden = val != 0,
+            ControlId::Lix => self.lix = val != 0,
+            ControlId::Lofi => self.lofi = val != 0,
+            ControlId::Neue => self.neue = val != 0,
+            ControlId::Obsidian => self.obsidian = val != 0,
+            ControlId::PastelPink => self.pastel_pink = val != 0,
+            ControlId::Ryo => self.ryo = val != 0,
+            ControlId::FrostedGlass => self.frosted_glass = val != 0,
+            ControlId::Solarize => self.solarize = val != 0,
+            ControlId::EdgeDetection => self.edge_detection = val != 0,
+        }
+    }
+
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
         match tab {
-            0 => vec![
-                ControlDef {
-                    label: "Width",
-                    kind: ControlKind::Slider { min: 10, max: 300 },
-                },
-                ControlDef {
-                    label: "Mode",
-                    kind: ControlKind::Enum {
-                        options: vec!["IRC", "ANSI", "ANSI24"],
-                    },
-                },
-                ControlDef {
-                    label: "Crop Top",
-                    kind: ControlKind::Slider { min: 0, max: 2000 },
-                },
-                ControlDef {
-                    label: "Crop Right",
-                    kind: ControlKind::Slider { min: 0, max: 2000 },
-                },
-                ControlDef {
-                    label: "Crop Bottom",
-                    kind: ControlKind::Slider { min: 0, max: 2000 },
-                },
-                ControlDef {
-                    label: "Crop Left",
-                    kind: ControlKind::Slider { min: 0, max: 2000 },
-                },
-                ControlDef {
-                    label: "Flip H",
-                    kind: ControlKind::Toggle,
-                },
-                ControlDef {
-                    label: "Flip V",
-                    kind: ControlKind::Toggle,
-                },
-                ControlDef {
-                    label: "Rotate",
-                    kind: ControlKind::Slider {
-                        min: -180,
-                        max: 180,
-                    },
-                },
-                ControlDef {
-                    label: "Scale X %",
-                    kind: ControlKind::Slider { min: 10, max: 500 },
-                },
-                ControlDef {
-                    label: "Scale Y %",
-                    kind: ControlKind::Slider { min: 10, max: 500 },
-                },
-                ControlDef {
-                    label: "Font Size",
-                    kind: ControlKind::Slider { min: 8, max: 64 },
-                },
-                ControlDef {
-                    label: "Font",
-                    kind: ControlKind::FontSelector,
-                },
-                ControlDef {
-                    label: "Filter",
-                    kind: ControlKind::Enum {
-                        options: vec!["Nearest", "Triangle", "CatmullRom", "Gaussian", "Lanczos3"],
-                    },
-                },
-                ControlDef {
-                    label: "Gray Tol",
-                    kind: ControlKind::Slider { min: 0, max: 255 },
-                },
-                ControlDef {
-                    label: "Brightness",
-                    kind: ControlKind::Slider {
-                        min: -255,
-                        max: 255,
-                    },
-                },
-                ControlDef {
-                    label: "Contrast",
-                    kind: ControlKind::Slider {
-                        min: -255,
-                        max: 255,
-                    },
-                },
-                ControlDef {
-                    label: "Saturation",
-                    kind: ControlKind::Slider {
-                        min: -255,
-                        max: 255,
-                    },
-                },
-                ControlDef {
-                    label: "Gamma",
-                    kind: ControlKind::Slider { min: 0, max: 255 },
-                },
-                ControlDef {
-                    label: "Hue",
-                    kind: ControlKind::Slider { min: 0, max: 360 },
-                },
-                ControlDef {
-                    label: "Colorspace",
-                    kind: ControlKind::Enum {
-                        options: vec!["HSL", "HSV", "HSLUV", "LCH"],
-                    },
-                },
-                ControlDef {
-                    label: "Encoding",
-                    kind: ControlKind::Enum {
-                        options: vec!["UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "CESU-8"],
-                    },
-                },
-            ],
-            1 => {
-                let mut v = vec![
-                    ControlDef {
-                        label: "Dither",
-                        kind: ControlKind::Slider { min: 0, max: 8 },
-                    },
-                    ControlDef {
-                        label: "Smooth",
-                        kind: ControlKind::Toggle,
-                    },
-                    ControlDef {
-                        label: "Invert",
-                        kind: ControlKind::Toggle,
-                    },
-                    ControlDef {
-                        label: "Grayscale",
-                        kind: ControlKind::Toggle,
-                    },
-                    ControlDef {
-                        label: "Pixelize",
-                        kind: ControlKind::Slider { min: 0, max: 100 },
-                    },
-                    ControlDef {
-                        label: "Gauss Blur",
-                        kind: ControlKind::Slider { min: 0, max: 100 },
-                    },
-                ];
-                let toggles = [
-                    "Box Blur",
-                    "Oil",
-                    "Halftone",
-                    "Sepia",
-                    "Normalize",
-                    "Noise",
-                    "Emboss",
-                    "Identity",
-                    "Laplace",
-                    "Denoise",
-                    "Sharpen",
-                    "Cali",
-                    "Dramatic",
-                    "Firenze",
-                    "Golden",
-                    "Lix",
-                    "Lofi",
-                    "Neue",
-                    "Obsidian",
-                    "PastelPink",
-                    "Ryo",
-                    "FrostGlass",
-                    "Solarize",
-                    "EdgeDetect",
-                ];
-                for t in toggles {
-                    v.push(ControlDef {
-                        label: t,
-                        kind: ControlKind::Toggle,
-                    });
-                }
-                v
-            }
+            0 => GENERAL_CONTROLS.to_vec(),
+            1 => self
+                .effects_pipeline
+                .iter()
+                .map(|&id| get_control_def(id))
+                .collect(),
             2 => self
                 .available_blocks
                 .iter()
                 .map(|_name| ControlDef {
+                    id: ControlId::Width, // Placeholder
                     label: "block",
-                    kind: ControlKind::Toggle,
+                    kind: ControlKind::Toggle { default: false },
                 })
                 .collect(),
             _ => vec![],
@@ -803,89 +1180,26 @@ impl App {
         self.tab_controls(self.current_tab).len()
     }
 
-    fn get_control_value(&self, tab: usize, idx: usize) -> i32 {
-        if tab == 0 {
-            match idx {
-                0 => self.width,
-                1 => self.render_mode_idx as i32,
-                2 => self.trim_top,
-                3 => self.trim_right,
-                4 => self.trim_bottom,
-                5 => self.trim_left,
-                6 => self.fliph as i32,
-                7 => self.flipv as i32,
-                8 => self.rotate,
-                9 => self.scalex,
-                10 => self.scaley,
-                11 => self.font_size as i32,
-                12 => self.font_idx as i32,
-                13 => self.filter_idx as i32,
-                14 => self.grayscale_tolerance as i32,
-                15 => self.brightness,
-                16 => self.contrast,
-                17 => self.saturation,
-                18 => self.gamma,
-                19 => self.hue,
-                20 => self.colorspace_idx as i32,
-                21 => self.encoding_idx as i32,
-                _ => 0,
-            }
-        } else if tab == 1 {
-            match idx {
-                0 => self.dither,
-                1 => self.smooth as i32,
-                2 => self.invert as i32,
-                3 => self.grayscale as i32,
-                4 => self.pixelize,
-                5 => self.gaussian_blur,
-                _ => {
-                    // Toggles start at 6
-                    match idx {
-                        6 => self.box_blur as i32,
-                        7 => self.oil as i32,
-                        8 => self.halftone as i32,
-                        9 => self.sepia as i32,
-                        10 => self.normalize as i32,
-                        11 => self.noise as i32,
-                        12 => self.emboss as i32,
-                        13 => self.identity as i32,
-                        14 => self.laplace as i32,
-                        15 => self.noise_reduction as i32,
-                        16 => self.sharpen as i32,
-                        17 => self.cali as i32,
-                        18 => self.dramatic as i32,
-                        19 => self.firenze as i32,
-                        20 => self.golden as i32,
-                        21 => self.lix as i32,
-                        22 => self.lofi as i32,
-                        23 => self.neue as i32,
-                        24 => self.obsidian as i32,
-                        25 => self.pastel_pink as i32,
-                        26 => self.ryo as i32,
-                        27 => self.frosted_glass as i32,
-                        28 => self.solarize as i32,
-                        29 => self.edge_detection as i32,
-                        _ => 0,
-                    }
-                }
-            }
-        } else {
-            // For blocks tab, checked = 1
+    fn get_control_value(&self, _tab: usize, idx: usize) -> i32 {
+        if self.current_tab == 2 {
             if idx < self.available_blocks.len() {
                 let name = &self.available_blocks[idx];
-                if self.render_args.blocks.is_empty() {
-                    1
-                }
-                // all on
-                else if self.render_args.blocks.contains(name) {
+                return if self.render_args.blocks.is_empty()
+                    || self.render_args.blocks.contains(name)
+                {
                     1
                 } else {
                     0
-                }
-            } else {
-                0
+                };
             }
+            return 0;
         }
+        let id = if self.current_tab == 0 {
+            GENERAL_CONTROLS[idx.min(GENERAL_CONTROLS.len() - 1)].id
+        } else {
+            self.effects_pipeline[idx.min(self.effects_pipeline.len() - 1)]
+        };
+        self.get_value(id)
     }
 
     fn mark_args_dirty(&mut self) {
@@ -939,9 +1253,9 @@ impl App {
         self.render_args.solarize = self.solarize;
         self.render_args.edge_detection = self.edge_detection;
         self.render_args.render = match self.render_mode_idx {
-            0 => Render::Preview, // Map "IRC" to Preview for display
-            1 => Render::Ansi,    // "ANSI"
-            _ => Render::Ansi24,  // "ANSI24"
+            0 => Render::Preview,
+            1 => Render::Ansi,
+            _ => Render::Ansi24,
         };
         self.render_args.fliph = self.fliph;
         self.render_args.flipv = self.flipv;
@@ -987,22 +1301,18 @@ impl App {
         } else {
             self.render_args.trim = None;
         }
-        self.render_args.crop = None; // Disable crop as we use trim now
+        self.render_args.crop = None;
 
         // Pipeline
-        let tab1_controls = self.tab_controls(1);
         let mut pipeline = vec![
-            "Dither".to_string(),
             "Brightness".to_string(),
             "Saturation".to_string(),
             "Contrast".to_string(),
             "Hue".to_string(),
             "Gamma".to_string(),
-            "Invert".to_string(),
-            "Grayscale".to_string(),
         ];
-        for &idx in &self.effects_pipeline {
-            pipeline.push(tab1_controls[idx].label.to_string());
+        for &id in &self.effects_pipeline {
+            pipeline.push(get_control_def(id).label.to_string());
         }
         self.render_args.pipeline = pipeline;
 
@@ -1216,7 +1526,11 @@ fn render_bar(
     }
 
     // Draw value on the right
-    let value_text = format!("{} ", value);
+    let value_text = if value == 0 {
+        "Auto ".to_string()
+    } else {
+        format!("{} ", value)
+    };
     let vx = area.x + area.width - value_text.len() as u16;
     for (i, ch) in value_text.chars().enumerate() {
         let x = vx + i as u16;
@@ -1228,7 +1542,7 @@ fn render_bar(
         let style = if value != 0 {
             Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
         } else {
-            Style::new().fg(TEXT_DIM)
+            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
         };
         cell.set_style(style);
     }
@@ -1455,29 +1769,32 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             }
 
             // Reload font/glyphs if changed
-            if current_args.font != last_font
-                || current_args.font_size != last_font_size
-                || current_args.blocks != last_blocks
+            let mut effective_args = current_args.clone();
+            crate::resolve_auto_font_size(&mut effective_args, &arc_image);
+
+            if effective_args.font != last_font
+                || effective_args.font_size != last_font_size
+                || effective_args.blocks != last_blocks
             {
                 let new_store = font::glyph_store(
-                    &current_args.blocks,
-                    &current_args.exclude_range,
-                    &current_args.exclude,
-                    &current_args.include_range,
-                    current_args.include.as_ref(),
-                    &current_args.font,
-                    current_args.font_size,
+                    &effective_args.blocks,
+                    &effective_args.exclude_range,
+                    &effective_args.exclude,
+                    &effective_args.include_range,
+                    effective_args.include.as_ref(),
+                    &effective_args.font,
+                    effective_args.font_size,
                     true,
                 );
                 arc_glyphs = Arc::new(new_store);
                 fast_glyphs_store = None;
-                last_font = current_args.font.clone();
-                last_font_size = current_args.font_size;
-                last_blocks = current_args.blocks.clone();
+                last_font = effective_args.font.clone();
+                last_font_size = effective_args.font_size;
+                last_blocks = effective_args.blocks.clone();
             }
 
             if fast_glyphs_store.is_none() {
-                fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &current_args));
+                fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &effective_args));
             }
 
             // Render!
@@ -1485,7 +1802,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             log::info!("Starting render optimization... ({} glyphs)", glyphs.len());
             let start = Instant::now();
             let result = crate::render_output(
-                &current_args,
+                effective_args,
                 &arc_glyphs,
                 (*arc_image).clone(),
                 glyphs,
@@ -1747,12 +2064,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         && mouse.column < area.x + area.width
                                         && mouse.row == area.y
                                     {
-                                        let ctrl_idx = if app.current_tab == 1 {
-                                            app.effects_pipeline[app.selected_control]
-                                        } else {
-                                            app.selected_control
-                                        };
-                                        if ctrl_idx == 12 {
+                                        let ctrl_id = app.get_current_control_id();
+                                        if ctrl_id == ControlId::Font {
                                             app.font_idx = i;
                                         }
                                         app.mark_args_dirty();
@@ -1791,14 +2104,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else {
                                         app.dragged_control = Some(i);
                                         let controls = app.tab_controls(app.current_tab);
-                                        let real_idx = if app.current_tab == 1 {
-                                            app.effects_pipeline[i]
-                                        } else {
-                                            i
-                                        };
-                                        if let Some(ctrl) = controls.get(real_idx) {
+                                        if let Some(ctrl) = controls.get(i) {
                                             match &ctrl.kind {
-                                                ControlKind::Slider { min, max } => {
+                                                ControlKind::Slider { min, max, .. } => {
                                                     let rel_x = (mouse.column - area.x) as f64;
                                                     let ratio =
                                                         (rel_x / area.width as f64).clamp(0.0, 1.0);
@@ -1810,7 +2118,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         new_val.clamp(*min, *max),
                                                     );
                                                 }
-                                                ControlKind::Toggle => toggle_control(&mut app),
+                                                ControlKind::Toggle { .. } => {
+                                                    toggle_control(&mut app)
+                                                }
                                                 ControlKind::Enum { .. } => {
                                                     toggle_control(&mut app)
                                                 }
@@ -1845,13 +2155,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if let Some(area) = app.control_areas.get(visual_idx) {
                                     if area.width > 0 {
                                         let controls = app.tab_controls(app.current_tab);
-                                        let real_idx = if app.current_tab == 1 {
-                                            app.effects_pipeline[visual_idx]
-                                        } else {
-                                            visual_idx
-                                        };
-                                        if let Some(ctrl) = controls.get(real_idx) {
-                                            if let ControlKind::Slider { min, max } = &ctrl.kind {
+                                        if let Some(ctrl) = controls.get(visual_idx) {
+                                            if let ControlKind::Slider { min, max, .. } = &ctrl.kind
+                                            {
                                                 let rel_x = (mouse.column as i32 - area.x as i32)
                                                     .max(0)
                                                     as f64;
@@ -2061,270 +2367,113 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
 // ── Control Logic ────────────────────────────────────────────────────────────
 fn adjust_control(app: &mut App, delta: i32) {
-    let real_idx = if app.current_tab == 1 {
-        app.effects_pipeline[app.selected_control.min(app.effects_pipeline.len() - 1)]
-    } else {
-        app.selected_control
-    };
+    let id = app.get_current_control_id();
+    let def = get_control_def(id);
 
-    if app.current_tab == 0 {
-        match real_idx {
-            0 => app.width = (app.width + delta).clamp(10, 300),
-            1 => {
-                if delta > 0 {
-                    app.render_mode_idx = (app.render_mode_idx + 1) % 3;
-                } else {
-                    app.render_mode_idx = (app.render_mode_idx + 2) % 3;
-                }
-            }
-            2 => app.trim_top = (app.trim_top + delta).clamp(0, 2000),
-            3 => app.trim_right = (app.trim_right + delta).clamp(0, 2000),
-            4 => app.trim_bottom = (app.trim_bottom + delta).clamp(0, 2000),
-            5 => app.trim_left = (app.trim_left + delta).clamp(0, 2000),
-            // 6, 7 are toggles (Flip)
-            8 => app.rotate = (app.rotate + delta).clamp(-180, 180),
-            9 => app.scalex = (app.scalex + delta).clamp(10, 500),
-            10 => app.scaley = (app.scaley + delta).clamp(10, 500),
-            11 => app.font_size = (app.font_size + delta).clamp(8, 64),
-            12 => {
-                let count = app.fonts.len();
-                if count > 0 {
-                    if delta > 0 {
-                        app.font_idx = (app.font_idx + 1) % count;
-                    } else {
-                        app.font_idx = (app.font_idx + count - 1) % count;
-                    }
-                }
-            }
-            13 => {
-                if delta > 0 {
-                    app.filter_idx = (app.filter_idx + 1) % 5;
-                } else {
-                    app.filter_idx = (app.filter_idx + 4) % 5;
-                }
-            }
-            14 => app.grayscale_tolerance = (app.grayscale_tolerance + delta).clamp(0, 255),
-            15 => app.brightness = (app.brightness + delta).clamp(-255, 255),
-            16 => app.contrast = (app.contrast + delta).clamp(-255, 255),
-            17 => app.saturation = (app.saturation + delta).clamp(-255, 255),
-            18 => app.gamma = (app.gamma + delta).clamp(0, 255),
-            19 => app.hue = (app.hue + delta).clamp(0, 360),
-            20 => {
-                if delta > 0 {
-                    app.colorspace_idx = (app.colorspace_idx + 1) % 4;
-                } else {
-                    app.colorspace_idx = (app.colorspace_idx + 3) % 4;
-                }
-            }
-            21 => {
-                if delta > 0 {
-                    app.encoding_idx = (app.encoding_idx + 1) % 5;
-                } else {
-                    app.encoding_idx = (app.encoding_idx + 4) % 5;
-                }
-            }
-            _ => {}
+    match def.kind {
+        ControlKind::Slider { min, max, .. } => {
+            let val = app.get_value(id);
+            app.set_value(id, (val + delta).clamp(min, max));
         }
-    } else if app.current_tab == 1 {
-        match real_idx {
-            0 => app.dither = (app.dither + delta).clamp(0, 8),
-            // 1, 2, 3 toggles
-            4 => app.pixelize = (app.pixelize + delta).clamp(0, 100),
-            5 => app.gaussian_blur = (app.gaussian_blur + delta).clamp(0, 100),
-            _ => {}
+        ControlKind::Enum { options, .. } => {
+            let val = app.get_value(id);
+            let count = options.len() as i32;
+            if delta > 0 {
+                app.set_value(id, (val + 1) % count);
+            } else {
+                app.set_value(id, (val + count - 1) % count);
+            }
+        }
+        ControlKind::FontSelector => {
+            let val = app.get_value(id);
+            let count = app.fonts.len() as i32;
+            if count > 0 {
+                if delta > 0 {
+                    app.set_value(id, (val + 1) % count);
+                } else {
+                    app.set_value(id, (val + count - 1) % count);
+                }
+            }
+        }
+        ControlKind::Toggle { .. } => {
+            // Toggles don't adjust by delta normally, but let's toggle if delta != 0
+            if delta != 0 {
+                let val = app.get_value(id);
+                app.set_value(id, if val == 0 { 1 } else { 0 });
+            }
         }
     }
+
     log::info!(
-        "TUI Adjusted: tab={}, ctrl={}, real={}",
+        "TUI Adjusted: tab={}, ctrl={}, id={:?}",
         app.current_tab,
         app.selected_control,
-        real_idx
+        id
     );
     app.mark_args_dirty();
 }
 
 fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
-    let real_idx = if app.current_tab == 1 {
-        app.effects_pipeline[visual_idx.min(app.effects_pipeline.len() - 1)]
+    let id = if app.current_tab == 0 {
+        GENERAL_CONTROLS[visual_idx.min(GENERAL_CONTROLS.len() - 1)].id
     } else {
-        visual_idx
+        app.effects_pipeline[visual_idx.min(app.effects_pipeline.len() - 1)]
     };
 
-    if app.current_tab == 0 {
-        match real_idx {
-            0 => app.width = val,
-            2 => app.trim_top = val,
-            3 => app.trim_right = val,
-            4 => app.trim_bottom = val,
-            5 => app.trim_left = val,
-            8 => app.rotate = val,
-            9 => app.scalex = val,
-            10 => app.scaley = val,
-            11 => app.font_size = val,
-            14 => app.grayscale_tolerance = val,
-            15 => app.brightness = val,
-            16 => app.contrast = val,
-            17 => app.saturation = val,
-            18 => app.gamma = val,
-            19 => app.hue = val,
-            _ => {}
-        }
-    } else if app.current_tab == 1 {
-        match real_idx {
-            0 => app.dither = val,
-            4 => app.pixelize = val,
-            5 => app.gaussian_blur = val,
-            _ => {}
-        }
-    }
+    app.set_value(id, val);
+
     log::info!(
-        "Value set: tab={}, visual={}, real={}, val={}",
+        "Value set: tab={}, visual={}, id={:?}, val={}",
         app.current_tab,
         visual_idx,
-        real_idx,
+        id,
         val
     );
-    app.mark_args_dirty(); // Reset is immediate
+    app.mark_args_dirty();
 }
 
 fn toggle_control(app: &mut App) {
-    let real_idx = if app.current_tab == 1 {
-        app.effects_pipeline[app.selected_control.min(app.effects_pipeline.len() - 1)]
-    } else {
-        app.selected_control
-    };
+    let id = app.get_current_control_id();
+    let def = get_control_def(id);
 
-    if app.current_tab == 0 {
-        match real_idx {
-            1 => {
-                app.render_mode_idx = (app.render_mode_idx + 1) % 3;
+    match def.kind {
+        ControlKind::Toggle { .. } => {
+            let val = app.get_value(id);
+            app.set_value(id, if val == 0 { 1 } else { 0 });
+        }
+        ControlKind::Enum { options, .. } => {
+            let val = app.get_value(id);
+            app.set_value(id, (val + 1) % options.len() as i32);
+        }
+        ControlKind::FontSelector => {
+            if !app.fonts.is_empty() {
+                app.font_idx = (app.font_idx + 1) % app.fonts.len();
             }
-            6 => app.fliph = !app.fliph,
-            7 => app.flipv = !app.flipv,
-            12 => {
-                if !app.fonts.is_empty() {
-                    app.font_idx = (app.font_idx + 1) % app.fonts.len();
-                }
-            }
-            13 => app.filter_idx = (app.filter_idx + 1) % 5,
-            20 => app.colorspace_idx = (app.colorspace_idx + 1) % 4,
-            21 => app.encoding_idx = (app.encoding_idx + 1) % 5,
-            _ => {}
         }
-    } else if app.current_tab == 1 {
-        match real_idx {
-            1 => app.smooth = !app.smooth,
-            2 => app.invert = !app.invert,
-            3 => app.grayscale = !app.grayscale,
-            // Toggles start at 6
-            6 => app.box_blur = !app.box_blur,
-            7 => app.oil = !app.oil,
-            8 => app.halftone = !app.halftone,
-            9 => app.sepia = !app.sepia,
-            10 => app.normalize = !app.normalize,
-            11 => app.noise = !app.noise,
-            12 => app.emboss = !app.emboss,
-            13 => app.identity = !app.identity,
-            14 => app.laplace = !app.laplace,
-            15 => app.noise_reduction = !app.noise_reduction,
-            16 => app.sharpen = !app.sharpen,
-            17 => app.cali = !app.cali,
-            18 => app.dramatic = !app.dramatic,
-            19 => app.firenze = !app.firenze,
-            20 => app.golden = !app.golden,
-            21 => app.lix = !app.lix,
-            22 => app.lofi = !app.lofi,
-            23 => app.neue = !app.neue,
-            24 => app.obsidian = !app.obsidian,
-            25 => app.pastel_pink = !app.pastel_pink,
-            26 => app.ryo = !app.ryo,
-            27 => app.frosted_glass = !app.frosted_glass,
-            28 => app.solarize = !app.solarize,
-            29 => app.edge_detection = !app.edge_detection,
-            _ => {}
-        }
-    } else if app.current_tab == 2 {
-        if app.selected_control < app.available_blocks.len() {
-            // Block toggling logic usually handled by Enter in tree, but keep specifically for list if used
-            // Currently tree is key
-        }
+        _ => {}
     }
+
     log::info!(
-        "TUI Toggled: tab={}, visual={}, real={}",
+        "TUI Toggled: tab={}, visual={}, id={:?}",
         app.current_tab,
         app.selected_control,
-        real_idx
+        id
     );
     app.mark_args_dirty();
 }
 
 fn reset_control(app: &mut App) {
-    if app.current_tab == 0 {
-        match app.selected_control {
-            0 => app.width = 80,
-            1 => app.render_mode_idx = 1,
-            2 => app.trim_top = 0,
-            3 => app.trim_right = 0,
-            4 => app.trim_bottom = 0,
-            5 => app.trim_left = 0,
-            6 => app.fliph = false,
-            7 => app.flipv = false,
-            8 => app.rotate = 0,
-            9 => app.scalex = 100,
-            10 => app.scaley = 100,
-            11 => app.font_size = 20,
-            12 => {} // font
-            13 => app.filter_idx = 4,
-            14 => app.grayscale_tolerance = 0,
-            15 => app.colorspace_idx = 0,
-            16 => app.encoding_idx = 0,
-            _ => {}
-        }
-    } else if app.current_tab == 1 {
-        match app.selected_control {
-            0 => app.dither = 0,
-            1 => app.smooth = false,
-            2 => app.invert = false,
-            3 => app.grayscale = false,
-            4 => app.brightness = 0,
-            5 => app.contrast = 0,
-            6 => app.saturation = 0,
-            7 => app.gamma = 0,
-            8 => app.hue = 0,
-            9 => app.pixelize = 0,
-            10 => app.gaussian_blur = 0,
-            11 => app.box_blur = false,
-            12 => app.oil = false,
-            13 => app.halftone = false,
-            14 => app.sepia = false,
-            15 => app.normalize = false,
-            16 => app.noise = false,
-            17 => app.emboss = false,
-            18 => app.identity = false,
-            19 => app.laplace = false,
-            20 => app.noise_reduction = false,
-            21 => app.sharpen = false,
-            22 => app.cali = false,
-            23 => app.dramatic = false,
-            24 => app.firenze = false,
-            25 => app.golden = false,
-            26 => app.lix = false,
-            27 => app.lofi = false,
-            28 => app.neue = false,
-            29 => app.obsidian = false,
-            30 => app.pastel_pink = false,
-            31 => app.ryo = false,
-            32 => app.frosted_glass = false,
-            33 => app.solarize = false,
-            34 => app.edge_detection = false,
-            _ => {}
-        }
+    let id = app.get_current_control_id();
+    let def = get_control_def(id);
+
+    match def.kind {
+        ControlKind::Slider { default, .. } => app.set_value(id, default),
+        ControlKind::Toggle { default } => app.set_value(id, if default { 1 } else { 0 }),
+        ControlKind::Enum { default, .. } => app.set_value(id, default as i32),
+        ControlKind::FontSelector => app.font_idx = 0,
     }
-    log::info!(
-        "Control reset: tab={}, control={}",
-        app.current_tab,
-        app.selected_control
-    );
+
+    log::info!("Control reset: tab={}, id={:?}", app.current_tab, id);
     app.mark_args_dirty();
 }
 
@@ -2530,14 +2679,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let mut control_rects = Vec::new();
     let mut y = inner.y;
 
-    let ordered_indices: Vec<usize> = if app.current_tab == 1 {
-        app.effects_pipeline.clone()
-    } else {
-        (0..controls.len()).collect()
-    };
-
-    for (v_idx, &i) in ordered_indices.iter().enumerate() {
-        let ctrl = &controls[i];
+    for (v_idx, ctrl) in controls.iter().enumerate() {
         if v_idx < scroll_offset {
             control_rects.push(Rect::default());
             continue;
@@ -2552,27 +2694,27 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
         let label_text = if app.current_tab == 1 {
             format!("≡ {}", ctrl.label)
-        } else if app.current_tab == 2 && i < app.available_blocks.len() {
-            app.available_blocks[i].clone()
+        } else if app.current_tab == 2 && v_idx < app.available_blocks.len() {
+            app.available_blocks[v_idx].clone()
         } else {
             ctrl.label.to_string()
         };
 
-        match &ctrl.kind {
-            ControlKind::Slider { min, max } => {
-                let value = app.get_control_value(app.current_tab, i);
-                render_bar(buf, ctrl_area, &label_text, value, *min, *max, selected);
+        match ctrl.kind {
+            ControlKind::Slider { min, max, .. } => {
+                let value = app.get_control_value(app.current_tab, v_idx);
+                render_bar(buf, ctrl_area, &label_text, value, min, max, selected);
             }
-            ControlKind::Enum { options } => {
-                let value = app.get_control_value(app.current_tab, i) as usize;
+            ControlKind::Enum { options, .. } => {
+                let value = app.get_control_value(app.current_tab, v_idx) as usize;
                 render_enum(buf, ctrl_area, &label_text, options, value, selected);
             }
-            ControlKind::Toggle => {
-                let on = app.get_control_value(app.current_tab, i) != 0;
+            ControlKind::Toggle { .. } => {
+                let on = app.get_control_value(app.current_tab, v_idx) != 0;
                 render_toggle(buf, ctrl_area, &label_text, on, selected);
             }
             ControlKind::FontSelector => {
-                let font_name = if app.font_idx < app.fonts.len() {
+                let font_name: &str = if app.font_idx < app.fonts.len() {
                     &app.fonts[app.font_idx]
                 } else {
                     "Default"
@@ -2871,26 +3013,13 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
 }
 
 fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let controls = app.tab_controls(app.current_tab);
-    let real_idx = if app.current_tab == 1 {
-        if let Some(&ridx) = app.effects_pipeline.get(app.selected_control) {
-            ridx
-        } else {
-            return;
-        }
-    } else {
-        app.selected_control
-    };
+    let id = app.get_current_control_id();
+    let ctrl = get_control_def(id);
 
-    let ctrl = if let Some(c) = controls.get(real_idx) {
-        c
-    } else {
-        return;
-    };
     let (options, current) = match &ctrl.kind {
-        ControlKind::Enum { options } => (
+        ControlKind::Enum { options, .. } => (
             options.iter().map(|&s| s.to_string()).collect::<Vec<_>>(),
-            app.get_control_value(app.current_tab, app.selected_control) as usize,
+            app.get_value(id) as usize,
         ),
         ControlKind::FontSelector => (app.fonts.clone(), app.font_idx),
         _ => return,
@@ -3075,20 +3204,4 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let line = Line::from(full_spans);
     let bar = Paragraph::new(line).style(Style::new().bg(STATUS_BG));
     f.render_widget(bar, area);
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(r);
-
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(popup[1])[1]
 }
