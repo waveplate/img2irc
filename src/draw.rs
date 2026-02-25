@@ -1119,10 +1119,10 @@ pub fn render_blocks_smooth(
                     (dr * dr + dg * dg + db * db) as u64
                 };
 
-                let mut top_diff = [0i64; 64];
-                let mut bottom_diff = [0i64; 64];
-                let mut left_diff = [0i64; 64];
-                let mut right_diff = [0i64; 64];
+                let mut top_diff = [0i64; 256];
+                let mut bottom_diff = [0i64; 256];
+                let mut left_diff = [0i64; 256];
+                let mut right_diff = [0i64; 256];
                 let mut corner_diff = [0i64; 4];
                 let mut edge_base_cost = 0u64;
 

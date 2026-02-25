@@ -242,7 +242,11 @@ pub fn render_from_canvas(
     }
 }
 
-pub fn resolve_auto_font_size(args: &mut RenderArgs, image: &PhotonImage, glyphs: &font::GlyphStore) {
+pub fn resolve_auto_font_size(
+    args: &mut RenderArgs,
+    image: &PhotonImage,
+    glyphs: &font::GlyphStore,
+) {
     if args.font_size == 0 {
         let (float_w, float_h) = if args.braille {
             (2.0, 4.0)
@@ -256,7 +260,7 @@ pub fn resolve_auto_font_size(args: &mut RenderArgs, image: &PhotonImage, glyphs
         let target_gw = img_w / target_char_w;
         let target_gh = target_gw / font_ratio;
 
-        args.font_size = target_gh.round().clamp(8.0, 64.0) as u32;
+        args.font_size = target_gh.round().clamp(13.0, 64.0) as u32;
         log::info!(
             "Auto-calculated font size: {} (based on ratio {:.3})",
             args.font_size,

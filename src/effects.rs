@@ -22,7 +22,7 @@ pub fn calculate_dimensions(
         let (gw, gh) = glyphs.metrics;
         (gw as f32, gh as f32)
     };
-    
+
     let (float_x, float_y) = if args.braille {
         (2.0, 4.0)
     } else {
@@ -39,32 +39,20 @@ pub fn calculate_dimensions(
         (Some(wc), Some(hc)) => (wc as f32 * factor_x, hc as f32 * factor_y),
 
         (Some(wc), None) => {
-            // Compute EXACT unfluctuating rows using the font's design (float) aspect ratio
-            let exact_rows = (wc as f32 * float_x * orig_h / orig_w) / float_y;
-            let rows = exact_rows.round().max(1.0);
-            
             let pw = wc as f32 * factor_x;
-            let ph = rows * factor_y;
+            let ph = pw * (orig_h / orig_w);
             (pw, ph)
         }
 
         (None, Some(hc)) => {
-            let exact_cols = (hc as f32 * float_y * orig_w / orig_h) / float_x;
-            let cols = exact_cols.round().max(1.0);
-            
             let ph = hc as f32 * factor_y;
-            let pw = cols * factor_x;
+            let pw = ph * (orig_w / orig_h);
             (pw, ph)
         }
 
         (None, None) => {
-            let exact_rows = orig_h / float_y;
-            let rows = exact_rows.round().max(1.0);
-            let ph = rows * factor_y;
-            
-            let exact_cols = (rows * float_y * orig_w / orig_h) / float_x;
-            let cols = exact_cols.round().max(1.0);
-            let pw = cols * factor_x;
+            let ph = orig_h;
+            let pw = ph * (orig_w / orig_h);
             (pw, ph)
         }
     };
