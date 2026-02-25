@@ -78,6 +78,7 @@ enum ControlId {
     FontSize,
     Font,
     Filter,
+    Eyedropper,
     GrayTol,
     Brightness,
     Contrast,
@@ -133,6 +134,7 @@ enum ControlKind {
         default: usize,
     },
     FontSelector,
+    EyedropperWidget,
 }
 
 #[derive(Clone, Copy)]
@@ -243,7 +245,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Font Size",
         kind: ControlKind::Slider {
             min: 0,
-            max: 64,
+            max: 256,
             default: 0,
         },
     },
@@ -251,6 +253,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::Font,
         label: "Font",
         kind: ControlKind::FontSelector,
+    },
+    ControlDef {
+        id: ControlId::Eyedropper,
+        label: "Select Color",
+        kind: ControlKind::EyedropperWidget,
     },
     ControlDef {
         id: ControlId::Filter,
@@ -1094,6 +1101,7 @@ impl App {
             ControlId::FrostedGlass => self.frosted_glass as i32,
             ControlId::Solarize => self.solarize as i32,
             ControlId::EdgeDetection => self.edge_detection as i32,
+            ControlId::Eyedropper => 0,
         }
     }
 
@@ -1152,6 +1160,7 @@ impl App {
             ControlId::FrostedGlass => self.frosted_glass = val != 0,
             ControlId::Solarize => self.solarize = val != 0,
             ControlId::EdgeDetection => self.edge_detection = val != 0,
+            ControlId::Eyedropper => {}
         }
     }
 
@@ -2124,6 +2133,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 ControlKind::Enum { .. } => {
                                                     toggle_control(&mut app)
                                                 }
+                                                ControlKind::EyedropperWidget => {
+                                                    // Placeholder behaviour when clicked
+                                                }
                                                 ControlKind::FontSelector => {
                                                     app.selected_control = i;
                                                 }
@@ -2402,6 +2414,7 @@ fn adjust_control(app: &mut App, delta: i32) {
                 app.set_value(id, if val == 0 { 1 } else { 0 });
             }
         }
+        ControlKind::EyedropperWidget => {}
     }
 
     log::info!(
@@ -2471,6 +2484,7 @@ fn reset_control(app: &mut App) {
         ControlKind::Toggle { default } => app.set_value(id, if default { 1 } else { 0 }),
         ControlKind::Enum { default, .. } => app.set_value(id, default as i32),
         ControlKind::FontSelector => app.font_idx = 0,
+        ControlKind::EyedropperWidget => {}
     }
 
     log::info!("Control reset: tab={}, id={:?}", app.current_tab, id);
@@ -2720,6 +2734,9 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                     "Default"
                 };
                 render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
+            }
+            ControlKind::EyedropperWidget => {
+                render_enum(buf, ctrl_area, &label_text, &["Click Image"], 0, selected);
             }
         }
 
