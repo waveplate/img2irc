@@ -271,7 +271,7 @@ fn render_glyph_from_face(
     let bitmap = glyph.bitmap();
     let rows = bitmap.rows() as usize;
     let width = bitmap.width() as usize;
-    let pitch = bitmap.pitch().abs() as usize;
+    let pitch = bitmap.pitch().unsigned_abs() as usize;
 
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
     let glyph_ascender = glyph.bitmap_top();
@@ -344,9 +344,9 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
     // max_advance is often bloated by wide characters (like ligatures or CJK).
     // Measure a standard character like 'X' or '0' to get the true monospace cell width.
     let mut standard_advance = metrics.max_advance;
-    if let Ok(_) = main_face.load_char('X' as usize, freetype::face::LoadFlag::DEFAULT) {
+    if main_face.load_char('X' as usize, freetype::face::LoadFlag::DEFAULT).is_ok() {
         standard_advance = main_face.glyph().metrics().horiAdvance;
-    } else if let Ok(_) = main_face.load_char('0' as usize, freetype::face::LoadFlag::DEFAULT) {
+    } else if main_face.load_char('0' as usize, freetype::face::LoadFlag::DEFAULT).is_ok() {
         standard_advance = main_face.glyph().metrics().horiAdvance;
     }
 

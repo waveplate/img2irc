@@ -6,11 +6,9 @@ use once_cell::sync::Lazy;
 use photon_rs::PhotonImage;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::f32::consts::PI as F32_PI;
 // Removed redundant debug imports
 use std::f64::consts::PI as F64_PI;
 use std::fmt::Write as _;
-use std::iter::repeat;
 use std::sync::Mutex;
 
 #[derive(Clone)]
@@ -129,7 +127,7 @@ static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
 pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >> 8) & 0xFF) as i32;
-    let pb = ((col >> 0) & 0xFF) as i32;
+    let pb = (col & 0xFF) as i32;
 
     let mut best_i = 0u8;
     let mut best_d = u32::MAX;
@@ -138,13 +136,13 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     }
 
     for (i, &p) in palette.iter().enumerate() {
-        if palette.len() == 99 && i >= 2 && i < 16 {
+        if palette.len() == 99 && (2..16).contains(&i) {
             continue;
         }
 
         let dr = pr - (((p >> 16) & 0xFF) as i32);
         let dg = pg - (((p >> 8) & 0xFF) as i32);
-        let db = pb - (((p >> 0) & 0xFF) as i32);
+        let db = pb - ((p & 0xFF) as i32);
         let d = (dr * dr + dg * dg + db * db) as u32;
         if d < best_d {
             best_d = d;
@@ -165,7 +163,7 @@ pub fn nearest_distinctly_chromatic_hex_colour(
 ) -> Option<u8> {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >> 8) & 0xFF) as i32;
-    let pb = ((col >> 0) & 0xFF) as i32;
+    let pb = (col & 0xFF) as i32;
 
     let mut best_i: Option<u8> = None;
     let mut best_d = u32::MAX;
@@ -176,7 +174,7 @@ pub fn nearest_distinctly_chromatic_hex_colour(
         }
         let dr = pr - (((p >> 16) & 0xFF) as i32);
         let dg = pg - (((p >> 8) & 0xFF) as i32);
-        let db = pb - (((p >> 0) & 0xFF) as i32);
+        let db = pb - ((p & 0xFF) as i32);
         let d = (dr * dr + dg * dg + db * db) as u32;
         if d < best_d {
             best_d = d;
@@ -197,10 +195,10 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
 
     let pr = ((target >> 16) & 0xFF) as i32;
     let pg = ((target >> 8) & 0xFF) as i32;
-    let pb = ((target >> 0) & 0xFF) as i32;
+    let pb = (target & 0xFF) as i32;
 
     for (i, &p) in palette.iter().enumerate() {
-        if palette.len() == 99 && i >= 2 && i < 16 {
+        if palette.len() == 99 && (2..16).contains(&i) {
             continue;
         }
 
@@ -209,7 +207,7 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
         if target_is_chromatic == p_is_chromatic {
             let r = ((p >> 16) & 0xFF) as i32;
             let g = ((p >> 8) & 0xFF) as i32;
-            let b = ((p >> 0) & 0xFF) as i32;
+            let b = (p & 0xFF) as i32;
             let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
             let d = d as u32;
             if d < best_d {
@@ -238,7 +236,7 @@ pub fn make_rgb_u32(px: &[u8]) -> u32 {
 }
 #[inline]
 pub fn unpack_rgb(rgb: u32) -> [u8; 3] {
-    [(rgb >> 16) as u8, (rgb >> 8) as u8, (rgb >> 0) as u8]
+    [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]
 }
 
 #[inline]
@@ -325,7 +323,7 @@ impl AnsiImage {
         let flat: Vec<u32> = raw.chunks(4).map(make_rgb_u32).collect();
         let mut bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
 
-        if bitmap.len() % 2 != 0 {
+        if !bitmap.len().is_multiple_of(2) {
             bitmap.push(vec![0; w]);
         }
         for row in &mut bitmap {
@@ -361,21 +359,21 @@ fn block_bitmap(
         .map(|row| row.iter().map(|px| AnsiPixel::new(px, tolerance)).collect())
         .collect();
 
-    let ph = ((px_rows.len() + gh - 1) / gh) * gh;
+    let ph = px_rows.len().div_ceil(gh) * gh;
     let pw = if px_rows.is_empty() {
         0
     } else {
-        ((px_rows[0].len() + gw - 1) / gw) * gw
+        px_rows[0].len().div_ceil(gw) * gw
     };
 
     for r in &mut px_rows {
         if r.len() < pw {
-            r.extend(repeat(AnsiPixel::new(&0, tolerance)).take(pw - r.len()));
+            r.extend(std::iter::repeat_n(AnsiPixel::new(&0, tolerance), pw - r.len()));
         }
     }
     if px_rows.len() < ph {
         let blank = vec![AnsiPixel::new(&0, tolerance); pw];
-        px_rows.extend(repeat(blank).take(ph - px_rows.len()));
+        px_rows.extend(std::iter::repeat_n(blank, ph - px_rows.len()));
     }
 
     let mut out = Vec::with_capacity(ph / gh);
@@ -456,13 +454,11 @@ pub fn emit_colourized(
                         }
                     }
                     out.push('m');
-                } else {
-                    if fg_changed {
-                        match fg {
-                            Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
-                            Colour::RGB([r, g, b]) => {
-                                write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
-                            }
+                } else if fg_changed {
+                    match fg {
+                        Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
+                        Colour::RGB([r, g, b]) => {
+                            write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                         }
                     }
                 }
@@ -1248,7 +1244,7 @@ pub fn render_blocks_smooth(
                     corner_diff[3] = c_fg as i64 - c_bg as i64;
                 }
 
-                let total_edge_diff = top_diff.iter().sum::<i64>()
+                let _total_edge_diff = top_diff.iter().sum::<i64>()
                     + bottom_diff.iter().sum::<i64>()
                     + left_diff.iter().sum::<i64>()
                     + right_diff.iter().sum::<i64>()
@@ -1696,12 +1692,12 @@ pub fn calculate_smoothness(
     for y in 1..height - 1 {
         for x in 1..width - 1 {
             let (w0, w1, w2) = ((y - 1) * width, y * width, (y + 1) * width);
-            gradx[w1 + x] = -1.0 * smooth_gray[w0 + x - 1] + 1.0 * smooth_gray[w0 + x + 1]
+            gradx[w1 + x] = -smooth_gray[w0 + x - 1] + 1.0 * smooth_gray[w0 + x + 1]
                 - 2.0 * smooth_gray[w1 + x - 1]
                 + 2.0 * smooth_gray[w1 + x + 1]
                 - 1.0 * smooth_gray[w2 + x - 1]
                 + 1.0 * smooth_gray[w2 + x + 1];
-            grady[w1 + x] = -1.0 * smooth_gray[w0 + x - 1]
+            grady[w1 + x] = -smooth_gray[w0 + x - 1]
                 - 2.0 * smooth_gray[w0 + x]
                 - 1.0 * smooth_gray[w0 + x + 1]
                 + 1.0 * smooth_gray[w2 + x - 1]
@@ -1812,7 +1808,7 @@ pub fn save_as_png(
         }
     }
     img.save(path)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        .map_err(std::io::Error::other)
 }
 
 fn get_transformed_block_pixels_into(

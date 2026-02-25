@@ -25,7 +25,7 @@ use crate::{
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     buffer::Buffer,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
@@ -878,6 +878,7 @@ struct App {
     path_area: Rect,
     tree_area: Rect,
     glyph_list_area: Rect,
+    explorer_area: Rect,
     preview_area: Rect,
     output_area: Rect,
     options_pane_area: Rect,
@@ -887,6 +888,9 @@ struct App {
     image_preview_protocol: Option<StatefulProtocol>,
     preview_picker: Picker,
     last_preview_path: Option<String>,
+
+    // Eyedropper state
+    eyedropper_color: Option<(u8, u8, u8)>,
 }
 
 impl App {
@@ -1031,10 +1035,12 @@ impl App {
             path_area: Rect::default(),
             tree_area: Rect::default(),
             glyph_list_area: Rect::default(),
+            explorer_area: Rect::default(),
             preview_area: Rect::default(),
             output_area: Rect::default(),
             options_pane_area: Rect::default(),
             options_areas: Vec::new(),
+            eyedropper_color: None,
         }
     }
 
@@ -1441,8 +1447,7 @@ fn list_system_fonts() -> Vec<String> {
                     // e.g. "/usr/share/fonts/TTF/CascadiaCode.ttf: Cascadia Code" -> "Cascadia Code"
                     // e.g. "Cascadia Code,Cascadia Mono:style=Regular" -> "Cascadia Code"
                     l.split(':')
-                        .skip(1)
-                        .next()
+                        .nth(1)
                         .unwrap_or(l) // everything after first : (path separator)
                         .split(',')
                         .next()
@@ -1612,6 +1617,69 @@ fn render_enum(
         let cell = &mut buf[(x, ly)];
         cell.set_char(ch);
         cell.set_style(Style::new().fg(ACCENT).add_modifier(Modifier::BOLD));
+    }
+
+    if selected {
+        let accent_style = Style::new().bg(ACCENT).fg(ACCENT);
+        for y in area.y..area.y + area.height {
+            buf.set_string(area.x, y, "▎", accent_style);
+        }
+    }
+}
+
+/// A specialized widget for eyedropper color
+fn render_eyedropper_widget(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    color: Option<(u8, u8, u8)>,
+    selected: bool,
+) {
+    if area.height < 1 || area.width < 4 {
+        return;
+    }
+
+    let bg = if selected { SELECTED_BG } else { SURFACE };
+    buf.set_style(area, Style::new().bg(bg));
+
+    let ly = area.y + area.height.saturating_sub(1) / 2;
+    let label_text = format!(" {}", label);
+    for (i, ch) in label_text.chars().enumerate() {
+        let x = area.x + 1 + i as u16;
+        if x >= area.x + area.width {
+            break;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        let style = Style::new()
+            .fg(if selected { Color::White } else { TEXT })
+            .add_modifier(Modifier::BOLD);
+        cell.set_style(style);
+    }
+
+    let val_text = "🯩███🯫 ";
+    let vx = area.x + area.width - val_text.chars().count() as u16;
+
+    let swatch_style = if let Some((r, g, b)) = color {
+        Style::new().fg(Color::Rgb(r, g, b))
+    } else {
+        Style::new().fg(TEXT_DIM)
+    };
+
+    for (i, ch) in val_text.chars().enumerate() {
+        let x = vx + i as u16;
+        if x < area.x || x >= area.x + area.width {
+            continue;
+        }
+        let cell = &mut buf[(x, ly)];
+        cell.set_char(ch);
+        // We only color the middle blocks (1, 2, 3 index) for the swatch itself if not using generic
+        let is_block = ch == '█';
+        if is_block {
+            cell.set_style(swatch_style);
+        } else {
+            cell.set_style(Style::new().fg(TEXT_DIM));
+        }
     }
 
     if selected {
@@ -1946,6 +2014,78 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     } else {
                         app.input_mode = InputMode::Normal;
                     }
+                } else if let Event::Mouse(mouse) = event {
+                    if let Some(mut dialog) = app.explorer_dialog.take() {
+                        let is_click = mouse.kind == MouseEventKind::Down(MouseButton::Left);
+                        let is_scroll_up = mouse.kind == MouseEventKind::ScrollUp;
+                        let is_scroll_down = mouse.kind == MouseEventKind::ScrollDown;
+
+                        if mouse.column >= app.explorer_area.x
+                            && mouse.column < app.explorer_area.x + app.explorer_area.width
+                            && mouse.row >= app.explorer_area.y + 1
+                            && mouse.row
+                                < app.explorer_area.y + app.explorer_area.height.saturating_sub(1)
+                        {
+                            if is_scroll_up {
+                                let _ = dialog.explorer.handle(ratatui_explorer::Input::Up);
+                            } else if is_scroll_down {
+                                let _ = dialog.explorer.handle(ratatui_explorer::Input::Down);
+                            } else if is_click {
+                                let offset = dialog.explorer.list_offset();
+                                let clicked_idx =
+                                    offset + (mouse.row - (app.explorer_area.y + 1)) as usize;
+                                if clicked_idx < dialog.explorer.files().len() {
+                                    if dialog.explorer.selected_idx() == clicked_idx {
+                                        // Double click equivalent
+                                        if dialog.explorer.current().is_file() {
+                                            if matches!(dialog.mode, ExplorerMode::Open) {
+                                                let path = dialog
+                                                    .explorer
+                                                    .current()
+                                                    .path()
+                                                    .to_string_lossy()
+                                                    .to_string();
+                                                app.handle_explorer_result(dialog.mode, path);
+                                                app.input_mode = InputMode::Normal;
+                                                app.explorer_dialog = None;
+                                                continue;
+                                            } else {
+                                                let name = dialog
+                                                    .explorer
+                                                    .current()
+                                                    .name()
+                                                    .replace("/", "");
+                                                dialog.name_input = TextArea::new(vec![name]);
+                                                dialog.name_input.set_block(
+                                                    ratatui::widgets::Block::default()
+                                                        .borders(ratatui::widgets::Borders::ALL)
+                                                        .title(" Filename (Enter to Save) "),
+                                                );
+                                                dialog.name_input.set_cursor_line_style(
+                                                    ratatui::style::Style::default(),
+                                                );
+                                                dialog.focus_on_input = true;
+                                            }
+                                        } else if dialog.explorer.current().is_dir() {
+                                            let _ = dialog
+                                                .explorer
+                                                .handle(ratatui_explorer::Input::Right);
+                                        }
+                                    } else {
+                                        dialog.explorer.set_selected_idx(clicked_idx);
+                                    }
+                                }
+                            }
+                            app.explorer_dialog = Some(dialog);
+                        } else if is_click {
+                            // Clicked outside the left pane, let's just restore dialog and do nothing, or maybe unfocus
+                            app.explorer_dialog = Some(dialog);
+                        } else {
+                            app.explorer_dialog = Some(dialog);
+                        }
+                    } else {
+                        app.input_mode = InputMode::Normal;
+                    }
                 }
                 continue; // Consume event
             }
@@ -1977,10 +2117,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                     _ => {}
                                 }
-                            } else {
-                                if app.selected_control > 0 {
-                                    app.selected_control -= 1;
-                                }
+                            } else if app.selected_control > 0 {
+                                app.selected_control -= 1;
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -2013,6 +2151,56 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             app.dragged_control = None;
+
+                            // Check if over output area for eyedropper
+                            if mouse.column >= app.output_area.x
+                                && mouse.column < app.output_area.x + app.output_area.width
+                                && mouse.row >= app.output_area.y
+                                && mouse.row < app.output_area.y + app.output_area.height
+                            {
+                                if app.get_current_control_id() == ControlId::Eyedropper {
+                                    if let Some(res) = &app.cached_result {
+                                        let inner_height = app.output_area.height.saturating_sub(2);
+                                        let line_count = app.cached_render.lines().count() as u16;
+                                        let pad_y = if line_count < inner_height {
+                                            inner_height
+                                                .saturating_sub(line_count)
+                                                .saturating_div(2)
+                                        } else {
+                                            0
+                                        };
+                                        if mouse.row >= app.output_area.y + 1 + pad_y {
+                                            let content_y = (mouse.row
+                                                - (app.output_area.y + 1 + pad_y))
+                                                as usize
+                                                + app.scroll as usize;
+                                            if content_y < res.grid.len() {
+                                                let row = &res.grid[content_y];
+                                                let inner_width =
+                                                    app.output_area.width.saturating_sub(2);
+                                                let row_len = row.len() as u16;
+                                                let pad_x = if inner_width > row_len {
+                                                    (inner_width - row_len) / 2
+                                                } else {
+                                                    0
+                                                };
+                                                let start_x = app.output_area.x + 1 + pad_x;
+                                                if mouse.column >= start_x
+                                                    && mouse.column < start_x + row_len
+                                                {
+                                                    let content_x =
+                                                        (mouse.column - start_x) as usize;
+                                                    let cell = &row[content_x];
+                                                    app.eyedropper_color =
+                                                        Some((cell.fg[0], cell.fg[1], cell.fg[2]));
+                                                    // Trigger a re-render
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // It could also be intended to just return Focus to output
+                            }
 
                             // Check path click
                             if mouse.column >= app.path_area.x
@@ -2557,9 +2745,9 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .enumerate()
             .filter(|(_, f)| f.to_lowercase().contains(&query))
             .map(|(i, f)| {
-                let is_selected = app.font_idx == i; // Visual check? No, font_list_state handles selection.
-                                                     // But we want to indicate the *current* font too?
-                                                     // The list allows picking a NEW font.
+                let _is_selected = app.font_idx == i; // Visual check? No, font_list_state handles selection.
+                                                      // But we want to indicate the *current* font too?
+                                                      // The list allows picking a NEW font.
                 ListItem::new(f.as_str()).style(Style::new().fg(TEXT))
             })
             .collect();
@@ -2736,7 +2924,13 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
             }
             ControlKind::EyedropperWidget => {
-                render_enum(buf, ctrl_area, &label_text, &["Click Image"], 0, selected);
+                render_eyedropper_widget(
+                    buf,
+                    ctrl_area,
+                    &label_text,
+                    app.eyedropper_color,
+                    selected,
+                );
             }
         }
 
@@ -2765,7 +2959,7 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // 1. Update Scroll
     {
         let nodes = app.tree_state.flatten();
-        let total = nodes.len();
+        let _total = nodes.len();
         let height = area.height as usize;
         let selected = app.tree_state.selected_idx;
         let current_scroll = app.tree_state.scroll as usize;
@@ -2880,6 +3074,7 @@ fn render_explorer_dialog(
     let explorer_area = main_chunks[0];
     let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(explorer_area);
+    app.explorer_area = chunks[0];
 
     // Explorer border
     let mut explorer_block = Block::default()
@@ -2970,7 +3165,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
 
     if app.cached_render.is_empty() && is_rendering {
         // Only show full-panel spinner if no content yet
-        let loading_text = format!("\n\n\n      Rendering...");
+        let loading_text = "\n\n\n      Rendering...".to_string();
         let p = Paragraph::new(loading_text)
             .block(block)
             .alignment(Alignment::Center)
@@ -3196,12 +3391,39 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         ("Q", "Quit"),
     ];
 
-    // Add technical info if available
-    let info_text = if let Some(g) = &app.arc_glyphs {
+    let mut technical_info = String::new();
+
+    if let Some(res) = &app.cached_result {
+        let width_chars = res.grid.first().map_or(0, |row| row.len());
+        let height_chars = res.grid.len();
+        technical_info.push_str(&format!("Size: {}x{} chars", width_chars, height_chars));
+    }
+
+    if let Some(g) = &app.arc_glyphs {
         let (gw, gh) = g.metrics;
-        format!(" | Cell: {}x{} | ", gw, gh)
-    } else {
+        if !technical_info.is_empty() {
+            technical_info.push_str(" | ");
+        }
+        technical_info.push_str(&format!("Cell: {}x{}", gw, gh));
+    }
+
+    if let Some((r, g, b)) = app.eyedropper_color {
+        let col_u32 = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+        let irc_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::IRC99);
+        let ansi_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::ANSI256);
+        if !technical_info.is_empty() {
+            technical_info.push_str(" | ");
+        }
+        technical_info.push_str(&format!(
+            "#{:02X}{:02X}{:02X} IRC:{:02} ANSI:{:03}",
+            r, g, b, irc_code, ansi_code
+        ));
+    }
+
+    let info_text = if technical_info.is_empty() {
         " | ".to_string()
+    } else {
+        format!(" | {} | ", technical_info)
     };
 
     let spans: Vec<Span> = keys

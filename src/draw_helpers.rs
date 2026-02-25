@@ -76,8 +76,8 @@ pub fn calculate_local_wiggle(
     
     // We compute gradients on the fly
     let get_grad = |s: &[f32], i: usize, w: usize| -> (f32, f32) {
-        let gx = -1.0*s[i-w-1] + 1.0*s[i-w+1] -2.0*s[i-1] + 2.0*s[i+1] -1.0*s[i+w-1] + 1.0*s[i+w+1];
-        let gy = -1.0*s[i-w-1] - 2.0*s[i-w] - 1.0*s[i-w+1] + 1.0*s[i+w-1] + 2.0*s[i+w] + 1.0*s[i+w+1];
+        let gx = -s[i-w-1] + 1.0*s[i-w+1] -2.0*s[i-1] + 2.0*s[i+1] -1.0*s[i+w-1] + 1.0*s[i+w+1];
+        let gy = -s[i-w-1] - 2.0*s[i-w] - 1.0*s[i-w+1] + 1.0*s[i+w-1] + 2.0*s[i+w] + 1.0*s[i+w+1];
         (gx, gy)
     };
 

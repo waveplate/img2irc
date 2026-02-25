@@ -10,17 +10,12 @@ pub mod tui;
 
 use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
-use reqwest;
 use std::{
     error::Error,
     io::{Cursor, Write},
 };
 use url::Url;
 
-use resvg;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Mutex;
-use tiny_skia;
 
 // Main execution logic moved to binary files
 
@@ -191,52 +186,50 @@ pub fn render_from_canvas(
         } else {
             draw::RenderResult::from("Error: Braille mode without luma canvas")
         }
+    } else if args.smooth {
+        match args.render {
+            crate::args::Render::Irc => draw::render_blocks_smooth(
+                canvas,
+                args,
+                crate::args::Render::Irc,
+                glyphs,
+                abort_flag,
+            ),
+            crate::args::Render::Ansi => draw::render_blocks_smooth(
+                canvas,
+                args,
+                crate::args::Render::Ansi,
+                glyphs,
+                abort_flag,
+            ),
+            crate::args::Render::Ansi24 => draw::render_blocks_smooth(
+                canvas,
+                args,
+                crate::args::Render::Ansi24,
+                glyphs,
+                abort_flag,
+            ),
+            crate::args::Render::Preview => draw::render_blocks_smooth(
+                canvas,
+                args,
+                crate::args::Render::Preview,
+                glyphs,
+                abort_flag,
+            ),
+        }
     } else {
-        if args.smooth {
-            match args.render {
-                crate::args::Render::Irc => draw::render_blocks_smooth(
-                    canvas,
-                    args,
-                    crate::args::Render::Irc,
-                    glyphs,
-                    abort_flag,
-                ),
-                crate::args::Render::Ansi => draw::render_blocks_smooth(
-                    canvas,
-                    args,
-                    crate::args::Render::Ansi,
-                    glyphs,
-                    abort_flag,
-                ),
-                crate::args::Render::Ansi24 => draw::render_blocks_smooth(
-                    canvas,
-                    args,
-                    crate::args::Render::Ansi24,
-                    glyphs,
-                    abort_flag,
-                ),
-                crate::args::Render::Preview => draw::render_blocks_smooth(
-                    canvas,
-                    args,
-                    crate::args::Render::Preview,
-                    glyphs,
-                    abort_flag,
-                ),
+        match args.render {
+            crate::args::Render::Irc => {
+                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
             }
-        } else {
-            match args.render {
-                crate::args::Render::Irc => {
-                    draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
-                }
-                crate::args::Render::Ansi => {
-                    draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
-                }
-                crate::args::Render::Ansi24 => {
-                    draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
-                }
-                crate::args::Render::Preview => {
-                    draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs)
-                }
+            crate::args::Render::Ansi => {
+                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
+            }
+            crate::args::Render::Ansi24 => {
+                draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
+            }
+            crate::args::Render::Preview => {
+                draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs)
             }
         }
     }
