@@ -242,8 +242,31 @@ pub fn render_from_canvas(
     }
 }
 
+pub fn resolve_auto_font_size(args: &mut RenderArgs, image: &PhotonImage, glyphs: &font::GlyphStore) {
+    if args.font_size == 0 {
+        let (float_w, float_h) = if args.braille {
+            (2.0, 4.0)
+        } else {
+            glyphs.float_metrics
+        };
+        let font_ratio = float_w / float_h;
+        let img_w = image.get_width() as f32;
+        let target_char_w = args.width.unwrap_or(80) as f32;
+
+        let target_gw = img_w / target_char_w;
+        let target_gh = target_gw / font_ratio;
+
+        args.font_size = target_gh.round().clamp(8.0, 64.0) as u32;
+        log::info!(
+            "Auto-calculated font size: {} (based on ratio {:.3})",
+            args.font_size,
+            font_ratio
+        );
+    }
+}
+
 pub fn render_output(
-    args: &RenderArgs,
+    mut args: RenderArgs,
     glyph_store: &font::GlyphStore,
     image: PhotonImage,
     glyphs: &[draw::FastGlyph],
@@ -254,8 +277,14 @@ pub fn render_output(
             return draw::RenderResult::from("Cancelled");
         }
     }
-    let (canvas, luma_canvas) = prepare_canvas(args, glyph_store, image);
-    render_from_canvas(args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag)
+
+    resolve_auto_font_size(&mut args, &image, glyph_store);
+
+    // If font_size was resolved/changed, we might need a new glyph_store and new FastGlyphs.
+    // However, for simplicity in this pass, we'll use the provided ones if they match.
+    // In TUI, this will be handled by the refresh loop.
+    let (canvas, luma_canvas) = prepare_canvas(&args, glyph_store, image);
+    render_from_canvas(&args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag)
 }
 
 pub fn write_encoded_output(content: &str, encoding: &crate::args::Encoding) {

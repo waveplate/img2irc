@@ -294,7 +294,7 @@ pub struct Args {
     pub font: Vec<String>,
 
     /// font size (height in pixels)
-    #[arg(long, default_value = "24")]
+    #[arg(long, default_value = "0")]
     pub font_size: Param,
 
     /// tolerance for considering a colour grayscale (0-255)

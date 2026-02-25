@@ -17,6 +17,8 @@ use std::sync::Mutex;
 pub struct FastGlyph {
     pub ch: char,
     pub bitmap: Vec<u8>,
+    pub ones: Vec<usize>,
+    pub zeros: Vec<usize>,
     pub top: Vec<u8>,
     pub bottom: Vec<u8>,
     pub left: Vec<u8>,
@@ -81,12 +83,24 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 right.push(bitmap[y * gw + (gw - 1)]);
             }
 
-            let ones = bitmap.iter().filter(|&&b| b == 1).count();
+            let mut ones_indices = Vec::with_capacity(bp);
+            let mut zeros_indices = Vec::with_capacity(bp);
+            for (i, &b) in bitmap.iter().enumerate() {
+                if b == 1 {
+                    ones_indices.push(i);
+                } else {
+                    zeros_indices.push(i);
+                }
+            }
+
+            let ones = ones_indices.len();
             let coverage = ones as f32 / bp as f32;
 
             FastGlyph {
                 ch: *ch,
                 bitmap,
+                ones: ones_indices,
+                zeros: zeros_indices,
                 top,
                 bottom,
                 left,
@@ -611,16 +625,25 @@ pub fn render_blocks_smooth(
                     }
                     let pixels = &working_pixels_buffer;
 
-                    // Pre-calc Sums for this scale
                     let mut block_sum_r = 0u64;
                     let mut block_sum_g = 0u64;
                     let mut block_sum_b = 0u64;
                     let mut block_sum_sq = 0u64;
-                    for p in pixels {
+
+                    let mut p_r = [0u64; 256];
+                    let mut p_g = [0u64; 256];
+                    let mut p_b = [0u64; 256];
+                    let mut p_sq = [0u64; 256];
+
+                    for (i, p) in pixels.iter().enumerate().take(256) {
                         block_sum_r += p.r;
                         block_sum_g += p.g;
                         block_sum_b += p.b;
                         block_sum_sq += p.sq;
+                        p_r[i] = p.r;
+                        p_g[i] = p.g;
+                        p_b[i] = p.b;
+                        p_sq[i] = p.sq;
                     }
 
                     // 2. Find Best Fit for Scale
@@ -664,15 +687,20 @@ pub fn render_blocks_smooth(
                                 let mut bg_cnt = [0u16; 256];
                                 let mut fg_len = 0;
                                 let mut bg_len = 0;
-                                for i in 0..bp {
-                                    let val = indices[i] as usize;
-                                    if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                                        fg_cnt[val] += 1;
-                                        fg_len += 1;
-                                    } else {
-                                        bg_cnt[val] += 1;
-                                        bg_len += 1;
-                                    }
+
+                                let (fg_iter, bg_iter) = if inv {
+                                    (&fglyph.zeros, &fglyph.ones)
+                                } else {
+                                    (&fglyph.ones, &fglyph.zeros)
+                                };
+
+                                for &i in fg_iter {
+                                    fg_cnt[indices[i] as usize] += 1;
+                                    fg_len += 1;
+                                }
+                                for &i in bg_iter {
+                                    bg_cnt[indices[i] as usize] += 1;
+                                    bg_len += 1;
                                 }
                                 let (fgi, fx) = fg_cnt
                                     .iter()
@@ -715,16 +743,15 @@ pub fn render_blocks_smooth(
                             let mut sum_ones_g = 0u64;
                             let mut sum_ones_b = 0u64;
                             let mut sum_ones_sq = 0u64;
-                            let mut count_ones = 0u64;
-                            for i in 0..bp {
-                                if fglyph.bitmap[i] == 1 {
-                                    let px = &pixels[i];
-                                    sum_ones_r += px.r;
-                                    sum_ones_g += px.g;
-                                    sum_ones_b += px.b;
-                                    sum_ones_sq += px.sq;
-                                    count_ones += 1;
-                                }
+                            let count_ones = fglyph.ones.len() as u64;
+
+                            for &i in &fglyph.ones {
+                                // SAFETY: fglyph.ones contains valid indices < bp
+                                let px = unsafe { pixels.get_unchecked(i) };
+                                sum_ones_r += px.r;
+                                sum_ones_g += px.g;
+                                sum_ones_b += px.b;
+                                sum_ones_sq += px.sq;
                             }
                             let count_zeros = bp as u64 - count_ones;
                             let sum_zeros_r = block_sum_r - sum_ones_r;
@@ -751,9 +778,6 @@ pub fn render_blocks_smooth(
                                 [0, 0, 0]
                             };
 
-                            let (target_bg_norm, penalty_norm) = (avg_zeros, 0);
-                            let (target_bg_inv, penalty_inv) = (avg_ones, 0);
-
                             let t1_1 = sum_ones_sq;
                             let t2_1 = 2
                                 * (avg_ones[0] as u64 * sum_ones_r
@@ -767,26 +791,6 @@ pub fn render_blocks_smooth(
 
                             let t1_0 = sum_zeros_sq;
                             let t2_0 = 2
-                                * (target_bg_norm[0] as u64 * sum_zeros_r
-                                    + target_bg_norm[1] as u64 * sum_zeros_g
-                                    + target_bg_norm[2] as u64 * sum_zeros_b);
-                            let t3_0 = count_zeros
-                                * (target_bg_norm[0] as u64 * target_bg_norm[0] as u64
-                                    + target_bg_norm[1] as u64 * target_bg_norm[1] as u64
-                                    + target_bg_norm[2] as u64 * target_bg_norm[2] as u64);
-                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-
-                            let cost_normal = c1 + c0 + penalty_norm;
-                            if cost_normal < scale_best_cost {
-                                scale_best_cost = cost_normal;
-                                scale_best_glyph = gi;
-                                scale_best_inv = false;
-                                scale_best_fg = avg_ones;
-                                scale_best_bg = target_bg_norm;
-                            }
-
-                            let t1_0 = sum_zeros_sq;
-                            let t2_0 = 2
                                 * (avg_zeros[0] as u64 * sum_zeros_r
                                     + avg_zeros[1] as u64 * sum_zeros_g
                                     + avg_zeros[2] as u64 * sum_zeros_b);
@@ -794,26 +798,15 @@ pub fn render_blocks_smooth(
                                 * (avg_zeros[0] as u64 * avg_zeros[0] as u64
                                     + avg_zeros[1] as u64 * avg_zeros[1] as u64
                                     + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                            let c_fg = (t1_0 + t3_0).saturating_sub(t2_0);
+                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
 
-                            let t1_1 = sum_ones_sq;
-                            let t2_1 = 2
-                                * (target_bg_inv[0] as u64 * sum_ones_r
-                                    + target_bg_inv[1] as u64 * sum_ones_g
-                                    + target_bg_inv[2] as u64 * sum_ones_b);
-                            let t3_1 = count_ones
-                                * (target_bg_inv[0] as u64 * target_bg_inv[0] as u64
-                                    + target_bg_inv[1] as u64 * target_bg_inv[1] as u64
-                                    + target_bg_inv[2] as u64 * target_bg_inv[2] as u64);
-                            let c_bg = (t1_1 + t3_1).saturating_sub(t2_1);
-
-                            let cost_inverted = c_fg + c_bg + penalty_inv;
-                            if cost_inverted < scale_best_cost {
-                                scale_best_cost = cost_inverted;
+                            let cost_normal = c1 + c0;
+                            if cost_normal < scale_best_cost {
+                                scale_best_cost = cost_normal;
                                 scale_best_glyph = gi;
-                                scale_best_inv = true;
-                                scale_best_fg = avg_zeros;
-                                scale_best_bg = target_bg_inv;
+                                scale_best_inv = false;
+                                scale_best_fg = avg_ones;
+                                scale_best_bg = avg_zeros;
                             }
                         }
 
@@ -1038,6 +1031,64 @@ pub fn render_blocks_smooth(
         }
     }
 
+    // --- Phase 2: Precompute internal block-glyph costs ---
+    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth {
+        grid_data
+            .par_iter()
+            .map(|data| {
+                let fg_p = PrePixel {
+                    r: data.fg[0] as u64,
+                    g: data.fg[1] as u64,
+                    b: data.fg[2] as u64,
+                    sq: (data.fg[0] as u64).pow(2)
+                        + (data.fg[1] as u64).pow(2)
+                        + (data.fg[2] as u64).pow(2),
+                };
+                let bg_p = PrePixel {
+                    r: data.bg[0] as u64,
+                    g: data.bg[1] as u64,
+                    b: data.bg[2] as u64,
+                    sq: (data.bg[0] as u64).pow(2)
+                        + (data.bg[1] as u64).pow(2)
+                        + (data.bg[2] as u64).pow(2),
+                };
+
+                let mut base_cost = 0u64;
+                // We could use static sizing since bp is small, but Vec is fine too.
+                let mut diff = vec![0i64; bp];
+
+                for i in 0..bp {
+                    let px = &data.pixels[i];
+                    let c_fg =
+                        px.sq + fg_p.sq - 2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b);
+                    let c_bg =
+                        px.sq + bg_p.sq - 2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b);
+                    base_cost += c_bg;
+                    diff[i] = c_fg as i64 - c_bg as i64;
+                }
+
+                let total_diff: i64 = diff.iter().sum();
+                let mut costs = Vec::with_capacity(glyphs.len() * 2);
+
+                for fglyph in glyphs.iter() {
+                    let mut dot = 0i64;
+                    for &i in &fglyph.ones {
+                        dot += unsafe { *diff.get_unchecked(i) };
+                    }
+
+                    let c_total_f = (base_cost as i64 + dot).max(0) as u64;
+                    let c_total_t = (base_cost as i64 + total_diff - dot).max(0) as u64;
+
+                    costs.push(c_total_f);
+                    costs.push(c_total_t);
+                }
+                costs
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
         let iterations = 10;
@@ -1060,33 +1111,6 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let data = &grid_data[curr_idx];
 
-                let fg_p = PrePixel {
-                    r: data.fg[0] as u64,
-                    g: data.fg[1] as u64,
-                    b: data.fg[2] as u64,
-                    sq: (data.fg[0] as u64).pow(2)
-                        + (data.fg[1] as u64).pow(2)
-                        + (data.fg[2] as u64).pow(2),
-                };
-                let bg_p = PrePixel {
-                    r: data.bg[0] as u64,
-                    g: data.bg[1] as u64,
-                    b: data.bg[2] as u64,
-                    sq: (data.bg[0] as u64).pow(2)
-                        + (data.bg[1] as u64).pow(2)
-                        + (data.bg[2] as u64).pow(2),
-                };
-                let mut d_block_sum_r = 0u64;
-                let mut d_block_sum_g = 0u64;
-                let mut d_block_sum_b = 0u64;
-                let mut d_block_sum_sq = 0u64;
-                for p in &data.pixels {
-                    d_block_sum_r += p.r;
-                    d_block_sum_g += p.g;
-                    d_block_sum_b += p.b;
-                    d_block_sum_sq += p.sq;
-                }
-
                 let edge_importance_weight = 4;
                 let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
                     let dr = a[0] as i64 - b[0] as i64;
@@ -1095,169 +1119,174 @@ pub fn render_blocks_smooth(
                     (dr * dr + dg * dg + db * db) as u64
                 };
 
+                let mut top_diff = [0i64; 64];
+                let mut bottom_diff = [0i64; 64];
+                let mut left_diff = [0i64; 64];
+                let mut right_diff = [0i64; 64];
+                let mut corner_diff = [0i64; 4];
+                let mut edge_base_cost = 0u64;
+
+                if cy > 0 {
+                    let n_idx = curr_idx - grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let n_on = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        top_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cy < grid_h - 1 {
+                    let n_idx = curr_idx + grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let n_on = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        bottom_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cx > 0 {
+                    let n_idx = curr_idx - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let n_on = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        left_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cx < grid_w - 1 {
+                    let n_idx = curr_idx + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let n_on = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        right_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+
+                if cy > 0 && cx > 0 {
+                    let n_idx = (curr_idx - grid_w) - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[0] = c_fg as i64 - c_bg as i64;
+                }
+                if cy > 0 && cx < grid_w - 1 {
+                    let n_idx = (curr_idx - grid_w) + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[1] = c_fg as i64 - c_bg as i64;
+                }
+                if cy < grid_h - 1 && cx > 0 {
+                    let n_idx = (curr_idx + grid_w) - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[2] = c_fg as i64 - c_bg as i64;
+                }
+                if cy < grid_h - 1 && cx < grid_w - 1 {
+                    let n_idx = (curr_idx + grid_w) + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[3] = c_fg as i64 - c_bg as i64;
+                }
+
+                let total_edge_diff = top_diff.iter().sum::<i64>()
+                    + bottom_diff.iter().sum::<i64>()
+                    + left_diff.iter().sum::<i64>()
+                    + right_diff.iter().sum::<i64>()
+                    + corner_diff.iter().sum::<i64>();
+
                 let mut best_cost = u64::MAX;
                 let mut best_choice = grid_state[curr_idx];
 
                 for (gi, fglyph) in glyphs.iter().enumerate() {
-                    for inv in [false, true] {
-                        let (my_fg, my_bg) = if inv {
-                            (data.bg, data.fg)
-                        } else {
-                            (data.fg, data.bg)
-                        };
-                        let mut current_edge_error = 0u64;
+                    let mut dot = 0i64;
+                    for i in 0..gw {
+                        dot += top_diff[i] * (fglyph.top[i] as i64);
+                        dot += bottom_diff[i] * (fglyph.bottom[i] as i64);
+                    }
+                    for i in 0..gh {
+                        dot += left_diff[i] * (fglyph.left[i] as i64);
+                        dot += right_diff[i] * (fglyph.right[i] as i64);
+                    }
+                    dot += corner_diff[0] * (fglyph.top[0] as i64);
+                    dot += corner_diff[1] * (fglyph.top[gw - 1] as i64);
+                    dot += corner_diff[2] * (fglyph.bottom[0] as i64);
+                    dot += corner_diff[3] * (fglyph.bottom[gw - 1] as i64);
 
-                        if cy > 0 {
-                            let n_idx = curr_idx - grid_w;
-                            let (ni, niv) = grid_state[n_idx];
-                            for i in 0..gw {
-                                let n_on = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
-                                let n_col = if n_on == niv {
-                                    grid_data[n_idx].bg
-                                } else {
-                                    grid_data[n_idx].fg
-                                };
-                                let my_on = (fglyph.top[i] ^ (inv as u8)) == 1;
-                                let my_col = if my_on { my_fg } else { my_bg };
-                                current_edge_error += dist_sq(n_col, my_col);
-                            }
-                        }
-                        if cy < grid_h - 1 {
-                            let n_idx = curr_idx + grid_w;
-                            let (ni, niv) = grid_state[n_idx];
-                            for i in 0..gw {
-                                let n_on = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
-                                let n_col = if n_on == niv {
-                                    grid_data[n_idx].bg
-                                } else {
-                                    grid_data[n_idx].fg
-                                };
-                                let my_on = (fglyph.bottom[i] ^ (inv as u8)) == 1;
-                                let my_col = if my_on { my_fg } else { my_bg };
-                                current_edge_error += dist_sq(n_col, my_col);
-                            }
-                        }
-                        if cx > 0 {
-                            let n_idx = curr_idx - 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            for i in 0..gh {
-                                let n_on = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
-                                let n_col = if n_on == niv {
-                                    grid_data[n_idx].bg
-                                } else {
-                                    grid_data[n_idx].fg
-                                };
-                                let my_on = (fglyph.left[i] ^ (inv as u8)) == 1;
-                                let my_col = if my_on { my_fg } else { my_bg };
-                                current_edge_error += dist_sq(n_col, my_col);
-                            }
-                        }
-                        if cx < grid_w - 1 {
-                            let n_idx = curr_idx + 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            for i in 0..gh {
-                                let n_on = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
-                                let n_col = if n_on == niv {
-                                    grid_data[n_idx].bg
-                                } else {
-                                    grid_data[n_idx].fg
-                                };
-                                let my_on = (fglyph.right[i] ^ (inv as u8)) == 1;
-                                let my_col = if my_on { my_fg } else { my_bg };
-                                current_edge_error += dist_sq(n_col, my_col);
-                            }
-                        }
+                    let edge_cost_normal =
+                        ((edge_base_cost as i64 + dot) as u64) * edge_importance_weight;
+                    let total_normal = edge_cost_normal + block_glyph_costs[curr_idx][gi * 2];
+                    if total_normal < best_cost {
+                        best_cost = total_normal;
+                        best_choice = (gi, false);
+                    }
 
-                        if cy > 0 && cx > 0 {
-                            let n_idx = (curr_idx - grid_w) - 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
-                            let n_col = if n_on == niv {
-                                grid_data[n_idx].bg
-                            } else {
-                                grid_data[n_idx].fg
-                            };
-                            let my_on = (fglyph.top[0] ^ (inv as u8)) == 1;
-                            let my_col = if my_on { my_fg } else { my_bg };
-                            current_edge_error += dist_sq(n_col, my_col);
-                        }
-                        if cy > 0 && cx < grid_w - 1 {
-                            let n_idx = (curr_idx - grid_w) + 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
-                            let n_col = if n_on == niv {
-                                grid_data[n_idx].bg
-                            } else {
-                                grid_data[n_idx].fg
-                            };
-                            let my_on = (fglyph.top[gw - 1] ^ (inv as u8)) == 1;
-                            let my_col = if my_on { my_fg } else { my_bg };
-                            current_edge_error += dist_sq(n_col, my_col);
-                        }
-                        if cy < grid_h - 1 && cx > 0 {
-                            let n_idx = (curr_idx + grid_w) - 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
-                            let n_col = if n_on == niv {
-                                grid_data[n_idx].bg
-                            } else {
-                                grid_data[n_idx].fg
-                            };
-                            let my_on = (fglyph.bottom[0] ^ (inv as u8)) == 1;
-                            let my_col = if my_on { my_fg } else { my_bg };
-                            current_edge_error += dist_sq(n_col, my_col);
-                        }
-                        if cy < grid_h - 1 && cx < grid_w - 1 {
-                            let n_idx = (curr_idx + grid_w) + 1;
-                            let (ni, niv) = grid_state[n_idx];
-                            let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
-                            let n_col = if n_on == niv {
-                                grid_data[n_idx].bg
-                            } else {
-                                grid_data[n_idx].fg
-                            };
-                            let my_on = (fglyph.bottom[gw - 1] ^ (inv as u8)) == 1;
-                            let my_col = if my_on { my_fg } else { my_bg };
-                            current_edge_error += dist_sq(n_col, my_col);
-                        }
-
-                        let edge_cost = current_edge_error * edge_importance_weight;
-                        if edge_cost >= best_cost {
-                            continue;
-                        }
-
-                        let mut sum_ones_r = 0u64;
-                        let mut sum_ones_g = 0u64;
-                        let mut sum_ones_b = 0u64;
-                        let mut sum_ones_sq = 0u64;
-                        let mut count_ones = 0u64;
-                        for i in 0..bp {
-                            if fglyph.bitmap[i] ^ (inv as u8) == 1 {
-                                let px = &data.pixels[i];
-                                sum_ones_r += px.r;
-                                sum_ones_g += px.g;
-                                sum_ones_b += px.b;
-                                sum_ones_sq += px.sq;
-                                count_ones += 1;
-                            }
-                        }
-                        let count_zeros = bp as u64 - count_ones;
-                        let c1 = (sum_ones_sq + count_ones * fg_p.sq).saturating_sub(
-                            2 * (fg_p.r * sum_ones_r + fg_p.g * sum_ones_g + fg_p.b * sum_ones_b),
-                        );
-                        let c0 = (d_block_sum_sq - sum_ones_sq + count_zeros * bg_p.sq)
-                            .saturating_sub(
-                                2 * (bg_p.r * (d_block_sum_r - sum_ones_r)
-                                    + bg_p.g * (d_block_sum_g - sum_ones_g)
-                                    + bg_p.b * (d_block_sum_b - sum_ones_b)),
-                            );
-
-                        let total = edge_cost + c1 + c0;
-
-                        if total < best_cost {
-                            best_cost = total;
-                            best_choice = (gi, inv);
-                        }
+                    // To match the previous buggy behavior exactly, inverted edge costs evaluated identically
+                    let edge_cost_inverted = edge_cost_normal;
+                    let total_inverted =
+                        edge_cost_inverted + block_glyph_costs[curr_idx][gi * 2 + 1];
+                    if total_inverted < best_cost {
+                        best_cost = total_inverted;
+                        best_choice = (gi, true);
                     }
                 }
 

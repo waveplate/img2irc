@@ -17,6 +17,7 @@ pub struct GlyphStore {
     pub groups: HashMap<String, Vec<char>>,
     pub selected: HashSet<char>,
     pub metrics: (usize, usize),
+    pub float_metrics: (f32, f32),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ struct CachedMetrics {
     cell_height: usize,
     ascender: i32,
     descender: i32,
+    float_width: f32,
+    float_height: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -338,11 +341,21 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
     let main_face = ctx.get_main_face();
     let metrics = main_face.size_metrics().expect("No size metrics available");
 
-    let cell_width = ((metrics.max_advance >> 6) as i32).max(1) as usize;
-    let mut ascender = (metrics.ascender >> 6) as i32;
-    let descender = (metrics.descender >> 6) as i32;
-    let mut cell_height = (ascender + descender.abs()).max(1) as usize;
+    // max_advance is often bloated by wide characters (like ligatures or CJK).
+    // Measure a standard character like 'X' or '0' to get the true monospace cell width.
+    let mut standard_advance = metrics.max_advance;
+    if let Ok(_) = main_face.load_char('X' as usize, freetype::face::LoadFlag::DEFAULT) {
+        standard_advance = main_face.glyph().metrics().horiAdvance;
+    } else if let Ok(_) = main_face.load_char('0' as usize, freetype::face::LoadFlag::DEFAULT) {
+        standard_advance = main_face.glyph().metrics().horiAdvance;
+    }
 
+    let cell_width = ((standard_advance >> 6) as i32).max(1) as usize;
+    let ascender = (metrics.ascender >> 6) as i32;
+    let descender = (metrics.descender >> 6) as i32;
+    let cell_height = ((metrics.height >> 6) as i32).max(1) as usize;
+
+    /*
     // Calibrate against Full Block (U+2588) to ensure gapless rendering
     let full_block_char = '█';
     for path in &ctx.font_paths {
@@ -370,13 +383,19 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
             }
         }
     }
+    */
+    
+    let float_width = standard_advance as f32 / 64.0;
+    let float_height = metrics.height as f32 / 64.0;
 
     log::info!(
-        "Metrics: Ascender={}, Descender={}, Height={}, Width={}",
+        "Metrics: Ascender={}, Descender={}, Height={}, Width={}, FloatW={}, FloatH={}",
         ascender,
         descender,
         cell_height,
-        cell_width
+        cell_width,
+        float_width,
+        float_height
     );
 
     let metrics = CachedMetrics {
@@ -384,6 +403,8 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
         cell_height,
         ascender,
         descender,
+        float_width,
+        float_height,
     };
 
     if let Some(parent) = path.parent() {
@@ -631,6 +652,7 @@ pub fn glyph_store(
         groups: groups_out,
         selected: selected_chars,
         metrics: (metrics.cell_width, metrics.cell_height),
+        float_metrics: (metrics.float_width, metrics.float_height),
     }
 }
 

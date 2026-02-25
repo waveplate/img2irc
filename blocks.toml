@@ -28,14 +28,16 @@ ranges = [[0x1CC00, 0x1CEBF]]
 
 [default]
 include = [
+]
+
+[all]
+include = [
     "ascii.space",
     "blocks.full",
     "blocks.half",
     "blocks.quarter",
     "blocks.eighth",
-    "legacy.base.polygons"
+    "legacy.base.polygons",
+    "legacy.base.sextants",
+    "legacy.supp"
 ]
-
-[all]
-include = ["default", "legacy.base.sextants"]
-exclude = [0x20]

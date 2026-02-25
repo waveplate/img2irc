@@ -1770,7 +1770,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
-            crate::resolve_auto_font_size(&mut effective_args, &arc_image);
+            crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
 
             if effective_args.font != last_font
                 || effective_args.font_size != last_font_size

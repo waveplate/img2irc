@@ -16,17 +16,21 @@ pub fn calculate_dimensions(
     let orig_w = width;
     let orig_h = height;
 
-    // determine per‐cell pixel factor:
-    // braille cells cover 2×4 pixels; block cells use glyph bitmap size
     let (factor_x, factor_y) = if args.braille {
         (2.0, 4.0)
     } else {
         let (gw, gh) = glyphs.metrics;
         (gw as f32, gh as f32)
     };
+    
+    let (float_x, float_y) = if args.braille {
+        (2.0, 4.0)
+    } else {
+        glyphs.float_metrics
+    };
 
-    log::info!("factor_x: {}", factor_x);
-    log::info!("factor_y: {}", factor_y);
+    log::info!("factor_x: {}, float_x: {}", factor_x, float_x);
+    log::info!("factor_y: {}, float_y: {}", factor_y, float_y);
 
     log::info!("img width: {}", orig_w);
     log::info!("img height: {}", orig_h);
@@ -35,28 +39,32 @@ pub fn calculate_dimensions(
         (Some(wc), Some(hc)) => (wc as f32 * factor_x, hc as f32 * factor_y),
 
         (Some(wc), None) => {
+            // Compute EXACT unfluctuating rows using the font's design (float) aspect ratio
+            let exact_rows = (wc as f32 * float_x * orig_h / orig_w) / float_y;
+            let rows = exact_rows.round().max(1.0);
+            
             let pw = wc as f32 * factor_x;
-            let ph = pw * (orig_h / orig_w);
+            let ph = rows * factor_y;
             (pw, ph)
         }
 
-        // "if the user suppplied onyl the heighT: scale the width according to the origina laspec tratio"
         (None, Some(hc)) => {
+            let exact_cols = (hc as f32 * float_y * orig_w / orig_h) / float_x;
+            let cols = exact_cols.round().max(1.0);
+            
             let ph = hc as f32 * factor_y;
-            let pw = ph * (orig_w / orig_h);
+            let pw = cols * factor_x;
             (pw, ph)
         }
 
-        // "if neither width nor height are supplied, then divide the height of the image by the heiht of the glyph to get the output height, use the image aspect ratio to get thew idth"
         (None, None) => {
-            // Height in chars = Image Height / Glyph Height
-            // Output Pixel Height = Height in Chars * Glyph Height = Image Height
-            let ph = orig_h;
-
-            // Output Pixel Width based on visual aspect ratio
-            // Visual Aspect = pw / ph = orig_w / orig_h
-            // pw = ph * (orig_w / orig_h)
-            let pw = ph * (orig_w / orig_h);
+            let exact_rows = orig_h / float_y;
+            let rows = exact_rows.round().max(1.0);
+            let ph = rows * factor_y;
+            
+            let exact_cols = (rows * float_y * orig_w / orig_h) / float_x;
+            let cols = exact_cols.round().max(1.0);
+            let pw = cols * factor_x;
             (pw, ph)
         }
     };

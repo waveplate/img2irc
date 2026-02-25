@@ -73,24 +73,7 @@ async fn main() {
     }
 
     // Move args preparation before image loading to support SVG dimension calculation
-    let render_args = img2irc_rs::args_to_render_args(&args);
-
-    let glyph_store = font::glyph_store(
-        &render_args.blocks,
-        &render_args.exclude_range,
-        &render_args.exclude,
-        &render_args.include_range,
-        render_args.include.as_ref(),
-        &render_args.font,
-        render_args.font_size,
-        false,
-    );
-    log::info!("Loaded {} glyphs", glyph_store.glyphs.len());
-    log::info!(
-        "Cell size: {}x{}",
-        glyph_store.metrics.0,
-        glyph_store.metrics.1
-    );
+    let mut render_args = img2irc_rs::args_to_render_args(&args);
 
     let img_path = match &args.image {
         Some(p) => p,
@@ -100,14 +83,48 @@ async fn main() {
         }
     };
 
-    match img2irc_rs::load_image_from_url_or_path(img_path, &render_args, &glyph_store).await {
+    // 1. Initial glyph store for loading image (e.g. SVG dimension calculation)
+    let initial_glyph_store = font::glyph_store(
+        &render_args.blocks,
+        &render_args.exclude_range,
+        &render_args.exclude,
+        &render_args.include_range,
+        render_args.include.as_ref(),
+        &render_args.font,
+        if render_args.font_size == 0 { 24 } else { render_args.font_size },
+        false,
+    );
+
+    match img2irc_rs::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store).await {
         Ok(image) => {
+            // 2. Resolve auto font size based on loaded image
+            img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
+
+            // 3. Final glyph store with resolved font size
+            let glyph_store = font::glyph_store(
+                &render_args.blocks,
+                &render_args.exclude_range,
+                &render_args.exclude,
+                &render_args.include_range,
+                render_args.include.as_ref(),
+                &render_args.font,
+                render_args.font_size,
+                false,
+            );
+
+            log::info!("Loaded {} glyphs", glyph_store.glyphs.len());
+            log::info!(
+                "Cell size: {}x{}",
+                glyph_store.metrics.0,
+                glyph_store.metrics.1
+            );
+
             // Pre-calculate FastGlyphs once
             let glyphs = draw::prepare_glyphs(&glyph_store, &render_args);
             log::info!("Prepared {} optimized glyphs", glyphs.len());
 
             let result =
-                img2irc_rs::render_output(&render_args, &glyph_store, image, &glyphs, None);
+                img2irc_rs::render_output(render_args.clone(), &glyph_store, image, &glyphs, None);
             if args.score {
                 let smoothness = draw::calculate_smoothness(&result, &glyphs, &render_args);
                 log::info!("Smoothness Score: {:.4} (Lower is smoother)", smoothness);
