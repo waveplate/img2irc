@@ -83,7 +83,7 @@ pub fn apply_effects(
         let h = photon_image.get_height();
         if left + right < w && top + bottom < h {
             // crop takes x1, y1, x2, y2 (coordinates)
-            photon_image = crop(&mut photon_image, left, top, w - right, h - bottom);
+            photon_image = crop(&photon_image, left, top, w - right, h - bottom);
         }
     }
 
@@ -232,7 +232,7 @@ pub fn apply_effects(
             }
             "Pixelize" => {
                 if args.pixelize > 0 {
-                    effects::pixelize(&mut photon_image, args.pixelize as i32);
+                    effects::pixelize(&mut photon_image, args.pixelize);
                 }
             }
             "Halftone" => {
@@ -381,7 +381,7 @@ pub fn apply_luma_effects(
         let w = photon_image.get_width();
         let h = photon_image.get_height();
         if left + right < w && top + bottom < h {
-            photon_image = crop(&mut photon_image, left, top, w - right, h - bottom);
+            photon_image = crop(&photon_image, left, top, w - right, h - bottom);
         }
     }
 
