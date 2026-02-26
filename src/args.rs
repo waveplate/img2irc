@@ -109,7 +109,7 @@ pub struct RenderArgs {
     pub exclude_range: Vec<String>,
     pub exclude: Vec<char>,
     pub font: Vec<String>,
-    pub font_size: u32,
+    pub font_size: f32,
     pub grayscale_tolerance: u8,
 
     // Numeric params

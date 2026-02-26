@@ -39,20 +39,23 @@ pub fn calculate_dimensions(
         (Some(wc), Some(hc)) => (wc as f32 * factor_x, hc as f32 * factor_y),
 
         (Some(wc), None) => {
+            let ch = (wc as f32 * (orig_h / orig_w)) * (float_x / float_y);
             let pw = wc as f32 * factor_x;
-            let ph = pw * (orig_h / orig_w);
+            let ph = (ch.round() * factor_y).max(factor_y);
             (pw, ph)
         }
 
         (None, Some(hc)) => {
+            let cw = (hc as f32 * (orig_w / orig_h)) * (float_y / float_x);
+            let pw = (cw.round() * factor_x).max(factor_x);
             let ph = hc as f32 * factor_y;
-            let pw = ph * (orig_w / orig_h);
             (pw, ph)
         }
 
         (None, None) => {
-            let ph = orig_h;
-            let pw = ph * (orig_w / orig_h);
+            let ch = (orig_w / float_x * (orig_h / orig_w)) * (float_x / float_y);
+            let pw = (orig_w / factor_x).round() * factor_x;
+            let ph = (ch.round() * factor_y).max(factor_y);
             (pw, ph)
         }
     };
@@ -478,41 +481,4 @@ pub fn apply_luma_effects(
     }
 
     photon_image
-}
-
-fn apply_luma_blur(img: &mut PhotonImage, radius: i32) {
-    let mut luma = img.clone();
-    monochrome::grayscale(&mut luma);
-    conv::gaussian_blur(&mut luma, radius);
-
-    let raw_orig = img.get_raw_pixels();
-    let raw_luma = luma.get_raw_pixels();
-    let mut new_raw = raw_orig.clone();
-
-    // YUV coefficients (Rec. 601)
-    for i in (0..raw_orig.len()).step_by(4) {
-        let r = raw_orig[i] as f32;
-        let g = raw_orig[i + 1] as f32;
-        let b = raw_orig[i + 2] as f32;
-
-        // Calculate original Chroma (U, V)
-        let y_old = 0.299 * r + 0.587 * g + 0.114 * b;
-        let u = 0.492 * (b - y_old);
-        let v = 0.877 * (r - y_old);
-
-        // Use new Luma (Y) from blurred grayscale image
-        let y_new = raw_luma[i] as f32;
-
-        // Convert back to RGB
-        let new_r = (y_new + 1.140 * v).clamp(0.0, 255.0) as u8;
-        let new_g = (y_new - 0.395 * u - 0.581 * v).clamp(0.0, 255.0) as u8;
-        let new_b = (y_new + 2.032 * u).clamp(0.0, 255.0) as u8;
-
-        new_raw[i] = new_r;
-        new_raw[i + 1] = new_g;
-        new_raw[i + 2] = new_b;
-        // Alpha remains unchanged
-    }
-
-    *img = PhotonImage::new(new_raw, img.get_width(), img.get_height());
 }

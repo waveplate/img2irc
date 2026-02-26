@@ -63,6 +63,7 @@ async fn main() {
             &render_args.font,
             render_args.font_size,
             false,
+            None,
         );
         img2irc_rs::write_encoded_output(&font::print_block_bitmaps(&glyphs), &args.encoding);
         exit(0);
@@ -91,11 +92,18 @@ async fn main() {
         &render_args.include_range,
         render_args.include.as_ref(),
         &render_args.font,
-        if render_args.font_size == 0 { 24 } else { render_args.font_size },
+        if (render_args.font_size - 0.0).abs() < f32::EPSILON {
+            24.0
+        } else {
+            render_args.font_size
+        },
         false,
+        None,
     );
 
-    match img2irc_rs::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store).await {
+    match img2irc_rs::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store)
+        .await
+    {
         Ok(image) => {
             // 2. Resolve auto font size based on loaded image
             img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
@@ -110,6 +118,7 @@ async fn main() {
                 &render_args.font,
                 render_args.font_size,
                 false,
+                None,
             );
 
             log::info!("Loaded {} glyphs", glyph_store.glyphs.len());

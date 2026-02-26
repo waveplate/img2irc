@@ -368,7 +368,10 @@ fn block_bitmap(
 
     for r in &mut px_rows {
         if r.len() < pw {
-            r.extend(std::iter::repeat_n(AnsiPixel::new(&0, tolerance), pw - r.len()));
+            r.extend(std::iter::repeat_n(
+                AnsiPixel::new(&0, tolerance),
+                pw - r.len(),
+            ));
         }
     }
     if px_rows.len() < ph {
@@ -560,7 +563,6 @@ pub fn render_blocks_smooth(
         bg_col: Option<Colour>,
         alt_fg_col: Option<Colour>, // For Preview mode: IRC version
         alt_bg_col: Option<Colour>,
-        is_flat: bool,
     }
 
     let scales = vec![(1.0, 1.0)];
@@ -914,11 +916,6 @@ pub fn render_blocks_smooth(
                         )
                     };
 
-                let contrast = (final_fg[0] as i32 - final_bg[0] as i32).pow(2)
-                    + (final_fg[1] as i32 - final_bg[1] as i32).pow(2)
-                    + (final_fg[2] as i32 - final_bg[2] as i32).pow(2);
-                let is_flat = contrast < 400;
-
                 row_data.push(BlockData {
                     pixels,
                     fg: final_fg,
@@ -927,7 +924,6 @@ pub fn render_blocks_smooth(
                     bg_col: bg_obj,
                     alt_fg_col: alt_fg_obj,
                     alt_bg_col: alt_bg_obj,
-                    is_flat,
                 });
                 row_state.push((best_glyph_idx, best_inv));
             }
@@ -1032,6 +1028,11 @@ pub fn render_blocks_smooth(
         grid_data
             .par_iter()
             .map(|data| {
+                if let Some(flag) = &abort_flag {
+                    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Vec::new();
+                    }
+                }
                 let fg_p = PrePixel {
                     r: data.fg[0] as u64,
                     g: data.fg[1] as u64,
@@ -1085,6 +1086,10 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
+    if args.smooth && block_glyph_costs.iter().any(|v| v.is_empty()) {
+        return "Cancelled".into();
+    }
+
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
         let iterations = 10;
@@ -1103,6 +1108,14 @@ pub fn render_blocks_smooth(
             };
 
             for &curr_idx in &indices {
+                if curr_idx % 128 == 0 {
+                    if let Some(flag) = &abort_flag {
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return "Cancelled".into();
+                        }
+                    }
+                }
+
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
                 let data = &grid_data[curr_idx];
@@ -1807,8 +1820,7 @@ pub fn save_as_png(
             }
         }
     }
-    img.save(path)
-        .map_err(std::io::Error::other)
+    img.save(path).map_err(std::io::Error::other)
 }
 
 fn get_transformed_block_pixels_into(

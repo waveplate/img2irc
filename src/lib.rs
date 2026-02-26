@@ -16,7 +16,6 @@ use std::{
 };
 use url::Url;
 
-
 // Main execution logic moved to binary files
 
 pub fn args_to_render_args(args: &Args) -> RenderArgs {
@@ -75,7 +74,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         exclude_range: args.exclude_range.clone(),
         exclude: args.exclude.clone(),
         font: args.font.clone(),
-        font_size: param_base(&args.font_size) as u32,
+        font_size: param_base(&args.font_size),
 
         grayscale_tolerance: param_base(&args.grayscale_tolerance) as u8,
 
@@ -240,7 +239,7 @@ pub fn resolve_auto_font_size(
     image: &PhotonImage,
     glyphs: &font::GlyphStore,
 ) {
-    if args.font_size == 0 {
+    if (args.font_size - 0.0).abs() < f32::EPSILON {
         let (float_w, float_h) = if args.braille {
             (2.0, 4.0)
         } else {
@@ -253,7 +252,7 @@ pub fn resolve_auto_font_size(
         let target_gw = img_w / target_char_w;
         let target_gh = target_gw / font_ratio;
 
-        args.font_size = target_gh.round().clamp(13.0, 64.0) as u32;
+        args.font_size = target_gh.round().clamp(13.0, 64.0);
         log::info!(
             "Auto-calculated font size: {} (based on ratio {:.3})",
             args.font_size,

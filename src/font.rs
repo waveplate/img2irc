@@ -525,35 +525,6 @@ fn parse_hex_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
     Some(start..=end)
 }
 
-const BASE_FONT_SIZE: f32 = 128.0;
-
-fn resize_bitmap(base: &GlyphBitmap, sw: usize, sh: usize, tw: usize, th: usize) -> GlyphBitmap {
-    let mut out = vec![vec![0u8; tw]; th];
-    if sw == 0 || sh == 0 || tw == 0 || th == 0 {
-        return out;
-    }
-    for ty in 0..th {
-        for tx in 0..tw {
-            let sy_start = ty * sh / th;
-            let sy_end = ((ty + 1) * sh / th).max(sy_start + 1);
-            let sx_start = tx * sw / tw;
-            let sx_end = ((tx + 1) * sw / tw).max(sx_start + 1);
-            let mut sum = 0;
-            let mut count = 0;
-            for sy in sy_start..sy_end.min(sh) {
-                for sx in sx_start..sx_end.min(sw) {
-                    sum += base[sy][sx] as u32;
-                    count += 1;
-                }
-            }
-            if count > 0 && sum * 2 >= count {
-                out[ty][tx] = 1;
-            }
-        }
-    }
-    out
-}
-
 pub fn glyph_store(
     blocks: &[String],
     exclude_ranges: &[String],
@@ -565,15 +536,12 @@ pub fn glyph_store(
     load_all: bool,
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> GlyphStore {
-    let mut ctx = FontContext::new(fonts, BASE_FONT_SIZE);
+    let mut ctx = FontContext::new(fonts, font_size);
     let metrics = get_metrics(&mut ctx);
     let (config_groups, _) = load_blocks_config();
 
-    let scale_factor = font_size / BASE_FONT_SIZE;
-    let target_cell_width = (metrics.cell_width as f32 * scale_factor).round() as usize;
-    let target_cell_height = (metrics.cell_height as f32 * scale_factor).round() as usize;
-    let target_cell_width = target_cell_width.max(1);
-    let target_cell_height = target_cell_height.max(1);
+    let target_cell_width = metrics.cell_width.max(1);
+    let target_cell_height = metrics.cell_height.max(1);
 
     let mut all_glyphs = BTreeMap::new();
     let mut selected_chars = HashSet::new();
@@ -633,20 +601,7 @@ pub fn glyph_store(
                 let is_selected = blocks_to_select.contains(block_name);
 
                 for (ch, bitmap) in glyphs {
-                    let resized = if target_cell_width == metrics.cell_width
-                        && target_cell_height == metrics.cell_height
-                    {
-                        bitmap
-                    } else {
-                        resize_bitmap(
-                            &bitmap,
-                            metrics.cell_width,
-                            metrics.cell_height,
-                            target_cell_width,
-                            target_cell_height,
-                        )
-                    };
-                    all_glyphs.insert(ch, resized);
+                    all_glyphs.insert(ch, bitmap);
                     if is_selected {
                         selected_chars.insert(ch);
                     }
@@ -683,20 +638,7 @@ pub fn glyph_store(
         let glyphs = get_block_glyphs(&mut ctx, "explicit_includes", &explicit_chars, &metrics);
         groups_out.insert("explicit_includes".to_string(), explicit_chars.clone());
         for (ch, bitmap) in glyphs {
-            let resized = if target_cell_width == metrics.cell_width
-                && target_cell_height == metrics.cell_height
-            {
-                bitmap
-            } else {
-                resize_bitmap(
-                    &bitmap,
-                    metrics.cell_width,
-                    metrics.cell_height,
-                    target_cell_width,
-                    target_cell_height,
-                )
-            };
-            all_glyphs.insert(ch, resized);
+            all_glyphs.insert(ch, bitmap);
             selected_chars.insert(ch);
         }
     }
@@ -717,37 +659,34 @@ pub fn glyph_store(
     }
 
     // Ensure space is present and selected
-    if !all_glyphs.contains_key(&' ') {
-        let glyphs = get_block_glyphs(&mut ctx, "space", &[' '], &metrics);
-        if let Some((ch, bitmap)) = glyphs.first() {
-            let resized = if target_cell_width == metrics.cell_width
-                && target_cell_height == metrics.cell_height
-            {
-                bitmap.clone()
-            } else {
-                resize_bitmap(
-                    bitmap,
-                    metrics.cell_width,
-                    metrics.cell_height,
-                    target_cell_width,
-                    target_cell_height,
-                )
-            };
-            all_glyphs.insert(*ch, resized);
-            selected_chars.insert(*ch);
-        }
-    } else {
-        selected_chars.insert(' ');
-    }
+    // if !all_glyphs.contains_key(&' ') {
+    //     let glyphs = get_block_glyphs(&mut ctx, "space", &[' '], &metrics);
+    //     if let Some((ch, bitmap)) = glyphs.first() {
+    //         let resized = if target_cell_width == metrics.cell_width
+    //             && target_cell_height == metrics.cell_height
+    //         {
+    //             bitmap.clone()
+    //         } else {
+    //             resize_bitmap(
+    //                 bitmap,
+    //                 metrics.cell_width,
+    //                 metrics.cell_height,
+    //                 target_cell_width,
+    //                 target_cell_height,
+    //             )
+    //         };
+    //         all_glyphs.insert(*ch, resized);
+    //         selected_chars.insert(*ch);
+    //     }
+    // } else {
+    //     selected_chars.insert(' ');
+    // }
     GlyphStore {
         glyphs: all_glyphs.into_iter().collect(),
         groups: groups_out,
         selected: selected_chars,
         metrics: (target_cell_width, target_cell_height),
-        float_metrics: (
-            metrics.float_width * scale_factor,
-            metrics.float_height * scale_factor,
-        ),
+        float_metrics: (metrics.float_width, metrics.float_height),
     }
 }
 

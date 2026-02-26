@@ -29,7 +29,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Terminal,
 };
 use ratatui_explorer::FileExplorer;
@@ -642,32 +642,6 @@ impl TreeState {
         }
     }
 
-    fn toggle_expand(&mut self) {
-        let target = self.selected_idx;
-        let mut count = 0;
-        for node in &mut self.root {
-            if Self::toggle_recursive(node, &mut count, target) {
-                return;
-            }
-        }
-    }
-
-    fn toggle_recursive(node: &mut TreeNode, count: &mut usize, target: usize) -> bool {
-        if *count == target {
-            node.expanded = !node.expanded;
-            return true;
-        }
-        *count += 1;
-        if node.expanded {
-            for child in &mut node.children {
-                if Self::toggle_recursive(child, count, target) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     fn expand_selected(&mut self) {
         if let Some(node) = self.get_selected_node_mut() {
             if !node.is_leaf {
@@ -826,7 +800,7 @@ struct App {
     rotate: i32,
     scalex: i32, // percentage, 100 = 1.0
     scaley: i32,
-    font_size: i32,
+    font_size: f32,
     fonts: Vec<String>,
     font_idx: usize,
     filter_idx: usize,
@@ -864,10 +838,8 @@ struct App {
 
     // Blocks
     available_blocks: Vec<String>,
-    block_list_state: ListState,
     tree_state: TreeState,
     glyph_list_state: ListState,
-    show_block_editor: bool,
 
     // Explorer dialog state
     explorer_dialog: Option<ExplorerDialog>,
@@ -936,10 +908,8 @@ impl App {
             font_search: String::new(),
             font_list_state: ListState::default(),
 
-            block_list_state: ListState::default(),
             tree_state,
             glyph_list_state: ListState::default(),
-            show_block_editor: false,
 
             image_path: render_args.image.clone().unwrap_or_default(),
             width: render_args.width.unwrap_or(80) as i32,
@@ -973,7 +943,7 @@ impl App {
                 .scale
                 .map(|s| (s.1 * 100.0) as i32)
                 .unwrap_or(100),
-            font_size: render_args.font_size as i32,
+            font_size: render_args.font_size,
             fonts: list_system_fonts(),
             font_idx: 0, // initialized below
             filter_idx: match render_args.filter {
@@ -1065,7 +1035,7 @@ impl App {
             ControlId::Rotate => self.rotate,
             ControlId::ScaleX => self.scalex,
             ControlId::ScaleY => self.scaley,
-            ControlId::FontSize => self.font_size,
+            ControlId::FontSize => self.font_size as i32,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
@@ -1124,7 +1094,7 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = val.clamp(0, 64),
+            ControlId::FontSize => self.font_size = (val as f32).clamp(0.0, 64.0),
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
@@ -1276,7 +1246,7 @@ impl App {
         self.render_args.flipv = self.flipv;
         self.render_args.rotate = self.rotate as f32;
         self.render_args.scale = Some((self.scalex as f32 / 100.0, self.scaley as f32 / 100.0));
-        self.render_args.font_size = self.font_size as u32;
+        self.render_args.font_size = self.font_size;
         if !self.fonts.is_empty() && self.font_idx < self.fonts.len() {
             let selected = &self.fonts[self.font_idx];
             if selected == "Default" {
@@ -1673,13 +1643,7 @@ fn render_eyedropper_widget(
         }
         let cell = &mut buf[(x, ly)];
         cell.set_char(ch);
-        // We only color the middle blocks (1, 2, 3 index) for the swatch itself if not using generic
-        let is_block = ch == '█';
-        if is_block {
-            cell.set_style(swatch_style);
-        } else {
-            cell.set_style(Style::new().fg(TEXT_DIM));
-        }
+        cell.set_style(swatch_style);
     }
 
     if selected {
@@ -1782,8 +1746,13 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         &render_args.include_range,
         render_args.include.as_ref(),
         &render_args.font,
-        render_args.font_size,
+        if (render_args.font_size - 0.0).abs() < f32::EPSILON {
+            24.0
+        } else {
+            render_args.font_size
+        },
         true,
+        None,
     );
 
     let image = if let Some(path) = &render_args.image {
@@ -1850,7 +1819,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
 
             if effective_args.font != last_font
-                || effective_args.font_size != last_font_size
+                || (effective_args.font_size - last_font_size).abs() > ::std::f32::EPSILON
                 || effective_args.blocks != last_blocks
             {
                 let new_store = font::glyph_store(
@@ -1862,7 +1831,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     &effective_args.font,
                     effective_args.font_size,
                     true,
+                    Some(cancel_flag.clone()),
                 );
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    continue;
+                }
                 arc_glyphs = Arc::new(new_store);
                 fast_glyphs_store = None;
                 last_font = effective_args.font.clone();
@@ -1883,15 +1856,17 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 &arc_glyphs,
                 (*arc_image).clone(),
                 glyphs,
-                Some(cancel_flag),
+                Some(cancel_flag.clone()),
             );
             log::info!("Render finished in {:?}", start.elapsed());
 
             rendering_flag2.store(false, Ordering::Relaxed);
 
             // Only send if not cancelled (though render output might say cancelled)
-            if tx_result.send((result, arc_glyphs.clone())).await.is_err() {
-                break;
+            if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if tx_result.send((result, arc_glyphs.clone())).await.is_err() {
+                    break;
+                }
             }
             if rx_args.changed().await.is_err() {
                 break;
@@ -2191,8 +2166,41 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     let content_x =
                                                         (mouse.column - start_x) as usize;
                                                     let cell = &row[content_x];
-                                                    app.eyedropper_color =
-                                                        Some((cell.fg[0], cell.fg[1], cell.fg[2]));
+                                                    let mut picked_color = cell.fg;
+                                                    if let Some(bg) = cell.bg {
+                                                        if let Some(g) = &app.arc_glyphs {
+                                                            if let Some((_, bitmap)) = g
+                                                                .glyphs
+                                                                .iter()
+                                                                .find(|(c, _)| *c == cell.char)
+                                                            {
+                                                                let total_pixels =
+                                                                    g.metrics.0 * g.metrics.1;
+                                                                let set_bits: usize = bitmap
+                                                                    .iter()
+                                                                    .map(|row| {
+                                                                        row.iter()
+                                                                            .filter(|&&b| b > 0)
+                                                                            .count()
+                                                                    })
+                                                                    .sum();
+                                                                let is_mostly_bg = if cell.inverted
+                                                                {
+                                                                    set_bits > total_pixels / 2
+                                                                } else {
+                                                                    set_bits < total_pixels / 2
+                                                                };
+                                                                if is_mostly_bg {
+                                                                    picked_color = bg;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    app.eyedropper_color = Some((
+                                                        picked_color[0],
+                                                        picked_color[1],
+                                                        picked_color[2],
+                                                    ));
                                                     // Trigger a re-render
                                                 }
                                             }
@@ -3001,7 +3009,7 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
         // Background for the whole line
         for x in area.x..area.x + area.width {
-            buf.get_mut(x, y).set_style(style);
+            buf[(x, y)].set_style(style);
         }
 
         // Indentation
@@ -3180,12 +3188,47 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .map(|l| l.len())
             .max()
             .unwrap_or(0);
-        let title_right = format!(
+        let title_base = format!(
             " {}×{} │ {}B ",
             max_bytes,
             line_count,
             app.cached_render.len()
         );
+
+        let mut technical_info = String::new();
+
+        if let Some(res) = &app.cached_result {
+            let width_chars = res.grid.first().map_or(0, |row| row.len());
+            let height_chars = res.grid.len();
+            technical_info.push_str(&format!("Size: {}x{} chars", width_chars, height_chars));
+        }
+
+        if let Some(g) = &app.arc_glyphs {
+            let (gw, gh) = g.metrics;
+            if !technical_info.is_empty() {
+                technical_info.push_str(" │ ");
+            }
+            technical_info.push_str(&format!("Cell: {}x{}", gw, gh));
+        }
+
+        if let Some((r, g, b)) = app.eyedropper_color {
+            let col_u32 = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+            let irc_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::IRC99);
+            let ansi_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::ANSI256);
+            if !technical_info.is_empty() {
+                technical_info.push_str(" │ ");
+            }
+            technical_info.push_str(&format!(
+                "#{:02X}{:02X}{:02X} IRC:{:02} ANSI:{:03}",
+                r, g, b, irc_code, ansi_code
+            ));
+        }
+
+        let title_right = if technical_info.is_empty() {
+            title_base
+        } else {
+            format!(" {} │ {} ", technical_info, title_base.trim())
+        };
 
         let block_with_bottom_title = block
             .title_bottom(Line::from(Span::styled(
@@ -3377,7 +3420,7 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
     }
 }
 
-fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
     let keys = [
         ("Tab", "Switch"),
         ("↑↓", "Navigate"),
@@ -3391,41 +3434,6 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         ("Q", "Quit"),
     ];
 
-    let mut technical_info = String::new();
-
-    if let Some(res) = &app.cached_result {
-        let width_chars = res.grid.first().map_or(0, |row| row.len());
-        let height_chars = res.grid.len();
-        technical_info.push_str(&format!("Size: {}x{} chars", width_chars, height_chars));
-    }
-
-    if let Some(g) = &app.arc_glyphs {
-        let (gw, gh) = g.metrics;
-        if !technical_info.is_empty() {
-            technical_info.push_str(" | ");
-        }
-        technical_info.push_str(&format!("Cell: {}x{}", gw, gh));
-    }
-
-    if let Some((r, g, b)) = app.eyedropper_color {
-        let col_u32 = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
-        let irc_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::IRC99);
-        let ansi_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::ANSI256);
-        if !technical_info.is_empty() {
-            technical_info.push_str(" | ");
-        }
-        technical_info.push_str(&format!(
-            "#{:02X}{:02X}{:02X} IRC:{:02} ANSI:{:03}",
-            r, g, b, irc_code, ansi_code
-        ));
-    }
-
-    let info_text = if technical_info.is_empty() {
-        " | ".to_string()
-    } else {
-        format!(" | {} | ", technical_info)
-    };
-
     let spans: Vec<Span> = keys
         .iter()
         .flat_map(|(key, desc)| {
@@ -3437,8 +3445,8 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    let mut full_spans = spans;
-    full_spans.push(Span::raw(info_text));
+    let mut full_spans = vec![];
+    full_spans.extend(spans);
 
     let line = Line::from(full_spans);
     let bar = Paragraph::new(line).style(Style::new().bg(STATUS_BG));
