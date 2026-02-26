@@ -1684,35 +1684,30 @@ pub fn render_blocks_smooth(
                 let curr_idx = cy * grid_w + cx;
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
-                let my_fg = grid_data[curr_idx].fg;
-                let my_bg = grid_data[curr_idx].bg;
 
-                let mut fg_disc = false; // FG (1s after inversion) has a discontinuity
-                let mut bg_disc = false; // BG (0s after inversion) has a discontinuity
+                let mut fg_disc = false;
+                let mut bg_disc = false;
 
-                // Helper: get rendered color for a pixel given its bitmap value,
-                // inversion state, and the cell's FG/BG colors
-                let rendered_color =
-                    |bmp_val: u8, is_inv: bool, fg: [u8; 3], bg: [u8; 3]| -> [u8; 3] {
-                        if (bmp_val ^ (is_inv as u8)) == 1 {
-                            fg
-                        } else {
-                            bg
-                        }
-                    };
+                // Get the rendered Colour at an edge pixel position.
+                // (bitmap ^ inv) == 1 → fg_col, else bg_col.
+                // This accounts for inversion swapping FG/BG in the terminal.
+                let get_colour = |bmp_val: u8, is_inv: bool, idx: usize| -> &Option<Colour> {
+                    if (bmp_val ^ (is_inv as u8)) == 1 {
+                        &grid_data[idx].fg_col
+                    } else {
+                        &grid_data[idx].bg_col
+                    }
+                };
 
                 // Check top edge
                 if cy > 0 {
                     let n_idx = curr_idx - grid_w;
                     let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
                     for i in 0..gw {
-                        let my_col = rendered_color(glyph.top[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(glyphs[ni].bottom[i], niv, n_fg, n_bg);
+                        let my_col = get_colour(glyph.top[i], inv, curr_idx);
+                        let n_col = get_colour(glyphs[ni].bottom[i], niv, n_idx);
                         if my_col != n_col {
-                            let my_is_fg = (glyph.top[i] ^ (inv as u8)) == 1;
-                            if my_is_fg {
+                            if (glyph.top[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
                                 bg_disc = true;
@@ -1725,14 +1720,11 @@ pub fn render_blocks_smooth(
                 if cy < grid_h - 1 {
                     let n_idx = curr_idx + grid_w;
                     let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
                     for i in 0..gw {
-                        let my_col = rendered_color(glyph.bottom[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(glyphs[ni].top[i], niv, n_fg, n_bg);
+                        let my_col = get_colour(glyph.bottom[i], inv, curr_idx);
+                        let n_col = get_colour(glyphs[ni].top[i], niv, n_idx);
                         if my_col != n_col {
-                            let my_is_fg = (glyph.bottom[i] ^ (inv as u8)) == 1;
-                            if my_is_fg {
+                            if (glyph.bottom[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
                                 bg_disc = true;
@@ -1745,14 +1737,11 @@ pub fn render_blocks_smooth(
                 if cx > 0 {
                     let n_idx = curr_idx - 1;
                     let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
                     for i in 0..gh {
-                        let my_col = rendered_color(glyph.left[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(glyphs[ni].right[i], niv, n_fg, n_bg);
+                        let my_col = get_colour(glyph.left[i], inv, curr_idx);
+                        let n_col = get_colour(glyphs[ni].right[i], niv, n_idx);
                         if my_col != n_col {
-                            let my_is_fg = (glyph.left[i] ^ (inv as u8)) == 1;
-                            if my_is_fg {
+                            if (glyph.left[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
                                 bg_disc = true;
@@ -1765,14 +1754,11 @@ pub fn render_blocks_smooth(
                 if cx < grid_w - 1 {
                     let n_idx = curr_idx + 1;
                     let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
                     for i in 0..gh {
-                        let my_col = rendered_color(glyph.right[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(glyphs[ni].left[i], niv, n_fg, n_bg);
+                        let my_col = get_colour(glyph.right[i], inv, curr_idx);
+                        let n_col = get_colour(glyphs[ni].left[i], niv, n_idx);
                         if my_col != n_col {
-                            let my_is_fg = (glyph.right[i] ^ (inv as u8)) == 1;
-                            if my_is_fg {
+                            if (glyph.right[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
                                 bg_disc = true;

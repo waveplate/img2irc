@@ -1,150 +1,704 @@
-05:37:47 [INFO] Starting img2irc TUI...
-05:37:47 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-05:37:47 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
-05:37:47 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-05:37:47 [INFO] Starting render optimization... (59 glyphs)
-05:37:47 [INFO] factor_x: 13, float_x: 13
-05:37:47 [INFO] factor_y: 27, float_y: 27
-05:37:47 [INFO] img width: 1056
-05:37:47 [INFO] img height: 1163
-05:37:47 [INFO] pw: 1170
-05:37:47 [INFO] ph: 1296
-05:37:47 [INFO] Final target dimensions (pixels): 1170x1296
-05:37:48 [INFO] Render finished in 427.158319ms
-05:37:48 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:37:48 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
-05:37:48 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:37:48 [INFO] Starting render optimization... (59 glyphs)
-05:37:48 [INFO] factor_x: 14, float_x: 14
-05:37:48 [INFO] factor_y: 28, float_y: 28
-05:37:48 [INFO] img width: 1056
-05:37:48 [INFO] img height: 1163
-05:37:48 [INFO] pw: 1260
-05:37:48 [INFO] ph: 1400
-05:37:48 [INFO] Final target dimensions (pixels): 1260x1400
-05:37:48 [INFO] Render finished in 461.97125ms
-05:38:00 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
-05:38:00 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:00 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
-05:38:00 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:00 [INFO] Starting render optimization... (59 glyphs)
-05:38:00 [INFO] factor_x: 13, float_x: 13
-05:38:00 [INFO] factor_y: 27, float_y: 27
-05:38:00 [INFO] img width: 1056
-05:38:00 [INFO] img height: 1163
-05:38:00 [INFO] pw: 1170
-05:38:00 [INFO] ph: 1296
-05:38:00 [INFO] Final target dimensions (pixels): 1170x1296
-05:38:01 [INFO] Render finished in 537.688265ms
-05:38:05 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=952
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1047
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1047
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1142
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1238
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1333
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1428
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1523
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1619
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1714
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1809
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1904
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2000
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2095
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2190
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2285
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2380
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2476
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2571
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2666
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2761
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2857
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=2952
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3047
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3142
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3333
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3428
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3523
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3619
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3714
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3809
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=3904
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=4000
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=4000
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=4000
-05:38:06 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=4000
-05:38:07 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:07 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
-05:38:07 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:07 [INFO] Starting render optimization... (59 glyphs)
-05:38:07 [INFO] factor_x: 14, float_x: 14
-05:38:07 [INFO] factor_y: 28, float_y: 28
-05:38:07 [INFO] img width: 1056
-05:38:07 [INFO] img height: 1163
-05:38:07 [INFO] pw: 1260
-05:38:07 [INFO] ph: 1400
-05:38:07 [INFO] Final target dimensions (pixels): 1260x1400
-05:38:07 [INFO] Render finished in 597.252014ms
-05:38:16 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
-05:38:16 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:16 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
-05:38:16 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:16 [INFO] Starting render optimization... (59 glyphs)
-05:38:16 [INFO] factor_x: 13, float_x: 13
-05:38:16 [INFO] factor_y: 27, float_y: 27
-05:38:16 [INFO] img width: 1056
-05:38:16 [INFO] img height: 1163
-05:38:16 [INFO] pw: 1170
-05:38:16 [INFO] ph: 1296
-05:38:16 [INFO] Final target dimensions (pixels): 1170x1296
-05:38:17 [INFO] Render finished in 534.556729ms
-05:38:19 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
-05:38:20 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:20 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
-05:38:20 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:20 [INFO] Starting render optimization... (59 glyphs)
-05:38:20 [INFO] factor_x: 14, float_x: 14
-05:38:20 [INFO] factor_y: 28, float_y: 28
-05:38:20 [INFO] img width: 1056
-05:38:20 [INFO] img height: 1163
-05:38:20 [INFO] pw: 1260
-05:38:20 [INFO] ph: 1400
-05:38:20 [INFO] Final target dimensions (pixels): 1260x1400
-05:38:20 [INFO] Render finished in 460.422774ms
-05:38:33 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
-05:38:34 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:34 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
-05:38:34 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:34 [INFO] Starting render optimization... (59 glyphs)
-05:38:34 [INFO] factor_x: 13, float_x: 13
-05:38:34 [INFO] factor_y: 27, float_y: 27
-05:38:34 [INFO] img width: 1056
-05:38:34 [INFO] img height: 1163
-05:38:34 [INFO] pw: 1170
-05:38:34 [INFO] ph: 1296
-05:38:34 [INFO] Final target dimensions (pixels): 1170x1296
-05:38:34 [INFO] Render finished in 392.249669ms
-05:38:42 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:42 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
-05:38:42 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:42 [INFO] Starting render optimization... (60 glyphs)
-05:38:42 [INFO] factor_x: 14, float_x: 14
-05:38:42 [INFO] factor_y: 28, float_y: 28
-05:38:42 [INFO] img width: 1056
-05:38:42 [INFO] img height: 1163
-05:38:42 [INFO] pw: 1260
-05:38:42 [INFO] ph: 1400
-05:38:42 [INFO] Final target dimensions (pixels): 1260x1400
-05:38:42 [INFO] Render finished in 463.592222ms
-05:38:47 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
-05:38:48 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
-05:38:48 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
-05:38:48 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
-05:38:48 [INFO] Starting render optimization... (60 glyphs)
-05:38:48 [INFO] factor_x: 13, float_x: 13
-05:38:48 [INFO] factor_y: 27, float_y: 27
-05:38:48 [INFO] img width: 1056
-05:38:48 [INFO] img height: 1163
-05:38:48 [INFO] pw: 1170
-05:38:48 [INFO] ph: 1296
-05:38:48 [INFO] Final target dimensions (pixels): 1170x1296
-05:38:48 [INFO] Render finished in 401.586648ms
+05:46:50 [INFO] Starting img2irc TUI...
+05:46:50 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:46:50 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:46:50 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:46:50 [INFO] Starting render optimization... (59 glyphs)
+05:46:50 [INFO] factor_x: 13, float_x: 13
+05:46:50 [INFO] factor_y: 27, float_y: 27
+05:46:50 [INFO] img width: 1056
+05:46:50 [INFO] img height: 1163
+05:46:50 [INFO] pw: 1170
+05:46:50 [INFO] ph: 1296
+05:46:50 [INFO] Final target dimensions (pixels): 1170x1296
+05:46:50 [INFO] Render finished in 421.14719ms
+05:46:50 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:46:50 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:46:50 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:46:50 [INFO] Starting render optimization... (59 glyphs)
+05:46:50 [INFO] factor_x: 14, float_x: 14
+05:46:50 [INFO] factor_y: 28, float_y: 28
+05:46:50 [INFO] img width: 1056
+05:46:50 [INFO] img height: 1163
+05:46:50 [INFO] pw: 1260
+05:46:50 [INFO] ph: 1400
+05:46:50 [INFO] Final target dimensions (pixels): 1260x1400
+05:46:51 [INFO] Render finished in 480.869386ms
+05:46:52 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:46:53 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:46:53 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:46:53 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:46:53 [INFO] Starting render optimization... (59 glyphs)
+05:46:53 [INFO] factor_x: 13, float_x: 13
+05:46:53 [INFO] factor_y: 27, float_y: 27
+05:46:53 [INFO] img width: 1056
+05:46:53 [INFO] img height: 1163
+05:46:53 [INFO] pw: 1170
+05:46:53 [INFO] ph: 1296
+05:46:53 [INFO] Final target dimensions (pixels): 1170x1296
+05:46:53 [INFO] Render finished in 394.397763ms
+05:46:56 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1809
+05:46:56 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:46:56 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:46:56 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:46:56 [INFO] Starting render optimization... (59 glyphs)
+05:46:56 [INFO] factor_x: 14, float_x: 14
+05:46:56 [INFO] factor_y: 28, float_y: 28
+05:46:56 [INFO] img width: 1056
+05:46:56 [INFO] img height: 1163
+05:46:56 [INFO] pw: 1260
+05:46:56 [INFO] ph: 1400
+05:46:56 [INFO] Final target dimensions (pixels): 1260x1400
+05:46:56 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
+05:46:57 [INFO] Render finished in 451.807853ms
+05:46:57 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:46:57 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:46:57 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:46:57 [INFO] Starting render optimization... (59 glyphs)
+05:46:57 [INFO] factor_x: 13, float_x: 13
+05:46:57 [INFO] factor_y: 27, float_y: 27
+05:46:57 [INFO] img width: 1056
+05:46:57 [INFO] img height: 1163
+05:46:57 [INFO] pw: 1170
+05:46:57 [INFO] ph: 1296
+05:46:57 [INFO] Final target dimensions (pixels): 1170x1296
+05:46:57 [INFO] Render finished in 532.768742ms
+05:47:03 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
+05:47:04 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:04 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:04 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:04 [INFO] Starting render optimization... (59 glyphs)
+05:47:04 [INFO] factor_x: 14, float_x: 14
+05:47:04 [INFO] factor_y: 28, float_y: 28
+05:47:04 [INFO] img width: 1056
+05:47:04 [INFO] img height: 1163
+05:47:04 [INFO] pw: 1260
+05:47:04 [INFO] ph: 1400
+05:47:04 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:04 [INFO] Render finished in 456.727478ms
+05:47:06 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:07 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:07 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:07 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:07 [INFO] Starting render optimization... (59 glyphs)
+05:47:07 [INFO] factor_x: 13, float_x: 13
+05:47:07 [INFO] factor_y: 27, float_y: 27
+05:47:07 [INFO] img width: 1056
+05:47:07 [INFO] img height: 1163
+05:47:07 [INFO] pw: 1170
+05:47:07 [INFO] ph: 1296
+05:47:07 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:07 [INFO] Render finished in 408.159017ms
+05:47:08 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
+05:47:08 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:08 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:08 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:08 [INFO] Starting render optimization... (59 glyphs)
+05:47:08 [INFO] factor_x: 14, float_x: 14
+05:47:08 [INFO] factor_y: 28, float_y: 28
+05:47:08 [INFO] img width: 1056
+05:47:08 [INFO] img height: 1163
+05:47:08 [INFO] pw: 1260
+05:47:08 [INFO] ph: 1400
+05:47:08 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:09 [INFO] Render finished in 315.708074ms
+05:47:11 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:12 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:12 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:12 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:12 [INFO] Starting render optimization... (59 glyphs)
+05:47:12 [INFO] factor_x: 13, float_x: 13
+05:47:12 [INFO] factor_y: 27, float_y: 27
+05:47:12 [INFO] img width: 1056
+05:47:12 [INFO] img height: 1163
+05:47:12 [INFO] pw: 1170
+05:47:12 [INFO] ph: 1296
+05:47:12 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:12 [INFO] Render finished in 285.124437ms
+05:47:14 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
+05:47:14 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:14 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:14 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:14 [INFO] Starting render optimization... (59 glyphs)
+05:47:14 [INFO] factor_x: 14, float_x: 14
+05:47:14 [INFO] factor_y: 28, float_y: 28
+05:47:14 [INFO] img width: 1056
+05:47:14 [INFO] img height: 1163
+05:47:14 [INFO] pw: 1260
+05:47:14 [INFO] ph: 1400
+05:47:14 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:15 [INFO] Render finished in 458.692564ms
+05:47:18 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:18 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:18 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:18 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:18 [INFO] Starting render optimization... (59 glyphs)
+05:47:18 [INFO] factor_x: 13, float_x: 13
+05:47:18 [INFO] factor_y: 27, float_y: 27
+05:47:18 [INFO] img width: 1056
+05:47:18 [INFO] img height: 1163
+05:47:18 [INFO] pw: 1170
+05:47:18 [INFO] ph: 1296
+05:47:18 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:19 [INFO] Render finished in 405.681293ms
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1714
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1619
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1523
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1428
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1333
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1238
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1142
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=1047
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=952
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=857
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=761
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=666
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=571
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=476
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=380
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=285
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=190
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=95
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=0
+05:47:20 [INFO] Value set: tab=0, visual=4, id=RelaxStrength, val=0
+05:47:21 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:21 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:21 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:21 [INFO] Starting render optimization... (59 glyphs)
+05:47:21 [INFO] factor_x: 14, float_x: 14
+05:47:21 [INFO] factor_y: 28, float_y: 28
+05:47:21 [INFO] img width: 1056
+05:47:21 [INFO] img height: 1163
+05:47:21 [INFO] pw: 1260
+05:47:21 [INFO] ph: 1400
+05:47:21 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:21 [INFO] Render finished in 462.308655ms
+05:47:27 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:28 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:28 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:28 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:28 [INFO] Starting render optimization... (59 glyphs)
+05:47:28 [INFO] factor_x: 13, float_x: 13
+05:47:28 [INFO] factor_y: 27, float_y: 27
+05:47:28 [INFO] img width: 1056
+05:47:28 [INFO] img height: 1163
+05:47:28 [INFO] pw: 1170
+05:47:28 [INFO] ph: 1296
+05:47:28 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:28 [INFO] Render finished in 415.934259ms
+05:47:29 [INFO] TUI Toggled: tab=0, visual=3, id=Relax
+05:47:29 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:29 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:29 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:29 [INFO] Starting render optimization... (59 glyphs)
+05:47:29 [INFO] factor_x: 14, float_x: 14
+05:47:29 [INFO] factor_y: 28, float_y: 28
+05:47:29 [INFO] img width: 1056
+05:47:29 [INFO] img height: 1163
+05:47:29 [INFO] pw: 1260
+05:47:29 [INFO] ph: 1400
+05:47:29 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:29 [INFO] Render finished in 308.85251ms
+05:47:35 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:36 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:36 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:36 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:36 [INFO] Starting render optimization... (59 glyphs)
+05:47:36 [INFO] factor_x: 13, float_x: 13
+05:47:36 [INFO] factor_y: 27, float_y: 27
+05:47:36 [INFO] img width: 1056
+05:47:36 [INFO] img height: 1163
+05:47:36 [INFO] pw: 1170
+05:47:36 [INFO] ph: 1296
+05:47:36 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:36 [INFO] Render finished in 268.749292ms
+05:47:36 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:47:36 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:36 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:47:36 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:36 [INFO] Starting render optimization... (59 glyphs)
+05:47:36 [INFO] factor_x: 14, float_x: 14
+05:47:36 [INFO] factor_y: 28, float_y: 28
+05:47:36 [INFO] img width: 1056
+05:47:36 [INFO] img height: 1163
+05:47:36 [INFO] pw: 1260
+05:47:36 [INFO] ph: 1400
+05:47:36 [INFO] Final target dimensions (pixels): 1260x1400
+05:47:37 [INFO] Render finished in 318.815332ms
+05:47:53 [INFO] TUI Toggled: tab=0, visual=1, id=RenderMode
+05:47:54 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:47:54 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:47:54 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:47:54 [INFO] Starting render optimization... (59 glyphs)
+05:47:54 [INFO] factor_x: 13, float_x: 13
+05:47:54 [INFO] factor_y: 27, float_y: 27
+05:47:54 [INFO] img width: 1056
+05:47:54 [INFO] img height: 1163
+05:47:54 [INFO] pw: 1170
+05:47:54 [INFO] ph: 1296
+05:47:54 [INFO] Final target dimensions (pixels): 1170x1296
+05:47:54 [INFO] Render finished in 95.752806ms
+05:47:59 [INFO] TUI Adjusted: tab=0, ctrl=1, id=RenderMode
+05:47:59 [INFO] TUI Adjusted: tab=0, ctrl=1, id=RenderMode
+05:48:00 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:00 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:48:00 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:00 [INFO] Starting render optimization... (59 glyphs)
+05:48:00 [INFO] factor_x: 14, float_x: 14
+05:48:00 [INFO] factor_y: 28, float_y: 28
+05:48:00 [INFO] img width: 1056
+05:48:00 [INFO] img height: 1163
+05:48:00 [INFO] pw: 1260
+05:48:00 [INFO] ph: 1400
+05:48:00 [INFO] Final target dimensions (pixels): 1260x1400
+05:48:00 [INFO] Render finished in 231.86421ms
+05:48:00 [INFO] TUI Toggled: tab=0, visual=1, id=RenderMode
+05:48:01 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:01 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:48:01 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:01 [INFO] Starting render optimization... (59 glyphs)
+05:48:01 [INFO] factor_x: 13, float_x: 13
+05:48:01 [INFO] factor_y: 27, float_y: 27
+05:48:01 [INFO] img width: 1056
+05:48:01 [INFO] img height: 1163
+05:48:01 [INFO] pw: 1170
+05:48:01 [INFO] ph: 1296
+05:48:01 [INFO] Final target dimensions (pixels): 1170x1296
+05:48:01 [INFO] TUI Adjusted: tab=0, ctrl=1, id=RenderMode
+05:48:01 [INFO] Render finished in 272.041347ms
+05:48:01 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:01 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:48:01 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:01 [INFO] Starting render optimization... (59 glyphs)
+05:48:01 [INFO] factor_x: 14, float_x: 14
+05:48:01 [INFO] factor_y: 28, float_y: 28
+05:48:01 [INFO] img width: 1056
+05:48:01 [INFO] img height: 1163
+05:48:01 [INFO] pw: 1260
+05:48:01 [INFO] ph: 1400
+05:48:01 [INFO] Final target dimensions (pixels): 1260x1400
+05:48:01 [INFO] Render finished in 237.699282ms
+05:48:06 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:48:06 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:06 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:48:06 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:06 [INFO] Starting render optimization... (59 glyphs)
+05:48:06 [INFO] factor_x: 13, float_x: 13
+05:48:06 [INFO] factor_y: 27, float_y: 27
+05:48:06 [INFO] img width: 1056
+05:48:06 [INFO] img height: 1163
+05:48:06 [INFO] pw: 1170
+05:48:06 [INFO] ph: 1296
+05:48:06 [INFO] Final target dimensions (pixels): 1170x1296
+05:48:06 [INFO] Render finished in 203.496978ms
+05:48:07 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:48:07 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:07 [INFO] Auto-calculated font size: 24 (based on ratio 0.481)
+05:48:07 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:07 [INFO] Starting render optimization... (59 glyphs)
+05:48:07 [INFO] factor_x: 14, float_x: 14
+05:48:07 [INFO] factor_y: 28, float_y: 28
+05:48:07 [INFO] img width: 1056
+05:48:07 [INFO] img height: 1163
+05:48:07 [INFO] pw: 1260
+05:48:07 [INFO] ph: 1400
+05:48:07 [INFO] Final target dimensions (pixels): 1260x1400
+05:48:07 [INFO] Render finished in 232.704286ms
+05:48:21 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:48:21 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=[]
+05:48:21 [INFO] Auto-calculated font size: 23 (based on ratio 0.500)
+05:48:21 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:21 [INFO] Starting render optimization... (59 glyphs)
+05:48:21 [INFO] factor_x: 13, float_x: 13
+05:48:21 [INFO] factor_y: 27, float_y: 27
+05:48:21 [INFO] img width: 1056
+05:48:21 [INFO] img height: 1163
+05:48:21 [INFO] pw: 1170
+05:48:21 [INFO] ph: 1296
+05:48:21 [INFO] Final target dimensions (pixels): 1170x1296
+05:48:21 [INFO] Render finished in 198.626908ms
+05:48:29 [INFO] Value set: tab=0, visual=0, id=Width, val=224
+05:48:29 [INFO] Flushing render args: width=224, scale=Some((1.0, 1.0)), font=[]
+05:48:29 [INFO] Auto-calculated font size: 13 (based on ratio 0.481)
+05:48:29 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:29 [INFO] Starting render optimization... (59 glyphs)
+05:48:29 [INFO] factor_x: 8, float_x: 8
+05:48:29 [INFO] factor_y: 15, float_y: 15
+05:48:29 [INFO] img width: 1056
+05:48:29 [INFO] img height: 1163
+05:48:29 [INFO] pw: 1792
+05:48:29 [INFO] ph: 1980
+05:48:29 [INFO] Final target dimensions (pixels): 1792x1980
+05:48:30 [INFO] Value set: tab=0, visual=0, id=Width, val=224
+05:48:30 [INFO] Value set: tab=0, visual=0, id=Width, val=224
+05:48:30 [INFO] Render finished in 658.308772ms
+05:48:30 [INFO] Flushing render args: width=224, scale=Some((1.0, 1.0)), font=[]
+05:48:30 [INFO] Auto-calculated font size: 13 (based on ratio 0.533)
+05:48:30 [INFO] Starting render optimization... (59 glyphs)
+05:48:30 [INFO] factor_x: 8, float_x: 8
+05:48:30 [INFO] factor_y: 15, float_y: 15
+05:48:30 [INFO] img width: 1056
+05:48:30 [INFO] img height: 1163
+05:48:30 [INFO] pw: 1792
+05:48:30 [INFO] ph: 1980
+05:48:30 [INFO] Final target dimensions (pixels): 1792x1980
+05:48:31 [INFO] Render finished in 659.868387ms
+05:48:32 [INFO] Value set: tab=0, visual=0, id=Width, val=113
+05:48:33 [INFO] Flushing render args: width=113, scale=Some((1.0, 1.0)), font=[]
+05:48:33 [INFO] Auto-calculated font size: 18 (based on ratio 0.533)
+05:48:33 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:33 [INFO] Starting render optimization... (59 glyphs)
+05:48:33 [INFO] factor_x: 11, float_x: 11
+05:48:33 [INFO] factor_y: 21, float_y: 21
+05:48:33 [INFO] img width: 1056
+05:48:33 [INFO] img height: 1163
+05:48:33 [INFO] pw: 1243
+05:48:33 [INFO] ph: 1365
+05:48:33 [INFO] Final target dimensions (pixels): 1243x1365
+05:48:33 [INFO] Render finished in 271.37533ms
+05:48:34 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
+05:48:35 [INFO] Flushing render args: width=113, scale=Some((1.0, 1.0)), font=[]
+05:48:35 [INFO] Auto-calculated font size: 18 (based on ratio 0.524)
+05:48:35 [INFO] Starting render optimization... (59 glyphs)
+05:48:35 [INFO] factor_x: 11, float_x: 11
+05:48:35 [INFO] factor_y: 21, float_y: 21
+05:48:35 [INFO] img width: 1056
+05:48:35 [INFO] img height: 1163
+05:48:35 [INFO] pw: 1243
+05:48:35 [INFO] ph: 1365
+05:48:35 [INFO] Final target dimensions (pixels): 1243x1365
+05:48:35 [INFO] Render finished in 450.630693ms
+05:48:40 [INFO] Value set: tab=0, visual=0, id=Width, val=113
+05:48:41 [INFO] Flushing render args: width=113, scale=Some((1.0, 1.0)), font=[]
+05:48:41 [INFO] Auto-calculated font size: 18 (based on ratio 0.524)
+05:48:41 [INFO] Starting render optimization... (59 glyphs)
+05:48:41 [INFO] factor_x: 11, float_x: 11
+05:48:41 [INFO] factor_y: 21, float_y: 21
+05:48:41 [INFO] img width: 1056
+05:48:41 [INFO] img height: 1163
+05:48:41 [INFO] pw: 1243
+05:48:41 [INFO] ph: 1365
+05:48:41 [INFO] Final target dimensions (pixels): 1243x1365
+05:48:41 [INFO] Value set: tab=0, visual=0, id=Width, val=79
+05:48:41 [INFO] Render finished in 447.337359ms
+05:48:42 [INFO] Flushing render args: width=79, scale=Some((1.0, 1.0)), font=[]
+05:48:42 [INFO] Auto-calculated font size: 26 (based on ratio 0.524)
+05:48:42 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:42 [INFO] Starting render optimization... (59 glyphs)
+05:48:42 [INFO] factor_x: 15, float_x: 15
+05:48:42 [INFO] factor_y: 30, float_y: 30
+05:48:42 [INFO] img width: 1056
+05:48:42 [INFO] img height: 1163
+05:48:42 [INFO] pw: 1185
+05:48:42 [INFO] ph: 1320
+05:48:42 [INFO] Final target dimensions (pixels): 1185x1320
+05:48:42 [INFO] Render finished in 324.766124ms
+05:48:43 [INFO] Value set: tab=0, visual=0, id=Width, val=99
+05:48:43 [INFO] Value set: tab=0, visual=0, id=Width, val=106
+05:48:44 [INFO] Flushing render args: width=106, scale=Some((1.0, 1.0)), font=[]
+05:48:44 [INFO] Auto-calculated font size: 20 (based on ratio 0.500)
+05:48:44 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:44 [INFO] Starting render optimization... (59 glyphs)
+05:48:44 [INFO] factor_x: 12, float_x: 12
+05:48:44 [INFO] factor_y: 23, float_y: 23
+05:48:44 [INFO] img width: 1056
+05:48:44 [INFO] img height: 1163
+05:48:44 [INFO] pw: 1272
+05:48:44 [INFO] ph: 1403
+05:48:44 [INFO] Final target dimensions (pixels): 1272x1403
+05:48:44 [INFO] Render finished in 425.180893ms
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:45 [INFO] Flushing render args: width=105, scale=Some((1.0, 1.0)), font=[]
+05:48:45 [INFO] Auto-calculated font size: 19 (based on ratio 0.522)
+05:48:45 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:45 [INFO] Rendering block 'p' (52 glyphs)
+05:48:45 [INFO] Rendering block 'vb' (7 glyphs)
+05:48:45 [INFO] Starting render optimization... (59 glyphs)
+05:48:45 [INFO] factor_x: 11, float_x: 11
+05:48:45 [INFO] factor_y: 22, float_y: 22
+05:48:45 [INFO] img width: 1056
+05:48:45 [INFO] img height: 1163
+05:48:45 [INFO] pw: 1155
+05:48:45 [INFO] ph: 1276
+05:48:45 [INFO] Final target dimensions (pixels): 1155x1276
+05:48:46 [INFO] Render finished in 370.76649ms
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:47 [INFO] Flushing render args: width=104, scale=Some((1.0, 1.0)), font=[]
+05:48:47 [INFO] Auto-calculated font size: 20 (based on ratio 0.500)
+05:48:47 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:47 [INFO] Starting render optimization... (59 glyphs)
+05:48:47 [INFO] factor_x: 12, float_x: 12
+05:48:47 [INFO] factor_y: 23, float_y: 23
+05:48:47 [INFO] img width: 1056
+05:48:47 [INFO] img height: 1163
+05:48:47 [INFO] pw: 1248
+05:48:47 [INFO] ph: 1380
+05:48:47 [INFO] Final target dimensions (pixels): 1248x1380
+05:48:47 [INFO] Render finished in 408.450963ms
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:48 [INFO] Flushing render args: width=103, scale=Some((1.0, 1.0)), font=[]
+05:48:48 [INFO] Auto-calculated font size: 20 (based on ratio 0.522)
+05:48:48 [INFO] Starting render optimization... (59 glyphs)
+05:48:48 [INFO] factor_x: 12, float_x: 12
+05:48:48 [INFO] factor_y: 23, float_y: 23
+05:48:48 [INFO] img width: 1056
+05:48:48 [INFO] img height: 1163
+05:48:48 [INFO] pw: 1236
+05:48:48 [INFO] ph: 1357
+05:48:48 [INFO] Final target dimensions (pixels): 1236x1357
+05:48:49 [INFO] Render finished in 406.574644ms
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:50 [INFO] Flushing render args: width=102, scale=Some((1.0, 1.0)), font=[]
+05:48:50 [INFO] Auto-calculated font size: 20 (based on ratio 0.522)
+05:48:50 [INFO] Starting render optimization... (59 glyphs)
+05:48:50 [INFO] factor_x: 12, float_x: 12
+05:48:50 [INFO] factor_y: 23, float_y: 23
+05:48:50 [INFO] img width: 1056
+05:48:50 [INFO] img height: 1163
+05:48:50 [INFO] pw: 1224
+05:48:50 [INFO] ph: 1357
+05:48:50 [INFO] Final target dimensions (pixels): 1224x1357
+05:48:50 [INFO] Render finished in 395.60788ms
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:51 [INFO] Flushing render args: width=101, scale=Some((1.0, 1.0)), font=[]
+05:48:51 [INFO] Auto-calculated font size: 20 (based on ratio 0.522)
+05:48:51 [INFO] Starting render optimization... (59 glyphs)
+05:48:51 [INFO] factor_x: 12, float_x: 12
+05:48:51 [INFO] factor_y: 23, float_y: 23
+05:48:51 [INFO] img width: 1056
+05:48:51 [INFO] img height: 1163
+05:48:51 [INFO] pw: 1212
+05:48:51 [INFO] ph: 1334
+05:48:51 [INFO] Final target dimensions (pixels): 1212x1334
+05:48:52 [INFO] Render finished in 382.954654ms
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:53 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=[]
+05:48:53 [INFO] Auto-calculated font size: 20 (based on ratio 0.522)
+05:48:53 [INFO] Starting render optimization... (59 glyphs)
+05:48:53 [INFO] factor_x: 12, float_x: 12
+05:48:53 [INFO] factor_y: 23, float_y: 23
+05:48:53 [INFO] img width: 1056
+05:48:53 [INFO] img height: 1163
+05:48:53 [INFO] pw: 1200
+05:48:53 [INFO] ph: 1311
+05:48:53 [INFO] Final target dimensions (pixels): 1200x1311
+05:48:53 [INFO] Render finished in 380.918717ms
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:55 [INFO] Flushing render args: width=99, scale=Some((1.0, 1.0)), font=[]
+05:48:55 [INFO] Auto-calculated font size: 20 (based on ratio 0.522)
+05:48:55 [INFO] Starting render optimization... (59 glyphs)
+05:48:55 [INFO] factor_x: 12, float_x: 12
+05:48:55 [INFO] factor_y: 23, float_y: 23
+05:48:55 [INFO] img width: 1056
+05:48:55 [INFO] img height: 1163
+05:48:55 [INFO] pw: 1188
+05:48:55 [INFO] ph: 1311
+05:48:55 [INFO] Final target dimensions (pixels): 1188x1311
+05:48:55 [INFO] Render finished in 374.55266ms
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:56 [INFO] Flushing render args: width=98, scale=Some((1.0, 1.0)), font=[]
+05:48:56 [INFO] Auto-calculated font size: 21 (based on ratio 0.522)
+05:48:56 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:56 [INFO] Starting render optimization... (59 glyphs)
+05:48:56 [INFO] factor_x: 12, float_x: 12
+05:48:56 [INFO] factor_y: 24, float_y: 24
+05:48:56 [INFO] img width: 1056
+05:48:56 [INFO] img height: 1163
+05:48:56 [INFO] pw: 1176
+05:48:56 [INFO] ph: 1296
+05:48:56 [INFO] Final target dimensions (pixels): 1176x1296
+05:48:57 [INFO] Render finished in 356.367601ms
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
+05:48:58 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:48:58 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:48:58 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaCode-Regular.otf
+05:48:58 [INFO] Starting render optimization... (59 glyphs)
+05:48:58 [INFO] factor_x: 13, float_x: 13
+05:48:58 [INFO] factor_y: 26, float_y: 26
+05:48:58 [INFO] img width: 1056
+05:48:58 [INFO] img height: 1163
+05:48:58 [INFO] pw: 1261
+05:48:58 [INFO] ph: 1378
+05:48:58 [INFO] Final target dimensions (pixels): 1261x1378
+05:48:58 [INFO] Render finished in 389.145884ms
+05:49:02 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:02 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:02 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:02 [INFO] Starting render optimization... (59 glyphs)
+05:49:02 [INFO] factor_x: 13, float_x: 13
+05:49:02 [INFO] factor_y: 26, float_y: 26
+05:49:02 [INFO] img width: 1055
+05:49:02 [INFO] img height: 1163
+05:49:02 [INFO] pw: 1261
+05:49:02 [INFO] ph: 1378
+05:49:02 [INFO] Final target dimensions (pixels): 1261x1378
+05:49:03 [INFO] Render finished in 398.544738ms
+05:49:03 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:04 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:04 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:04 [INFO] Starting render optimization... (59 glyphs)
+05:49:04 [INFO] factor_x: 13, float_x: 13
+05:49:04 [INFO] factor_y: 26, float_y: 26
+05:49:04 [INFO] img width: 1054
+05:49:04 [INFO] img height: 1163
+05:49:04 [INFO] pw: 1261
+05:49:04 [INFO] ph: 1404
+05:49:04 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:04 [INFO] Render finished in 407.529716ms
+05:49:05 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:05 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:05 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:05 [INFO] Starting render optimization... (59 glyphs)
+05:49:05 [INFO] factor_x: 13, float_x: 13
+05:49:05 [INFO] factor_y: 26, float_y: 26
+05:49:05 [INFO] img width: 1053
+05:49:05 [INFO] img height: 1163
+05:49:05 [INFO] pw: 1261
+05:49:05 [INFO] ph: 1404
+05:49:05 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:05 [INFO] Render finished in 405.915269ms
+05:49:06 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:06 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:06 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:06 [INFO] Starting render optimization... (59 glyphs)
+05:49:06 [INFO] factor_x: 13, float_x: 13
+05:49:06 [INFO] factor_y: 26, float_y: 26
+05:49:06 [INFO] img width: 1052
+05:49:06 [INFO] img height: 1163
+05:49:06 [INFO] pw: 1261
+05:49:06 [INFO] ph: 1404
+05:49:06 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:07 [INFO] Render finished in 414.986769ms
+05:49:07 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:08 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:08 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:08 [INFO] Starting render optimization... (59 glyphs)
+05:49:08 [INFO] factor_x: 13, float_x: 13
+05:49:08 [INFO] factor_y: 26, float_y: 26
+05:49:08 [INFO] img width: 1051
+05:49:08 [INFO] img height: 1163
+05:49:08 [INFO] pw: 1261
+05:49:08 [INFO] ph: 1404
+05:49:08 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:08 [INFO] Render finished in 408.272389ms
+05:49:09 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:09 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:09 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:09 [INFO] Starting render optimization... (59 glyphs)
+05:49:09 [INFO] factor_x: 13, float_x: 13
+05:49:09 [INFO] factor_y: 26, float_y: 26
+05:49:09 [INFO] img width: 1050
+05:49:09 [INFO] img height: 1163
+05:49:09 [INFO] pw: 1261
+05:49:09 [INFO] ph: 1404
+05:49:09 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:10 [INFO] Render finished in 407.19544ms
+05:49:10 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:11 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:11 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:11 [INFO] Starting render optimization... (59 glyphs)
+05:49:11 [INFO] factor_x: 13, float_x: 13
+05:49:11 [INFO] factor_y: 26, float_y: 26
+05:49:11 [INFO] img width: 1049
+05:49:11 [INFO] img height: 1163
+05:49:11 [INFO] pw: 1261
+05:49:11 [INFO] ph: 1404
+05:49:11 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:11 [INFO] Render finished in 397.370847ms
+05:49:12 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:12 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:12 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:12 [INFO] Starting render optimization... (59 glyphs)
+05:49:12 [INFO] factor_x: 13, float_x: 13
+05:49:12 [INFO] factor_y: 26, float_y: 26
+05:49:12 [INFO] img width: 1048
+05:49:12 [INFO] img height: 1163
+05:49:12 [INFO] pw: 1261
+05:49:12 [INFO] ph: 1404
+05:49:12 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:13 [INFO] Render finished in 410.167733ms
+05:49:13 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:14 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:14 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:14 [INFO] Starting render optimization... (59 glyphs)
+05:49:14 [INFO] factor_x: 13, float_x: 13
+05:49:14 [INFO] factor_y: 26, float_y: 26
+05:49:14 [INFO] img width: 1047
+05:49:14 [INFO] img height: 1163
+05:49:14 [INFO] pw: 1261
+05:49:14 [INFO] ph: 1404
+05:49:14 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:14 [INFO] Render finished in 405.473911ms
+05:49:15 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:16 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:16 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:16 [INFO] Starting render optimization... (59 glyphs)
+05:49:16 [INFO] factor_x: 13, float_x: 13
+05:49:16 [INFO] factor_y: 26, float_y: 26
+05:49:16 [INFO] img width: 1046
+05:49:16 [INFO] img height: 1163
+05:49:16 [INFO] pw: 1261
+05:49:16 [INFO] ph: 1404
+05:49:16 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:16 [INFO] Render finished in 402.57183ms
+05:49:17 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:17 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:17 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:17 [INFO] Starting render optimization... (59 glyphs)
+05:49:17 [INFO] factor_x: 13, float_x: 13
+05:49:17 [INFO] factor_y: 26, float_y: 26
+05:49:17 [INFO] img width: 1045
+05:49:17 [INFO] img height: 1163
+05:49:17 [INFO] pw: 1261
+05:49:17 [INFO] ph: 1404
+05:49:17 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:18 [INFO] Render finished in 406.202488ms
+05:49:18 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:19 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:19 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:19 [INFO] Starting render optimization... (59 glyphs)
+05:49:19 [INFO] factor_x: 13, float_x: 13
+05:49:19 [INFO] factor_y: 26, float_y: 26
+05:49:19 [INFO] img width: 1044
+05:49:19 [INFO] img height: 1163
+05:49:19 [INFO] pw: 1261
+05:49:19 [INFO] ph: 1404
+05:49:19 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:19 [INFO] Render finished in 407.074062ms
+05:49:22 [INFO] TUI Adjusted: tab=0, ctrl=9, id=TrimLeft
+05:49:22 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:22 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:22 [INFO] Starting render optimization... (59 glyphs)
+05:49:22 [INFO] factor_x: 13, float_x: 13
+05:49:22 [INFO] factor_y: 26, float_y: 26
+05:49:22 [INFO] img width: 1043
+05:49:22 [INFO] img height: 1163
+05:49:22 [INFO] pw: 1261
+05:49:22 [INFO] ph: 1404
+05:49:22 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:23 [INFO] Render finished in 409.140558ms
+05:49:30 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:49:30 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:30 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:30 [INFO] Starting render optimization... (59 glyphs)
+05:49:30 [INFO] factor_x: 13, float_x: 13
+05:49:30 [INFO] factor_y: 26, float_y: 26
+05:49:30 [INFO] img width: 1043
+05:49:30 [INFO] img height: 1163
+05:49:30 [INFO] pw: 1261
+05:49:30 [INFO] ph: 1404
+05:49:30 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:31 [INFO] Render finished in 415.268098ms
+05:49:54 [INFO] TUI Toggled: tab=0, visual=5, id=HighlightDisc
+05:49:54 [INFO] Flushing render args: width=97, scale=Some((1.0, 1.0)), font=[]
+05:49:54 [INFO] Auto-calculated font size: 22 (based on ratio 0.500)
+05:49:54 [INFO] Starting render optimization... (59 glyphs)
+05:49:54 [INFO] factor_x: 13, float_x: 13
+05:49:54 [INFO] factor_y: 26, float_y: 26
+05:49:54 [INFO] img width: 1043
+05:49:54 [INFO] img height: 1163
+05:49:54 [INFO] pw: 1261
+05:49:54 [INFO] ph: 1404
+05:49:54 [INFO] Final target dimensions (pixels): 1261x1404
+05:49:55 [INFO] Render finished in 410.355548ms
