@@ -70,6 +70,7 @@ enum ControlId {
     RelaxStrength,
     HighlightDisc,
     FixDisc,
+    FixStrength,
     TrimTop,
     TrimRight,
     TrimBottom,
@@ -91,6 +92,9 @@ enum ControlId {
     Hue,
     Colorspace,
     Encoding,
+    Misc1,
+    Misc2,
+    Misc3,
 
     Dither,
     Invert,
@@ -194,6 +198,42 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::FixDisc,
         label: "Fix Disc",
         kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::FixStrength,
+        label: "Fix Strength",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000000000,
+            default: 4,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc1,
+        label: "Misc1",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000000000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc2,
+        label: "Misc2",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000000000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc3,
+        label: "Misc3",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000000000,
+            default: 0,
+        },
     },
     ControlDef {
         id: ControlId::TrimTop,
@@ -816,6 +856,12 @@ struct App {
     relax_strength: i32,
     show_discontinuities: bool,
     fix_disc: bool,
+    fix_strength: u32,
+
+    misc1: i32,
+    misc2: i32,
+    misc3: i32,
+
     invert: bool,
     grayscale: bool,
     brightness: i32,
@@ -957,6 +1003,10 @@ impl App {
             relax_strength: (render_args.relax_strength * 10.0) as i32,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
+            fix_strength: render_args.fix_strength,
+            misc1: 0,
+            misc2: 0,
+            misc3: 0,
             invert: render_args.invert,
             grayscale: render_args.grayscale,
             brightness: 0,
@@ -1089,6 +1139,10 @@ impl App {
             ControlId::RelaxStrength => self.relax_strength,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::FixDisc => self.fix_disc as i32,
+            ControlId::FixStrength => self.fix_strength as i32,
+            ControlId::Misc1 => self.misc1,
+            ControlId::Misc2 => self.misc2,
+            ControlId::Misc3 => self.misc3,
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
             ControlId::Pixelize => self.pixelize,
@@ -1152,6 +1206,10 @@ impl App {
             ControlId::RelaxStrength => self.relax_strength = val,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::FixDisc => self.fix_disc = val != 0,
+            ControlId::FixStrength => self.fix_strength = val as u32,
+            ControlId::Misc1 => self.misc1 = val,
+            ControlId::Misc2 => self.misc2 = val,
+            ControlId::Misc3 => self.misc3 = val,
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
             ControlId::Pixelize => self.pixelize = val,
@@ -1255,6 +1313,7 @@ impl App {
         self.render_args.relax_strength = self.relax_strength as f32 / 10.0;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
+        self.render_args.fix_strength = self.fix_strength;
         self.render_args.pixelize = self.pixelize;
         self.render_args.gaussian_blur = self.gaussian_blur;
         self.render_args.box_blur = self.box_blur;

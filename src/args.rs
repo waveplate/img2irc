@@ -161,6 +161,10 @@ pub struct RenderArgs {
     pub relax_strength: f32,
     pub show_discontinuities: bool,
     pub fix_disc: bool,
+    pub fix_strength: u32,
+    pub misc1: i32,
+    pub misc2: i32,
+    pub misc3: i32,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -521,6 +525,19 @@ pub struct Args {
     /// fix discontinuities by trying alternative glyphs
     #[arg(long, default_value_t = false)]
     pub fix_disc: bool,
+
+    /// strength of the fix
+    #[arg(long, default_value = "4")]
+    pub fix_strength: u32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc1: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc2: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc3: i32,
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]

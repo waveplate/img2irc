@@ -1339,7 +1339,7 @@ pub fn render_blocks_smooth(
     // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
     if args.relax {
         let relax_strength = args.relax_strength as f64;
-        let relax_iterations = 50;
+        let relax_iterations = 5;
 
         // Helper: compute exit position for inverted glyph
         // When inverted, FG pixels become BG and vice versa, so the boundary
@@ -1398,7 +1398,8 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let data = &grid_data[curr_idx];
 
-                let edge_importance_weight = 4;
+                //let edge_importance_weight = 4;
+                let edge_importance_weight = args.misc1 as u64;
                 let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
                     let dr = a[0] as i64 - b[0] as i64;
                     let dg = a[1] as i64 - b[1] as i64;
@@ -1684,7 +1685,8 @@ pub fn render_blocks_smooth(
     // available glyphs. Only changes a cell if the new glyph strictly reduces
     // the number of fixable discontinuity pixels.
     if args.fix_disc {
-        let disc_threshold_sq = 10000u32;
+        //let disc_threshold_sq = 10000u32;
+        let disc_threshold_sq = args.fix_strength;
 
         let disc_palette: &[u32] = match render {
             Render::Irc | Render::Preview => &IRC99,
