@@ -125,6 +125,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         relax: args.relax,
         relax_strength: param_base(&args.relax_strength),
         show_discontinuities: args.show_discontinuities,
+        fix_disc: args.fix_disc,
         save: args.save.clone(),
 
         score: args.score,

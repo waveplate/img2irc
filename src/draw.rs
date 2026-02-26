@@ -1054,7 +1054,7 @@ pub fn render_blocks_smooth(
     }
 
     // --- Phase 2: Precompute internal block-glyph costs ---
-    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax {
+    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax || args.fix_disc {
         grid_data
             .par_iter()
             .map(|data| {
@@ -1116,7 +1116,9 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    if (args.smooth || args.relax) && block_glyph_costs.iter().any(|v| v.is_empty()) {
+    if (args.smooth || args.relax || args.fix_disc)
+        && block_glyph_costs.iter().any(|v| v.is_empty())
+    {
         return "Cancelled".into();
     }
 
@@ -1337,7 +1339,7 @@ pub fn render_blocks_smooth(
     // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
     if args.relax {
         let relax_strength = args.relax_strength as f64;
-        let relax_iterations = 5;
+        let relax_iterations = 50;
 
         // Helper: compute exit position for inverted glyph
         // When inverted, FG pixels become BG and vice versa, so the boundary
@@ -1673,6 +1675,198 @@ pub fn render_blocks_smooth(
                 }
 
                 grid_state[curr_idx] = best_choice;
+            }
+        }
+    }
+
+    // --- Phase 5: Fix Discontinuities ---
+    // Surgically fixes cells that have fixable discontinuities by trying all
+    // available glyphs. Only changes a cell if the new glyph strictly reduces
+    // the number of fixable discontinuity pixels.
+    if args.fix_disc {
+        let disc_threshold_sq = 10000u32;
+
+        let disc_palette: &[u32] = match render {
+            Render::Irc | Render::Preview => &IRC99,
+            Render::Ansi => &ANSI256,
+            Render::Ansi24 => &ANSI256,
+        };
+
+        let colour_to_rgb_fd = |c: &Colour| -> [u8; 3] {
+            match c {
+                Colour::Index(i) => unpack_rgb(disc_palette[*i as usize]),
+                Colour::RGB(rgb) => *rgb,
+            }
+        };
+
+        let col_dist_sq_fd = |a: [u8; 3], b: [u8; 3]| -> u32 {
+            let dr = a[0] as i32 - b[0] as i32;
+            let dg = a[1] as i32 - b[1] as i32;
+            let db = a[2] as i32 - b[2] as i32;
+            (dr * dr + dg * dg + db * db) as u32
+        };
+
+        // Precompute resolved FG/BG RGB for each cell
+        let cell_fg_rgb_fd: Vec<[u8; 3]> = grid_data
+            .iter()
+            .map(|d| {
+                d.fg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb_fd(c))
+                    .unwrap_or([0, 0, 0])
+            })
+            .collect();
+        let cell_bg_rgb_fd: Vec<[u8; 3]> = grid_data
+            .iter()
+            .map(|d| {
+                d.bg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb_fd(c))
+                    .unwrap_or([0, 0, 0])
+            })
+            .collect();
+
+        // Gauss-Seidel: iterate and fix cells in-place
+        let fix_iterations = 3;
+
+        // Inline disc counting to avoid borrow conflicts with grid_state
+        let count_disc_inline =
+            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u32 {
+                let curr_idx = cy * grid_w + cx;
+                let glyph = &glyphs[gi];
+                let my_fg = cell_fg_rgb_fd[curr_idx];
+                let my_bg = cell_bg_rgb_fd[curr_idx];
+                let mut count = 0u32;
+
+                macro_rules! check_edge_fd {
+                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge:expr) => {
+                        if $cond {
+                            let n_idx = $n_idx;
+                            let (ni, niv) = gs[n_idx];
+                            for i in 0..$len {
+                                let my_rgb = if ($my_edge[i] ^ (inv as u8)) == 1 {
+                                    cell_fg_rgb_fd[curr_idx]
+                                } else {
+                                    cell_bg_rgb_fd[curr_idx]
+                                };
+                                let n_rgb = if ($n_edge(ni, i) ^ (niv as u8)) == 1 {
+                                    cell_fg_rgb_fd[n_idx]
+                                } else {
+                                    cell_bg_rgb_fd[n_idx]
+                                };
+                                if col_dist_sq_fd(my_rgb, n_rgb) >= disc_threshold_sq {
+                                    let n_could = col_dist_sq_fd(my_rgb, cell_fg_rgb_fd[n_idx])
+                                        < disc_threshold_sq
+                                        || col_dist_sq_fd(my_rgb, cell_bg_rgb_fd[n_idx])
+                                            < disc_threshold_sq;
+                                    let i_could = col_dist_sq_fd(n_rgb, my_fg) < disc_threshold_sq
+                                        || col_dist_sq_fd(n_rgb, my_bg) < disc_threshold_sq;
+                                    if n_could || i_could {
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                check_edge_fd!(
+                    cy > 0,
+                    curr_idx - grid_w,
+                    gw,
+                    glyph.top,
+                    |ni: usize, i: usize| glyphs[ni].bottom[i]
+                );
+                check_edge_fd!(
+                    cy < grid_h - 1,
+                    curr_idx + grid_w,
+                    gw,
+                    glyph.bottom,
+                    |ni: usize, i: usize| glyphs[ni].top[i]
+                );
+                check_edge_fd!(
+                    cx > 0,
+                    curr_idx - 1,
+                    gh,
+                    glyph.left,
+                    |ni: usize, i: usize| glyphs[ni].right[i]
+                );
+                check_edge_fd!(
+                    cx < grid_w - 1,
+                    curr_idx + 1,
+                    gh,
+                    glyph.right,
+                    |ni: usize, i: usize| glyphs[ni].left[i]
+                );
+
+                count
+            };
+
+        for pass in 0..fix_iterations {
+            if let Some(flag) = &abort_flag {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return "Cancelled".into();
+                }
+            }
+            let forward = pass % 2 == 0;
+            let indices: Vec<usize> = if forward {
+                (0..grid_h * grid_w).collect()
+            } else {
+                (0..grid_h * grid_w).rev().collect()
+            };
+
+            // Collect changes, then apply (avoids borrow conflict)
+            let mut changes: Vec<(usize, (usize, bool))> = Vec::new();
+
+            for &curr_idx in &indices {
+                let cx = curr_idx % grid_w;
+                let cy = curr_idx / grid_w;
+
+                // Skip uniform cells
+                if col_dist_sq_fd(cell_fg_rgb_fd[curr_idx], cell_bg_rgb_fd[curr_idx])
+                    < disc_threshold_sq
+                {
+                    continue;
+                }
+
+                let (cur_gi, cur_inv) = grid_state[curr_idx];
+                let cur_disc = count_disc_inline(cx, cy, cur_gi, cur_inv, &grid_state);
+                if cur_disc == 0 {
+                    continue;
+                }
+
+                let mut best_disc = cur_disc;
+                let mut best_choice = (cur_gi, cur_inv);
+                let mut best_internal = block_glyph_costs
+                    .get(curr_idx)
+                    .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
+                    .unwrap_or(u64::MAX);
+
+                for (gi, _glyph) in glyphs.iter().enumerate() {
+                    for inv_idx in 0..2usize {
+                        let inv = inv_idx == 1;
+                        let d = count_disc_inline(cx, cy, gi, inv, &grid_state);
+                        let internal = block_glyph_costs
+                            .get(curr_idx)
+                            .and_then(|v| v.get(gi * 2 + inv_idx).copied())
+                            .unwrap_or(u64::MAX);
+
+                        if d < best_disc || (d == best_disc && internal < best_internal) {
+                            best_disc = d;
+                            best_choice = (gi, inv);
+                            best_internal = internal;
+                        }
+                    }
+                }
+
+                if best_disc < cur_disc {
+                    changes.push((curr_idx, best_choice));
+                }
+            }
+
+            // Apply all changes for this pass
+            for (idx, choice) in changes {
+                grid_state[idx] = choice;
             }
         }
     }

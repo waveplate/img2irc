@@ -160,6 +160,7 @@ pub struct RenderArgs {
     pub relax: bool,
     pub relax_strength: f32,
     pub show_discontinuities: bool,
+    pub fix_disc: bool,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -516,6 +517,10 @@ pub struct Args {
     /// highlight cells with discontinuities in red
     #[arg(long, default_value_t = false)]
     pub show_discontinuities: bool,
+
+    /// fix discontinuities by trying alternative glyphs
+    #[arg(long, default_value_t = false)]
+    pub fix_disc: bool,
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]
