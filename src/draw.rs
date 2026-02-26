@@ -1678,16 +1678,16 @@ pub fn render_blocks_smooth(
     }
 
     // --- Discontinuity Highlighting ---
+    // Only flags "fixable" discontinuities: mismatches where a different glyph
+    // could resolve the seam. Natural color boundaries (e.g., black outline meeting
+    // blue background) are NOT flagged because no glyph change could fix them.
     if args.show_discontinuities {
-        // Threshold: only flag discontinuities where the color difference is significant.
-        // Adjacent palette yellows: ~1600-3000 sq dist. Yellow-to-black: ~75000.
         let disc_threshold_sq = 10000u32;
 
-        // Palette for resolving Index → RGB
         let disc_palette: &[u32] = match render {
             Render::Irc | Render::Preview => &IRC99,
             Render::Ansi => &ANSI256,
-            Render::Ansi24 => &ANSI256, // won't be used for Ansi24 (colours are RGB)
+            Render::Ansi24 => &ANSI256,
         };
 
         let colour_to_rgb = |c: &Colour| -> [u8; 3] {
@@ -1704,42 +1704,62 @@ pub fn render_blocks_smooth(
             (dr * dr + dg * dg + db * db) as u32
         };
 
+        // Precompute resolved RGB for each cell's FG and BG
+        let cell_fg_rgb: Vec<[u8; 3]> = grid_data
+            .iter()
+            .map(|d| {
+                d.fg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb(c))
+                    .unwrap_or([0, 0, 0])
+            })
+            .collect();
+        let cell_bg_rgb: Vec<[u8; 3]> = grid_data
+            .iter()
+            .map(|d| {
+                d.bg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb(c))
+                    .unwrap_or([0, 0, 0])
+            })
+            .collect();
+
         for cy in 0..grid_h {
             for cx in 0..grid_w {
                 let curr_idx = cy * grid_w + cx;
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
 
-                // Quick check: if this cell's FG and BG resolve to similar colors,
-                // no glyph pattern can create a significant discontinuity FROM this cell.
-                let my_fg_rgb = grid_data[curr_idx]
-                    .fg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb(c))
-                    .unwrap_or([0, 0, 0]);
-                let my_bg_rgb = grid_data[curr_idx]
-                    .bg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb(c))
-                    .unwrap_or([0, 0, 0]);
-                if col_dist_sq(my_fg_rgb, my_bg_rgb) < disc_threshold_sq {
-                    continue; // FG ≈ BG, this cell is effectively uniform
+                // Skip uniform cells (FG ≈ BG)
+                if col_dist_sq(cell_fg_rgb[curr_idx], cell_bg_rgb[curr_idx]) < disc_threshold_sq {
+                    continue;
                 }
 
                 let mut fg_disc = false;
                 let mut bg_disc = false;
 
+                let my_fg = cell_fg_rgb[curr_idx];
+                let my_bg = cell_bg_rgb[curr_idx];
+
                 // Get resolved RGB for a pixel at an edge position
                 let get_rgb = |bmp_val: u8, is_inv: bool, idx: usize| -> [u8; 3] {
-                    let col_ref = if (bmp_val ^ (is_inv as u8)) == 1 {
-                        &grid_data[idx].fg_col
+                    if (bmp_val ^ (is_inv as u8)) == 1 {
+                        cell_fg_rgb[idx]
                     } else {
-                        &grid_data[idx].bg_col
-                    };
-                    col_ref
-                        .as_ref()
-                        .map(|c| colour_to_rgb(c))
-                        .unwrap_or([0, 0, 0])
+                        cell_bg_rgb[idx]
+                    }
+                };
+
+                // Check if a mismatch is fixable: could either cell render
+                // the matching color with a different glyph?
+                let is_fixable = |my_rgb: [u8; 3], n_rgb: [u8; 3], n_idx: usize| -> bool {
+                    // Could the neighbor render my_rgb? (my_rgb ≈ neighbor's FG or BG)
+                    let n_could_match = col_dist_sq(my_rgb, cell_fg_rgb[n_idx]) < disc_threshold_sq
+                        || col_dist_sq(my_rgb, cell_bg_rgb[n_idx]) < disc_threshold_sq;
+                    // Could I render n_rgb? (n_rgb ≈ my FG or BG)
+                    let i_could_match = col_dist_sq(n_rgb, my_fg) < disc_threshold_sq
+                        || col_dist_sq(n_rgb, my_bg) < disc_threshold_sq;
+                    n_could_match || i_could_match
                 };
 
                 // Check top edge
@@ -1750,10 +1770,12 @@ pub fn render_blocks_smooth(
                         let my_rgb = get_rgb(glyph.top[i], inv, curr_idx);
                         let n_rgb = get_rgb(glyphs[ni].bottom[i], niv, n_idx);
                         if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if (glyph.top[i] ^ (inv as u8)) == 1 {
-                                fg_disc = true;
-                            } else {
-                                bg_disc = true;
+                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                                if (glyph.top[i] ^ (inv as u8)) == 1 {
+                                    fg_disc = true;
+                                } else {
+                                    bg_disc = true;
+                                }
                             }
                         }
                     }
@@ -1767,10 +1789,12 @@ pub fn render_blocks_smooth(
                         let my_rgb = get_rgb(glyph.bottom[i], inv, curr_idx);
                         let n_rgb = get_rgb(glyphs[ni].top[i], niv, n_idx);
                         if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if (glyph.bottom[i] ^ (inv as u8)) == 1 {
-                                fg_disc = true;
-                            } else {
-                                bg_disc = true;
+                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                                if (glyph.bottom[i] ^ (inv as u8)) == 1 {
+                                    fg_disc = true;
+                                } else {
+                                    bg_disc = true;
+                                }
                             }
                         }
                     }
@@ -1784,10 +1808,12 @@ pub fn render_blocks_smooth(
                         let my_rgb = get_rgb(glyph.left[i], inv, curr_idx);
                         let n_rgb = get_rgb(glyphs[ni].right[i], niv, n_idx);
                         if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if (glyph.left[i] ^ (inv as u8)) == 1 {
-                                fg_disc = true;
-                            } else {
-                                bg_disc = true;
+                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                                if (glyph.left[i] ^ (inv as u8)) == 1 {
+                                    fg_disc = true;
+                                } else {
+                                    bg_disc = true;
+                                }
                             }
                         }
                     }
@@ -1801,10 +1827,12 @@ pub fn render_blocks_smooth(
                         let my_rgb = get_rgb(glyph.right[i], inv, curr_idx);
                         let n_rgb = get_rgb(glyphs[ni].left[i], niv, n_idx);
                         if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if (glyph.right[i] ^ (inv as u8)) == 1 {
-                                fg_disc = true;
-                            } else {
-                                bg_disc = true;
+                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                                if (glyph.right[i] ^ (inv as u8)) == 1 {
+                                    fg_disc = true;
+                                } else {
+                                    bg_disc = true;
+                                }
                             }
                         }
                     }
