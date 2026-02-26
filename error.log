@@ -1,0 +1,4 @@
+warning: unused manifest key: package.github
+warning: unused manifest key: target.x86_64-unknown-linux-musl.linker
+    Finished `release` profile [optimized] target(s) in 0.28s
+     Running `target/release/img2irc --width 90 test.png`

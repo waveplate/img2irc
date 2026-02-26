@@ -122,6 +122,8 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         solarize: args.solarize,
         edge_detection: args.edge_detection,
         smooth: args.smooth,
+        relax: args.relax,
+        relax_strength: param_base(&args.relax_strength),
         save: args.save.clone(),
 
         score: args.score,

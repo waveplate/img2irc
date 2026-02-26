@@ -157,6 +157,8 @@ pub struct RenderArgs {
     pub solarize: bool,
     pub edge_detection: bool,
     pub smooth: bool,
+    pub relax: bool,
+    pub relax_strength: f32,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -501,6 +503,14 @@ pub struct Args {
     /// experimental smoothness optimization mode
     #[arg(long, default_value_t = false, alias = "connected")]
     pub smooth: bool,
+
+    /// topological relaxation pass to smooth jagged boundaries
+    #[arg(long, default_value_t = false)]
+    pub relax: bool,
+
+    /// strength of the relaxation sharpness penalty (0.0-20.0)
+    #[arg(long, default_value = "4.0")]
+    pub relax_strength: Param,
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]

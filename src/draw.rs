@@ -22,6 +22,11 @@ pub struct FastGlyph {
     pub left: Vec<u8>,
     pub right: Vec<u8>,
     pub coverage: f32,
+    // Exit positions: average boundary crossing point per edge (-1.0 = no boundary)
+    pub exit_top: f32,
+    pub exit_bottom: f32,
+    pub exit_left: f32,
+    pub exit_right: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -94,6 +99,27 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
             let ones = ones_indices.len();
             let coverage = ones as f32 / bp as f32;
 
+            // Compute exit positions: average position of FG pixels along each edge
+            // -1.0 means uniform edge (all FG or all BG, so no boundary to track)
+            let compute_exit = |edge: &[u8]| -> f32 {
+                let count: usize = edge.iter().filter(|&&b| b == 1).count();
+                if count == 0 || count == edge.len() {
+                    return -1.0; // uniform edge, no boundary
+                }
+                let sum: f32 = edge
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &b)| b == 1)
+                    .map(|(i, _)| i as f32)
+                    .sum();
+                sum / count as f32
+            };
+
+            let exit_top = compute_exit(&top);
+            let exit_bottom = compute_exit(&bottom);
+            let exit_left = compute_exit(&left);
+            let exit_right = compute_exit(&right);
+
             FastGlyph {
                 ch: *ch,
                 bitmap,
@@ -104,6 +130,10 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 left,
                 right,
                 coverage,
+                exit_top,
+                exit_bottom,
+                exit_left,
+                exit_right,
             }
         })
         .collect()
@@ -1296,6 +1326,349 @@ pub fn render_blocks_smooth(
                     if total_inverted < best_cost {
                         best_cost = total_inverted;
                         best_choice = (gi, true);
+                    }
+                }
+
+                grid_state[curr_idx] = best_choice;
+            }
+        }
+    }
+
+    // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
+    if args.relax && args.smooth {
+        let relax_strength = args.relax_strength as f64;
+        let relax_iterations = 5;
+
+        // Helper: compute exit position for inverted glyph
+        // When inverted, FG pixels become BG and vice versa, so the boundary
+        // crossing position flips to the complementary position on the edge.
+        let invert_exit = |exit: f32, edge_len: usize| -> f32 {
+            if exit < 0.0 {
+                -1.0 // still uniform
+            } else {
+                (edge_len as f32 - 1.0) - exit
+            }
+        };
+
+        // Precompute exit positions for all glyphs including inverted variants
+        // Layout: [glyph0_normal, glyph0_inv, glyph1_normal, glyph1_inv, ...]
+        let glyph_exits: Vec<(f32, f32, f32, f32)> = glyphs
+            .iter()
+            .flat_map(|g| {
+                let normal = (g.exit_top, g.exit_bottom, g.exit_left, g.exit_right);
+                let inv = (
+                    invert_exit(g.exit_top, gw),
+                    invert_exit(g.exit_bottom, gw),
+                    invert_exit(g.exit_left, gh),
+                    invert_exit(g.exit_right, gh),
+                );
+                [normal, inv]
+            })
+            .collect();
+
+        // Default penalty for edge where one side has boundary, other doesn't
+        let default_h_penalty = (gw as f64) / 2.0;
+        let default_v_penalty = (gh as f64) / 2.0;
+
+        for pass in 0..relax_iterations {
+            if let Some(flag) = &abort_flag {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return "Cancelled".into();
+                }
+            }
+            let forward = pass % 2 == 0;
+            let indices: Vec<usize> = if forward {
+                (0..grid_h * grid_w).collect()
+            } else {
+                (0..grid_h * grid_w).rev().collect()
+            };
+
+            for &curr_idx in &indices {
+                if curr_idx % 128 == 0 {
+                    if let Some(flag) = &abort_flag {
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return "Cancelled".into();
+                        }
+                    }
+                }
+
+                let cx = curr_idx % grid_w;
+                let cy = curr_idx / grid_w;
+                let data = &grid_data[curr_idx];
+
+                let edge_importance_weight = 4;
+                let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
+                    let dr = a[0] as i64 - b[0] as i64;
+                    let dg = a[1] as i64 - b[1] as i64;
+                    let db = a[2] as i64 - b[2] as i64;
+                    (dr * dr + dg * dg + db * db) as u64
+                };
+
+                // Collect neighbor exit positions for sharpness computation
+                // Top neighbor's bottom exit, bottom neighbor's top exit, etc.
+                let n_exit_bottom = if cy > 0 {
+                    let n_idx = curr_idx - grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    let key = ni * 2 + niv as usize;
+                    Some(glyph_exits[key].1) // bottom exit of top neighbor
+                } else {
+                    None
+                };
+
+                let n_exit_top = if cy < grid_h - 1 {
+                    let n_idx = curr_idx + grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    let key = ni * 2 + niv as usize;
+                    Some(glyph_exits[key].0) // top exit of bottom neighbor
+                } else {
+                    None
+                };
+
+                let n_exit_right = if cx > 0 {
+                    let n_idx = curr_idx - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let key = ni * 2 + niv as usize;
+                    Some(glyph_exits[key].3) // right exit of left neighbor
+                } else {
+                    None
+                };
+
+                let n_exit_left = if cx < grid_w - 1 {
+                    let n_idx = curr_idx + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let key = ni * 2 + niv as usize;
+                    Some(glyph_exits[key].2) // left exit of right neighbor
+                } else {
+                    None
+                };
+
+                // Also recompute discontinuity cost (same as Phase 3)
+                let mut top_diff = [0i64; 256];
+                let mut bottom_diff = [0i64; 256];
+                let mut left_diff = [0i64; 256];
+                let mut right_diff = [0i64; 256];
+                let mut corner_diff = [0i64; 4];
+                let mut edge_base_cost = 0u64;
+
+                if cy > 0 {
+                    let n_idx = curr_idx - grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let n_on = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        top_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cy < grid_h - 1 {
+                    let n_idx = curr_idx + grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let n_on = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        bottom_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cx > 0 {
+                    let n_idx = curr_idx - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let n_on = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        left_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+                if cx < grid_w - 1 {
+                    let n_idx = curr_idx + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let n_on = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
+                        let n_col = if n_on == niv {
+                            grid_data[n_idx].bg
+                        } else {
+                            grid_data[n_idx].fg
+                        };
+                        let c_fg = dist_sq(n_col, data.fg);
+                        let c_bg = dist_sq(n_col, data.bg);
+                        edge_base_cost += c_bg;
+                        right_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
+                }
+
+                // Corners
+                if cy > 0 && cx > 0 {
+                    let n_idx = (curr_idx - grid_w) - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[0] = c_fg as i64 - c_bg as i64;
+                }
+                if cy > 0 && cx < grid_w - 1 {
+                    let n_idx = (curr_idx - grid_w) + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[1] = c_fg as i64 - c_bg as i64;
+                }
+                if cy < grid_h - 1 && cx > 0 {
+                    let n_idx = (curr_idx + grid_w) - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[2] = c_fg as i64 - c_bg as i64;
+                }
+                if cy < grid_h - 1 && cx < grid_w - 1 {
+                    let n_idx = (curr_idx + grid_w) + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
+                    let n_col = if n_on == niv {
+                        grid_data[n_idx].bg
+                    } else {
+                        grid_data[n_idx].fg
+                    };
+                    let c_fg = dist_sq(n_col, data.fg);
+                    let c_bg = dist_sq(n_col, data.bg);
+                    edge_base_cost += c_bg;
+                    corner_diff[3] = c_fg as i64 - c_bg as i64;
+                }
+
+                let mut best_cost = f64::MAX;
+                let mut best_choice = grid_state[curr_idx];
+
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    for inv_idx in 0..2usize {
+                        let inv = inv_idx == 1;
+
+                        // Discontinuity cost (same as Phase 3)
+                        let mut dot = 0i64;
+                        for i in 0..gw {
+                            dot += top_diff[i] * (fglyph.top[i] as i64);
+                            dot += bottom_diff[i] * (fglyph.bottom[i] as i64);
+                        }
+                        for i in 0..gh {
+                            dot += left_diff[i] * (fglyph.left[i] as i64);
+                            dot += right_diff[i] * (fglyph.right[i] as i64);
+                        }
+                        dot += corner_diff[0] * (fglyph.top[0] as i64);
+                        dot += corner_diff[1] * (fglyph.top[gw - 1] as i64);
+                        dot += corner_diff[2] * (fglyph.bottom[0] as i64);
+                        dot += corner_diff[3] * (fglyph.bottom[gw - 1] as i64);
+
+                        let edge_cost =
+                            ((edge_base_cost as i64 + dot) as u64) * edge_importance_weight;
+                        let internal_cost = block_glyph_costs[curr_idx][gi * 2 + inv_idx];
+
+                        // Sharpness cost: compare exit positions
+                        let key = gi * 2 + inv_idx;
+                        let (et, eb, el, er) = glyph_exits[key];
+
+                        let mut sharpness = 0.0f64;
+                        let mut sharp_edges = 0;
+
+                        // Top edge vs top neighbor's bottom exit
+                        if let Some(n_eb) = n_exit_bottom {
+                            if n_eb >= 0.0 && et >= 0.0 {
+                                let d = (et as f64 - n_eb as f64).abs();
+                                sharpness += d * d;
+                                sharp_edges += 1;
+                            } else if n_eb >= 0.0 || et >= 0.0 {
+                                // One side has boundary, other doesn't
+                                sharpness += default_h_penalty * default_h_penalty;
+                                sharp_edges += 1;
+                            }
+                        }
+
+                        // Bottom edge vs bottom neighbor's top exit
+                        if let Some(n_et) = n_exit_top {
+                            if n_et >= 0.0 && eb >= 0.0 {
+                                let d = (eb as f64 - n_et as f64).abs();
+                                sharpness += d * d;
+                                sharp_edges += 1;
+                            } else if n_et >= 0.0 || eb >= 0.0 {
+                                sharpness += default_h_penalty * default_h_penalty;
+                                sharp_edges += 1;
+                            }
+                        }
+
+                        // Left edge vs left neighbor's right exit
+                        if let Some(n_er) = n_exit_right {
+                            if n_er >= 0.0 && el >= 0.0 {
+                                let d = (el as f64 - n_er as f64).abs();
+                                sharpness += d * d;
+                                sharp_edges += 1;
+                            } else if n_er >= 0.0 || el >= 0.0 {
+                                sharpness += default_v_penalty * default_v_penalty;
+                                sharp_edges += 1;
+                            }
+                        }
+
+                        // Right edge vs right neighbor's left exit
+                        if let Some(n_el) = n_exit_left {
+                            if n_el >= 0.0 && er >= 0.0 {
+                                let d = (er as f64 - n_el as f64).abs();
+                                sharpness += d * d;
+                                sharp_edges += 1;
+                            } else if n_el >= 0.0 || er >= 0.0 {
+                                sharpness += default_v_penalty * default_v_penalty;
+                                sharp_edges += 1;
+                            }
+                        }
+
+                        // Normalize sharpness by number of edges that contributed
+                        let avg_sharpness = if sharp_edges > 0 {
+                            sharpness / sharp_edges as f64
+                        } else {
+                            0.0
+                        };
+
+                        let total_cost = (internal_cost + edge_cost) as f64
+                            + relax_strength * avg_sharpness * (bp as f64);
+
+                        if total_cost < best_cost {
+                            best_cost = total_cost;
+                            best_choice = (gi, inv);
+                        }
                     }
                 }
 
