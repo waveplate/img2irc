@@ -1054,7 +1054,7 @@ pub fn render_blocks_smooth(
     }
 
     // --- Phase 2: Precompute internal block-glyph costs ---
-    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth {
+    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax {
         grid_data
             .par_iter()
             .map(|data| {
@@ -1116,7 +1116,7 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    if args.smooth && block_glyph_costs.iter().any(|v| v.is_empty()) {
+    if (args.smooth || args.relax) && block_glyph_costs.iter().any(|v| v.is_empty()) {
         return "Cancelled".into();
     }
 
@@ -1335,7 +1335,7 @@ pub fn render_blocks_smooth(
     }
 
     // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
-    if args.relax && args.smooth {
+    if args.relax {
         let relax_strength = args.relax_strength as f64;
         let relax_iterations = 5;
 
@@ -1673,6 +1673,106 @@ pub fn render_blocks_smooth(
                 }
 
                 grid_state[curr_idx] = best_choice;
+            }
+        }
+    }
+
+    // --- Discontinuity Highlighting ---
+    if args.show_discontinuities {
+        for cy in 0..grid_h {
+            for cx in 0..grid_w {
+                let curr_idx = cy * grid_w + cx;
+                let (gi, inv) = grid_state[curr_idx];
+                let glyph = &glyphs[gi];
+
+                let mut fg_disc = false; // FG (1s after inversion) has a discontinuity
+                let mut bg_disc = false; // BG (0s after inversion) has a discontinuity
+
+                // Check top edge
+                if cy > 0 {
+                    let n_idx = curr_idx - grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let my_v = (glyph.top[i] ^ (inv as u8)) == 1;
+                        let n_v = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
+                        if my_v != n_v {
+                            if my_v {
+                                fg_disc = true;
+                            } else {
+                                bg_disc = true;
+                            }
+                        }
+                    }
+                }
+
+                // Check bottom edge
+                if cy < grid_h - 1 {
+                    let n_idx = curr_idx + grid_w;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gw {
+                        let my_v = (glyph.bottom[i] ^ (inv as u8)) == 1;
+                        let n_v = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
+                        if my_v != n_v {
+                            if my_v {
+                                fg_disc = true;
+                            } else {
+                                bg_disc = true;
+                            }
+                        }
+                    }
+                }
+
+                // Check left edge
+                if cx > 0 {
+                    let n_idx = curr_idx - 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let my_v = (glyph.left[i] ^ (inv as u8)) == 1;
+                        let n_v = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
+                        if my_v != n_v {
+                            if my_v {
+                                fg_disc = true;
+                            } else {
+                                bg_disc = true;
+                            }
+                        }
+                    }
+                }
+
+                // Check right edge
+                if cx < grid_w - 1 {
+                    let n_idx = curr_idx + 1;
+                    let (ni, niv) = grid_state[n_idx];
+                    for i in 0..gh {
+                        let my_v = (glyph.right[i] ^ (inv as u8)) == 1;
+                        let n_v = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
+                        if my_v != n_v {
+                            if my_v {
+                                fg_disc = true;
+                            } else {
+                                bg_disc = true;
+                            }
+                        }
+                    }
+                }
+
+                // Override colors for cells with discontinuities
+                if fg_disc || bg_disc {
+                    let data = &mut grid_data[curr_idx];
+                    if fg_disc {
+                        data.fg = [255, 60, 60];
+                        data.fg_col = Some(Colour::RGB([255, 60, 60]));
+                    }
+                    if bg_disc {
+                        let bg_red = if fg_disc {
+                            [140, 20, 20]
+                        } else {
+                            [180, 30, 30]
+                        };
+                        data.bg = bg_red;
+                        data.bg_col = Some(Colour::RGB(bg_red));
+                    }
+                }
             }
         }
     }

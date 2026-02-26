@@ -68,6 +68,7 @@ enum ControlId {
     Smooth,
     Relax,
     RelaxStrength,
+    HighlightDisc,
     TrimTop,
     TrimRight,
     TrimBottom,
@@ -179,9 +180,14 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Relax Str",
         kind: ControlKind::Slider {
             min: 0,
-            max: 200,
+            max: 4000,
             default: 40,
         },
+    },
+    ControlDef {
+        id: ControlId::HighlightDisc,
+        label: "Show Disc",
+        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::TrimTop,
@@ -802,6 +808,7 @@ struct App {
     smooth: bool,
     relax: bool,
     relax_strength: i32,
+    show_discontinuities: bool,
     invert: bool,
     grayscale: bool,
     brightness: i32,
@@ -941,6 +948,7 @@ impl App {
             smooth: render_args.smooth,
             relax: render_args.relax,
             relax_strength: (render_args.relax_strength * 10.0) as i32,
+            show_discontinuities: render_args.show_discontinuities,
             invert: render_args.invert,
             grayscale: render_args.grayscale,
             brightness: 0,
@@ -1071,6 +1079,7 @@ impl App {
             ControlId::Smooth => self.smooth as i32,
             ControlId::Relax => self.relax as i32,
             ControlId::RelaxStrength => self.relax_strength,
+            ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
             ControlId::Pixelize => self.pixelize,
@@ -1132,6 +1141,7 @@ impl App {
             ControlId::Smooth => self.smooth = val != 0,
             ControlId::Relax => self.relax = val != 0,
             ControlId::RelaxStrength => self.relax_strength = val,
+            ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
             ControlId::Pixelize => self.pixelize = val,
@@ -1233,6 +1243,7 @@ impl App {
         self.render_args.smooth = self.smooth;
         self.render_args.relax = self.relax;
         self.render_args.relax_strength = self.relax_strength as f32 / 10.0;
+        self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.pixelize = self.pixelize;
         self.render_args.gaussian_blur = self.gaussian_blur;
         self.render_args.box_blur = self.box_blur;

@@ -159,6 +159,7 @@ pub struct RenderArgs {
     pub smooth: bool,
     pub relax: bool,
     pub relax_strength: f32,
+    pub show_discontinuities: bool,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -511,6 +512,10 @@ pub struct Args {
     /// strength of the relaxation sharpness penalty (0.0-20.0)
     #[arg(long, default_value = "4.0")]
     pub relax_strength: Param,
+
+    /// highlight cells with discontinuities in red
+    #[arg(long, default_value_t = false)]
+    pub show_discontinuities: bool,
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]
