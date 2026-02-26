@@ -1685,48 +1685,11 @@ pub fn render_blocks_smooth(
     // available glyphs. Only changes a cell if the new glyph strictly reduces
     // the number of fixable discontinuity pixels.
     if args.fix_disc {
-        //let disc_threshold_sq = 10000u32;
-        let disc_threshold_sq = args.fix_strength;
-
-        let disc_palette: &[u32] = match render {
-            Render::Irc | Render::Preview => &IRC99,
-            Render::Ansi => &ANSI256,
-            Render::Ansi24 => &ANSI256,
-        };
-
-        let colour_to_rgb_fd = |c: &Colour| -> [u8; 3] {
-            match c {
-                Colour::Index(i) => unpack_rgb(disc_palette[*i as usize]),
-                Colour::RGB(rgb) => *rgb,
-            }
-        };
-
-        let col_dist_sq_fd = |a: [u8; 3], b: [u8; 3]| -> u32 {
-            let dr = a[0] as i32 - b[0] as i32;
-            let dg = a[1] as i32 - b[1] as i32;
-            let db = a[2] as i32 - b[2] as i32;
-            (dr * dr + dg * dg + db * db) as u32
-        };
-
-        // Precompute resolved FG/BG RGB for each cell
-        let cell_fg_rgb_fd: Vec<[u8; 3]> = grid_data
-            .iter()
-            .map(|d| {
-                d.fg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb_fd(c))
-                    .unwrap_or([0, 0, 0])
-            })
-            .collect();
-        let cell_bg_rgb_fd: Vec<[u8; 3]> = grid_data
-            .iter()
-            .map(|d| {
-                d.bg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb_fd(c))
-                    .unwrap_or([0, 0, 0])
-            })
-            .collect();
+        // Collect FG/BG as optional Colours for each cell
+        let cell_fg_col_fd: Vec<Option<Colour>> =
+            grid_data.iter().map(|d| d.fg_col.clone()).collect();
+        let cell_bg_col_fd: Vec<Option<Colour>> =
+            grid_data.iter().map(|d| d.bg_col.clone()).collect();
 
         // Gauss-Seidel: iterate and fix cells in-place
         let fix_iterations = 3;
@@ -1736,8 +1699,8 @@ pub fn render_blocks_smooth(
             |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u32 {
                 let curr_idx = cy * grid_w + cx;
                 let glyph = &glyphs[gi];
-                let my_fg = cell_fg_rgb_fd[curr_idx];
-                let my_bg = cell_bg_rgb_fd[curr_idx];
+                let my_fg = &cell_fg_col_fd[curr_idx];
+                let my_bg = &cell_bg_col_fd[curr_idx];
                 let mut count = 0u32;
 
                 macro_rules! check_edge_fd {
@@ -1746,23 +1709,25 @@ pub fn render_blocks_smooth(
                             let n_idx = $n_idx;
                             let (ni, niv) = gs[n_idx];
                             for i in 0..$len {
-                                let my_rgb = if ($my_edge[i] ^ (inv as u8)) == 1 {
-                                    cell_fg_rgb_fd[curr_idx]
+                                let my_col = if ($my_edge[i] ^ (inv as u8)) == 1 {
+                                    my_fg
                                 } else {
-                                    cell_bg_rgb_fd[curr_idx]
+                                    my_bg
                                 };
-                                let n_rgb = if ($n_edge(ni, i) ^ (niv as u8)) == 1 {
-                                    cell_fg_rgb_fd[n_idx]
+                                let n_col = if ($n_edge(ni, i) ^ (niv as u8)) == 1 {
+                                    &cell_fg_col_fd[n_idx]
                                 } else {
-                                    cell_bg_rgb_fd[n_idx]
+                                    &cell_bg_col_fd[n_idx]
                                 };
-                                if col_dist_sq_fd(my_rgb, n_rgb) >= disc_threshold_sq {
-                                    let n_could = col_dist_sq_fd(my_rgb, cell_fg_rgb_fd[n_idx])
-                                        < disc_threshold_sq
-                                        || col_dist_sq_fd(my_rgb, cell_bg_rgb_fd[n_idx])
-                                            < disc_threshold_sq;
-                                    let i_could = col_dist_sq_fd(n_rgb, my_fg) < disc_threshold_sq
-                                        || col_dist_sq_fd(n_rgb, my_bg) < disc_threshold_sq;
+
+                                // Direct strict Colour equality check! No RGB!
+                                if my_col != n_col {
+                                    let n_fg = &cell_fg_col_fd[n_idx];
+                                    let n_bg = &cell_bg_col_fd[n_idx];
+
+                                    let n_could = my_col == n_fg || my_col == n_bg;
+                                    let i_could = n_col == my_fg || n_col == my_bg;
+
                                     if n_could || i_could {
                                         count += 1;
                                     }
@@ -1824,10 +1789,8 @@ pub fn render_blocks_smooth(
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
 
-                // Skip uniform cells
-                if col_dist_sq_fd(cell_fg_rgb_fd[curr_idx], cell_bg_rgb_fd[curr_idx])
-                    < disc_threshold_sq
-                {
+                // Skip uniform cells (strict Colour stringency)
+                if cell_fg_col_fd[curr_idx] == cell_bg_col_fd[curr_idx] {
                     continue;
                 }
 
@@ -1878,47 +1841,9 @@ pub fn render_blocks_smooth(
     // could resolve the seam. Natural color boundaries (e.g., black outline meeting
     // blue background) are NOT flagged because no glyph change could fix them.
     if args.show_discontinuities {
-        let disc_threshold_sq = 10000u32;
-
-        let disc_palette: &[u32] = match render {
-            Render::Irc | Render::Preview => &IRC99,
-            Render::Ansi => &ANSI256,
-            Render::Ansi24 => &ANSI256,
-        };
-
-        let colour_to_rgb = |c: &Colour| -> [u8; 3] {
-            match c {
-                Colour::Index(i) => unpack_rgb(disc_palette[*i as usize]),
-                Colour::RGB(rgb) => *rgb,
-            }
-        };
-
-        let col_dist_sq = |a: [u8; 3], b: [u8; 3]| -> u32 {
-            let dr = a[0] as i32 - b[0] as i32;
-            let dg = a[1] as i32 - b[1] as i32;
-            let db = a[2] as i32 - b[2] as i32;
-            (dr * dr + dg * dg + db * db) as u32
-        };
-
-        // Precompute resolved RGB for each cell's FG and BG
-        let cell_fg_rgb: Vec<[u8; 3]> = grid_data
-            .iter()
-            .map(|d| {
-                d.fg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb(c))
-                    .unwrap_or([0, 0, 0])
-            })
-            .collect();
-        let cell_bg_rgb: Vec<[u8; 3]> = grid_data
-            .iter()
-            .map(|d| {
-                d.bg_col
-                    .as_ref()
-                    .map(|c| colour_to_rgb(c))
-                    .unwrap_or([0, 0, 0])
-            })
-            .collect();
+        // Collect FG/BG as optional Colours for each cell
+        let cell_fg_col: Vec<Option<Colour>> = grid_data.iter().map(|d| d.fg_col.clone()).collect();
+        let cell_bg_col: Vec<Option<Colour>> = grid_data.iter().map(|d| d.bg_col.clone()).collect();
 
         for cy in 0..grid_h {
             for cx in 0..grid_w {
@@ -1926,47 +1851,47 @@ pub fn render_blocks_smooth(
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
 
-                // Skip uniform cells (FG ≈ BG)
-                if col_dist_sq(cell_fg_rgb[curr_idx], cell_bg_rgb[curr_idx]) < disc_threshold_sq {
+                // Skip uniform cells (strict Colour equality)
+                if cell_fg_col[curr_idx] == cell_bg_col[curr_idx] {
                     continue;
                 }
 
                 let mut fg_disc = false;
                 let mut bg_disc = false;
 
-                let my_fg = cell_fg_rgb[curr_idx];
-                let my_bg = cell_bg_rgb[curr_idx];
+                let my_fg = &cell_fg_col[curr_idx];
+                let my_bg = &cell_bg_col[curr_idx];
 
-                // Get resolved RGB for a pixel at an edge position
-                let get_rgb = |bmp_val: u8, is_inv: bool, idx: usize| -> [u8; 3] {
+                // Get Colour for a pixel at an edge position
+                let get_col = |bmp_val: u8, is_inv: bool, idx: usize| -> &Option<Colour> {
                     if (bmp_val ^ (is_inv as u8)) == 1 {
-                        cell_fg_rgb[idx]
+                        &cell_fg_col[idx]
                     } else {
-                        cell_bg_rgb[idx]
+                        &cell_bg_col[idx]
                     }
                 };
 
-                // Check if a mismatch is fixable: could either cell render
-                // the matching color with a different glyph?
-                let is_fixable = |my_rgb: [u8; 3], n_rgb: [u8; 3], n_idx: usize| -> bool {
-                    // Could the neighbor render my_rgb? (my_rgb ≈ neighbor's FG or BG)
-                    let n_could_match = col_dist_sq(my_rgb, cell_fg_rgb[n_idx]) < disc_threshold_sq
-                        || col_dist_sq(my_rgb, cell_bg_rgb[n_idx]) < disc_threshold_sq;
-                    // Could I render n_rgb? (n_rgb ≈ my FG or BG)
-                    let i_could_match = col_dist_sq(n_rgb, my_fg) < disc_threshold_sq
-                        || col_dist_sq(n_rgb, my_bg) < disc_threshold_sq;
-                    n_could_match || i_could_match
-                };
+                // Check if a mismatch is fixable using pure Colour matching
+                let is_fixable =
+                    |my_col: &Option<Colour>, n_col: &Option<Colour>, n_idx: usize| -> bool {
+                        let n_fg = &cell_fg_col[n_idx];
+                        let n_bg = &cell_bg_col[n_idx];
+
+                        let n_could_match = my_col == n_fg || my_col == n_bg;
+                        let i_could_match = n_col == my_fg || n_col == my_bg;
+
+                        n_could_match || i_could_match
+                    };
 
                 // Check top edge
                 if cy > 0 {
                     let n_idx = curr_idx - grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_rgb = get_rgb(glyph.top[i], inv, curr_idx);
-                        let n_rgb = get_rgb(glyphs[ni].bottom[i], niv, n_idx);
-                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                        let my_col = get_col(glyph.top[i], inv, curr_idx);
+                        let n_col = get_col(glyphs[ni].bottom[i], niv, n_idx);
+                        if my_col != n_col {
+                            if is_fixable(my_col, n_col, n_idx) {
                                 if (glyph.top[i] ^ (inv as u8)) == 1 {
                                     fg_disc = true;
                                 } else {
@@ -1982,10 +1907,10 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_rgb = get_rgb(glyph.bottom[i], inv, curr_idx);
-                        let n_rgb = get_rgb(glyphs[ni].top[i], niv, n_idx);
-                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                        let my_col = get_col(glyph.bottom[i], inv, curr_idx);
+                        let n_col = get_col(glyphs[ni].top[i], niv, n_idx);
+                        if my_col != n_col {
+                            if is_fixable(my_col, n_col, n_idx) {
                                 if (glyph.bottom[i] ^ (inv as u8)) == 1 {
                                     fg_disc = true;
                                 } else {
@@ -2001,10 +1926,10 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx - 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_rgb = get_rgb(glyph.left[i], inv, curr_idx);
-                        let n_rgb = get_rgb(glyphs[ni].right[i], niv, n_idx);
-                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                        let my_col = get_col(glyph.left[i], inv, curr_idx);
+                        let n_col = get_col(glyphs[ni].right[i], niv, n_idx);
+                        if my_col != n_col {
+                            if is_fixable(my_col, n_col, n_idx) {
                                 if (glyph.left[i] ^ (inv as u8)) == 1 {
                                     fg_disc = true;
                                 } else {
@@ -2020,10 +1945,10 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_rgb = get_rgb(glyph.right[i], inv, curr_idx);
-                        let n_rgb = get_rgb(glyphs[ni].left[i], niv, n_idx);
-                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
-                            if is_fixable(my_rgb, n_rgb, n_idx) {
+                        let my_col = get_col(glyph.right[i], inv, curr_idx);
+                        let n_col = get_col(glyphs[ni].left[i], niv, n_idx);
+                        if my_col != n_col {
+                            if is_fixable(my_col, n_col, n_idx) {
                                 if (glyph.right[i] ^ (inv as u8)) == 1 {
                                     fg_disc = true;
                                 } else {
