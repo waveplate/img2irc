@@ -3,6 +3,7 @@ use std::process::exit;
 
 #[tokio::main]
 async fn main() {
+
     let mut args = args::parse_args();
 
     // Load config

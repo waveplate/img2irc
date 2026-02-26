@@ -1,5 +1,6 @@
 use fontconfig::Fontconfig;
 use freetype::{face::LoadFlag, Library};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
@@ -7,6 +8,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use toml::Value;
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
@@ -103,21 +105,41 @@ fn find_font_path(font_name: &str) -> Option<String> {
         .map(|f| f.path.display().to_string())
 }
 
+static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Option<String>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 fn get_fallback_font_path(ch: char) -> Option<String> {
+    if let Some(path) = FALLBACK_FONT_CACHE.lock().unwrap().get(&ch) {
+        return path.clone();
+    }
+
     let output = Command::new("fc-match")
         .arg("-f")
         .arg("%{file}")
         .arg(format!(":charset={:x}", ch as u32))
         .output()
-        .ok()?;
+        .ok();
 
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(path);
+    let result = if let Some(output) = output {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                Some(path)
+            } else {
+                None
+            }
+        } else {
+            None
         }
-    }
-    None
+    } else {
+        None
+    };
+
+    FALLBACK_FONT_CACHE
+        .lock()
+        .unwrap()
+        .insert(ch, result.clone());
+    result
 }
 
 #[derive(Debug, Deserialize)]

@@ -1830,7 +1830,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     effective_args.include.as_ref(),
                     &effective_args.font,
                     effective_args.font_size,
-                    true,
+                    false,
                     Some(cancel_flag.clone()),
                 );
                 if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
