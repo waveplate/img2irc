@@ -1679,24 +1679,67 @@ pub fn render_blocks_smooth(
 
     // --- Discontinuity Highlighting ---
     if args.show_discontinuities {
+        // Threshold: only flag discontinuities where the color difference is significant.
+        // Adjacent palette yellows: ~1600-3000 sq dist. Yellow-to-black: ~75000.
+        let disc_threshold_sq = 10000u32;
+
+        // Palette for resolving Index → RGB
+        let disc_palette: &[u32] = match render {
+            Render::Irc | Render::Preview => &IRC99,
+            Render::Ansi => &ANSI256,
+            Render::Ansi24 => &ANSI256, // won't be used for Ansi24 (colours are RGB)
+        };
+
+        let colour_to_rgb = |c: &Colour| -> [u8; 3] {
+            match c {
+                Colour::Index(i) => unpack_rgb(disc_palette[*i as usize]),
+                Colour::RGB(rgb) => *rgb,
+            }
+        };
+
+        let col_dist_sq = |a: [u8; 3], b: [u8; 3]| -> u32 {
+            let dr = a[0] as i32 - b[0] as i32;
+            let dg = a[1] as i32 - b[1] as i32;
+            let db = a[2] as i32 - b[2] as i32;
+            (dr * dr + dg * dg + db * db) as u32
+        };
+
         for cy in 0..grid_h {
             for cx in 0..grid_w {
                 let curr_idx = cy * grid_w + cx;
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
 
+                // Quick check: if this cell's FG and BG resolve to similar colors,
+                // no glyph pattern can create a significant discontinuity FROM this cell.
+                let my_fg_rgb = grid_data[curr_idx]
+                    .fg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb(c))
+                    .unwrap_or([0, 0, 0]);
+                let my_bg_rgb = grid_data[curr_idx]
+                    .bg_col
+                    .as_ref()
+                    .map(|c| colour_to_rgb(c))
+                    .unwrap_or([0, 0, 0]);
+                if col_dist_sq(my_fg_rgb, my_bg_rgb) < disc_threshold_sq {
+                    continue; // FG ≈ BG, this cell is effectively uniform
+                }
+
                 let mut fg_disc = false;
                 let mut bg_disc = false;
 
-                // Get the rendered Colour at an edge pixel position.
-                // (bitmap ^ inv) == 1 → fg_col, else bg_col.
-                // This accounts for inversion swapping FG/BG in the terminal.
-                let get_colour = |bmp_val: u8, is_inv: bool, idx: usize| -> &Option<Colour> {
-                    if (bmp_val ^ (is_inv as u8)) == 1 {
+                // Get resolved RGB for a pixel at an edge position
+                let get_rgb = |bmp_val: u8, is_inv: bool, idx: usize| -> [u8; 3] {
+                    let col_ref = if (bmp_val ^ (is_inv as u8)) == 1 {
                         &grid_data[idx].fg_col
                     } else {
                         &grid_data[idx].bg_col
-                    }
+                    };
+                    col_ref
+                        .as_ref()
+                        .map(|c| colour_to_rgb(c))
+                        .unwrap_or([0, 0, 0])
                 };
 
                 // Check top edge
@@ -1704,9 +1747,9 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx - grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_col = get_colour(glyph.top[i], inv, curr_idx);
-                        let n_col = get_colour(glyphs[ni].bottom[i], niv, n_idx);
-                        if my_col != n_col {
+                        let my_rgb = get_rgb(glyph.top[i], inv, curr_idx);
+                        let n_rgb = get_rgb(glyphs[ni].bottom[i], niv, n_idx);
+                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
                             if (glyph.top[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
@@ -1721,9 +1764,9 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_col = get_colour(glyph.bottom[i], inv, curr_idx);
-                        let n_col = get_colour(glyphs[ni].top[i], niv, n_idx);
-                        if my_col != n_col {
+                        let my_rgb = get_rgb(glyph.bottom[i], inv, curr_idx);
+                        let n_rgb = get_rgb(glyphs[ni].top[i], niv, n_idx);
+                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
                             if (glyph.bottom[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
@@ -1738,9 +1781,9 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx - 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_col = get_colour(glyph.left[i], inv, curr_idx);
-                        let n_col = get_colour(glyphs[ni].right[i], niv, n_idx);
-                        if my_col != n_col {
+                        let my_rgb = get_rgb(glyph.left[i], inv, curr_idx);
+                        let n_rgb = get_rgb(glyphs[ni].right[i], niv, n_idx);
+                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
                             if (glyph.left[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
@@ -1755,9 +1798,9 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_col = get_colour(glyph.right[i], inv, curr_idx);
-                        let n_col = get_colour(glyphs[ni].left[i], niv, n_idx);
-                        if my_col != n_col {
+                        let my_rgb = get_rgb(glyph.right[i], inv, curr_idx);
+                        let n_rgb = get_rgb(glyphs[ni].left[i], niv, n_idx);
+                        if col_dist_sq(my_rgb, n_rgb) >= disc_threshold_sq {
                             if (glyph.right[i] ^ (inv as u8)) == 1 {
                                 fg_disc = true;
                             } else {
