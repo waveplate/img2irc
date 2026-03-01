@@ -275,7 +275,6 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         }
     }
 
-    all_chars.insert(' ');
     (resolved_groups, all_chars)
 }
 

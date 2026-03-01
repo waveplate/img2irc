@@ -1,5 +1,5 @@
 font = "Cascadia Mono"
 blocks = [
-    "ascii.space",
-    "blocks.eighth"
+    "p",
+    "vb"
 ]

@@ -53,25 +53,20 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
     let is_filtering =
         !args.blocks.is_empty() || args.include.is_some() || !args.include_range.is_empty();
 
-    let mut filtered_glyphs: Vec<_> = glyphs
-        .glyphs
-        .iter()
-        .filter(|(ch, _)| {
-            if !is_filtering {
-                return true;
-            }
-            // If filtering, include selected chars plus spaces for background
-            glyphs.selected.contains(ch) || *ch == ' ' || *ch == '\u{2800}'
-        })
-        .collect();
-
-    // Fallback: if filtering resulted in no non-whitespace glyphs, use all available glyphs
-    // This prevents "no glyphs available" error if a block doesn't load correctly.
-    if filtered_glyphs.len() <= 2
-        && filtered_glyphs
+    let mut filtered_glyphs: Vec<_> = if is_filtering {
+        // Only include selected characters, no extra spaces
+        glyphs
+            .glyphs
             .iter()
-            .all(|(ch, _)| *ch == ' ' || *ch == '\u{2800}')
-    {
+            .filter(|(ch, _)| glyphs.selected.contains(ch))
+            .collect()
+    } else {
+        // If not filtering, include everything
+        glyphs.glyphs.iter().collect()
+    };
+
+    // Fallback: if filtering resulted in no glyphs, use all available glyphs
+    if filtered_glyphs.is_empty() {
         filtered_glyphs = glyphs.glyphs.iter().collect();
     }
 
@@ -515,14 +510,14 @@ pub fn emit_colourized(
             Render::Irc => {
                 out.push('\x03');
                 match fg {
-                    Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
-                    _ => out.push_str("01"),
+                    Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                    _ => out.push_str("1"),
                 }
                 if let Some(bg_c) = &bg {
                     out.push(',');
                     match bg_c {
-                        Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
-                        _ => out.push_str("00"),
+                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                        _ => out.push_str("0"),
                     }
                 }
             }

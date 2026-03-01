@@ -1098,7 +1098,19 @@ impl App {
                 .unwrap_or(100),
             font_size: render_args.font_size,
             fonts: list_system_fonts(),
-            font_idx: 0, // initialized below
+            font_idx: {
+                // Match config font in the system fonts list
+                let sys_fonts = list_system_fonts();
+                let config_font = render_args.font.first().map(|s| s.as_str()).unwrap_or("");
+                if config_font.is_empty() {
+                    0 // "Default"
+                } else {
+                    sys_fonts
+                        .iter()
+                        .position(|f| f.eq_ignore_ascii_case(config_font))
+                        .unwrap_or(0)
+                }
+            },
             filter_idx: match render_args.filter {
                 SamplingFilter::Nearest => 0,
                 SamplingFilter::Triangle => 1,
@@ -1261,7 +1273,7 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = (val as f32).clamp(0.0, 64.0),
+            ControlId::FontSize => self.font_size = (val as f32),
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
@@ -3375,20 +3387,15 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .style(Style::new().fg(ACCENT));
         f.render_widget(p, area);
     } else {
-        // Compute output stats
-        let line_count = app.cached_render.lines().count();
-        let max_bytes = app
-            .cached_render
-            .lines()
-            .map(|l| l.len())
-            .max()
-            .unwrap_or(0);
-        let title_base = format!(
-            " {}×{} │ {}B ",
-            max_bytes,
-            line_count,
-            app.cached_render.len()
-        );
+        // Use save_content (IRC) stats when available, otherwise cached_render (ANSI)
+        let stats_content = app
+            .cached_result
+            .as_ref()
+            .and_then(|r| r.save_content.as_ref())
+            .unwrap_or(&app.cached_render);
+        let line_count = stats_content.lines().count();
+        let max_bytes = stats_content.lines().map(|l| l.len()).max().unwrap_or(0);
+        let title_base = format!(" {}×{} │ {}B ", max_bytes, line_count, stats_content.len());
 
         let mut technical_info = String::new();
 
