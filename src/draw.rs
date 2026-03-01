@@ -1695,93 +1695,105 @@ pub fn render_blocks_smooth(
         }
     }
 
-    // --- Phase 5: Fix Discontinuities ---
-    // Surgically fixes cells that have fixable discontinuities by trying all
-    // available glyphs. Only changes a cell if the new glyph strictly reduces
-    // the number of fixable discontinuity pixels.
+    // --- Phase 5: Targeted Boundary Smoothing (Fix Discontinuities) ---
+    // For each cell, computes the boundary cost: the sum of squared RGB distances
+    // between rendered edge pixels and adjacent neighbor pixels. Only processes
+    // cells above a discontinuity threshold. Tries all glyph+inversion combos
+    // and picks the one that minimizes (edge_cost * weight + internal_cost).
+    //
+    // Controls:
+    //   misc3 = iterations (default 3)
+    //   misc5 = discontinuity threshold (cells with boundary cost below this are skipped)
+    //   misc6 = edge weight multiplier (higher = prioritize smooth edges over internal fidelity)
     if args.fix_disc {
-        // Collect FG/BG as optional Colours for each cell
-        let cell_fg_col_fd: Vec<Option<Colour>> =
-            grid_data.iter().map(|d| d.fg_col.clone()).collect();
-        let cell_bg_col_fd: Vec<Option<Colour>> =
-            grid_data.iter().map(|d| d.bg_col.clone()).collect();
+        let fix_iterations = (args.misc3 as usize).max(1);
+        let disc_threshold = (args.misc5 as u64).max(0);
+        let edge_weight = (args.misc6 as f64).max(1.0);
 
-        // Gauss-Seidel: iterate and fix cells in-place
-        let fix_iterations = args.misc3 as usize;
+        // Helper: compute rendered color of a pixel given glyph bitmap value and inversion
+        let rendered_color = |bitmap_val: u8, inv: bool, fg: [u8; 3], bg: [u8; 3]| -> [u8; 3] {
+            if (bitmap_val ^ (inv as u8)) == 1 {
+                fg
+            } else {
+                bg
+            }
+        };
 
-        // Inline disc counting to avoid borrow conflicts with grid_state
-        let count_disc_inline =
-            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u32 {
+        // Helper: squared RGB distance between two colors
+        let rgb_dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
+            let dr = a[0] as i64 - b[0] as i64;
+            let dg = a[1] as i64 - b[1] as i64;
+            let db = a[2] as i64 - b[2] as i64;
+            (dr * dr + dg * dg + db * db) as u64
+        };
+
+        // Compute boundary cost for a cell with a given glyph+inversion
+        // Returns sum of squared RGB distances across all boundary pixel pairs
+        let compute_boundary_cost =
+            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u64 {
                 let curr_idx = cy * grid_w + cx;
                 let glyph = &glyphs[gi];
-                let my_fg = &cell_fg_col_fd[curr_idx];
-                let my_bg = &cell_bg_col_fd[curr_idx];
-                let mut count = 0u32;
+                let my_fg = grid_data[curr_idx].fg;
+                let my_bg = grid_data[curr_idx].bg;
+                let mut cost = 0u64;
 
-                macro_rules! check_edge_fd {
-                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge:expr) => {
-                        if $cond {
-                            let n_idx = $n_idx;
-                            let (ni, niv) = gs[n_idx];
-                            for i in 0..$len {
-                                let my_col = if ($my_edge[i] ^ (inv as u8)) == 1 {
-                                    my_fg
-                                } else {
-                                    my_bg
-                                };
-                                let n_col = if ($n_edge(ni, i) ^ (niv as u8)) == 1 {
-                                    &cell_fg_col_fd[n_idx]
-                                } else {
-                                    &cell_bg_col_fd[n_idx]
-                                };
-
-                                // Direct strict Colour equality check! No RGB!
-                                if my_col != n_col {
-                                    let n_fg = &cell_fg_col_fd[n_idx];
-                                    let n_bg = &cell_bg_col_fd[n_idx];
-
-                                    let n_could = my_col == n_fg || my_col == n_bg;
-                                    let i_could = n_col == my_fg || n_col == my_bg;
-
-                                    if n_could || i_could {
-                                        count += 1;
-                                    }
-                                }
-                            }
-                        }
-                    };
+                // Top edge: compare with neighbor above's bottom edge
+                if cy > 0 {
+                    let n_idx = curr_idx - grid_w;
+                    let (ni, niv) = gs[n_idx];
+                    let n_glyph = &glyphs[ni];
+                    let n_fg = grid_data[n_idx].fg;
+                    let n_bg = grid_data[n_idx].bg;
+                    for i in 0..gw {
+                        let my_col = rendered_color(glyph.top[i], inv, my_fg, my_bg);
+                        let n_col = rendered_color(n_glyph.bottom[i], niv, n_fg, n_bg);
+                        cost += rgb_dist_sq(my_col, n_col);
+                    }
                 }
 
-                check_edge_fd!(
-                    cy > 0,
-                    curr_idx - grid_w,
-                    gw,
-                    glyph.top,
-                    |ni: usize, i: usize| glyphs[ni].bottom[i]
-                );
-                check_edge_fd!(
-                    cy < grid_h - 1,
-                    curr_idx + grid_w,
-                    gw,
-                    glyph.bottom,
-                    |ni: usize, i: usize| glyphs[ni].top[i]
-                );
-                check_edge_fd!(
-                    cx > 0,
-                    curr_idx - 1,
-                    gh,
-                    glyph.left,
-                    |ni: usize, i: usize| glyphs[ni].right[i]
-                );
-                check_edge_fd!(
-                    cx < grid_w - 1,
-                    curr_idx + 1,
-                    gh,
-                    glyph.right,
-                    |ni: usize, i: usize| glyphs[ni].left[i]
-                );
+                // Bottom edge: compare with neighbor below's top edge
+                if cy < grid_h - 1 {
+                    let n_idx = curr_idx + grid_w;
+                    let (ni, niv) = gs[n_idx];
+                    let n_glyph = &glyphs[ni];
+                    let n_fg = grid_data[n_idx].fg;
+                    let n_bg = grid_data[n_idx].bg;
+                    for i in 0..gw {
+                        let my_col = rendered_color(glyph.bottom[i], inv, my_fg, my_bg);
+                        let n_col = rendered_color(n_glyph.top[i], niv, n_fg, n_bg);
+                        cost += rgb_dist_sq(my_col, n_col);
+                    }
+                }
 
-                count
+                // Left edge: compare with neighbor left's right edge
+                if cx > 0 {
+                    let n_idx = curr_idx - 1;
+                    let (ni, niv) = gs[n_idx];
+                    let n_glyph = &glyphs[ni];
+                    let n_fg = grid_data[n_idx].fg;
+                    let n_bg = grid_data[n_idx].bg;
+                    for i in 0..gh {
+                        let my_col = rendered_color(glyph.left[i], inv, my_fg, my_bg);
+                        let n_col = rendered_color(n_glyph.right[i], niv, n_fg, n_bg);
+                        cost += rgb_dist_sq(my_col, n_col);
+                    }
+                }
+
+                // Right edge: compare with neighbor right's left edge
+                if cx < grid_w - 1 {
+                    let n_idx = curr_idx + 1;
+                    let (ni, niv) = gs[n_idx];
+                    let n_glyph = &glyphs[ni];
+                    let n_fg = grid_data[n_idx].fg;
+                    let n_bg = grid_data[n_idx].bg;
+                    for i in 0..gh {
+                        let my_col = rendered_color(glyph.right[i], inv, my_fg, my_bg);
+                        let n_col = rendered_color(n_glyph.left[i], niv, n_fg, n_bg);
+                        cost += rgb_dist_sq(my_col, n_col);
+                    }
+                }
+
+                cost
             };
 
         for pass in 0..fix_iterations {
@@ -1790,6 +1802,9 @@ pub fn render_blocks_smooth(
                     return "Cancelled".into();
                 }
             }
+
+            let mut changes = 0u32;
+            // Alternate scan direction for Gauss-Seidel convergence
             let forward = pass % 2 == 0;
             let indices: Vec<usize> = if forward {
                 (0..grid_h * grid_w).collect()
@@ -1797,57 +1812,60 @@ pub fn render_blocks_smooth(
                 (0..grid_h * grid_w).rev().collect()
             };
 
-            // Collect changes, then apply (avoids borrow conflict)
-            let mut changes: Vec<(usize, (usize, bool))> = Vec::new();
-
             for &curr_idx in &indices {
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
-
-                // Skip uniform cells (strict Colour stringency)
-                if cell_fg_col_fd[curr_idx] == cell_bg_col_fd[curr_idx] {
-                    continue;
-                }
-
                 let (cur_gi, cur_inv) = grid_state[curr_idx];
-                let cur_disc = count_disc_inline(cx, cy, cur_gi, cur_inv, &grid_state);
-                if cur_disc == 0 {
+
+                // Compute current boundary cost
+                let cur_boundary = compute_boundary_cost(cx, cy, cur_gi, cur_inv, &grid_state);
+
+                // Skip cells that are already smooth enough
+                if cur_boundary <= disc_threshold {
                     continue;
                 }
 
-                let mut best_disc = cur_disc;
-                let mut best_choice = (cur_gi, cur_inv);
-                let mut best_internal = block_glyph_costs
+                // Current internal cost (how well colors match the source image pixels)
+                let cur_internal = block_glyph_costs
                     .get(curr_idx)
                     .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
                     .unwrap_or(u64::MAX);
 
-                for (gi, _glyph) in glyphs.iter().enumerate() {
+                let cur_total = cur_boundary as f64 * edge_weight + cur_internal as f64;
+
+                let mut best_total = cur_total;
+                let mut best_choice = (cur_gi, cur_inv);
+
+                // Try all glyphs + inversions
+                for (gi, _) in glyphs.iter().enumerate() {
                     let max_inv = if args.no_glyph_invert { 1 } else { 2 };
                     for inv_idx in 0..max_inv {
                         let inv = inv_idx == 1;
-                        let d = count_disc_inline(cx, cy, gi, inv, &grid_state);
+
+                        let boundary = compute_boundary_cost(cx, cy, gi, inv, &grid_state);
                         let internal = block_glyph_costs
                             .get(curr_idx)
                             .and_then(|v| v.get(gi * 2 + inv_idx).copied())
                             .unwrap_or(u64::MAX);
 
-                        if d < best_disc || (d == best_disc && internal < best_internal) {
-                            best_disc = d;
+                        let total = boundary as f64 * edge_weight + internal as f64;
+
+                        if total < best_total {
+                            best_total = total;
                             best_choice = (gi, inv);
-                            best_internal = internal;
                         }
                     }
                 }
 
-                if best_disc < cur_disc {
-                    changes.push((curr_idx, best_choice));
+                if best_choice != (cur_gi, cur_inv) {
+                    grid_state[curr_idx] = best_choice;
+                    changes += 1;
                 }
             }
 
-            // Apply all changes for this pass
-            for (idx, choice) in changes {
-                grid_state[idx] = choice;
+            log::info!("fix_disc pass {}: {} cells changed", pass, changes);
+            if changes == 0 {
+                break;
             }
         }
     }
