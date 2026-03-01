@@ -1845,13 +1845,22 @@ pub fn render_blocks_smooth(
     }
 
     // --- Discontinuity Highlighting ---
-    // Only flags "fixable" discontinuities: mismatches where a different glyph
-    // could resolve the seam. Natural color boundaries (e.g., black outline meeting
-    // blue background) are NOT flagged because no glyph change could fix them.
+    // Detects STRUCTURAL discontinuities: places where the bit-pattern of adjacent
+    // glyph edges creates jagged steps (one pixel is FG while its neighbor across
+    // the cell boundary is BG, or vice versa). This highlights pixelation / jagged
+    // boundaries rather than natural color transitions.
+    //
+    // The idea: for each pair of adjacent edge pixels across a cell boundary,
+    // compute the "effective role" (FG=1 or BG=0) considering inversion. If both
+    // pixels have the same role, the boundary is smooth there. If they differ,
+    // that's a structural step. We count these mismatches per cell and flag cells
+    // whose mismatch count exceeds a threshold.
     if args.show_discontinuities {
-        // Collect FG/BG as optional Colours for each cell
-        let cell_fg_col: Vec<Option<Colour>> = grid_data.iter().map(|d| d.fg_col.clone()).collect();
-        let cell_bg_col: Vec<Option<Colour>> = grid_data.iter().map(|d| d.bg_col.clone()).collect();
+        // Threshold: how many edge-pixel mismatches before we flag a cell.
+        // A cell with 4 edges each of width gw or gh pixels has a maximum of
+        // 2*gw + 2*gh edge pixels. We use fix_strength as a sensitivity control.
+        // Lower fix_strength = more sensitive (shows more discontinuities).
+        let disc_threshold = args.fix_strength as usize;
 
         for cy in 0..grid_h {
             for cx in 0..grid_w {
@@ -1859,54 +1868,29 @@ pub fn render_blocks_smooth(
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
 
-                // Skip uniform cells (strict Colour equality)
-                if cell_fg_col[curr_idx] == cell_bg_col[curr_idx] {
-                    continue;
+                let mut mismatches = 0usize;
+                let mut total_edge_pixels = 0usize;
+
+                // Helper: effective role of a pixel (0 = BG, 1 = FG) considering inversion
+                // bitmap_val is the raw glyph bitmap value (0 or 1)
+                // When inverted, FG and BG swap: effective = bitmap_val XOR inv
+                macro_rules! effective_role {
+                    ($bmp_val:expr, $is_inv:expr) => {
+                        ($bmp_val ^ ($is_inv as u8))
+                    };
                 }
 
-                let mut fg_disc = false;
-                let mut bg_disc = false;
-
-                let my_fg = &cell_fg_col[curr_idx];
-                let my_bg = &cell_bg_col[curr_idx];
-
-                // Get Colour for a pixel at an edge position
-                let get_col = |bmp_val: u8, is_inv: bool, idx: usize| -> &Option<Colour> {
-                    if (bmp_val ^ (is_inv as u8)) == 1 {
-                        &cell_fg_col[idx]
-                    } else {
-                        &cell_bg_col[idx]
-                    }
-                };
-
-                // Check if a mismatch is fixable using pure Colour matching
-                let is_fixable =
-                    |my_col: &Option<Colour>, n_col: &Option<Colour>, n_idx: usize| -> bool {
-                        let n_fg = &cell_fg_col[n_idx];
-                        let n_bg = &cell_bg_col[n_idx];
-
-                        let n_could_match = my_col == n_fg || my_col == n_bg;
-                        let i_could_match = n_col == my_fg || n_col == my_bg;
-
-                        n_could_match || i_could_match
-                    };
-
-                // Check top edge
+                // Check top edge: compare our top row with neighbor's bottom row
                 if cy > 0 {
                     let n_idx = curr_idx - grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_col = get_col(glyph.top[i], inv, curr_idx);
-                        let n_col = get_col(glyphs[ni].bottom[i], niv, n_idx);
-                        if my_col != n_col {
-                            if is_fixable(my_col, n_col, n_idx) {
-                                if (glyph.top[i] ^ (inv as u8)) == 1 {
-                                    fg_disc = true;
-                                } else {
-                                    bg_disc = true;
-                                }
-                            }
+                        let my_role = effective_role!(glyph.top[i], inv);
+                        let n_role = effective_role!(glyphs[ni].bottom[i], niv);
+                        if my_role != n_role {
+                            mismatches += 1;
                         }
+                        total_edge_pixels += 1;
                     }
                 }
 
@@ -1915,17 +1899,12 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + grid_w;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
-                        let my_col = get_col(glyph.bottom[i], inv, curr_idx);
-                        let n_col = get_col(glyphs[ni].top[i], niv, n_idx);
-                        if my_col != n_col {
-                            if is_fixable(my_col, n_col, n_idx) {
-                                if (glyph.bottom[i] ^ (inv as u8)) == 1 {
-                                    fg_disc = true;
-                                } else {
-                                    bg_disc = true;
-                                }
-                            }
+                        let my_role = effective_role!(glyph.bottom[i], inv);
+                        let n_role = effective_role!(glyphs[ni].top[i], niv);
+                        if my_role != n_role {
+                            mismatches += 1;
                         }
+                        total_edge_pixels += 1;
                     }
                 }
 
@@ -1934,17 +1913,12 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx - 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_col = get_col(glyph.left[i], inv, curr_idx);
-                        let n_col = get_col(glyphs[ni].right[i], niv, n_idx);
-                        if my_col != n_col {
-                            if is_fixable(my_col, n_col, n_idx) {
-                                if (glyph.left[i] ^ (inv as u8)) == 1 {
-                                    fg_disc = true;
-                                } else {
-                                    bg_disc = true;
-                                }
-                            }
+                        let my_role = effective_role!(glyph.left[i], inv);
+                        let n_role = effective_role!(glyphs[ni].right[i], niv);
+                        if my_role != n_role {
+                            mismatches += 1;
                         }
+                        total_edge_pixels += 1;
                     }
                 }
 
@@ -1953,36 +1927,26 @@ pub fn render_blocks_smooth(
                     let n_idx = curr_idx + 1;
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
-                        let my_col = get_col(glyph.right[i], inv, curr_idx);
-                        let n_col = get_col(glyphs[ni].left[i], niv, n_idx);
-                        if my_col != n_col {
-                            if is_fixable(my_col, n_col, n_idx) {
-                                if (glyph.right[i] ^ (inv as u8)) == 1 {
-                                    fg_disc = true;
-                                } else {
-                                    bg_disc = true;
-                                }
-                            }
+                        let my_role = effective_role!(glyph.right[i], inv);
+                        let n_role = effective_role!(glyphs[ni].left[i], niv);
+                        if my_role != n_role {
+                            mismatches += 1;
                         }
+                        total_edge_pixels += 1;
                     }
                 }
 
-                // Override colors for cells with discontinuities
-                if fg_disc || bg_disc {
+                // Flag cell if structural mismatches exceed threshold
+                if mismatches > disc_threshold && total_edge_pixels > 0 {
+                    // Intensity: proportion of edge pixels that are mismatched
+                    let severity = mismatches as f32 / total_edge_pixels as f32;
+                    let red_intensity = (80.0 + 175.0 * severity).min(255.0) as u8;
                     let data = &mut grid_data[curr_idx];
-                    if fg_disc {
-                        data.fg = [255, 60, 60];
-                        data.fg_col = Some(Colour::RGB([255, 60, 60]));
-                    }
-                    if bg_disc {
-                        let bg_red = if fg_disc {
-                            [140, 20, 20]
-                        } else {
-                            [180, 30, 30]
-                        };
-                        data.bg = bg_red;
-                        data.bg_col = Some(Colour::RGB(bg_red));
-                    }
+                    data.fg = [red_intensity, 20, 20];
+                    data.fg_col = Some(Colour::RGB([red_intensity, 20, 20]));
+                    let bg_intensity = (red_intensity / 2).max(30);
+                    data.bg = [bg_intensity, 10, 10];
+                    data.bg_col = Some(Colour::RGB([bg_intensity, 10, 10]));
                 }
             }
         }
