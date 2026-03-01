@@ -1702,13 +1702,13 @@ pub fn render_blocks_smooth(
     // and picks the one that minimizes (edge_cost * weight + internal_cost).
     //
     // Controls:
-    //   misc3 = iterations (default 3)
-    //   misc5 = discontinuity threshold (cells with boundary cost below this are skipped)
+    //   misc5 = iterations (default 1)
     //   misc6 = edge weight multiplier (higher = prioritize smooth edges over internal fidelity)
+    //   misc7 = discontinuity threshold (cells with boundary cost below this are skipped)
     if args.fix_disc {
-        let fix_iterations = (args.misc3 as usize).max(1);
-        let disc_threshold = (args.misc5 as u64).max(0);
+        let fix_iterations = (args.misc5 as usize).max(1);
         let edge_weight = (args.misc6 as f64).max(1.0);
+        let disc_threshold = args.misc7 as u64;
 
         // Helper: compute rendered color of a pixel given glyph bitmap value and inversion
         let rendered_color = |bitmap_val: u8, inv: bool, fg: [u8; 3], bg: [u8; 3]| -> [u8; 3] {
