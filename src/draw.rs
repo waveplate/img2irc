@@ -1958,6 +1958,25 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
+    // Precompute cheapest glyph for uniform cells (FG==BG, glyph invisible).
+    // Space/braille blank allow skipping the FG color code (~3 byte saving),
+    // so they get a bonus. Among remaining glyphs, prefer smallest UTF-8 encoding.
+    let cheapest_uniform_glyph: Option<char> = if glyphs.is_empty() {
+        None
+    } else {
+        let mut best_ch = glyphs[0].ch;
+        let mut best_cost = usize::MAX;
+        for g in glyphs.iter() {
+            let is_blank = g.ch == ' ' || g.ch == '\u{2800}';
+            // Effective cost: glyph bytes + estimated FG overhead (0 for blanks, ~3 for others)
+            let cost = g.ch.len_utf8() + if is_blank { 0 } else { 3 };
+            if cost < best_cost {
+                best_cost = cost;
+                best_ch = g.ch;
+            }
+        }
+        Some(best_ch)
+    };
     let mut out = String::new();
     let mut alt_out = String::new();
     let mut grid_out = Vec::new();
@@ -2064,7 +2083,16 @@ pub fn render_blocks_smooth(
                 draw_bg
             };
 
-            let final_char = ch;
+            let mut final_char = ch;
+            if overlay.is_none() {
+                if let Some(uniform_ch) = cheapest_uniform_glyph {
+                    if let Some(bg_c) = &draw_bg {
+                        if &draw_fg == bg_c {
+                            final_char = uniform_ch;
+                        }
+                    }
+                }
+            }
 
             row_vec.push(RenderedCell {
                 char: final_char,
