@@ -1006,78 +1006,78 @@ pub fn render_blocks_smooth(
         return "Cancelled".into();
     }
 
-    // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
-    if args.smooth {
-        if let Some(flag) = &abort_flag {
-            if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                return "Cancelled".into();
-            }
-        }
-        let smoothing_threshold_sq = args.misc1 as u64;
-        let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
-            let dr = a[0] as i64 - b[0] as i64;
-            let dg = a[1] as i64 - b[1] as i64;
-            let db = a[2] as i64 - b[2] as i64;
-            (dr * dr + dg * dg + db * db) as u64
-        };
+    // // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
+    // if args.smooth {
+    //     if let Some(flag) = &abort_flag {
+    //         if flag.load(std::sync::atomic::Ordering::Relaxed) {
+    //             return "Cancelled".into();
+    //         }
+    //     }
+    //     let smoothing_threshold_sq = args.misc1 as u64;
+    //     let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
+    //         let dr = a[0] as i64 - b[0] as i64;
+    //         let dg = a[1] as i64 - b[1] as i64;
+    //         let db = a[2] as i64 - b[2] as i64;
+    //         (dr * dr + dg * dg + db * db) as u64
+    //     };
 
-        for y in 0..grid_h {
-            for x in 0..grid_w {
-                let idx = y * grid_w + x;
-                let mut new_fg = grid_data[idx].fg;
-                let mut new_bg = grid_data[idx].bg;
-                let mut changed = false;
+    //     for y in 0..grid_h {
+    //         for x in 0..grid_w {
+    //             let idx = y * grid_w + x;
+    //             let mut new_fg = grid_data[idx].fg;
+    //             let mut new_bg = grid_data[idx].bg;
+    //             let mut changed = false;
 
-                if x > 0 {
-                    let left_idx = idx - 1;
-                    if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
-                        new_fg = [
-                            ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
-                            ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
-                            ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                    if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
-                        new_bg = [
-                            ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
-                            ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
-                            ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                }
-                if y > 0 {
-                    let top_idx = idx - grid_w;
-                    if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
-                        new_fg = [
-                            ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
-                            ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
-                            ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                    if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
-                        new_bg = [
-                            ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
-                            ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
-                            ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                }
+    //             if x > 0 {
+    //                 let left_idx = idx - 1;
+    //                 if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
+    //                     new_fg = [
+    //                         ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
+    //                         ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
+    //                         ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8,
+    //                     ];
+    //                     changed = true;
+    //                 }
+    //                 if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
+    //                     new_bg = [
+    //                         ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
+    //                         ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
+    //                         ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8,
+    //                     ];
+    //                     changed = true;
+    //                 }
+    //             }
+    //             if y > 0 {
+    //                 let top_idx = idx - grid_w;
+    //                 if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
+    //                     new_fg = [
+    //                         ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
+    //                         ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
+    //                         ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8,
+    //                     ];
+    //                     changed = true;
+    //                 }
+    //                 if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
+    //                     new_bg = [
+    //                         ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
+    //                         ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
+    //                         ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8,
+    //                     ];
+    //                     changed = true;
+    //                 }
+    //             }
 
-                if changed {
-                    grid_data[idx].fg = new_fg;
-                    grid_data[idx].bg = new_bg;
-                    if render == Render::Ansi24 || render == Render::Preview {
-                        grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
-                        grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
-                    }
-                }
-            }
-        }
-    }
+    //             if changed {
+    //                 grid_data[idx].fg = new_fg;
+    //                 grid_data[idx].bg = new_bg;
+    //                 if render == Render::Ansi24 || render == Render::Preview {
+    //                     grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
+    //                     grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 
     // --- Phase 2: Precompute internal block-glyph costs ---
     let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax || args.fix_disc {
@@ -1150,7 +1150,7 @@ pub fn render_blocks_smooth(
 
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
-        let iterations = 5;
+        let iterations = args.misc1 as usize;
 
         for pass in 0..iterations {
             if let Some(flag) = &abort_flag {
@@ -1315,7 +1315,7 @@ pub fn render_blocks_smooth(
                     corner_diff[3] = c_fg as i64 - c_bg as i64;
                 }
 
-                let _total_edge_diff = top_diff.iter().sum::<i64>()
+                let total_edge_diff: i64 = top_diff.iter().sum::<i64>()
                     + bottom_diff.iter().sum::<i64>()
                     + left_diff.iter().sum::<i64>()
                     + right_diff.iter().sum::<i64>()
@@ -1348,8 +1348,11 @@ pub fn render_blocks_smooth(
                     }
 
                     if !args.no_glyph_invert {
-                        // To match the previous buggy behavior exactly, inverted edge costs evaluated identically
-                        let edge_cost_inverted = edge_cost_normal;
+                        // Inverted glyph flips all edge bits: bitmap[i] → (1 - bitmap[i])
+                        // So dot_inv = Σ diff[i] * (1 - bitmap[i]) = total_edge_diff - dot
+                        let dot_inv = total_edge_diff - dot;
+                        let edge_cost_inverted =
+                            ((edge_base_cost as i64 + dot_inv) as u64) * edge_importance_weight;
                         let total_inverted =
                             edge_cost_inverted + block_glyph_costs[curr_idx][gi * 2 + 1];
                         if total_inverted < best_cost {

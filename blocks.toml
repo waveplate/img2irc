@@ -40,6 +40,8 @@ ranges = [[0x1CC00, 0x1CEBF]]
 
 [default]
 include = [
+    "p",
+    "vb"
 ]
 
 [all]

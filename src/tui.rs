@@ -223,7 +223,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Misc1",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100000,
+            max: 100000000,
             default: 0,
         },
     },
@@ -232,7 +232,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Misc2",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100000,
+            max: 1000000000,
             default: 0,
         },
     },

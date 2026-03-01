@@ -3,7 +3,6 @@ use std::process::exit;
 
 #[tokio::main]
 async fn main() {
-
     let mut args = args::parse_args();
 
     // Load config
@@ -135,20 +134,14 @@ async fn main() {
 
             let result =
                 img2irc_rs::render_output(render_args.clone(), &glyph_store, image, &glyphs, None);
-            if args.score {
-                let smoothness = draw::calculate_smoothness(&result, &glyphs, &render_args);
-                log::info!("Smoothness Score: {:.4} (Lower is smoother)", smoothness);
-            }
+
             img2irc_rs::write_encoded_output(&result.content, &args.encoding);
             if let Some(path) = &args.save {
-                let smoothness = draw::calculate_smoothness(&result, &glyphs, &render_args);
-                let final_path = path.replace("%s", &format!("{:.4}", smoothness));
-
                 let metadata = format!("{:?}", args);
-                if let Err(e) = draw::save_as_png(&result, &glyph_store, &final_path, &metadata) {
+                if let Err(e) = draw::save_as_png(&result, &glyph_store, path, &metadata) {
                     log::info!("Failed to save PNG: {}", e);
                 } else {
-                    log::info!("Saved image to {}", final_path);
+                    log::info!("Saved image to {}", path);
                 }
             }
         }
