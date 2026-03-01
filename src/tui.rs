@@ -2439,10 +2439,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= app.tree_area.y
                                     && mouse.row < app.tree_area.y + app.tree_area.height
                                 {
-                                    app.selected_control = 0;
                                     let row = (mouse.row - app.tree_area.y) as usize;
                                     let scroll = app.tree_state.scroll as usize;
-                                    app.tree_state.selected_idx = scroll + row;
+                                    let clicked_idx = scroll + row;
+                                    if clicked_idx == app.tree_state.selected_idx {
+                                        // Click on already-selected item: toggle checkbox
+                                        app.toggle_tree_selection();
+                                    } else {
+                                        app.tree_state.selected_idx = clicked_idx;
+                                    }
                                 } else if mouse.column >= app.glyph_list_area.x
                                     && mouse.column
                                         < app.glyph_list_area.x + app.glyph_list_area.width
@@ -2450,15 +2455,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row
                                         < app.glyph_list_area.y + app.glyph_list_area.height
                                 {
-                                    app.selected_control = 1;
                                     let row = (mouse.row - app.glyph_list_area.y) as usize;
                                     app.glyph_list_state.select(Some(row));
-                                } else if mouse.column >= app.preview_area.x
-                                    && mouse.column < app.preview_area.x + app.preview_area.width
-                                    && mouse.row >= app.preview_area.y
-                                    && mouse.row < app.preview_area.y + app.preview_area.height
-                                {
-                                    app.selected_control = 2;
                                 }
                             }
 
@@ -3254,7 +3252,11 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // 1. Render normal background content (Image or Glyphs tab)
     if app.current_tab == 2 {
-        render_glyphs_tab(f, app, area);
+        // Show glyphs/preview in top 1/3, output in bottom 2/3
+        let glyphs_layout =
+            Layout::vertical([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]).split(area);
+        render_glyphs_tab(f, app, glyphs_layout[0]);
+        render_normal_output_content(f, app, glyphs_layout[1]);
     } else {
         render_normal_output_content(f, app, area);
     }

@@ -1193,10 +1193,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
                         let n_on = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1209,10 +1209,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
                         let n_on = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1225,10 +1225,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
                         let n_on = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1241,10 +1241,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
                         let n_on = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1257,10 +1257,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx - grid_w) - 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1271,10 +1271,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx - grid_w) + 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1285,10 +1285,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx + grid_w) - 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1299,10 +1299,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx + grid_w) + 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1472,10 +1472,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
                         let n_on = (glyphs[ni].bottom[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1488,10 +1488,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gw {
                         let n_on = (glyphs[ni].top[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1504,10 +1504,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
                         let n_on = (glyphs[ni].right[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1520,10 +1520,10 @@ pub fn render_blocks_smooth(
                     let (ni, niv) = grid_state[n_idx];
                     for i in 0..gh {
                         let n_on = (glyphs[ni].left[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on == niv {
-                            grid_data[n_idx].bg
-                        } else {
+                        let n_col = if n_on {
                             grid_data[n_idx].fg
+                        } else {
+                            grid_data[n_idx].bg
                         };
                         let c_fg = dist_sq(n_col, data.fg);
                         let c_bg = dist_sq(n_col, data.bg);
@@ -1537,10 +1537,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx - grid_w) - 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1551,10 +1551,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx - grid_w) + 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1565,10 +1565,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx + grid_w) - 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
@@ -1579,10 +1579,10 @@ pub fn render_blocks_smooth(
                     let n_idx = (curr_idx + grid_w) + 1;
                     let (ni, niv) = grid_state[n_idx];
                     let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on == niv {
-                        grid_data[n_idx].bg
-                    } else {
+                    let n_col = if n_on {
                         grid_data[n_idx].fg
+                    } else {
+                        grid_data[n_idx].bg
                     };
                     let c_fg = dist_sq(n_col, data.fg);
                     let c_bg = dist_sq(n_col, data.bg);
