@@ -27,6 +27,11 @@ pub struct FastGlyph {
     pub exit_bottom: f32,
     pub exit_left: f32,
     pub exit_right: f32,
+    // Inverted exit positions: average position of ZERO pixels (which become FG when inverted)
+    pub exit_top_inv: f32,
+    pub exit_bottom_inv: f32,
+    pub exit_left_inv: f32,
+    pub exit_right_inv: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -101,24 +106,31 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
 
             // Compute exit positions: average position of FG pixels along each edge
             // -1.0 means uniform edge (all FG or all BG, so no boundary to track)
-            let compute_exit = |edge: &[u8]| -> f32 {
-                let count: usize = edge.iter().filter(|&&b| b == 1).count();
+            let compute_exit = |edge: &[u8], target: u8| -> f32 {
+                let count: usize = edge.iter().filter(|&&b| b == target).count();
                 if count == 0 || count == edge.len() {
                     return -1.0; // uniform edge, no boundary
                 }
                 let sum: f32 = edge
                     .iter()
                     .enumerate()
-                    .filter(|(_, &b)| b == 1)
+                    .filter(|(_, &b)| b == target)
                     .map(|(i, _)| i as f32)
                     .sum();
                 sum / count as f32
             };
 
-            let exit_top = compute_exit(&top);
-            let exit_bottom = compute_exit(&bottom);
-            let exit_left = compute_exit(&left);
-            let exit_right = compute_exit(&right);
+            // Normal exits: average position of 1-pixels (FG)
+            let exit_top = compute_exit(&top, 1);
+            let exit_bottom = compute_exit(&bottom, 1);
+            let exit_left = compute_exit(&left, 1);
+            let exit_right = compute_exit(&right, 1);
+
+            // Inverted exits: average position of 0-pixels (which become FG when inverted)
+            let exit_top_inv = compute_exit(&top, 0);
+            let exit_bottom_inv = compute_exit(&bottom, 0);
+            let exit_left_inv = compute_exit(&left, 0);
+            let exit_right_inv = compute_exit(&right, 0);
 
             FastGlyph {
                 ch: *ch,
@@ -134,6 +146,10 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 exit_bottom,
                 exit_left,
                 exit_right,
+                exit_top_inv,
+                exit_bottom_inv,
+                exit_left_inv,
+                exit_right_inv,
             }
         })
         .collect()
@@ -735,18 +751,23 @@ pub fn render_blocks_smooth(
                                     bg_cnt[indices[i] as usize] += 1;
                                     bg_len += 1;
                                 }
-                                let (fgi, fx) = fg_cnt
+                                let (fgi_raw, fx) = fg_cnt
                                     .iter()
                                     .enumerate()
                                     .max_by_key(|&(_, c)| c)
                                     .unwrap_or((0, &0));
-                                let (bgi, bx) = bg_cnt
+                                let (bgi_raw, bx) = bg_cnt
                                     .iter()
                                     .enumerate()
                                     .max_by_key(|&(_, c)| c)
                                     .unwrap_or((0, &0));
 
-                                // Note: We removed fg_only support, so logic is simplified to standard
+                                // Fix: when a partition is empty, its argmax is
+                                // meaningless. Inherit the other partition's index
+                                // so that uniform cells get fg==bg correctly.
+                                let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
+                                let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
+
                                 let cost = ((fg_len as u64) - (*fx as u64))
                                     + ((bg_len as u64) - (*bx as u64));
 
@@ -1348,17 +1369,6 @@ pub fn render_blocks_smooth(
         let relax_strength = args.relax_strength as f64;
         let relax_iterations = args.misc4 as usize;
 
-        // Helper: compute exit position for inverted glyph
-        // When inverted, FG pixels become BG and vice versa, so the boundary
-        // crossing position flips to the complementary position on the edge.
-        let invert_exit = |exit: f32, edge_len: usize| -> f32 {
-            if exit < 0.0 {
-                -1.0 // still uniform
-            } else {
-                (edge_len as f32 - 1.0) - exit
-            }
-        };
-
         // Precompute exit positions for all glyphs including inverted variants
         // Layout: [glyph0_normal, glyph0_inv, glyph1_normal, glyph1_inv, ...]
         let glyph_exits: Vec<(f32, f32, f32, f32)> = glyphs
@@ -1366,10 +1376,10 @@ pub fn render_blocks_smooth(
             .flat_map(|g| {
                 let normal = (g.exit_top, g.exit_bottom, g.exit_left, g.exit_right);
                 let inv = (
-                    invert_exit(g.exit_top, gw),
-                    invert_exit(g.exit_bottom, gw),
-                    invert_exit(g.exit_left, gh),
-                    invert_exit(g.exit_right, gh),
+                    g.exit_top_inv,
+                    g.exit_bottom_inv,
+                    g.exit_left_inv,
+                    g.exit_right_inv,
                 );
                 [normal, inv]
             })
@@ -1845,10 +1855,15 @@ pub fn render_blocks_smooth(
     }
 
     // --- Discontinuity Highlighting (non-destructive overlay) ---
-    // Computes a separate overlay array — does NOT modify grid_data or grid_state.
-    // This ensures toggling show_discontinuities never affects glyph selection.
+    // Compares the ACTUAL RENDERED COLOR at each edge pixel pair across cell
+    // boundaries. Only counts mismatches where the colors COULD have matched
+    // (i.e. the mismatched color exists in the neighbor's FG/BG palette),
+    // which excludes natural color transitions and only flags structural breaks.
     let disc_overlay: Vec<Option<([u8; 3], [u8; 3])>> = if args.show_discontinuities {
         let disc_threshold = args.fix_strength as usize;
+
+        // Precompute rendered FG/BG colors for each cell
+        let cell_colors: Vec<([u8; 3], [u8; 3])> = grid_data.iter().map(|d| (d.fg, d.bg)).collect();
 
         (0..grid_h * grid_w)
             .map(|curr_idx| {
@@ -1856,70 +1871,86 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
+                let (my_fg, my_bg) = cell_colors[curr_idx];
 
-                let mut mismatches = 0usize;
-                let mut total_edge_pixels = 0usize;
+                let mut fixable_mismatches = 0usize;
 
-                macro_rules! effective_role {
-                    ($bmp_val:expr, $is_inv:expr) => {
-                        ($bmp_val ^ ($is_inv as u8))
+                // Rendered color of a pixel given its bitmap value and inversion
+                // (bitmap_val ^ inv) == 1 → FG, else → BG
+                let my_pixel_color = |bmp_val: u8| -> [u8; 3] {
+                    if (bmp_val ^ (inv as u8)) == 1 {
+                        my_fg
+                    } else {
+                        my_bg
+                    }
+                };
+
+                macro_rules! check_edge {
+                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge_fn:expr) => {
+                        if $cond {
+                            let n_idx = $n_idx;
+                            let (ni, niv) = grid_state[n_idx];
+                            let (n_fg, n_bg) = cell_colors[n_idx];
+                            for i in 0..$len {
+                                let my_col = my_pixel_color($my_edge[i]);
+                                let n_bmp = $n_edge_fn(ni, i);
+                                let n_col = if (n_bmp ^ (niv as u8)) == 1 {
+                                    n_fg
+                                } else {
+                                    n_bg
+                                };
+
+                                if my_col != n_col {
+                                    // Only count if this is "fixable": the mismatched color
+                                    // exists in the other cell's palette. Natural transitions
+                                    // (e.g., white meeting black across a boundary) won't be
+                                    // fixable because white isn't in the black cell's palette.
+                                    let my_in_n = my_col == n_fg || my_col == n_bg;
+                                    let n_in_me = n_col == my_fg || n_col == my_bg;
+                                    if my_in_n || n_in_me {
+                                        fixable_mismatches += 1;
+                                    }
+                                }
+                            }
+                        }
                     };
                 }
 
-                if cy > 0 {
-                    let n_idx = curr_idx - grid_w;
-                    let (ni, niv) = grid_state[n_idx];
-                    for i in 0..gw {
-                        if effective_role!(glyph.top[i], inv)
-                            != effective_role!(glyphs[ni].bottom[i], niv)
-                        {
-                            mismatches += 1;
-                        }
-                        total_edge_pixels += 1;
-                    }
-                }
-                if cy < grid_h - 1 {
-                    let n_idx = curr_idx + grid_w;
-                    let (ni, niv) = grid_state[n_idx];
-                    for i in 0..gw {
-                        if effective_role!(glyph.bottom[i], inv)
-                            != effective_role!(glyphs[ni].top[i], niv)
-                        {
-                            mismatches += 1;
-                        }
-                        total_edge_pixels += 1;
-                    }
-                }
-                if cx > 0 {
-                    let n_idx = curr_idx - 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    for i in 0..gh {
-                        if effective_role!(glyph.left[i], inv)
-                            != effective_role!(glyphs[ni].right[i], niv)
-                        {
-                            mismatches += 1;
-                        }
-                        total_edge_pixels += 1;
-                    }
-                }
-                if cx < grid_w - 1 {
-                    let n_idx = curr_idx + 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    for i in 0..gh {
-                        if effective_role!(glyph.right[i], inv)
-                            != effective_role!(glyphs[ni].left[i], niv)
-                        {
-                            mismatches += 1;
-                        }
-                        total_edge_pixels += 1;
-                    }
-                }
+                check_edge!(
+                    cy > 0,
+                    curr_idx - grid_w,
+                    gw,
+                    glyph.top,
+                    |ni: usize, i: usize| glyphs[ni].bottom[i]
+                );
+                check_edge!(
+                    cy < grid_h - 1,
+                    curr_idx + grid_w,
+                    gw,
+                    glyph.bottom,
+                    |ni: usize, i: usize| glyphs[ni].top[i]
+                );
+                check_edge!(
+                    cx > 0,
+                    curr_idx - 1,
+                    gh,
+                    glyph.left,
+                    |ni: usize, i: usize| glyphs[ni].right[i]
+                );
+                check_edge!(
+                    cx < grid_w - 1,
+                    curr_idx + 1,
+                    gh,
+                    glyph.right,
+                    |ni: usize, i: usize| glyphs[ni].left[i]
+                );
 
-                if mismatches > disc_threshold && total_edge_pixels > 0 {
-                    let severity = mismatches as f32 / total_edge_pixels as f32;
-                    let red_intensity = (80.0 + 175.0 * severity).min(255.0) as u8;
-                    let bg_intensity = (red_intensity / 2).max(30);
-                    Some(([red_intensity, 20, 20], [bg_intensity, 10, 10]))
+                if fixable_mismatches > disc_threshold {
+                    let max_edge = (2 * gw + 2 * gh) as f32;
+                    let severity = (fixable_mismatches as f32 / max_edge).min(1.0);
+                    let red = (80.0 + 175.0 * severity).min(255.0) as u8;
+                    let bg_int = (red / 2).max(30);
+                    Some(([red, 20, 20], [bg_int, 10, 10]))
                 } else {
                     None
                 }
