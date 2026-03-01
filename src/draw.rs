@@ -1107,12 +1107,17 @@ pub fn render_blocks_smooth(
 
                 for i in 0..bp {
                     let px = &data.pixels[i];
+                    // Binary classification: is this pixel closer to FG or BG?
                     let c_fg =
                         px.sq + fg_p.sq - 2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b);
                     let c_bg =
                         px.sq + bg_p.sq - 2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b);
-                    base_cost += c_bg;
-                    diff[i] = c_fg as i64 - c_bg as i64;
+                    // 0 if pixel is closer to BG (correct assignment), 1 if closer to FG (mismatch)
+                    let bg_wins = if c_bg <= c_fg { 0i64 } else { 1i64 };
+                    base_cost += bg_wins as u64;
+                    // diff[i] = cost_if_fg - cost_if_bg: negative means FG is better
+                    let fg_wins = if c_fg <= c_bg { 0i64 } else { 1i64 };
+                    diff[i] = fg_wins - bg_wins;
                 }
 
                 let total_diff: i64 = diff.iter().sum();
@@ -1174,11 +1179,13 @@ pub fn render_blocks_smooth(
                 let data = &grid_data[curr_idx];
 
                 let edge_importance_weight = args.misc2 as u64;
-                let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
-                    let dr = a[0] as i64 - b[0] as i64;
-                    let dg = a[1] as i64 - b[1] as i64;
-                    let db = a[2] as i64 - b[2] as i64;
-                    (dr * dr + dg * dg + db * db) as u64
+                // Binary match/mismatch: cost is 0 (colors match) or 1 (colors differ)
+                let dist_bin = |a: [u8; 3], b: [u8; 3]| -> u64 {
+                    if a == b {
+                        0
+                    } else {
+                        1
+                    }
                 };
 
                 let mut top_diff = [0i64; 256];
@@ -1198,8 +1205,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         top_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1214,8 +1221,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         bottom_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1230,8 +1237,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         left_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1246,8 +1253,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         right_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1262,8 +1269,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[0] = c_fg as i64 - c_bg as i64;
                 }
@@ -1276,8 +1283,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[1] = c_fg as i64 - c_bg as i64;
                 }
@@ -1290,8 +1297,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[2] = c_fg as i64 - c_bg as i64;
                 }
@@ -1304,8 +1311,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[3] = c_fg as i64 - c_bg as i64;
                 }
@@ -1414,11 +1421,12 @@ pub fn render_blocks_smooth(
                 let data = &grid_data[curr_idx];
 
                 let edge_importance_weight = args.misc2 as u64;
-                let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
-                    let dr = a[0] as i64 - b[0] as i64;
-                    let dg = a[1] as i64 - b[1] as i64;
-                    let db = a[2] as i64 - b[2] as i64;
-                    (dr * dr + dg * dg + db * db) as u64
+                let dist_bin = |a: [u8; 3], b: [u8; 3]| -> u64 {
+                    if a == b {
+                        0
+                    } else {
+                        1
+                    }
                 };
 
                 // Collect neighbor exit positions for sharpness computation
@@ -1477,8 +1485,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         top_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1493,8 +1501,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         bottom_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1509,8 +1517,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         left_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1525,8 +1533,8 @@ pub fn render_blocks_smooth(
                         } else {
                             grid_data[n_idx].bg
                         };
-                        let c_fg = dist_sq(n_col, data.fg);
-                        let c_bg = dist_sq(n_col, data.bg);
+                        let c_fg = dist_bin(n_col, data.fg);
+                        let c_bg = dist_bin(n_col, data.bg);
                         edge_base_cost += c_bg;
                         right_diff[i] = c_fg as i64 - c_bg as i64;
                     }
@@ -1542,8 +1550,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[0] = c_fg as i64 - c_bg as i64;
                 }
@@ -1556,8 +1564,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[1] = c_fg as i64 - c_bg as i64;
                 }
@@ -1570,8 +1578,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[2] = c_fg as i64 - c_bg as i64;
                 }
@@ -1584,8 +1592,8 @@ pub fn render_blocks_smooth(
                     } else {
                         grid_data[n_idx].bg
                     };
-                    let c_fg = dist_sq(n_col, data.fg);
-                    let c_bg = dist_sq(n_col, data.bg);
+                    let c_fg = dist_bin(n_col, data.fg);
+                    let c_bg = dist_bin(n_col, data.bg);
                     edge_base_cost += c_bg;
                     corner_diff[3] = c_fg as i64 - c_bg as i64;
                 }
@@ -1719,12 +1727,13 @@ pub fn render_blocks_smooth(
             }
         };
 
-        // Helper: squared RGB distance between two colors
-        let rgb_dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
-            let dr = a[0] as i64 - b[0] as i64;
-            let dg = a[1] as i64 - b[1] as i64;
-            let db = a[2] as i64 - b[2] as i64;
-            (dr * dr + dg * dg + db * db) as u64
+        // Helper: binary match/mismatch between two colors
+        let rgb_mismatch = |a: [u8; 3], b: [u8; 3]| -> u64 {
+            if a == b {
+                0
+            } else {
+                1
+            }
         };
 
         // Compute boundary cost for a cell with a given glyph+inversion
@@ -1747,7 +1756,7 @@ pub fn render_blocks_smooth(
                     for i in 0..gw {
                         let my_col = rendered_color(glyph.top[i], inv, my_fg, my_bg);
                         let n_col = rendered_color(n_glyph.bottom[i], niv, n_fg, n_bg);
-                        cost += rgb_dist_sq(my_col, n_col);
+                        cost += rgb_mismatch(my_col, n_col);
                     }
                 }
 
@@ -1761,7 +1770,7 @@ pub fn render_blocks_smooth(
                     for i in 0..gw {
                         let my_col = rendered_color(glyph.bottom[i], inv, my_fg, my_bg);
                         let n_col = rendered_color(n_glyph.top[i], niv, n_fg, n_bg);
-                        cost += rgb_dist_sq(my_col, n_col);
+                        cost += rgb_mismatch(my_col, n_col);
                     }
                 }
 
@@ -1775,7 +1784,7 @@ pub fn render_blocks_smooth(
                     for i in 0..gh {
                         let my_col = rendered_color(glyph.left[i], inv, my_fg, my_bg);
                         let n_col = rendered_color(n_glyph.right[i], niv, n_fg, n_bg);
-                        cost += rgb_dist_sq(my_col, n_col);
+                        cost += rgb_mismatch(my_col, n_col);
                     }
                 }
 
@@ -1789,7 +1798,7 @@ pub fn render_blocks_smooth(
                     for i in 0..gh {
                         let my_col = rendered_color(glyph.right[i], inv, my_fg, my_bg);
                         let n_col = rendered_color(n_glyph.left[i], niv, n_fg, n_bg);
-                        cost += rgb_dist_sq(my_col, n_col);
+                        cost += rgb_mismatch(my_col, n_col);
                     }
                 }
 
