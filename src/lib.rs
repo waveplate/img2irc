@@ -1,7 +1,6 @@
 pub mod args;
 pub mod config;
 pub mod draw;
-pub mod draw_helpers;
 pub mod effects;
 pub mod font;
 pub mod palette;
@@ -122,6 +121,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         solarize: args.solarize,
         edge_detection: args.edge_detection,
         smooth: args.smooth,
+        no_glyph_invert: args.no_glyph_invert,
         relax: args.relax,
         relax_strength: param_base(&args.relax_strength),
         show_discontinuities: args.show_discontinuities,
@@ -130,6 +130,11 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         misc1: args.misc1,
         misc2: args.misc2,
         misc3: args.misc3,
+        misc4: args.misc4,
+        misc5: args.misc5,
+        misc6: args.misc6,
+        misc7: args.misc7,
+        misc8: args.misc8,
         save: args.save.clone(),
 
         score: args.score,
@@ -260,7 +265,7 @@ pub fn resolve_auto_font_size(
         let target_gw = img_w / target_char_w;
         let target_gh = target_gw / font_ratio;
 
-        args.font_size = target_gh.round().clamp(13.0, 64.0);
+        args.font_size = target_gh.round().clamp(6.0, 256.0);
         log::info!(
             "Auto-calculated font size: {} (based on ratio {:.3})",
             args.font_size,

@@ -157,6 +157,7 @@ pub struct RenderArgs {
     pub solarize: bool,
     pub edge_detection: bool,
     pub smooth: bool,
+    pub no_glyph_invert: bool,
     pub relax: bool,
     pub relax_strength: f32,
     pub show_discontinuities: bool,
@@ -165,6 +166,11 @@ pub struct RenderArgs {
     pub misc1: i32,
     pub misc2: i32,
     pub misc3: i32,
+    pub misc4: i32,
+    pub misc5: i32,
+    pub misc6: i32,
+    pub misc7: i32,
+    pub misc8: i32,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -510,6 +516,10 @@ pub struct Args {
     #[arg(long, default_value_t = false, alias = "connected")]
     pub smooth: bool,
 
+    /// prevent glyphs from being used in their inverted state
+    #[arg(long, default_value_t = false)]
+    pub no_glyph_invert: bool,
+
     /// topological relaxation pass to smooth jagged boundaries
     #[arg(long, default_value_t = false)]
     pub relax: bool,
@@ -538,6 +548,21 @@ pub struct Args {
 
     #[arg(long, default_value = "0", hide = true)]
     pub misc3: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc4: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc5: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc6: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc7: i32,
+
+    #[arg(long, default_value = "0", hide = true)]
+    pub misc8: i32,
 
     /// print smoothness score
     #[arg(long, default_value_t = false, hide = true)]

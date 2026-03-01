@@ -710,7 +710,12 @@ pub fn render_blocks_smooth(
                         }
 
                         for (gi, fglyph) in glyphs.iter().enumerate() {
-                            for inv in [false, true] {
+                            let invert_opts: &[bool] = if args.no_glyph_invert {
+                                &[false]
+                            } else {
+                                &[false, true]
+                            };
+                            for &inv in invert_opts {
                                 let mut fg_cnt = [0u16; 256];
                                 let mut bg_cnt = [0u16; 256];
                                 let mut fg_len = 0;
@@ -987,7 +992,7 @@ pub fn render_blocks_smooth(
                 return "Cancelled".into();
             }
         }
-        let smoothing_threshold_sq = 40u64 * 40u64;
+        let smoothing_threshold_sq = args.misc1 as u64;
         let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
             let dr = a[0] as i64 - b[0] as i64;
             let dg = a[1] as i64 - b[1] as i64;
@@ -1124,7 +1129,7 @@ pub fn render_blocks_smooth(
 
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
-        let iterations = 10;
+        let iterations = 5;
 
         for pass in 0..iterations {
             if let Some(flag) = &abort_flag {
@@ -1152,7 +1157,7 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let data = &grid_data[curr_idx];
 
-                let edge_importance_weight = 4;
+                let edge_importance_weight = args.misc2 as u64;
                 let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
                     let dr = a[0] as i64 - b[0] as i64;
                     let dg = a[1] as i64 - b[1] as i64;
@@ -1321,13 +1326,15 @@ pub fn render_blocks_smooth(
                         best_choice = (gi, false);
                     }
 
-                    // To match the previous buggy behavior exactly, inverted edge costs evaluated identically
-                    let edge_cost_inverted = edge_cost_normal;
-                    let total_inverted =
-                        edge_cost_inverted + block_glyph_costs[curr_idx][gi * 2 + 1];
-                    if total_inverted < best_cost {
-                        best_cost = total_inverted;
-                        best_choice = (gi, true);
+                    if !args.no_glyph_invert {
+                        // To match the previous buggy behavior exactly, inverted edge costs evaluated identically
+                        let edge_cost_inverted = edge_cost_normal;
+                        let total_inverted =
+                            edge_cost_inverted + block_glyph_costs[curr_idx][gi * 2 + 1];
+                        if total_inverted < best_cost {
+                            best_cost = total_inverted;
+                            best_choice = (gi, true);
+                        }
                     }
                 }
 
@@ -1339,7 +1346,7 @@ pub fn render_blocks_smooth(
     // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
     if args.relax {
         let relax_strength = args.relax_strength as f64;
-        let relax_iterations = 5;
+        let relax_iterations = args.misc4 as usize;
 
         // Helper: compute exit position for inverted glyph
         // When inverted, FG pixels become BG and vice versa, so the boundary
@@ -1398,8 +1405,7 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let data = &grid_data[curr_idx];
 
-                //let edge_importance_weight = 4;
-                let edge_importance_weight = args.misc1 as u64;
+                let edge_importance_weight = args.misc2 as u64;
                 let dist_sq = |a: [u8; 3], b: [u8; 3]| -> u64 {
                     let dr = a[0] as i64 - b[0] as i64;
                     let dg = a[1] as i64 - b[1] as i64;
@@ -1580,7 +1586,8 @@ pub fn render_blocks_smooth(
                 let mut best_choice = grid_state[curr_idx];
 
                 for (gi, fglyph) in glyphs.iter().enumerate() {
-                    for inv_idx in 0..2usize {
+                    let max_inv = if args.no_glyph_invert { 1 } else { 2 };
+                    for inv_idx in 0..max_inv {
                         let inv = inv_idx == 1;
 
                         // Discontinuity cost (same as Phase 3)
@@ -1692,7 +1699,7 @@ pub fn render_blocks_smooth(
             grid_data.iter().map(|d| d.bg_col.clone()).collect();
 
         // Gauss-Seidel: iterate and fix cells in-place
-        let fix_iterations = 3;
+        let fix_iterations = args.misc3 as usize;
 
         // Inline disc counting to avoid borrow conflicts with grid_state
         let count_disc_inline =
@@ -1808,7 +1815,8 @@ pub fn render_blocks_smooth(
                     .unwrap_or(u64::MAX);
 
                 for (gi, _glyph) in glyphs.iter().enumerate() {
-                    for inv_idx in 0..2usize {
+                    let max_inv = if args.no_glyph_invert { 1 } else { 2 };
+                    for inv_idx in 0..max_inv {
                         let inv = inv_idx == 1;
                         let d = count_disc_inline(cx, cy, gi, inv, &grid_state);
                         let internal = block_glyph_costs
@@ -2299,159 +2307,6 @@ fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
             Colour::RGB(unpack_rgb(IRC99[idx as usize]))
         }
     }
-}
-
-pub fn calculate_smoothness(
-    result: &RenderResult,
-    glyphs: &[FastGlyph],
-    _args: &RenderArgs,
-) -> f64 {
-    if result.grid.is_empty() {
-        return 0.0;
-    }
-    let (rows, cols) = (result.grid.len(), result.grid[0].len());
-    let gh = glyphs[0].left.len();
-    let gw = glyphs[0].top.len();
-    let (width, height) = (cols * gw, rows * gh);
-    let mut gray = vec![0.0f64; width * height];
-    let char_map: HashMap<char, &FastGlyph> = glyphs.iter().map(|g| (g.ch, g)).collect();
-    let mut conn_mismatch = 0.0;
-    for r in 0..rows {
-        for c in 0..cols {
-            let cell = &result.grid[r][c];
-            if let Some(g) = char_map.get(&cell.char) {
-                for gy in 0..gh {
-                    for gx in 0..gw {
-                        if (g.bitmap[gy * gw + gx] ^ (cell.inverted as u8)) == 1 {
-                            gray[(r * gh + gy) * width + (c * gw + gx)] = 255.0;
-                        }
-                    }
-                }
-                if r > 0 {
-                    if let Some(tg) = char_map.get(&result.grid[r - 1][c].char) {
-                        let mut diff = 0;
-                        for i in 0..gw {
-                            let my_v = g.top[i] ^ (cell.inverted as u8);
-                            let n_v = tg.bottom[i] ^ (result.grid[r - 1][c].inverted as u8);
-                            if my_v != n_v {
-                                diff += 1;
-                            }
-                        }
-                        conn_mismatch += diff as f64;
-                    }
-                }
-                if c > 0 {
-                    if let Some(lg) = char_map.get(&result.grid[r][c - 1].char) {
-                        let mut diff = 0;
-                        for i in 0..gh {
-                            let my_v = g.left[i] ^ (cell.inverted as u8);
-                            let n_v = lg.right[i] ^ (result.grid[r][c - 1].inverted as u8);
-                            if my_v != n_v {
-                                diff += 1;
-                            }
-                        }
-                        conn_mismatch += diff as f64;
-                    }
-                }
-            }
-        }
-    }
-    let mut smooth_gray = gray.clone();
-    let mut temp_gray = smooth_gray.clone();
-    for _ in 0..8 {
-        for y in 1..height - 1 {
-            for x in 1..width - 1 {
-                let i = y * width + x;
-                temp_gray[i] = (smooth_gray[i - width - 1]
-                    + 2.0 * smooth_gray[i - width]
-                    + smooth_gray[i - width + 1]
-                    + 2.0 * smooth_gray[i - 1]
-                    + 4.0 * smooth_gray[i]
-                    + 2.0 * smooth_gray[i + 1]
-                    + smooth_gray[i + width - 1]
-                    + 2.0 * smooth_gray[i + width]
-                    + smooth_gray[i + width + 1])
-                    / 16.0;
-            }
-        }
-        smooth_gray.copy_from_slice(&temp_gray);
-    }
-    let mut gradx = vec![0.0; width * height];
-    let mut grady = vec![0.0; width * height];
-    for y in 1..height - 1 {
-        for x in 1..width - 1 {
-            let (w0, w1, w2) = ((y - 1) * width, y * width, (y + 1) * width);
-            gradx[w1 + x] = -smooth_gray[w0 + x - 1] + 1.0 * smooth_gray[w0 + x + 1]
-                - 2.0 * smooth_gray[w1 + x - 1]
-                + 2.0 * smooth_gray[w1 + x + 1]
-                - 1.0 * smooth_gray[w2 + x - 1]
-                + 1.0 * smooth_gray[w2 + x + 1];
-            grady[w1 + x] = -smooth_gray[w0 + x - 1]
-                - 2.0 * smooth_gray[w0 + x]
-                - 1.0 * smooth_gray[w0 + x + 1]
-                + 1.0 * smooth_gray[w2 + x - 1]
-                + 2.0 * smooth_gray[w2 + x]
-                + 1.0 * smooth_gray[w2 + x + 1];
-        }
-    }
-    let mut dir = vec![0.0; width * height];
-    let mut mag = vec![0.0; width * height];
-    let mut total_mag = 0.0;
-    for i in 0..width * height {
-        let m = (gradx[i] * gradx[i] + grady[i] * grady[i]).sqrt();
-        if m > 0.001 {
-            dir[i] = grady[i].atan2(gradx[i]);
-            mag[i] = m;
-            total_mag += m;
-        }
-    }
-    let mut wiggle = 0.0;
-    if total_mag > 0.0 {
-        let diff = |a: f64, b: f64| {
-            let mut d = a - b;
-            while d > F64_PI {
-                d -= 2.0 * F64_PI;
-            }
-            while d < -F64_PI {
-                d += 2.0 * F64_PI;
-            }
-            d
-        };
-        for y in 1..height - 1 {
-            for x in 1..width - 1 {
-                let i = y * width + x;
-                if mag[i] > 0.0 {
-                    let dx = diff(dir[i + 1], dir[i]);
-                    let dy = diff(dir[i + width], dir[i]);
-                    wiggle += mag[i] * (dx * dx + dy * dy);
-                }
-            }
-        }
-    }
-
-    // Normalize connectivity score by total boundary length, not area.
-    // Boundary length scales linearly with resolution (L), Mismatch count scales linearly (L).
-    // Ratio is L/L = Dimensionless.
-    let total_boundary_pixels =
-        (rows.saturating_sub(1) * cols * gw) + (rows * cols.saturating_sub(1) * gh);
-    let conn_score = if total_boundary_pixels > 0 {
-        conn_mismatch * 100.0 / total_boundary_pixels as f64
-    } else {
-        0.0
-    };
-
-    // Normalize wiggle score.
-    // Wiggle sum ~ Constant (corners). Total Mag ~ Linear (L).
-    // Wiggle/Mag ~ 1/L.
-    // To make it invariant, multiply by characteristic length (L).
-    let scale_factor = (gw + gh) as f64 / 2.0;
-    let wiggle_score = if total_mag > 0.0 {
-        (wiggle * 100.0 / total_mag) * scale_factor
-    } else {
-        0.0
-    };
-
-    conn_score + wiggle_score
 }
 
 pub fn save_as_png(

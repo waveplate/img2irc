@@ -66,6 +66,7 @@ enum ControlId {
     Width,
     RenderMode,
     Smooth,
+    NoGlyphInvert,
     Relax,
     RelaxStrength,
     HighlightDisc,
@@ -95,7 +96,11 @@ enum ControlId {
     Misc1,
     Misc2,
     Misc3,
-
+    Misc4,
+    Misc5,
+    Misc6,
+    Misc7,
+    Misc8,
     Dither,
     Invert,
     Grayscale,
@@ -176,6 +181,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
+        id: ControlId::NoGlyphInvert,
+        label: "No Inv Glyphs",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
         id: ControlId::Relax,
         label: "Relax",
         kind: ControlKind::Toggle { default: false },
@@ -213,7 +223,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Misc1",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1000000000,
+            max: 100000,
             default: 0,
         },
     },
@@ -222,7 +232,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Misc2",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1000000000,
+            max: 100000,
             default: 0,
         },
     },
@@ -231,7 +241,52 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Misc3",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1000000000,
+            max: 100000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc4,
+        label: "Misc4",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc5,
+        label: "Misc5",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc6,
+        label: "Misc6",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc7,
+        label: "Misc7",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100000,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Misc8,
+        label: "Misc8",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100000,
             default: 0,
         },
     },
@@ -852,6 +907,7 @@ struct App {
     render_mode_idx: usize,
     dither: i32,
     smooth: bool,
+    no_glyph_invert: bool,
     relax: bool,
     relax_strength: i32,
     show_discontinuities: bool,
@@ -861,6 +917,11 @@ struct App {
     misc1: i32,
     misc2: i32,
     misc3: i32,
+    misc4: i32,
+    misc5: i32,
+    misc6: i32,
+    misc7: i32,
+    misc8: i32,
 
     invert: bool,
     grayscale: bool,
@@ -999,14 +1060,20 @@ impl App {
             },
             dither: render_args.dither as i32,
             smooth: render_args.smooth,
+            no_glyph_invert: render_args.no_glyph_invert,
             relax: render_args.relax,
             relax_strength: (render_args.relax_strength * 10.0) as i32,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
             fix_strength: render_args.fix_strength,
-            misc1: 0,
-            misc2: 0,
-            misc3: 0,
+            misc1: render_args.misc1,
+            misc2: render_args.misc2,
+            misc3: render_args.misc3,
+            misc4: render_args.misc4,
+            misc5: render_args.misc5,
+            misc6: render_args.misc6,
+            misc7: render_args.misc7,
+            misc8: render_args.misc8,
             invert: render_args.invert,
             grayscale: render_args.grayscale,
             brightness: 0,
@@ -1135,6 +1202,7 @@ impl App {
 
             ControlId::Dither => self.dither,
             ControlId::Smooth => self.smooth as i32,
+            ControlId::NoGlyphInvert => self.no_glyph_invert as i32,
             ControlId::Relax => self.relax as i32,
             ControlId::RelaxStrength => self.relax_strength,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
@@ -1143,6 +1211,11 @@ impl App {
             ControlId::Misc1 => self.misc1,
             ControlId::Misc2 => self.misc2,
             ControlId::Misc3 => self.misc3,
+            ControlId::Misc4 => self.misc4,
+            ControlId::Misc5 => self.misc5,
+            ControlId::Misc6 => self.misc6,
+            ControlId::Misc7 => self.misc7,
+            ControlId::Misc8 => self.misc8,
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
             ControlId::Pixelize => self.pixelize,
@@ -1202,6 +1275,7 @@ impl App {
 
             ControlId::Dither => self.dither = val,
             ControlId::Smooth => self.smooth = val != 0,
+            ControlId::NoGlyphInvert => self.no_glyph_invert = val != 0,
             ControlId::Relax => self.relax = val != 0,
             ControlId::RelaxStrength => self.relax_strength = val,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
@@ -1210,6 +1284,11 @@ impl App {
             ControlId::Misc1 => self.misc1 = val,
             ControlId::Misc2 => self.misc2 = val,
             ControlId::Misc3 => self.misc3 = val,
+            ControlId::Misc4 => self.misc4 = val,
+            ControlId::Misc5 => self.misc5 = val,
+            ControlId::Misc6 => self.misc6 = val,
+            ControlId::Misc7 => self.misc7 = val,
+            ControlId::Misc8 => self.misc8 = val,
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
             ControlId::Pixelize => self.pixelize = val,
@@ -1309,11 +1388,20 @@ impl App {
         self.render_args.invert = self.invert;
         self.render_args.grayscale = self.grayscale;
         self.render_args.smooth = self.smooth;
+        self.render_args.no_glyph_invert = self.no_glyph_invert;
         self.render_args.relax = self.relax;
         self.render_args.relax_strength = self.relax_strength as f32 / 10.0;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
         self.render_args.fix_strength = self.fix_strength;
+        self.render_args.misc1 = self.misc1;
+        self.render_args.misc2 = self.misc2;
+        self.render_args.misc3 = self.misc3;
+        self.render_args.misc4 = self.misc4;
+        self.render_args.misc5 = self.misc5;
+        self.render_args.misc6 = self.misc6;
+        self.render_args.misc7 = self.misc7;
+        self.render_args.misc8 = self.misc8;
         self.render_args.pixelize = self.pixelize;
         self.render_args.gaussian_blur = self.gaussian_blur;
         self.render_args.box_blur = self.box_blur;
