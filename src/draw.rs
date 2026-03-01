@@ -2064,14 +2064,7 @@ pub fn render_blocks_smooth(
                 draw_bg
             };
 
-            let mut final_char = ch;
-            if overlay.is_none() {
-                if let Some(bg_c) = &draw_bg {
-                    if &draw_fg == bg_c {
-                        final_char = ' ';
-                    }
-                }
-            }
+            let final_char = ch;
 
             row_vec.push(RenderedCell {
                 char: final_char,

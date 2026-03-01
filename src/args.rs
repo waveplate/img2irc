@@ -276,13 +276,6 @@ pub struct Args {
         long,
         value_delimiter = ',',
         num_args = 0..,
-        default_values = &[
-            "legacy.base.polygons",
-            "blocks.eighth",
-            "ascii.space",
-            "blocks.half",
-            "blocks.quarter",
-        ],
         conflicts_with = "braille",
     )]
     pub blocks: Vec<String>,
