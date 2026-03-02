@@ -1712,11 +1712,11 @@ pub fn render_blocks_smooth(
     // Controls:
     //   misc5 = iterations (default 1)
     //   misc6 = edge weight multiplier (higher = prioritize smooth edges over internal fidelity)
-    //   misc7 = discontinuity threshold (cells with boundary cost below this are skipped)
+    //   fix_strength = fixable mismatch threshold (same as show_disc uses)
     if args.fix_disc {
         let fix_iterations = (args.misc5 as usize).max(1);
         let edge_weight = (args.misc6 as f64).max(1.0);
-        let disc_threshold = args.misc7 as u64;
+        let disc_threshold = args.fix_strength as usize;
 
         // Helper: compute rendered color of a pixel given glyph bitmap value and inversion
         let rendered_color = |bitmap_val: u8, inv: bool, fg: [u8; 3], bg: [u8; 3]| -> [u8; 3] {
@@ -1736,8 +1736,73 @@ pub fn render_blocks_smooth(
             }
         };
 
+        // Count fixable mismatches for a cell (same logic as show_disc).
+        // Only counts mismatches where the mismatched color exists in the
+        // neighbor's FG/BG palette, excluding natural color transitions.
+        let count_fixable_mismatches =
+            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> usize {
+                let curr_idx = cy * grid_w + cx;
+                let glyph = &glyphs[gi];
+                let my_fg = grid_data[curr_idx].fg;
+                let my_bg = grid_data[curr_idx].bg;
+                let mut count = 0usize;
+
+                macro_rules! check_fixable {
+                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge_fn:expr) => {
+                        if $cond {
+                            let n_idx = $n_idx;
+                            let (ni, niv) = gs[n_idx];
+                            let n_fg = grid_data[n_idx].fg;
+                            let n_bg = grid_data[n_idx].bg;
+                            for i in 0..$len {
+                                let my_col = rendered_color($my_edge[i], inv, my_fg, my_bg);
+                                let n_col = rendered_color($n_edge_fn(ni, i), niv, n_fg, n_bg);
+                                if my_col != n_col {
+                                    let my_in_n = my_col == n_fg || my_col == n_bg;
+                                    let n_in_me = n_col == my_fg || n_col == my_bg;
+                                    if my_in_n || n_in_me {
+                                        count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                }
+
+                check_fixable!(
+                    cy > 0,
+                    curr_idx - grid_w,
+                    gw,
+                    glyph.top,
+                    |ni: usize, i: usize| glyphs[ni].bottom[i]
+                );
+                check_fixable!(
+                    cy < grid_h - 1,
+                    curr_idx + grid_w,
+                    gw,
+                    glyph.bottom,
+                    |ni: usize, i: usize| glyphs[ni].top[i]
+                );
+                check_fixable!(
+                    cx > 0,
+                    curr_idx - 1,
+                    gh,
+                    glyph.left,
+                    |ni: usize, i: usize| glyphs[ni].right[i]
+                );
+                check_fixable!(
+                    cx < grid_w - 1,
+                    curr_idx + 1,
+                    gh,
+                    glyph.right,
+                    |ni: usize, i: usize| glyphs[ni].left[i]
+                );
+
+                count
+            };
+
         // Compute boundary cost for a cell with a given glyph+inversion
-        // Returns sum of squared RGB distances across all boundary pixel pairs
+        // Returns count of mismatched boundary pixel pairs
         let compute_boundary_cost =
             |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u64 {
                 let curr_idx = cy * grid_w + cx;
@@ -1746,7 +1811,7 @@ pub fn render_blocks_smooth(
                 let my_bg = grid_data[curr_idx].bg;
                 let mut cost = 0u64;
 
-                // Top edge: compare with neighbor above's bottom edge
+                // Top edge
                 if cy > 0 {
                     let n_idx = curr_idx - grid_w;
                     let (ni, niv) = gs[n_idx];
@@ -1759,8 +1824,7 @@ pub fn render_blocks_smooth(
                         cost += rgb_mismatch(my_col, n_col);
                     }
                 }
-
-                // Bottom edge: compare with neighbor below's top edge
+                // Bottom edge
                 if cy < grid_h - 1 {
                     let n_idx = curr_idx + grid_w;
                     let (ni, niv) = gs[n_idx];
@@ -1773,8 +1837,7 @@ pub fn render_blocks_smooth(
                         cost += rgb_mismatch(my_col, n_col);
                     }
                 }
-
-                // Left edge: compare with neighbor left's right edge
+                // Left edge
                 if cx > 0 {
                     let n_idx = curr_idx - 1;
                     let (ni, niv) = gs[n_idx];
@@ -1787,8 +1850,7 @@ pub fn render_blocks_smooth(
                         cost += rgb_mismatch(my_col, n_col);
                     }
                 }
-
-                // Right edge: compare with neighbor right's left edge
+                // Right edge
                 if cx < grid_w - 1 {
                     let n_idx = curr_idx + 1;
                     let (ni, niv) = gs[n_idx];
@@ -1813,7 +1875,6 @@ pub fn render_blocks_smooth(
             }
 
             let mut changes = 0u32;
-            // Alternate scan direction for Gauss-Seidel convergence
             let forward = pass % 2 == 0;
             let indices: Vec<usize> = if forward {
                 (0..grid_h * grid_w).collect()
@@ -1826,11 +1887,10 @@ pub fn render_blocks_smooth(
                 let cy = curr_idx / grid_w;
                 let (cur_gi, cur_inv) = grid_state[curr_idx];
 
-                // Compute current boundary cost
-                let cur_boundary = compute_boundary_cost(cx, cy, cur_gi, cur_inv, &grid_state);
-
-                // Skip cells that are already smooth enough
-                if cur_boundary <= disc_threshold {
+                // Only process cells that show_disc would highlight:
+                // cells with fixable mismatches above the threshold
+                let fixable = count_fixable_mismatches(cx, cy, cur_gi, cur_inv, &grid_state);
+                if fixable <= disc_threshold {
                     continue;
                 }
 
@@ -1840,6 +1900,7 @@ pub fn render_blocks_smooth(
                     .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
                     .unwrap_or(u64::MAX);
 
+                let cur_boundary = compute_boundary_cost(cx, cy, cur_gi, cur_inv, &grid_state);
                 let cur_total = cur_boundary as f64 * edge_weight + cur_internal as f64;
 
                 let mut best_total = cur_total;

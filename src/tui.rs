@@ -2609,13 +2609,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.selected_control = (app.selected_control + 2) % 3;
                                 }
                             }
-                            KeyCode::Char('q') => {
+                            KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
                             }
                             KeyCode::Char('r') | KeyCode::Delete => {
                                 reset_control(&mut app);
                             }
-                            KeyCode::Char('o') => {
+                            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.open_explorer(ExplorerMode::Open);
                             }
                             KeyCode::Char('s') => {
@@ -3632,10 +3632,10 @@ fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
         ("Space", "Toggle"),
         ("Del", "Reset"),
         ("Shift", "×10"),
-        ("O", "Open"),
+        ("Ctrl+O", "Open"),
         ("Ctrl+S", "Save"),
         ("Ctrl+P", "Png"),
-        ("Q", "Quit"),
+        ("Ctrl+Q", "Quit"),
     ];
 
     let spans: Vec<Span> = keys
