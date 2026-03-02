@@ -636,6 +636,7 @@ fn get_control_def(id: ControlId) -> ControlDef {
 enum InputMode {
     Normal,
     Explorer,
+    ValueEdit,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -887,6 +888,7 @@ struct App {
     is_rendering: Arc<AtomicBool>,
     render_tick: usize,
     dragged_control: Option<usize>,
+    value_edit_buffer: String,
 
     effects_pipeline: Vec<ControlId>,
     reordering_grabbed: Option<usize>,
@@ -1037,6 +1039,7 @@ impl App {
             is_rendering: Arc::new(AtomicBool::new(true)),
             render_tick: 0,
             dragged_control: None,
+            value_edit_buffer: String::new(),
             arc_glyphs: None,
 
             image_preview_protocol: None,
@@ -2274,6 +2277,44 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue; // Consume event
             }
 
+            // --- Value Edit Mode: direct numeric input for sliders ---
+            if app.input_mode == InputMode::ValueEdit {
+                if let Event::Key(key) = event {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Enter => {
+                                // Confirm: parse and apply the value
+                                if let Ok(val) = app.value_edit_buffer.parse::<i32>() {
+                                    let controls = app.tab_controls(app.current_tab);
+                                    if let Some(ctrl) = controls.get(app.selected_control) {
+                                        if let ControlKind::Slider { min, max, .. } = &ctrl.kind {
+                                            let clamped = val.clamp(*min, *max);
+                                            let sc = app.selected_control;
+                                            set_control_value(&mut app, sc, clamped);
+                                        }
+                                    }
+                                }
+                                app.input_mode = InputMode::Normal;
+                                app.value_edit_buffer.clear();
+                            }
+                            KeyCode::Esc => {
+                                // Cancel
+                                app.input_mode = InputMode::Normal;
+                                app.value_edit_buffer.clear();
+                            }
+                            KeyCode::Backspace => {
+                                app.value_edit_buffer.pop();
+                            }
+                            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' || c == '.' => {
+                                app.value_edit_buffer.push(c);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+
             match event {
                 Event::Mouse(mouse) => {
                     match mouse.kind {
@@ -2747,6 +2788,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.toggle_tree_selection();
                                     }
                                 } else {
+                                    // Enter on a slider: start direct numeric input
+                                    if key.code == KeyCode::Enter {
+                                        let controls = app.tab_controls(app.current_tab);
+                                        if let Some(ctrl) = controls.get(app.selected_control) {
+                                            if let ControlKind::Slider { .. } = &ctrl.kind {
+                                                let current_val = app.get_value(ctrl.id);
+                                                app.value_edit_buffer = current_val.to_string();
+                                                app.input_mode = InputMode::ValueEdit;
+                                                continue;
+                                            }
+                                        }
+                                    }
                                     toggle_control(&mut app);
                                 }
                             }
@@ -3120,7 +3173,23 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         match ctrl.kind {
             ControlKind::Slider { min, max, .. } => {
                 let value = app.get_control_value(app.current_tab, v_idx);
-                render_bar(buf, ctrl_area, &label_text, value, min, max, selected);
+                if selected && app.input_mode == InputMode::ValueEdit {
+                    // Show edit buffer with cursor
+                    let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
+                    let style = Style::new()
+                        .fg(Color::Yellow)
+                        .bg(SURFACE)
+                        .add_modifier(Modifier::BOLD);
+                    for (i, ch) in edit_text.chars().enumerate() {
+                        if ctrl_area.x + i as u16 >= ctrl_area.x + ctrl_area.width {
+                            break;
+                        }
+                        buf.cell_mut((ctrl_area.x + i as u16, ctrl_area.y))
+                            .map(|cell| cell.set_char(ch).set_style(style));
+                    }
+                } else {
+                    render_bar(buf, ctrl_area, &label_text, value, min, max, selected);
+                }
             }
             ControlKind::Enum { options, .. } => {
                 let value = app.get_control_value(app.current_tab, v_idx) as usize;
