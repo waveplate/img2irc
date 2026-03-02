@@ -1700,171 +1700,26 @@ pub fn render_blocks_smooth(
         }
     }
 
-    // --- Phase 5: Targeted Boundary Smoothing (Fix Discontinuities) ---
-    // For each cell, computes the boundary cost: the sum of squared RGB distances
-    // between rendered edge pixels and adjacent neighbor pixels. Only processes
-    // cells above a discontinuity threshold. Tries all glyph+inversion combos
-    // and picks the one that minimizes (edge_cost * weight + internal_cost).
+    // --- Phase 5: Boundary Continuity Resolution ---
     //
-    // Controls:
-    //   misc5 = iterations (default 1)
-    //   misc6 = edge weight multiplier (higher = prioritize smooth edges over internal fidelity)
-    //   fix_strength = fixable mismatch threshold (same as show_disc uses)
+    // Constraint-satisfaction approach: no weights, no knobs.
+    //
+    // For each cell with fixable discontinuities (same detection as show_disc):
+    //   1. Build edge constraints from neighbors. For each boundary pixel,
+    //      the neighbor renders a definite color. If that color is in our
+    //      palette (FG or BG), we know the exact effective bitmap value
+    //      (0=BG, 1=FG) needed to match. That's a hard constraint.
+    //   2. Score each candidate glyph by how many constraints it satisfies
+    //      ("continuity score"). No weights — just count matches.
+    //   3. Pick the glyph with the highest continuity score. Break ties
+    //      by internal fidelity (fewer misclassified source pixels).
+    //   4. Iterate until convergence (max 10 passes).
+    //
+    // Only parameter: fix_strength (same threshold show_disc uses).
     if args.fix_disc {
-        let fix_iterations = (args.misc5 as usize).max(1);
-        let edge_weight = (args.misc6 as f64).max(1.0);
         let disc_threshold = args.fix_strength as usize;
 
-        // Helper: compute rendered color of a pixel given glyph bitmap value and inversion
-        let rendered_color = |bitmap_val: u8, inv: bool, fg: [u8; 3], bg: [u8; 3]| -> [u8; 3] {
-            if (bitmap_val ^ (inv as u8)) == 1 {
-                fg
-            } else {
-                bg
-            }
-        };
-
-        // Helper: binary match/mismatch between two colors
-        let rgb_mismatch = |a: [u8; 3], b: [u8; 3]| -> u64 {
-            if a == b {
-                0
-            } else {
-                1
-            }
-        };
-
-        // Count fixable mismatches for a cell (same logic as show_disc).
-        // Only counts mismatches where the mismatched color exists in the
-        // neighbor's FG/BG palette, excluding natural color transitions.
-        let count_fixable_mismatches =
-            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> usize {
-                let curr_idx = cy * grid_w + cx;
-                let glyph = &glyphs[gi];
-                let my_fg = grid_data[curr_idx].fg;
-                let my_bg = grid_data[curr_idx].bg;
-                let mut count = 0usize;
-
-                macro_rules! check_fixable {
-                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge_fn:expr) => {
-                        if $cond {
-                            let n_idx = $n_idx;
-                            let (ni, niv) = gs[n_idx];
-                            let n_fg = grid_data[n_idx].fg;
-                            let n_bg = grid_data[n_idx].bg;
-                            for i in 0..$len {
-                                let my_col = rendered_color($my_edge[i], inv, my_fg, my_bg);
-                                let n_col = rendered_color($n_edge_fn(ni, i), niv, n_fg, n_bg);
-                                if my_col != n_col {
-                                    let my_in_n = my_col == n_fg || my_col == n_bg;
-                                    let n_in_me = n_col == my_fg || n_col == my_bg;
-                                    if my_in_n || n_in_me {
-                                        count += 1;
-                                    }
-                                }
-                            }
-                        }
-                    };
-                }
-
-                check_fixable!(
-                    cy > 0,
-                    curr_idx - grid_w,
-                    gw,
-                    glyph.top,
-                    |ni: usize, i: usize| glyphs[ni].bottom[i]
-                );
-                check_fixable!(
-                    cy < grid_h - 1,
-                    curr_idx + grid_w,
-                    gw,
-                    glyph.bottom,
-                    |ni: usize, i: usize| glyphs[ni].top[i]
-                );
-                check_fixable!(
-                    cx > 0,
-                    curr_idx - 1,
-                    gh,
-                    glyph.left,
-                    |ni: usize, i: usize| glyphs[ni].right[i]
-                );
-                check_fixable!(
-                    cx < grid_w - 1,
-                    curr_idx + 1,
-                    gh,
-                    glyph.right,
-                    |ni: usize, i: usize| glyphs[ni].left[i]
-                );
-
-                count
-            };
-
-        // Compute boundary cost for a cell with a given glyph+inversion
-        // Returns count of mismatched boundary pixel pairs
-        let compute_boundary_cost =
-            |cx: usize, cy: usize, gi: usize, inv: bool, gs: &[(usize, bool)]| -> u64 {
-                let curr_idx = cy * grid_w + cx;
-                let glyph = &glyphs[gi];
-                let my_fg = grid_data[curr_idx].fg;
-                let my_bg = grid_data[curr_idx].bg;
-                let mut cost = 0u64;
-
-                // Top edge
-                if cy > 0 {
-                    let n_idx = curr_idx - grid_w;
-                    let (ni, niv) = gs[n_idx];
-                    let n_glyph = &glyphs[ni];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    for i in 0..gw {
-                        let my_col = rendered_color(glyph.top[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(n_glyph.bottom[i], niv, n_fg, n_bg);
-                        cost += rgb_mismatch(my_col, n_col);
-                    }
-                }
-                // Bottom edge
-                if cy < grid_h - 1 {
-                    let n_idx = curr_idx + grid_w;
-                    let (ni, niv) = gs[n_idx];
-                    let n_glyph = &glyphs[ni];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    for i in 0..gw {
-                        let my_col = rendered_color(glyph.bottom[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(n_glyph.top[i], niv, n_fg, n_bg);
-                        cost += rgb_mismatch(my_col, n_col);
-                    }
-                }
-                // Left edge
-                if cx > 0 {
-                    let n_idx = curr_idx - 1;
-                    let (ni, niv) = gs[n_idx];
-                    let n_glyph = &glyphs[ni];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    for i in 0..gh {
-                        let my_col = rendered_color(glyph.left[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(n_glyph.right[i], niv, n_fg, n_bg);
-                        cost += rgb_mismatch(my_col, n_col);
-                    }
-                }
-                // Right edge
-                if cx < grid_w - 1 {
-                    let n_idx = curr_idx + 1;
-                    let (ni, niv) = gs[n_idx];
-                    let n_glyph = &glyphs[ni];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    for i in 0..gh {
-                        let my_col = rendered_color(glyph.right[i], inv, my_fg, my_bg);
-                        let n_col = rendered_color(n_glyph.left[i], niv, n_fg, n_bg);
-                        cost += rgb_mismatch(my_col, n_col);
-                    }
-                }
-
-                cost
-            };
-
-        for pass in 0..fix_iterations {
+        for pass in 0..10 {
             if let Some(flag) = &abort_flag {
                 if flag.load(std::sync::atomic::Ordering::Relaxed) {
                     return "Cancelled".into();
@@ -1883,43 +1738,161 @@ pub fn render_blocks_smooth(
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
                 let (cur_gi, cur_inv) = grid_state[curr_idx];
+                let my_fg = grid_data[curr_idx].fg;
+                let my_bg = grid_data[curr_idx].bg;
 
-                // Only process cells that show_disc would highlight:
-                // cells with fixable mismatches above the threshold
-                let fixable = count_fixable_mismatches(cx, cy, cur_gi, cur_inv, &grid_state);
-                if fixable <= disc_threshold {
+                // Skip uniform cells (FG == BG: glyph is invisible)
+                if my_fg == my_bg {
                     continue;
                 }
 
-                // Current internal cost (how well colors match the source image pixels)
-                let cur_internal = block_glyph_costs
-                    .get(curr_idx)
-                    .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
-                    .unwrap_or(u64::MAX);
+                // Build edge constraints and count fixable mismatches.
+                //
+                // For each boundary pixel, if the neighbor renders a color
+                // that's in our palette, we set a constraint:
+                //   want=1 means "effective FG here" (bitmap ^ inv == 1)
+                //   want=0 means "effective BG here" (bitmap ^ inv == 0)
+                // 255 = unconstrained (neighbor's color not in our palette)
+                const UNCONSTRAINED: u8 = 255;
+                let mut top_want = [UNCONSTRAINED; 256];
+                let mut bottom_want = [UNCONSTRAINED; 256];
+                let mut left_want = [UNCONSTRAINED; 256];
+                let mut right_want = [UNCONSTRAINED; 256];
+                let mut fixable_count = 0usize;
 
-                let cur_boundary = compute_boundary_cost(cx, cy, cur_gi, cur_inv, &grid_state);
-                let cur_total = cur_boundary as f64 * edge_weight + cur_internal as f64;
+                macro_rules! build_edge {
+                    ($cond:expr, $n_idx:expr, $len:expr, $wants:expr,
+                     $my_edge_fn:expr, $n_edge_fn:expr) => {
+                        if $cond {
+                            let n_idx = $n_idx;
+                            let (ni, niv) = grid_state[n_idx];
+                            let n_fg = grid_data[n_idx].fg;
+                            let n_bg = grid_data[n_idx].bg;
+                            for i in 0..$len {
+                                // What the neighbor renders at this boundary pixel
+                                let n_col = if (($n_edge_fn)(ni, i) ^ (niv as u8)) == 1 {
+                                    n_fg
+                                } else {
+                                    n_bg
+                                };
+                                // What we currently render
+                                let my_bmp = ($my_edge_fn)(cur_gi, i);
+                                let my_col = if (my_bmp ^ (cur_inv as u8)) == 1 {
+                                    my_fg
+                                } else {
+                                    my_bg
+                                };
+                                // Count fixable mismatch (same logic as show_disc)
+                                if my_col != n_col {
+                                    let my_in_n = my_col == n_fg || my_col == n_bg;
+                                    let n_in_me = n_col == my_fg || n_col == my_bg;
+                                    if my_in_n || n_in_me {
+                                        fixable_count += 1;
+                                    }
+                                }
+                                // Set constraint: what effective value do we need
+                                // to render the neighbor's color?
+                                if n_col == my_fg {
+                                    $wants[i] = 1; // need FG
+                                } else if n_col == my_bg {
+                                    $wants[i] = 0; // need BG
+                                }
+                                // else: neighbor's color isn't in our palette → unconstrained
+                            }
+                        }
+                    };
+                }
 
-                let mut best_total = cur_total;
+                build_edge!(
+                    cy > 0,
+                    curr_idx - grid_w,
+                    gw,
+                    top_want,
+                    |gi: usize, i: usize| glyphs[gi].top[i],
+                    |ni: usize, i: usize| glyphs[ni].bottom[i]
+                );
+                build_edge!(
+                    cy < grid_h - 1,
+                    curr_idx + grid_w,
+                    gw,
+                    bottom_want,
+                    |gi: usize, i: usize| glyphs[gi].bottom[i],
+                    |ni: usize, i: usize| glyphs[ni].top[i]
+                );
+                build_edge!(
+                    cx > 0,
+                    curr_idx - 1,
+                    gh,
+                    left_want,
+                    |gi: usize, i: usize| glyphs[gi].left[i],
+                    |ni: usize, i: usize| glyphs[ni].right[i]
+                );
+                build_edge!(
+                    cx < grid_w - 1,
+                    curr_idx + 1,
+                    gh,
+                    right_want,
+                    |gi: usize, i: usize| glyphs[gi].right[i],
+                    |ni: usize, i: usize| glyphs[ni].left[i]
+                );
+
+                // Only repair cells that show_disc would highlight
+                if fixable_count <= disc_threshold {
+                    continue;
+                }
+
+                // Score each candidate glyph by constraint satisfaction.
+                // No weights, no cost functions — just count matching edge pixels.
+                let mut best_continuity = 0u32;
+                let mut best_internal = u64::MAX;
                 let mut best_choice = (cur_gi, cur_inv);
 
-                // Try all glyphs + inversions
-                for (gi, _) in glyphs.iter().enumerate() {
+                for (gi, glyph) in glyphs.iter().enumerate() {
                     let max_inv = if args.no_glyph_invert { 1 } else { 2 };
                     for inv_idx in 0..max_inv {
-                        let inv = inv_idx == 1;
+                        let inv_u8 = inv_idx as u8;
 
-                        let boundary = compute_boundary_cost(cx, cy, gi, inv, &grid_state);
+                        // Count how many constraints this glyph satisfies
+                        let mut continuity = 0u32;
+
+                        for i in 0..gw {
+                            if top_want[i] != UNCONSTRAINED
+                                && (glyph.top[i] ^ inv_u8) == top_want[i]
+                            {
+                                continuity += 1;
+                            }
+                            if bottom_want[i] != UNCONSTRAINED
+                                && (glyph.bottom[i] ^ inv_u8) == bottom_want[i]
+                            {
+                                continuity += 1;
+                            }
+                        }
+                        for i in 0..gh {
+                            if left_want[i] != UNCONSTRAINED
+                                && (glyph.left[i] ^ inv_u8) == left_want[i]
+                            {
+                                continuity += 1;
+                            }
+                            if right_want[i] != UNCONSTRAINED
+                                && (glyph.right[i] ^ inv_u8) == right_want[i]
+                            {
+                                continuity += 1;
+                            }
+                        }
+
+                        // Tiebreaker: internal fidelity (fewer misclassified pixels)
                         let internal = block_glyph_costs
                             .get(curr_idx)
                             .and_then(|v| v.get(gi * 2 + inv_idx).copied())
                             .unwrap_or(u64::MAX);
 
-                        let total = boundary as f64 * edge_weight + internal as f64;
-
-                        if total < best_total {
-                            best_total = total;
-                            best_choice = (gi, inv);
+                        // Primary: max continuity. Secondary: min internal cost.
+                        if continuity > best_continuity
+                            || (continuity == best_continuity && internal < best_internal)
+                        {
+                            best_continuity = continuity;
+                            best_internal = internal;
+                            best_choice = (gi, inv_idx == 1);
                         }
                     }
                 }
