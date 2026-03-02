@@ -637,6 +637,7 @@ enum InputMode {
     Normal,
     Explorer,
     ValueEdit,
+    MetadataPrompt,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -901,6 +902,11 @@ struct App {
     font_search: String,
     font_list_state: ListState,
 
+    // Metadata prompt state
+    metadata_prompt_settings: Option<RenderArgs>,
+    metadata_prompt_path: String,
+    metadata_prompt_png_path: String,
+
     // Image path
     image_path: String,
 
@@ -1050,6 +1056,10 @@ impl App {
             font_search: String::new(),
             font_list_state: ListState::default(),
 
+            metadata_prompt_settings: None,
+            metadata_prompt_path: String::new(),
+            metadata_prompt_png_path: String::new(),
+
             tree_state,
             glyph_list_state: ListState::default(),
 
@@ -1180,6 +1190,116 @@ impl App {
             options_areas: Vec::new(),
             eyedropper_color: None,
         }
+    }
+
+    fn apply_settings(&mut self, render_args: &RenderArgs) {
+        self.render_args = render_args.clone();
+        self.width = render_args.width.unwrap_or(80) as i32;
+        self.render_mode_idx = match render_args.render {
+            Render::Preview => 0,
+            Render::Ansi => 1,
+            Render::Ansi24 => 2,
+            Render::Irc => 0,
+        };
+        self.dither = render_args.dither as i32;
+        self.smooth = render_args.smooth;
+        self.no_glyph_invert = render_args.no_glyph_invert;
+        self.relax = render_args.relax;
+        self.relax_strength = (render_args.relax_strength * 10.0) as i32;
+        self.show_discontinuities = render_args.show_discontinuities;
+        self.fix_disc = render_args.fix_disc;
+        self.fix_strength = render_args.fix_strength;
+        self.misc1 = render_args.misc1;
+        self.misc2 = render_args.misc2;
+        self.misc3 = render_args.misc3;
+        self.misc4 = render_args.misc4;
+        self.misc5 = render_args.misc5;
+        self.misc6 = render_args.misc6;
+        self.misc7 = render_args.misc7;
+        self.misc8 = render_args.misc8;
+        self.invert = render_args.invert;
+        self.grayscale = render_args.grayscale;
+        self.brightness = 0;
+        self.contrast = 0;
+        self.saturation = 0;
+        self.gamma = render_args.gamma as i32;
+        self.hue = render_args.hue as i32;
+        self.trim_top = render_args.trim.map(|t| t.0 as i32).unwrap_or(0);
+        self.trim_right = render_args.trim.map(|t| t.1 as i32).unwrap_or(0);
+        self.trim_bottom = render_args.trim.map(|t| t.2 as i32).unwrap_or(0);
+        self.trim_left = render_args.trim.map(|t| t.3 as i32).unwrap_or(0);
+        self.fliph = render_args.fliph;
+        self.flipv = render_args.flipv;
+        self.rotate = render_args.rotate as i32;
+        self.scalex = render_args
+            .scale
+            .map(|s| (s.0 * 100.0) as i32)
+            .unwrap_or(100);
+        self.scaley = render_args
+            .scale
+            .map(|s| (s.1 * 100.0) as i32)
+            .unwrap_or(100);
+        self.font_size = render_args.font_size;
+
+        let sys_fonts = list_system_fonts();
+        let config_font = render_args.font.first().map(|s| s.as_str()).unwrap_or("");
+        self.font_idx = if config_font.is_empty() {
+            0
+        } else {
+            sys_fonts
+                .iter()
+                .position(|f| f.eq_ignore_ascii_case(config_font))
+                .unwrap_or(0)
+        };
+
+        self.filter_idx = match render_args.filter {
+            SamplingFilter::Nearest => 0,
+            SamplingFilter::Triangle => 1,
+            SamplingFilter::CatmullRom => 2,
+            SamplingFilter::Gaussian => 3,
+            SamplingFilter::Lanczos3 => 4,
+        };
+        self.grayscale_tolerance = render_args.grayscale_tolerance as i32;
+        self.colorspace_idx = match render_args.colorspace {
+            ColourSpace::HSL => 0,
+            ColourSpace::HSV => 1,
+            ColourSpace::HSLUV => 2,
+            ColourSpace::LCH => 3,
+        };
+        self.encoding_idx = match render_args.encoding {
+            Encoding::Utf8 => 0,
+            Encoding::Utf16 => 1,
+            Encoding::Utf16be => 2,
+            Encoding::Utf16le => 3,
+            Encoding::Cesu8 => 4,
+        };
+
+        self.pixelize = render_args.pixelize;
+        self.gaussian_blur = render_args.gaussian_blur;
+        self.box_blur = render_args.box_blur;
+        self.oil = render_args.oil.is_some();
+        self.halftone = render_args.halftone;
+        self.sepia = render_args.sepia;
+        self.normalize = render_args.normalize;
+        self.noise = render_args.noise;
+        self.emboss = render_args.emboss;
+        self.identity = render_args.identity;
+        self.laplace = render_args.laplace;
+        self.noise_reduction = render_args.noise_reduction;
+        self.sharpen = render_args.sharpen;
+        self.cali = render_args.cali;
+        self.dramatic = render_args.dramatic;
+        self.firenze = render_args.firenze;
+        self.golden = render_args.golden;
+        self.lix = render_args.lix;
+        self.lofi = render_args.lofi;
+        self.neue = render_args.neue;
+        self.obsidian = render_args.obsidian;
+        self.pastel_pink = render_args.pastel_pink;
+        self.ryo = render_args.ryo;
+        self.frosted_glass = render_args.frosted_glass;
+        self.solarize = render_args.solarize;
+        self.edge_detection = render_args.edge_detection;
     }
 
     fn get_current_control_id(&self) -> ControlId {
@@ -1584,9 +1704,7 @@ impl App {
 
         match mode {
             ExplorerMode::Open => {
-                self.image_path = path.clone();
-                self.render_args.image = Some(path);
-                self.mark_args_dirty();
+                self.load_image(path);
             }
             ExplorerMode::SaveText => {
                 let save_data = self
@@ -1613,6 +1731,49 @@ impl App {
                 }
             }
         }
+    }
+
+    fn load_image(&mut self, path: String) {
+        if path.to_lowercase().ends_with(".png") {
+            if let Ok(file) = std::fs::File::open(&path) {
+                let reader = std::io::BufReader::new(file);
+                let decoder = png::Decoder::new(reader);
+                if let Ok(png_reader) = decoder.read_info() {
+                    let info: &png::Info = png_reader.info();
+                    for chunk in &info.uncompressed_latin1_text {
+                        if chunk.keyword == "img2irc_settings" {
+                            if let Ok(settings) = serde_json::from_str::<RenderArgs>(&chunk.text) {
+                                if let Some(ref root_image) = settings.image {
+                                    let png_dir = std::path::Path::new(&path)
+                                        .parent()
+                                        .unwrap_or(std::path::Path::new(""));
+                                    let input_path = png_dir.join(root_image);
+                                    let found_path = if input_path.exists() {
+                                        Some(input_path.to_string_lossy().to_string())
+                                    } else if std::path::Path::new(root_image).exists() {
+                                        Some(root_image.clone())
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(real_input_path) = found_path {
+                                        self.metadata_prompt_settings = Some(settings);
+                                        self.metadata_prompt_path = real_input_path;
+                                        self.metadata_prompt_png_path = path;
+                                        self.input_mode = InputMode::MetadataPrompt;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.image_path = path.clone();
+        self.render_args.image = Some(path);
+        self.mark_args_dirty();
     }
 
     /// Try to paste an image from the system clipboard.
@@ -2388,6 +2549,37 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Char(c) if c.is_ascii_digit() || c == '-' || c == '.' => {
                                 app.value_edit_buffer.push(c);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // --- Metadata Prompt Mode ---
+            if app.input_mode == InputMode::MetadataPrompt {
+                if let Event::Key(key) = event {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                                // Load metadata
+                                if let Some(settings) = app.metadata_prompt_settings.take() {
+                                    app.image_path = app.metadata_prompt_path.clone();
+                                    app.render_args.image = Some(app.metadata_prompt_path.clone());
+                                    app.apply_settings(&settings);
+                                    app.mark_args_dirty();
+                                }
+                                app.input_mode = InputMode::Normal;
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                // Just load image
+                                let png_path = app.metadata_prompt_png_path.clone();
+                                app.image_path = png_path.clone();
+                                app.render_args.image = Some(png_path);
+                                app.mark_args_dirty();
+                                app.input_mode = InputMode::Normal;
+                                app.metadata_prompt_settings = None;
                             }
                             _ => {}
                         }
@@ -3427,6 +3619,15 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         render_explorer_dialog(f, app, &mut dialog, overlay_area);
         app.explorer_dialog = Some(dialog);
     }
+
+    // 3. Overlay Metadata Prompt if active
+    if app.input_mode == InputMode::MetadataPrompt {
+        let layout =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+        let overlay_area = layout[1];
+        f.render_widget(Clear, overlay_area);
+        render_metadata_prompt(f, app, overlay_area);
+    }
 }
 
 fn render_explorer_dialog(
@@ -3513,6 +3714,30 @@ fn render_explorer_dialog(
         }
         f.render_widget(&dialog.name_input, input_area);
     }
+}
+
+fn render_metadata_prompt(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(" Metadata Found! ");
+
+    let target = &app.metadata_prompt_path;
+    let message = format!(
+        "This image contains img2irc metadata!\n\n\
+        The original input image can be found at:\n\
+        {}\n\n\
+        Would you like to load this into the workspace?\n\n\
+        [Y/Enter] Load Settings    [N/Esc] Load Image Only",
+        target
+    );
+
+    let p = ratatui::widgets::Paragraph::new(message)
+        .block(block)
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    f.render_widget(p, area);
 }
 
 fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
