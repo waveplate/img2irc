@@ -1,8 +1,9 @@
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(clap::ValueEnum, Clone, Debug)]
+#[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
 pub enum SamplingFilter {
     Nearest,
     Triangle,
@@ -11,7 +12,7 @@ pub enum SamplingFilter {
     Lanczos3,
 }
 
-#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColourSpace {
     HSL,
     HSV,
@@ -19,7 +20,7 @@ pub enum ColourSpace {
     LCH,
 }
 
-#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Encoding {
     Utf8,
     Utf16,
@@ -28,7 +29,7 @@ pub enum Encoding {
     Cesu8,
 }
 
-#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Render {
     Irc,
     Ansi,
@@ -83,7 +84,7 @@ impl fmt::Display for Param {
 }
 
 // Struct used for actual rendering (all values resolved to f32)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RenderArgs {
     pub list_blocks: bool,
     pub list_ranges: bool,

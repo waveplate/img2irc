@@ -1602,7 +1602,9 @@ impl App {
                     } else {
                         format!("{}.png", path)
                     };
-                    if let Err(e) = draw::save_as_png(result, glyphs, &png_path, "") {
+                    // Serialize current settings as JSON metadata
+                    let metadata = serde_json::to_string(&self.render_args).unwrap_or_default();
+                    if let Err(e) = draw::save_as_png(result, glyphs, &png_path, &metadata) {
                         log::info!("Failed to save PNG: {}", e);
                     }
                 }

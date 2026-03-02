@@ -1,13 +1,10 @@
 use crate::args::{Render, RenderArgs};
 use crate::font::GlyphStore;
 use crate::palette::{ANSI256, IRC99};
-use image::Rgb;
 use once_cell::sync::Lazy;
 use photon_rs::PhotonImage;
 use rayon::prelude::*;
 use std::collections::HashMap;
-// Removed redundant debug imports
-use std::f64::consts::PI as F64_PI;
 use std::fmt::Write as _;
 use std::sync::Mutex;
 
@@ -2413,14 +2410,18 @@ pub fn save_as_png(
     result: &RenderResult,
     glyphs: &GlyphStore,
     path: &str,
-    _metadata: &str,
+    metadata_json: &str,
 ) -> std::io::Result<()> {
     if result.grid.is_empty() {
         return Ok(());
     }
     let (gw, gh) = glyphs.metrics;
     let (rows, cols) = (result.grid.len(), result.grid[0].len());
-    let mut img = image::ImageBuffer::new((cols * gw) as u32, (rows * gh) as u32);
+    let width = (cols * gw) as u32;
+    let height = (rows * gh) as u32;
+
+    // Build raw pixel buffer
+    let mut pixels = vec![0u8; (width * height * 3) as usize];
     for (r, row) in result.grid.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             let (xb, yb) = (c * gw, r * gh);
@@ -2437,21 +2438,42 @@ pub fn save_as_png(
                         } else {
                             false
                         };
-                        img.put_pixel(
-                            (xb + x) as u32,
-                            (yb + y) as u32,
-                            Rgb(if on {
-                                cell.fg
-                            } else {
-                                cell.bg.unwrap_or([0, 0, 0])
-                            }),
-                        );
+                        let color = if on {
+                            cell.fg
+                        } else {
+                            cell.bg.unwrap_or([0, 0, 0])
+                        };
+                        let px_idx = ((yb + y) as u32 * width + (xb + x) as u32) as usize * 3;
+                        if px_idx + 2 < pixels.len() {
+                            pixels[px_idx] = color[0];
+                            pixels[px_idx + 1] = color[1];
+                            pixels[px_idx + 2] = color[2];
+                        }
                     }
                 }
             }
         }
     }
-    img.save(path).map_err(std::io::Error::other)
+
+    // Write PNG with metadata using the png crate
+    let file = std::fs::File::create(path)?;
+    let w = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(w, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+
+    // Add settings metadata as a tEXt chunk
+    if !metadata_json.is_empty() {
+        encoder
+            .add_text_chunk("img2irc_settings".to_string(), metadata_json.to_string())
+            .map_err(std::io::Error::other)?;
+    }
+
+    let mut writer = encoder.write_header().map_err(std::io::Error::other)?;
+    writer
+        .write_image_data(&pixels)
+        .map_err(std::io::Error::other)?;
+    Ok(())
 }
 
 fn get_transformed_block_pixels_into(
