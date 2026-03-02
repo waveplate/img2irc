@@ -220,19 +220,19 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::Misc1,
-        label: "Misc1",
+        label: "Smooth Iter",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100000000,
+            max: 100,
             default: 0,
         },
     },
     ControlDef {
         id: ControlId::Misc2,
-        label: "Misc2",
+        label: "Edge Importance",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1000000000,
+            max: 1000,
             default: 0,
         },
     },
@@ -247,10 +247,10 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::Misc4,
-        label: "Misc4",
+        label: "Relax Iter",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100000,
+            max: 100,
             default: 0,
         },
     },
@@ -1614,6 +1614,87 @@ impl App {
             }
         }
     }
+
+    /// Try to paste an image from the system clipboard.
+    /// Attempts xclip (X11) first, then wl-paste (Wayland).
+    /// Saves the image to a temp file and loads it.
+    fn paste_from_clipboard(&mut self) {
+        use std::io::Write;
+
+        let clipboard_data = Self::try_clipboard_x11().or_else(|| Self::try_clipboard_wayland());
+
+        if let Some(data) = clipboard_data {
+            if data.is_empty() {
+                log::info!("Clipboard is empty or contains no image");
+                return;
+            }
+
+            // Detect format from magic bytes and pick extension
+            let ext = if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+                "png"
+            } else if data.starts_with(&[0xFF, 0xD8]) {
+                "jpg"
+            } else if data.starts_with(b"GIF") {
+                "gif"
+            } else if data.starts_with(b"BM") {
+                "bmp"
+            } else if data.starts_with(b"RIFF") {
+                "webp"
+            } else {
+                "png" // assume PNG as fallback
+            };
+
+            let tmp_path = format!("/tmp/img2irc_clipboard.{}", ext);
+            match std::fs::File::create(&tmp_path) {
+                Ok(mut f) => {
+                    if let Err(e) = f.write_all(&data) {
+                        log::info!("Failed to write clipboard image: {}", e);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    log::info!("Failed to create temp file: {}", e);
+                    return;
+                }
+            }
+
+            log::info!(
+                "Loaded image from clipboard: {} ({} bytes)",
+                tmp_path,
+                data.len()
+            );
+            self.image_path = tmp_path.clone();
+            self.render_args.image = Some(tmp_path);
+            self.mark_args_dirty();
+        } else {
+            log::info!("No image found in clipboard (tried xclip and wl-paste)");
+        }
+    }
+
+    fn try_clipboard_x11() -> Option<Vec<u8>> {
+        for target in &["image/png", "image/jpeg", "image/bmp"] {
+            if let Ok(output) = Command::new("xclip")
+                .args(["-selection", "clipboard", "-t", target, "-o"])
+                .output()
+            {
+                if output.status.success() && !output.stdout.is_empty() {
+                    return Some(output.stdout);
+                }
+            }
+        }
+        None
+    }
+
+    fn try_clipboard_wayland() -> Option<Vec<u8>> {
+        for mime in &["image/png", "image/jpeg", "image/bmp"] {
+            if let Ok(output) = Command::new("wl-paste").args(["--type", mime]).output() {
+                if output.status.success() && !output.stdout.is_empty() {
+                    return Some(output.stdout);
+                }
+            }
+        }
+        None
+    }
 }
 
 fn list_system_fonts() -> Vec<String> {
@@ -2661,6 +2742,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.open_explorer(ExplorerMode::Open);
                             }
+                            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.paste_from_clipboard();
+                            }
                             KeyCode::Char('s') => {
                                 app.open_explorer(ExplorerMode::SaveText);
                             }
@@ -3704,6 +3788,7 @@ fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
         ("Del", "Reset"),
         ("Shift", "×10"),
         ("Ctrl+O", "Open"),
+        ("Ctrl+V", "Paste"),
         ("Ctrl+S", "Save"),
         ("Ctrl+P", "Png"),
         ("Ctrl+Q", "Quit"),

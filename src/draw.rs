@@ -1147,7 +1147,7 @@ pub fn render_blocks_smooth(
 
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
-        let iterations = (args.misc1 as usize).max(1);
+        let iterations = args.misc1 as usize;
 
         for pass in 0..iterations {
             if let Some(flag) = &abort_flag {
@@ -1369,7 +1369,7 @@ pub fn render_blocks_smooth(
     // --- Phase 4: Topological Relaxation (Sharpness Penalty) ---
     if args.relax {
         let relax_strength = args.relax_strength as f64;
-        let relax_iterations = (args.misc4 as usize).max(1);
+        let relax_iterations = args.misc4 as usize;
 
         // Precompute exit positions for all glyphs including inverted variants
         // Layout: [glyph0_normal, glyph0_inv, glyph1_normal, glyph1_inv, ...]
