@@ -445,6 +445,7 @@ pub fn emit_colourized(
     first: &mut bool,
     last_fg: &mut Option<Colour>,
     last_bg: &mut Option<Colour>,
+    lookahead_fg: Option<&Colour>,
 ) {
     let is_space = glyph == ' ' || glyph == '\u{2800}';
 
@@ -528,12 +529,12 @@ pub fn emit_colourized(
                         _ => out.push_str("1"),
                     }
                 } else if need_bg {
-                    // Only BG changed, FG is for a space so skip it.
-                    // We need a disambiguating FG to set BG via \x03FG,BG.
-                    // Use the current last_fg (or fg as fallback).
+                    // Only BG changed. IRC requires FG to set BG.
+                    // Use lookahead FG (next visible glyph's FG) if available,
+                    // so last_fg gets pre-set and we avoid a redundant code later.
                     if let Some(bg_c) = &bg {
+                        let effective_fg = lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg);
                         out.push('\x03');
-                        let effective_fg = last_fg.as_ref().unwrap_or(&fg);
                         match effective_fg {
                             Colour::Index(i) => write!(out, "{}", i).unwrap(),
                             _ => out.push_str("1"),
@@ -543,6 +544,8 @@ pub fn emit_colourized(
                             Colour::Index(i) => write!(out, "{}", i).unwrap(),
                             _ => out.push_str("0"),
                         }
+                        // Pre-set last_fg so the next glyph with this FG won't re-emit it
+                        *last_fg = Some(effective_fg.clone());
                     }
                 }
             }
@@ -2077,6 +2080,10 @@ pub fn render_blocks_smooth(
         let mut alt_last_fg: Option<Colour> = None;
         let mut alt_last_bg: Option<Colour> = None;
 
+        // Pass 1: Collect processed cell data for the row
+        let mut row_cells: Vec<(Colour, Option<Colour>, char)> = Vec::with_capacity(grid_w);
+        let mut alt_row_cells: Vec<(Colour, Option<Colour>, char)> = Vec::with_capacity(grid_w);
+
         for x in 0..grid_w {
             let idx = y * grid_w + x;
             let data = &grid_data[idx];
@@ -2186,20 +2193,11 @@ pub fn render_blocks_smooth(
                 bg: draw_bg_raw,
                 inverted: inv,
             });
-            emit_colourized(
-                &mut out,
-                render,
-                draw_fg.clone(),
-                draw_bg.clone(),
-                final_char,
-                &mut first,
-                &mut last_fg,
-                &mut last_bg,
-            );
+
+            row_cells.push((draw_fg.clone(), draw_bg.clone(), final_char));
 
             if render == Render::Preview {
                 let (alt_fg, alt_bg) = if overlay.is_some() {
-                    // For overlay, just use same red colors in IRC output too
                     (draw_fg.clone(), draw_bg.clone())
                 } else if inv {
                     (
@@ -2212,18 +2210,62 @@ pub fn render_blocks_smooth(
                         data.alt_bg_col.clone(),
                     )
                 };
+                alt_row_cells.push((alt_fg, alt_bg, final_char));
+            }
+        }
+
+        // Pass 2: Emit with lookahead for FG optimization
+        for (i, (fg, bg, ch)) in row_cells.iter().enumerate() {
+            // Find next non-space cell's FG for lookahead
+            let lookahead = if render == Render::Irc || (render == Render::Preview) {
+                row_cells[i + 1..].iter().find_map(|(f, _, c)| {
+                    let is_sp = *c == ' ' || *c == '\u{2800}';
+                    if !is_sp {
+                        Some(f)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            emit_colourized(
+                &mut out,
+                render,
+                fg.clone(),
+                bg.clone(),
+                *ch,
+                &mut first,
+                &mut last_fg,
+                &mut last_bg,
+                lookahead,
+            );
+        }
+
+        if render == Render::Preview {
+            for (i, (fg, bg, ch)) in alt_row_cells.iter().enumerate() {
+                let lookahead = alt_row_cells[i + 1..].iter().find_map(|(f, _, c)| {
+                    let is_sp = *c == ' ' || *c == '\u{2800}';
+                    if !is_sp {
+                        Some(f)
+                    } else {
+                        None
+                    }
+                });
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
-                    alt_fg,
-                    alt_bg,
-                    final_char,
+                    fg.clone(),
+                    bg.clone(),
+                    *ch,
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,
+                    lookahead,
                 );
             }
         }
+
         let end_seq = match render {
             Render::Ansi | Render::Ansi24 | Render::Preview => "\x1b[0m\n",
             Render::Irc => "\x0f\n",
@@ -2339,6 +2381,7 @@ pub fn render_braille(
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
+                None,
             );
 
             if render == Render::Preview {
@@ -2356,6 +2399,7 @@ pub fn render_braille(
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,
+                    None,
                 );
             }
         }
