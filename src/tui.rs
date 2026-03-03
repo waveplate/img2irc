@@ -2393,7 +2393,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let path_str = path.to_string_lossy().to_string();
                                 let mode = dialog.mode;
                                 app.handle_explorer_result(mode, path_str);
-                                app.input_mode = InputMode::Normal;
+                                if app.input_mode != InputMode::MetadataPrompt {
+                                    app.input_mode = InputMode::Normal;
+                                }
                                 app.explorer_dialog = None;
                             } else if key.code == KeyCode::Esc {
                                 app.input_mode = InputMode::Normal;
@@ -2416,7 +2418,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         .to_string();
                                     let mode = dialog.mode;
                                     app.handle_explorer_result(mode, path);
-                                    app.input_mode = InputMode::Normal;
+                                    if app.input_mode != InputMode::MetadataPrompt {
+                                        app.input_mode = InputMode::Normal;
+                                    }
                                     app.explorer_dialog = None;
                                 } else {
                                     // In Save mode, enter on file copies name to input
@@ -2475,7 +2479,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     .to_string_lossy()
                                                     .to_string();
                                                 app.handle_explorer_result(dialog.mode, path);
-                                                app.input_mode = InputMode::Normal;
+                                                if app.input_mode != InputMode::MetadataPrompt {
+                                                    app.input_mode = InputMode::Normal;
+                                                }
                                                 app.explorer_dialog = None;
                                                 continue;
                                             } else {
@@ -2565,9 +2571,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                                 // Load metadata
                                 if let Some(settings) = app.metadata_prompt_settings.take() {
+                                    app.apply_settings(&settings);
                                     app.image_path = app.metadata_prompt_path.clone();
                                     app.render_args.image = Some(app.metadata_prompt_path.clone());
-                                    app.apply_settings(&settings);
                                     app.mark_args_dirty();
                                 }
                                 app.input_mode = InputMode::Normal;
