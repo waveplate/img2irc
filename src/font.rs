@@ -377,10 +377,13 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
         standard_advance = main_face.glyph().metrics().horiAdvance;
     }
 
-    let cell_width = ((standard_advance >> 6) as i32).max(1) as usize;
-    let ascender = (metrics.ascender >> 6) as i32;
-    let descender = (metrics.descender >> 6) as i32;
-    let cell_height = ((metrics.height >> 6) as i32).max(1) as usize;
+    // Convert FreeType 26.6 fixed-point to integer with proper rounding (not truncation).
+    // Truncation can produce cell dimensions 1px too small at fractional font sizes,
+    // causing glyph bitmap clipping and visual artifacts.
+    let cell_width = (((standard_advance + 32) >> 6) as i32).max(1) as usize;
+    let ascender = ((metrics.ascender + 32) >> 6) as i32;
+    let descender = ((metrics.descender + 32) >> 6) as i32;
+    let cell_height = (((metrics.height + 32) >> 6) as i32).max(1) as usize;
 
     /*
     // Calibrate against Full Block (U+2588) to ensure gapless rendering

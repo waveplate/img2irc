@@ -446,34 +446,35 @@ pub fn emit_colourized(
     last_fg: &mut Option<Colour>,
     last_bg: &mut Option<Colour>,
 ) {
-    let mut fg_changed = *first || last_fg.as_ref() != Some(&fg);
+    let is_space = glyph == ' ' || glyph == '\u{2800}';
+
+    // Determine what actually changed
+    let fg_changed = *first || last_fg.as_ref() != Some(&fg);
     let bg_changed = *first || last_bg.as_ref() != bg.as_ref();
 
-    let is_space = glyph == ' ' || glyph == '\u{2800}';
-    let can_skip_fg = match render {
-        Render::Ansi | Render::Ansi24 | Render::Preview => true,
-        Render::Irc => bg.is_none(),
-    };
+    // For spaces, FG is invisible (no glyph to color), so we never need to emit FG for them.
+    // We also don't update last_fg for spaces, so when a real glyph appears next,
+    // we compare against the most recent *visible* FG.
+    let need_fg = fg_changed && !is_space;
 
-    if is_space && can_skip_fg {
-        fg_changed = false;
-    }
+    // BG always matters (it fills the cell), so we need it when changed
+    let need_bg = bg_changed;
 
-    if fg_changed {
+    if need_fg {
         *last_fg = Some(fg.clone());
     }
-    if bg_changed {
+    if need_bg {
         *last_bg = bg.clone();
     }
 
-    if fg_changed || bg_changed {
+    if need_fg || need_bg {
         match render {
             Render::Ansi | Render::Ansi24 | Render::Preview => {
                 if let Some(bg_c) = &bg {
                     out.push_str("\x1b[");
                     let mut semi = false;
 
-                    if fg_changed {
+                    if need_fg {
                         match fg {
                             Colour::Index(i) => write!(out, "38;5;{}", i).unwrap(),
                             Colour::RGB([r, g, b]) => {
@@ -483,7 +484,7 @@ pub fn emit_colourized(
                         semi = true;
                     }
 
-                    if bg_changed {
+                    if need_bg {
                         if semi {
                             out.push(';');
                         }
@@ -495,7 +496,7 @@ pub fn emit_colourized(
                         }
                     }
                     out.push('m');
-                } else if fg_changed {
+                } else if need_fg {
                     match fg {
                         Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
                         Colour::RGB([r, g, b]) => {
@@ -505,16 +506,43 @@ pub fn emit_colourized(
                 }
             }
             Render::Irc => {
-                out.push('\x03');
-                match fg {
-                    Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                    _ => out.push_str("1"),
-                }
-                if let Some(bg_c) = &bg {
-                    out.push(',');
-                    match bg_c {
+                if need_fg && need_bg {
+                    // Both changed: \x03FG,BG
+                    out.push('\x03');
+                    match fg {
                         Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                        _ => out.push_str("0"),
+                        _ => out.push_str("1"),
+                    }
+                    if let Some(bg_c) = &bg {
+                        out.push(',');
+                        match bg_c {
+                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                            _ => out.push_str("0"),
+                        }
+                    }
+                } else if need_fg {
+                    // Only FG changed (BG inherited): \x03FG
+                    out.push('\x03');
+                    match fg {
+                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                        _ => out.push_str("1"),
+                    }
+                } else if need_bg {
+                    // Only BG changed, FG is for a space so skip it.
+                    // We need a disambiguating FG to set BG via \x03FG,BG.
+                    // Use the current last_fg (or fg as fallback).
+                    if let Some(bg_c) = &bg {
+                        out.push('\x03');
+                        let effective_fg = last_fg.as_ref().unwrap_or(&fg);
+                        match effective_fg {
+                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                            _ => out.push_str("1"),
+                        }
+                        out.push(',');
+                        match bg_c {
+                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                            _ => out.push_str("0"),
+                        }
                     }
                 }
             }
@@ -999,77 +1027,77 @@ pub fn render_blocks_smooth(
     }
 
     // // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
-    // if args.smooth {
-    //     if let Some(flag) = &abort_flag {
-    //         if flag.load(std::sync::atomic::Ordering::Relaxed) {
-    //             return "Cancelled".into();
-    //         }
-    //     }
-    //     let smoothing_threshold_sq = args.misc1 as u64;
-    //     let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
-    //         let dr = a[0] as i64 - b[0] as i64;
-    //         let dg = a[1] as i64 - b[1] as i64;
-    //         let db = a[2] as i64 - b[2] as i64;
-    //         (dr * dr + dg * dg + db * db) as u64
-    //     };
+    if args.smooth {
+        if let Some(flag) = &abort_flag {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                return "Cancelled".into();
+            }
+        }
+        let smoothing_threshold_sq = args.misc1 as u64;
+        let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
+            let dr = a[0] as i64 - b[0] as i64;
+            let dg = a[1] as i64 - b[1] as i64;
+            let db = a[2] as i64 - b[2] as i64;
+            (dr * dr + dg * dg + db * db) as u64
+        };
 
-    //     for y in 0..grid_h {
-    //         for x in 0..grid_w {
-    //             let idx = y * grid_w + x;
-    //             let mut new_fg = grid_data[idx].fg;
-    //             let mut new_bg = grid_data[idx].bg;
-    //             let mut changed = false;
+        for y in 0..grid_h {
+            for x in 0..grid_w {
+                let idx = y * grid_w + x;
+                let mut new_fg = grid_data[idx].fg;
+                let mut new_bg = grid_data[idx].bg;
+                let mut changed = false;
 
-    //             if x > 0 {
-    //                 let left_idx = idx - 1;
-    //                 if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
-    //                     new_fg = [
-    //                         ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
-    //                         ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
-    //                         ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8,
-    //                     ];
-    //                     changed = true;
-    //                 }
-    //                 if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
-    //                     new_bg = [
-    //                         ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
-    //                         ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
-    //                         ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8,
-    //                     ];
-    //                     changed = true;
-    //                 }
-    //             }
-    //             if y > 0 {
-    //                 let top_idx = idx - grid_w;
-    //                 if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
-    //                     new_fg = [
-    //                         ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
-    //                         ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
-    //                         ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8,
-    //                     ];
-    //                     changed = true;
-    //                 }
-    //                 if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
-    //                     new_bg = [
-    //                         ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
-    //                         ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
-    //                         ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8,
-    //                     ];
-    //                     changed = true;
-    //                 }
-    //             }
+                if x > 0 {
+                    let left_idx = idx - 1;
+                    if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
+                        new_fg = [
+                            ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
+                            ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
+                            ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8,
+                        ];
+                        changed = true;
+                    }
+                    if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
+                        new_bg = [
+                            ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
+                            ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
+                            ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8,
+                        ];
+                        changed = true;
+                    }
+                }
+                if y > 0 {
+                    let top_idx = idx - grid_w;
+                    if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
+                        new_fg = [
+                            ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
+                            ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
+                            ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8,
+                        ];
+                        changed = true;
+                    }
+                    if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
+                        new_bg = [
+                            ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
+                            ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
+                            ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8,
+                        ];
+                        changed = true;
+                    }
+                }
 
-    //             if changed {
-    //                 grid_data[idx].fg = new_fg;
-    //                 grid_data[idx].bg = new_bg;
-    //                 if render == Render::Ansi24 || render == Render::Preview {
-    //                     grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
-    //                     grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
+                if changed {
+                    grid_data[idx].fg = new_fg;
+                    grid_data[idx].bg = new_bg;
+                    if render == Render::Ansi24 || render == Render::Preview {
+                        grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
+                        grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
+                    }
+                }
+            }
+        }
+    }
 
     // --- Phase 2: Precompute internal block-glyph costs ---
     let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax || args.fix_disc {
