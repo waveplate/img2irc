@@ -27,7 +27,7 @@ ranges = [
 ]
 
 [p]
-ranges = [[0x1FB3C, 0x1FB6F]]
+ranges = [[0x1FB3C, 0x1FB67]]
 
 [legacy.base.polygons]
 ranges = [[0x1FB3C, 0x1FB6F]]
