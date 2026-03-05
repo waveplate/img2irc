@@ -530,10 +530,16 @@ pub fn emit_colourized(
                     }
                 } else if need_bg {
                     // Only BG changed. IRC requires FG to set BG.
-                    // Use lookahead FG (next visible glyph's FG) if available,
-                    // so last_fg gets pre-set and we avoid a redundant code later.
+                    // For spaces (FG invisible), use lookahead FG to pre-set
+                    // and avoid a redundant code on the next visible glyph.
+                    // For non-spaces, we MUST use the current FG (== last_fg)
+                    // since the glyph is visible and its FG must be correct.
                     if let Some(bg_c) = &bg {
-                        let effective_fg = lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg);
+                        let effective_fg = if is_space {
+                            lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
+                        } else {
+                            last_fg.as_ref().unwrap_or(&fg)
+                        };
                         out.push('\x03');
                         match effective_fg {
                             Colour::Index(i) => write!(out, "{}", i).unwrap(),
