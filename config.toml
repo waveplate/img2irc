@@ -1,5 +1,6 @@
 font = "Cascadia Mono"
 blocks = [
-    "p",
-    "vb"
+    "p2",
+    "vb",
+    "hb"
 ]

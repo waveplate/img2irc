@@ -2210,7 +2210,19 @@ pub fn render_blocks_smooth(
                         data.alt_bg_col.clone(),
                     )
                 };
-                alt_row_cells.push((alt_fg, alt_bg, final_char));
+                // Compute uniform-glyph replacement for the IRC alt output
+                // using the IRC99 colors, not the ANSI256-based final_char.
+                let mut alt_final_char = ch;
+                if overlay.is_none() {
+                    if let Some(uniform_ch) = cheapest_uniform_glyph {
+                        if let Some(bg_c) = &alt_bg {
+                            if &alt_fg == bg_c {
+                                alt_final_char = uniform_ch;
+                            }
+                        }
+                    }
+                }
+                alt_row_cells.push((alt_fg, alt_bg, alt_final_char));
             }
         }
 

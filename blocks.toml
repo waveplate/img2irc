@@ -27,7 +27,11 @@ ranges = [
 ]
 
 [p]
-ranges = [[0x1FB3C, 0x1FB67]]
+ranges = [[0x1FB3C, 0x1FB6F]]
+
+[p2]
+ranges = [[0x1FB3C, 0x1FB6F]]
+exclude = [0x1FB69, 0x1FB6B, 0x1FB6D, 0x1FB6F]
 
 [legacy.base.polygons]
 ranges = [[0x1FB3C, 0x1FB6F]]
@@ -41,7 +45,9 @@ ranges = [[0x1CC00, 0x1CEBF]]
 [default]
 include = [
     "p",
-    "vb"
+    "vb",
+    "hb",
+    "ascii.space"
 ]
 
 [all]

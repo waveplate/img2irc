@@ -196,7 +196,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 0,
             max: 4000,
-            default: 40,
+            default: 0,
         },
     },
     ControlDef {
@@ -236,60 +236,60 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             default: 0,
         },
     },
-    ControlDef {
-        id: ControlId::Misc3,
-        label: "Misc3",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc4,
-        label: "Relax Iter",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc5,
-        label: "Misc5",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc6,
-        label: "Misc6",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc7,
-        label: "Misc7",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc8,
-        label: "Misc8",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100000,
-            default: 0,
-        },
-    },
+    // ControlDef {
+    //     id: ControlId::Misc3,
+    //     label: "Misc3",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100000,
+    //         default: 0,
+    //     },
+    // },
+    // ControlDef {
+    //     id: ControlId::Misc4,
+    //     label: "Relax Iter",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100,
+    //         default: 0,
+    //     },
+    // },
+    // ControlDef {
+    //     id: ControlId::Misc5,
+    //     label: "Misc5",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100000,
+    //         default: 0,
+    //     },
+    // },
+    // ControlDef {
+    //     id: ControlId::Misc6,
+    //     label: "Misc6",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100000,
+    //         default: 0,
+    //     },
+    // },
+    // ControlDef {
+    //     id: ControlId::Misc7,
+    //     label: "Misc7",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100000,
+    //         default: 0,
+    //     },
+    // },
+    // ControlDef {
+    //     id: ControlId::Misc8,
+    //     label: "Misc8",
+    //     kind: ControlKind::Slider {
+    //         min: 0,
+    //         max: 100000,
+    //         default: 0,
+    //     },
+    // },
     ControlDef {
         id: ControlId::TrimTop,
         label: "Crop Top",
@@ -368,7 +368,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Font Size",
         kind: ControlKind::Slider {
             min: 0,
-            max: 256,
+            max: 2560,
             default: 0,
         },
     },
@@ -1396,7 +1396,7 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = (val as f32),
+            ControlId::FontSize => self.font_size = (val / 10) as f32,
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
