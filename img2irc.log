@@ -1,2691 +1,1096 @@
-07:45:41 [INFO] Starting img2irc TUI...
-07:45:41 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:45:41 [INFO] Rendering block 'all' (843 glyphs)
-07:45:45 [INFO] Rendering block 'ascii.space' (1 glyphs)
-07:45:45 [INFO] Rendering block 'blocks.eighth' (14 glyphs)
-07:45:45 [INFO] Rendering block 'blocks.full' (1 glyphs)
-07:45:45 [INFO] Rendering block 'blocks.half' (1 glyphs)
-07:45:45 [INFO] Rendering block 'blocks.quarter' (10 glyphs)
-07:45:45 [INFO] Rendering block 'default' (67 glyphs)
-07:45:45 [INFO] Rendering block 'legacy.base.polygons' (52 glyphs)
-07:45:45 [INFO] Rendering block 'legacy.base.sextants' (60 glyphs)
-07:45:45 [INFO] Rendering block 'legacy.supp' (704 glyphs)
-07:45:45 [INFO] Rendering block 'p' (52 glyphs)
-07:45:46 [INFO] Auto-calculated font size: 135 (based on ratio 0.500)
-07:45:46 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:45:46 [INFO] Metrics: Ascender=126, Descender=-32, Height=157, Width=79, FloatW=79, FloatH=157
-07:45:46 [INFO] Rendering block 'hb' (7 glyphs)
-07:45:46 [INFO] Rendering block 'p2' (48 glyphs)
-07:45:46 [INFO] Rendering block 'vb' (7 glyphs)
-07:45:46 [INFO] Starting render optimization... (62 glyphs)
-07:45:46 [INFO] factor_x: 79, float_x: 79
-07:45:46 [INFO] factor_y: 157, float_y: 157
-07:45:46 [INFO] img width: 5400
-07:45:46 [INFO] img height: 7748
-07:45:46 [INFO] pw: 6320
-07:45:46 [INFO] ph: 9106
-07:45:46 [INFO] Final target dimensions (pixels): 6320x9106
-07:45:46 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:01 [INFO] Render finished in 15.330012349s
-07:46:01 [INFO] Auto-calculated font size: 134 (based on ratio 0.503)
-07:46:01 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:46:01 [INFO] Metrics: Ascender=125, Descender=-32, Height=156, Width=79, FloatW=79, FloatH=156
-07:46:01 [INFO] Rendering block 'hb' (7 glyphs)
-07:46:01 [INFO] Rendering block 'p2' (48 glyphs)
-07:46:01 [INFO] Rendering block 'vb' (7 glyphs)
-07:46:01 [INFO] Starting render optimization... (62 glyphs)
-07:46:01 [INFO] factor_x: 79, float_x: 79
-07:46:01 [INFO] factor_y: 156, float_y: 156
-07:46:01 [INFO] img width: 5400
-07:46:01 [INFO] img height: 7748
-07:46:01 [INFO] pw: 6320
-07:46:01 [INFO] ph: 9048
-07:46:01 [INFO] Final target dimensions (pixels): 6320x9048
-07:46:16 [INFO] Render finished in 14.780525895s
-07:46:24 [INFO] TUI Toggled: tab=2, visual=2, id=Grayscale
-07:46:25 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:25 [INFO] Auto-calculated font size: 133 (based on ratio 0.506)
-07:46:25 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:46:25 [INFO] Metrics: Ascender=124, Descender=-32, Height=155, Width=78, FloatW=78, FloatH=155
-07:46:25 [INFO] Rendering block 'hb' (7 glyphs)
-07:46:25 [INFO] Rendering block 'p2' (48 glyphs)
-07:46:25 [INFO] Rendering block 'vb' (7 glyphs)
-07:46:25 [INFO] Starting render optimization... (62 glyphs)
-07:46:25 [INFO] factor_x: 78, float_x: 78
-07:46:25 [INFO] factor_y: 155, float_y: 155
-07:46:25 [INFO] img width: 5400
-07:46:25 [INFO] img height: 7748
-07:46:25 [INFO] pw: 6240
-07:46:25 [INFO] ph: 8990
-07:46:25 [INFO] Final target dimensions (pixels): 6240x8990
-07:46:27 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:27 [INFO] TUI Toggled: tab=2, visual=2, id=Grayscale
-07:46:28 [INFO] TUI Toggled: tab=2, visual=2, id=Grayscale
-07:46:28 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:35 [INFO] TUI Toggled: tab=1, visual=2, id=Grayscale
-07:46:35 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:37 [INFO] Render finished in 12.459952007s
-07:46:37 [INFO] Auto-calculated font size: 134 (based on ratio 0.503)
-07:46:37 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:46:37 [INFO] Rendering block 'ascii.space' (1 glyphs)
-07:46:37 [INFO] Rendering block 'blocks.full' (1 glyphs)
-07:46:37 [INFO] Rendering block 'blocks.half' (1 glyphs)
-07:46:37 [INFO] Starting render optimization... (65 glyphs)
-07:46:37 [INFO] factor_x: 79, float_x: 79
-07:46:37 [INFO] factor_y: 156, float_y: 156
-07:46:37 [INFO] img width: 5400
-07:46:37 [INFO] img height: 7748
-07:46:37 [INFO] pw: 6320
-07:46:37 [INFO] ph: 9048
-07:46:37 [INFO] Final target dimensions (pixels): 6320x9048
-07:46:38 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1238
-07:46:39 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1142
-07:46:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1047
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=952
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=857
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=761
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=571
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=476
-07:46:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=95
-07:46:40 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:41 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=95238095
-07:46:41 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=71428571
-07:46:41 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=47619047
-07:46:42 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=23809523
-07:46:42 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=0
-07:46:42 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=0
-07:46:42 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:43 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:46:43 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:44 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:46:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:50 [INFO] Render finished in 12.557238942s
-07:46:50 [INFO] Auto-calculated font size: 133 (based on ratio 0.506)
-07:46:50 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:46:50 [INFO] Rendering block 'ascii.space' (1 glyphs)
-07:46:50 [INFO] Rendering block 'blocks.full' (1 glyphs)
-07:46:50 [INFO] Rendering block 'blocks.half' (1 glyphs)
-07:46:50 [INFO] Starting render optimization... (65 glyphs)
-07:46:50 [INFO] factor_x: 78, float_x: 78
-07:46:50 [INFO] factor_y: 155, float_y: 155
-07:46:50 [INFO] img width: 5400
-07:46:50 [INFO] img height: 7748
-07:46:50 [INFO] pw: 6240
-07:46:50 [INFO] ph: 8990
-07:46:50 [INFO] Final target dimensions (pixels): 6240x8990
-07:46:53 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:46:54 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:46:56 [INFO] Render finished in 5.993896615s
-07:46:56 [INFO] Auto-calculated font size: 134 (based on ratio 0.503)
-07:46:56 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:46:56 [INFO] Starting render optimization... (65 glyphs)
-07:46:56 [INFO] factor_x: 79, float_x: 79
-07:46:56 [INFO] factor_y: 156, float_y: 156
-07:46:56 [INFO] img width: 5400
-07:46:56 [INFO] img height: 7748
-07:46:56 [INFO] pw: 6320
-07:46:56 [INFO] ph: 9048
-07:46:56 [INFO] Final target dimensions (pixels): 6320x9048
-07:47:03 [INFO] Value set: tab=0, visual=9, id=Misc1, val=0
-07:47:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:04 [INFO] TUI Adjusted: tab=0, ctrl=9, id=Misc1
-07:47:04 [INFO] Render finished in 8.380577515s
-07:47:04 [INFO] Auto-calculated font size: 133 (based on ratio 0.506)
-07:47:04 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:04 [INFO] Starting render optimization... (65 glyphs)
-07:47:04 [INFO] factor_x: 78, float_x: 78
-07:47:04 [INFO] factor_y: 155, float_y: 155
-07:47:04 [INFO] img width: 5400
-07:47:04 [INFO] img height: 7748
-07:47:04 [INFO] pw: 6240
-07:47:04 [INFO] ph: 8990
-07:47:04 [INFO] Final target dimensions (pixels): 6240x8990
-07:47:04 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=95
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=119
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=166
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=214
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=309
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=404
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=523
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=642
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=761
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=928
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:07 [INFO] Value set: tab=0, visual=10, id=Misc2, val=1000
-07:47:08 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:10 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:47:10 [INFO] Render finished in 5.992050788s
-07:47:10 [INFO] Auto-calculated font size: 134 (based on ratio 0.503)
-07:47:10 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:10 [INFO] Starting render optimization... (65 glyphs)
-07:47:10 [INFO] factor_x: 79, float_x: 79
-07:47:10 [INFO] factor_y: 156, float_y: 156
-07:47:10 [INFO] img width: 5400
-07:47:10 [INFO] img height: 7748
-07:47:10 [INFO] pw: 6320
-07:47:10 [INFO] ph: 9048
-07:47:10 [INFO] Final target dimensions (pixels): 6320x9048
-07:47:10 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:15 [INFO] Render finished in 4.865955086s
-07:47:15 [INFO] Auto-calculated font size: 133 (based on ratio 0.506)
-07:47:15 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:15 [INFO] Starting render optimization... (65 glyphs)
-07:47:15 [INFO] factor_x: 78, float_x: 78
-07:47:15 [INFO] factor_y: 155, float_y: 155
-07:47:15 [INFO] img width: 5400
-07:47:15 [INFO] img height: 7748
-07:47:15 [INFO] pw: 6240
-07:47:15 [INFO] ph: 8990
-07:47:15 [INFO] Final target dimensions (pixels): 6240x8990
-07:47:21 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:25 [INFO] fix_disc pass 0: 528 cells changed
-07:47:25 [INFO] fix_disc pass 1: 44 cells changed
-07:47:26 [INFO] fix_disc pass 2: 3 cells changed
-07:47:26 [INFO] fix_disc pass 3: 0 cells changed
-07:47:26 [INFO] Render finished in 10.694128117s
-07:47:26 [INFO] Auto-calculated font size: 9 (based on ratio 0.503)
-07:47:26 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:26 [INFO] Rendering block 'blocks.half' (1 glyphs)
-07:47:26 [INFO] Starting render optimization... (65 glyphs)
-07:47:26 [INFO] factor_x: 5, float_x: 5
-07:47:26 [INFO] factor_y: 10, float_y: 10
-07:47:26 [INFO] img width: 360
-07:47:26 [INFO] img height: 504
-07:47:26 [INFO] pw: 400
-07:47:26 [INFO] ph: 560
-07:47:26 [INFO] Final target dimensions (pixels): 400x560
-07:47:26 [INFO] fix_disc pass 0: 749 cells changed
-07:47:26 [INFO] fix_disc pass 1: 102 cells changed
-07:47:26 [INFO] fix_disc pass 2: 19 cells changed
-07:47:26 [INFO] fix_disc pass 3: 9 cells changed
-07:47:26 [INFO] fix_disc pass 4: 0 cells changed
-07:47:26 [INFO] Render finished in 103.460533ms
-07:47:35 [INFO] TUI Toggled: tab=0, visual=1, id=RenderMode
-07:47:35 [INFO] TUI Toggled: tab=0, visual=1, id=RenderMode
-07:47:35 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:35 [INFO] Auto-calculated font size: 9 (based on ratio 0.500)
-07:47:35 [INFO] Starting render optimization... (65 glyphs)
-07:47:35 [INFO] factor_x: 5, float_x: 5
-07:47:35 [INFO] factor_y: 10, float_y: 10
-07:47:35 [INFO] img width: 360
-07:47:35 [INFO] img height: 504
-07:47:35 [INFO] pw: 400
-07:47:35 [INFO] ph: 560
-07:47:35 [INFO] Final target dimensions (pixels): 400x560
-07:47:36 [INFO] fix_disc pass 0: 704 cells changed
-07:47:36 [INFO] fix_disc pass 1: 90 cells changed
-07:47:36 [INFO] fix_disc pass 2: 16 cells changed
-07:47:36 [INFO] fix_disc pass 3: 8 cells changed
-07:47:36 [INFO] fix_disc pass 4: 1 cells changed
-07:47:36 [INFO] fix_disc pass 5: 0 cells changed
-07:47:36 [INFO] Render finished in 91.434699ms
-07:47:38 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:47:38 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:38 [INFO] Auto-calculated font size: 9 (based on ratio 0.500)
-07:47:38 [INFO] Starting render optimization... (65 glyphs)
-07:47:38 [INFO] factor_x: 5, float_x: 5
-07:47:38 [INFO] factor_y: 10, float_y: 10
-07:47:38 [INFO] img width: 360
-07:47:38 [INFO] img height: 504
-07:47:38 [INFO] pw: 400
-07:47:38 [INFO] ph: 560
-07:47:38 [INFO] Final target dimensions (pixels): 400x560
-07:47:38 [INFO] fix_disc pass 0: 154 cells changed
-07:47:38 [INFO] fix_disc pass 1: 24 cells changed
-07:47:38 [INFO] fix_disc pass 2: 2 cells changed
-07:47:38 [INFO] fix_disc pass 3: 1 cells changed
-07:47:38 [INFO] fix_disc pass 4: 0 cells changed
-07:47:38 [INFO] Render finished in 94.353696ms
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=2952
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=2857
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=2666
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=2476
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=2190
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1904
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1428
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=1047
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=666
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=285
-07:47:39 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=95
-07:47:40 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:40 [INFO] Auto-calculated font size: 9 (based on ratio 0.500)
-07:47:40 [INFO] Starting render optimization... (65 glyphs)
-07:47:40 [INFO] factor_x: 5, float_x: 5
-07:47:40 [INFO] factor_y: 10, float_y: 10
-07:47:40 [INFO] img width: 360
-07:47:40 [INFO] img height: 504
-07:47:40 [INFO] pw: 400
-07:47:40 [INFO] ph: 560
-07:47:40 [INFO] Final target dimensions (pixels): 400x560
-07:47:40 [INFO] fix_disc pass 0: 154 cells changed
-07:47:40 [INFO] fix_disc pass 1: 24 cells changed
-07:47:40 [INFO] fix_disc pass 2: 2 cells changed
-07:47:40 [INFO] fix_disc pass 3: 1 cells changed
-07:47:40 [INFO] fix_disc pass 4: 0 cells changed
-07:47:40 [INFO] Render finished in 99.80308ms
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=666
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=571
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=476
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=380
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=285
-07:47:40 [INFO] Value set: tab=0, visual=5, id=RelaxStrength, val=0
-07:47:41 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:41 [INFO] Auto-calculated font size: 9 (based on ratio 0.500)
-07:47:41 [INFO] Starting render optimization... (65 glyphs)
-07:47:41 [INFO] factor_x: 5, float_x: 5
-07:47:41 [INFO] factor_y: 10, float_y: 10
-07:47:41 [INFO] img width: 360
-07:47:41 [INFO] img height: 504
-07:47:41 [INFO] pw: 400
-07:47:41 [INFO] ph: 560
-07:47:41 [INFO] Final target dimensions (pixels): 400x560
-07:47:41 [INFO] fix_disc pass 0: 154 cells changed
-07:47:41 [INFO] fix_disc pass 1: 24 cells changed
-07:47:41 [INFO] fix_disc pass 2: 2 cells changed
-07:47:41 [INFO] fix_disc pass 3: 1 cells changed
-07:47:41 [INFO] fix_disc pass 4: 0 cells changed
-07:47:41 [INFO] Render finished in 99.697462ms
-07:47:52 [INFO] Value set: tab=0, visual=20, id=FontSize, val=609
-07:47:52 [INFO] Value set: tab=0, visual=20, id=FontSize, val=609
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=670
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=731
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=731
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=792
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=853
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=914
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=975
-07:47:53 [INFO] Value set: tab=0, visual=20, id=FontSize, val=1036
-07:47:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:53 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:53 [INFO] Metrics: Ascender=96, Descender=-25, Height=120, Width=60, FloatW=60, FloatH=120
-07:47:53 [INFO] Rendering block 'ascii.space' (1 glyphs)
-07:47:53 [INFO] Rendering block 'blocks.full' (1 glyphs)
-07:47:53 [INFO] Rendering block 'blocks.half' (1 glyphs)
-07:47:53 [INFO] Rendering block 'hb' (7 glyphs)
-07:47:53 [INFO] Rendering block 'p2' (48 glyphs)
-07:47:53 [INFO] Rendering block 'vb' (7 glyphs)
-07:47:53 [INFO] Starting render optimization... (65 glyphs)
-07:47:53 [INFO] factor_x: 60, float_x: 60
-07:47:53 [INFO] factor_y: 120, float_y: 120
-07:47:53 [INFO] img width: 360
-07:47:53 [INFO] img height: 504
-07:47:53 [INFO] pw: 4800
-07:47:53 [INFO] ph: 6720
-07:47:53 [INFO] Final target dimensions (pixels): 4800x6720
-07:47:54 [INFO] Value set: tab=0, visual=20, id=FontSize, val=182
-07:47:54 [INFO] Value set: tab=0, visual=20, id=FontSize, val=121
-07:47:55 [INFO] Value set: tab=0, visual=20, id=FontSize, val=182
-07:47:55 [INFO] Value set: tab=0, visual=20, id=FontSize, val=243
-07:47:55 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:47:56 [INFO] Render finished in 2.396748653s
-07:47:56 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
-07:47:56 [INFO] Starting render optimization... (65 glyphs)
-07:47:56 [INFO] factor_x: 14, float_x: 14
-07:47:56 [INFO] factor_y: 28, float_y: 28
-07:47:56 [INFO] img width: 360
-07:47:56 [INFO] img height: 504
-07:47:56 [INFO] pw: 1120
-07:47:56 [INFO] ph: 1568
-07:47:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:47:56 [INFO] fix_disc pass 0: 139 cells changed
-07:47:56 [INFO] fix_disc pass 1: 33 cells changed
-07:47:56 [INFO] fix_disc pass 2: 9 cells changed
-07:47:56 [INFO] fix_disc pass 3: 3 cells changed
-07:47:56 [INFO] fix_disc pass 4: 0 cells changed
-07:47:56 [INFO] Render finished in 308.074334ms
-07:48:04 [INFO] Value set: tab=0, visual=26, id=Contrast, val=48
-07:48:04 [INFO] Value set: tab=0, visual=26, id=Contrast, val=60
-07:48:04 [INFO] Value set: tab=0, visual=26, id=Contrast, val=60
-07:48:04 [INFO] Value set: tab=0, visual=26, id=Contrast, val=72
-07:48:04 [INFO] Value set: tab=0, visual=26, id=Contrast, val=85
-07:48:04 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:04 [INFO] Starting render optimization... (65 glyphs)
-07:48:04 [INFO] factor_x: 14, float_x: 14
-07:48:04 [INFO] factor_y: 28, float_y: 28
-07:48:04 [INFO] img width: 360
-07:48:04 [INFO] img height: 504
-07:48:04 [INFO] pw: 1120
-07:48:04 [INFO] ph: 1568
-07:48:04 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:05 [INFO] fix_disc pass 0: 90 cells changed
-07:48:05 [INFO] fix_disc pass 1: 9 cells changed
-07:48:05 [INFO] fix_disc pass 2: 0 cells changed
-07:48:05 [INFO] Render finished in 303.149143ms
-07:48:12 [INFO] TUI Toggled: tab=1, visual=7, id=Halftone
-07:48:12 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:12 [INFO] Starting render optimization... (65 glyphs)
-07:48:12 [INFO] factor_x: 14, float_x: 14
-07:48:12 [INFO] factor_y: 28, float_y: 28
-07:48:12 [INFO] img width: 360
-07:48:12 [INFO] img height: 504
-07:48:12 [INFO] pw: 1120
-07:48:12 [INFO] ph: 1568
-07:48:12 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:12 [INFO] fix_disc pass 0: 91 cells changed
-07:48:13 [INFO] fix_disc pass 1: 7 cells changed
-07:48:13 [INFO] fix_disc pass 2: 0 cells changed
-07:48:13 [INFO] Render finished in 293.258063ms
-07:48:18 [INFO] TUI Toggled: tab=1, visual=11, id=Emboss
-07:48:18 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:18 [INFO] Starting render optimization... (65 glyphs)
-07:48:18 [INFO] factor_x: 14, float_x: 14
-07:48:18 [INFO] factor_y: 28, float_y: 28
-07:48:18 [INFO] img width: 360
-07:48:18 [INFO] img height: 504
-07:48:18 [INFO] pw: 1120
-07:48:18 [INFO] ph: 1568
-07:48:18 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:19 [INFO] fix_disc pass 0: 120 cells changed
-07:48:19 [INFO] fix_disc pass 1: 18 cells changed
-07:48:19 [INFO] fix_disc pass 2: 0 cells changed
-07:48:19 [INFO] Render finished in 372.65451ms
-07:48:24 [INFO] TUI Toggled: tab=1, visual=11, id=Emboss
-07:48:25 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:25 [INFO] Starting render optimization... (65 glyphs)
-07:48:25 [INFO] factor_x: 14, float_x: 14
-07:48:25 [INFO] factor_y: 28, float_y: 28
-07:48:25 [INFO] img width: 360
-07:48:25 [INFO] img height: 504
-07:48:25 [INFO] pw: 1120
-07:48:25 [INFO] ph: 1568
-07:48:25 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:25 [INFO] fix_disc pass 0: 91 cells changed
-07:48:25 [INFO] fix_disc pass 1: 7 cells changed
-07:48:25 [INFO] fix_disc pass 2: 0 cells changed
-07:48:25 [INFO] Render finished in 290.090106ms
-07:48:28 [INFO] Value set: tab=1, visual=0, id=Dither, val=1
-07:48:29 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:29 [INFO] Starting render optimization... (65 glyphs)
-07:48:29 [INFO] factor_x: 14, float_x: 14
-07:48:29 [INFO] factor_y: 28, float_y: 28
-07:48:29 [INFO] img width: 360
-07:48:29 [INFO] img height: 504
-07:48:29 [INFO] pw: 1120
-07:48:29 [INFO] ph: 1568
-07:48:29 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:29 [INFO] fix_disc pass 0: 437 cells changed
-07:48:29 [INFO] fix_disc pass 1: 49 cells changed
-07:48:29 [INFO] fix_disc pass 2: 13 cells changed
-07:48:29 [INFO] fix_disc pass 3: 2 cells changed
-07:48:29 [INFO] fix_disc pass 4: 0 cells changed
-07:48:29 [INFO] Render finished in 394.394588ms
-07:48:30 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:48:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:30 [INFO] Starting render optimization... (65 glyphs)
-07:48:30 [INFO] factor_x: 14, float_x: 14
-07:48:30 [INFO] factor_y: 28, float_y: 28
-07:48:30 [INFO] img width: 360
-07:48:30 [INFO] img height: 504
-07:48:30 [INFO] pw: 1120
-07:48:30 [INFO] ph: 1568
-07:48:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:31 [INFO] fix_disc pass 0: 278 cells changed
-07:48:31 [INFO] fix_disc pass 1: 11 cells changed
-07:48:31 [INFO] fix_disc pass 2: 0 cells changed
-07:48:31 [INFO] Render finished in 333.835022ms
-07:48:31 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:48:32 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:32 [INFO] Starting render optimization... (65 glyphs)
-07:48:32 [INFO] factor_x: 14, float_x: 14
-07:48:32 [INFO] factor_y: 28, float_y: 28
-07:48:32 [INFO] img width: 360
-07:48:32 [INFO] img height: 504
-07:48:32 [INFO] pw: 1120
-07:48:32 [INFO] ph: 1568
-07:48:32 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:32 [INFO] fix_disc pass 0: 88 cells changed
-07:48:32 [INFO] fix_disc pass 1: 4 cells changed
-07:48:32 [INFO] fix_disc pass 2: 0 cells changed
-07:48:32 [INFO] Render finished in 320.543504ms
-07:48:33 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:48:33 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:33 [INFO] Starting render optimization... (65 glyphs)
-07:48:33 [INFO] factor_x: 14, float_x: 14
-07:48:33 [INFO] factor_y: 28, float_y: 28
-07:48:33 [INFO] img width: 360
-07:48:33 [INFO] img height: 504
-07:48:33 [INFO] pw: 1120
-07:48:33 [INFO] ph: 1568
-07:48:33 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:34 [INFO] fix_disc pass 0: 92 cells changed
-07:48:34 [INFO] fix_disc pass 1: 5 cells changed
-07:48:34 [INFO] fix_disc pass 2: 0 cells changed
-07:48:34 [INFO] Render finished in 320.300086ms
-07:48:34 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:48:35 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:35 [INFO] Starting render optimization... (65 glyphs)
-07:48:35 [INFO] factor_x: 14, float_x: 14
-07:48:35 [INFO] factor_y: 28, float_y: 28
-07:48:35 [INFO] img width: 360
-07:48:35 [INFO] img height: 504
-07:48:35 [INFO] pw: 1120
-07:48:35 [INFO] ph: 1568
-07:48:35 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:35 [INFO] fix_disc pass 0: 88 cells changed
-07:48:35 [INFO] fix_disc pass 1: 4 cells changed
-07:48:35 [INFO] fix_disc pass 2: 0 cells changed
-07:48:35 [INFO] Render finished in 324.760214ms
-07:48:42 [INFO] Value set: tab=0, visual=24, id=GrayTol, val=6
-07:48:43 [INFO] Value set: tab=0, visual=24, id=GrayTol, val=12
-07:48:43 [INFO] Value set: tab=0, visual=24, id=GrayTol, val=18
-07:48:43 [INFO] Value set: tab=0, visual=24, id=GrayTol, val=24
-07:48:43 [INFO] Value set: tab=0, visual=24, id=GrayTol, val=18
-07:48:44 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:44 [INFO] Starting render optimization... (65 glyphs)
-07:48:44 [INFO] factor_x: 14, float_x: 14
-07:48:44 [INFO] factor_y: 28, float_y: 28
-07:48:44 [INFO] img width: 360
-07:48:44 [INFO] img height: 504
-07:48:44 [INFO] pw: 1120
-07:48:44 [INFO] ph: 1568
-07:48:44 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:44 [INFO] fix_disc pass 0: 89 cells changed
-07:48:44 [INFO] fix_disc pass 1: 4 cells changed
-07:48:44 [INFO] fix_disc pass 2: 0 cells changed
-07:48:44 [INFO] Render finished in 317.278626ms
-07:48:48 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:49 [INFO] Starting render optimization... (65 glyphs)
-07:48:49 [INFO] factor_x: 14, float_x: 14
-07:48:49 [INFO] factor_y: 28, float_y: 28
-07:48:49 [INFO] img width: 360
-07:48:49 [INFO] img height: 504
-07:48:49 [INFO] pw: 1120
-07:48:49 [INFO] ph: 1568
-07:48:49 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] fix_disc pass 0: 89 cells changed
-07:48:49 [INFO] fix_disc pass 1: 4 cells changed
-07:48:49 [INFO] fix_disc pass 2: 0 cells changed
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] Render finished in 320.639189ms
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:49 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:50 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:50 [INFO] Starting render optimization... (65 glyphs)
-07:48:50 [INFO] factor_x: 14, float_x: 14
-07:48:50 [INFO] factor_y: 28, float_y: 28
-07:48:50 [INFO] img width: 360
-07:48:50 [INFO] img height: 504
-07:48:50 [INFO] pw: 1120
-07:48:50 [INFO] ph: 1568
-07:48:50 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:50 [INFO] fix_disc pass 0: 91 cells changed
-07:48:50 [INFO] fix_disc pass 1: 5 cells changed
-07:48:50 [INFO] fix_disc pass 2: 0 cells changed
-07:48:50 [INFO] Render finished in 327.898039ms
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:51 [INFO] Starting render optimization... (65 glyphs)
-07:48:51 [INFO] factor_x: 14, float_x: 14
-07:48:51 [INFO] factor_y: 28, float_y: 28
-07:48:51 [INFO] img width: 360
-07:48:51 [INFO] img height: 504
-07:48:51 [INFO] pw: 1120
-07:48:51 [INFO] ph: 1568
-07:48:51 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] fix_disc pass 0: 91 cells changed
-07:48:51 [INFO] fix_disc pass 1: 5 cells changed
-07:48:51 [INFO] fix_disc pass 2: 0 cells changed
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:51 [INFO] Render finished in 327.081637ms
-07:48:51 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:52 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:53 [INFO] Starting render optimization... (65 glyphs)
-07:48:53 [INFO] factor_x: 14, float_x: 14
-07:48:53 [INFO] factor_y: 28, float_y: 28
-07:48:53 [INFO] img width: 360
-07:48:53 [INFO] img height: 504
-07:48:53 [INFO] pw: 1120
-07:48:53 [INFO] ph: 1568
-07:48:53 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:53 [INFO] fix_disc pass 0: 91 cells changed
-07:48:53 [INFO] fix_disc pass 1: 5 cells changed
-07:48:53 [INFO] fix_disc pass 2: 0 cells changed
-07:48:53 [INFO] Render finished in 327.507836ms
-07:48:53 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:54 [INFO] Starting render optimization... (65 glyphs)
-07:48:54 [INFO] factor_x: 14, float_x: 14
-07:48:54 [INFO] factor_y: 28, float_y: 28
-07:48:54 [INFO] img width: 360
-07:48:54 [INFO] img height: 504
-07:48:54 [INFO] pw: 1120
-07:48:54 [INFO] ph: 1568
-07:48:54 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] fix_disc pass 0: 91 cells changed
-07:48:54 [INFO] fix_disc pass 1: 5 cells changed
-07:48:54 [INFO] fix_disc pass 2: 0 cells changed
-07:48:54 [INFO] Render finished in 327.367322ms
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:54 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:55 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:56 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:56 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:56 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:48:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:48:56 [INFO] Starting render optimization... (65 glyphs)
-07:48:56 [INFO] factor_x: 14, float_x: 14
-07:48:56 [INFO] factor_y: 28, float_y: 28
-07:48:56 [INFO] img width: 360
-07:48:56 [INFO] img height: 504
-07:48:56 [INFO] pw: 1120
-07:48:56 [INFO] ph: 1568
-07:48:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:48:56 [INFO] fix_disc pass 0: 91 cells changed
-07:48:56 [INFO] fix_disc pass 1: 5 cells changed
-07:48:56 [INFO] fix_disc pass 2: 0 cells changed
-07:48:56 [INFO] Render finished in 337.676654ms
-07:49:24 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:49:25 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:25 [INFO] Starting render optimization... (65 glyphs)
-07:49:25 [INFO] factor_x: 14, float_x: 14
-07:49:25 [INFO] factor_y: 28, float_y: 28
-07:49:25 [INFO] img width: 360
-07:49:25 [INFO] img height: 504
-07:49:25 [INFO] pw: 1120
-07:49:25 [INFO] ph: 1568
-07:49:25 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:25 [INFO] fix_disc pass 0: 626 cells changed
-07:49:25 [INFO] fix_disc pass 1: 66 cells changed
-07:49:25 [INFO] fix_disc pass 2: 1 cells changed
-07:49:25 [INFO] fix_disc pass 3: 0 cells changed
-07:49:25 [INFO] Render finished in 317.689529ms
-07:49:29 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:30 [INFO] Starting render optimization... (65 glyphs)
-07:49:30 [INFO] factor_x: 14, float_x: 14
-07:49:30 [INFO] factor_y: 28, float_y: 28
-07:49:30 [INFO] img width: 360
-07:49:30 [INFO] img height: 504
-07:49:30 [INFO] pw: 1120
-07:49:30 [INFO] ph: 1568
-07:49:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:30 [INFO] Render finished in 285.045681ms
-07:49:30 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:49:31 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:31 [INFO] Starting render optimization... (65 glyphs)
-07:49:31 [INFO] factor_x: 14, float_x: 14
-07:49:31 [INFO] factor_y: 28, float_y: 28
-07:49:31 [INFO] img width: 360
-07:49:31 [INFO] img height: 504
-07:49:31 [INFO] pw: 1120
-07:49:31 [INFO] ph: 1568
-07:49:31 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:31 [INFO] Render finished in 301.128826ms
-07:49:33 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:49:33 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:33 [INFO] Starting render optimization... (65 glyphs)
-07:49:33 [INFO] factor_x: 14, float_x: 14
-07:49:33 [INFO] factor_y: 28, float_y: 28
-07:49:33 [INFO] img width: 360
-07:49:33 [INFO] img height: 504
-07:49:33 [INFO] pw: 1120
-07:49:33 [INFO] ph: 1568
-07:49:33 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:33 [INFO] Render finished in 281.226193ms
-07:49:35 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:36 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:36 [INFO] Starting render optimization... (65 glyphs)
-07:49:36 [INFO] factor_x: 14, float_x: 14
-07:49:36 [INFO] factor_y: 28, float_y: 28
-07:49:36 [INFO] img width: 360
-07:49:36 [INFO] img height: 504
-07:49:36 [INFO] pw: 1120
-07:49:36 [INFO] ph: 1568
-07:49:36 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:36 [INFO] fix_disc pass 0: 626 cells changed
-07:49:36 [INFO] fix_disc pass 1: 66 cells changed
-07:49:36 [INFO] fix_disc pass 2: 1 cells changed
-07:49:36 [INFO] fix_disc pass 3: 0 cells changed
-07:49:36 [INFO] Render finished in 317.135898ms
-07:49:37 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:38 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:38 [INFO] Starting render optimization... (65 glyphs)
-07:49:38 [INFO] factor_x: 14, float_x: 14
-07:49:38 [INFO] factor_y: 28, float_y: 28
-07:49:38 [INFO] img width: 360
-07:49:38 [INFO] img height: 504
-07:49:38 [INFO] pw: 1120
-07:49:38 [INFO] ph: 1568
-07:49:38 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:38 [INFO] Render finished in 289.389189ms
-07:49:40 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:49:40 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:40 [INFO] Starting render optimization... (65 glyphs)
-07:49:40 [INFO] factor_x: 14, float_x: 14
-07:49:40 [INFO] factor_y: 28, float_y: 28
-07:49:40 [INFO] img width: 360
-07:49:40 [INFO] img height: 504
-07:49:40 [INFO] pw: 1120
-07:49:40 [INFO] ph: 1568
-07:49:40 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:41 [INFO] Render finished in 300.227484ms
-07:49:43 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:44 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:44 [INFO] Starting render optimization... (65 glyphs)
-07:49:44 [INFO] factor_x: 14, float_x: 14
-07:49:44 [INFO] factor_y: 28, float_y: 28
-07:49:44 [INFO] img width: 360
-07:49:44 [INFO] img height: 504
-07:49:44 [INFO] pw: 1120
-07:49:44 [INFO] ph: 1568
-07:49:44 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:44 [INFO] fix_disc pass 0: 91 cells changed
-07:49:44 [INFO] fix_disc pass 1: 5 cells changed
-07:49:44 [INFO] fix_disc pass 2: 0 cells changed
-07:49:44 [INFO] Render finished in 337.751867ms
-07:49:45 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:45 [INFO] Starting render optimization... (65 glyphs)
-07:49:45 [INFO] factor_x: 14, float_x: 14
-07:49:45 [INFO] factor_y: 28, float_y: 28
-07:49:45 [INFO] img width: 360
-07:49:45 [INFO] img height: 504
-07:49:45 [INFO] pw: 1120
-07:49:45 [INFO] ph: 1568
-07:49:45 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:46 [INFO] Render finished in 295.387732ms
-07:49:46 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:47 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:47 [INFO] Starting render optimization... (65 glyphs)
-07:49:47 [INFO] factor_x: 14, float_x: 14
-07:49:47 [INFO] factor_y: 28, float_y: 28
-07:49:47 [INFO] img width: 360
-07:49:47 [INFO] img height: 504
-07:49:47 [INFO] pw: 1120
-07:49:47 [INFO] ph: 1568
-07:49:47 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:47 [INFO] fix_disc pass 0: 91 cells changed
-07:49:47 [INFO] fix_disc pass 1: 5 cells changed
-07:49:47 [INFO] fix_disc pass 2: 0 cells changed
-07:49:47 [INFO] Render finished in 318.909474ms
-07:49:48 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:48 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:48 [INFO] Starting render optimization... (65 glyphs)
-07:49:48 [INFO] factor_x: 14, float_x: 14
-07:49:48 [INFO] factor_y: 28, float_y: 28
-07:49:48 [INFO] img width: 360
-07:49:48 [INFO] img height: 504
-07:49:48 [INFO] pw: 1120
-07:49:48 [INFO] ph: 1568
-07:49:48 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:49 [INFO] Render finished in 296.27696ms
-07:49:51 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:49:52 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:52 [INFO] Starting render optimization... (65 glyphs)
-07:49:52 [INFO] factor_x: 14, float_x: 14
-07:49:52 [INFO] factor_y: 28, float_y: 28
-07:49:52 [INFO] img width: 360
-07:49:52 [INFO] img height: 504
-07:49:52 [INFO] pw: 1120
-07:49:52 [INFO] ph: 1568
-07:49:52 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:52 [INFO] Render finished in 306.715284ms
-07:49:53 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:49:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:53 [INFO] Starting render optimization... (65 glyphs)
-07:49:53 [INFO] factor_x: 14, float_x: 14
-07:49:53 [INFO] factor_y: 28, float_y: 28
-07:49:53 [INFO] img width: 360
-07:49:53 [INFO] img height: 504
-07:49:53 [INFO] pw: 1120
-07:49:53 [INFO] ph: 1568
-07:49:53 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:53 [INFO] fix_disc pass 0: 626 cells changed
-07:49:53 [INFO] fix_disc pass 1: 66 cells changed
-07:49:53 [INFO] fix_disc pass 2: 1 cells changed
-07:49:53 [INFO] fix_disc pass 3: 0 cells changed
-07:49:53 [INFO] Render finished in 322.512964ms
-07:49:54 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=47619047
-07:49:54 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=71428571
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=95238095
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=71428571
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=47619047
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=23809523
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=0
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=0
-07:49:55 [INFO] Value set: tab=0, visual=8, id=FixStrength, val=0
-07:49:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:56 [INFO] Starting render optimization... (65 glyphs)
-07:49:56 [INFO] factor_x: 14, float_x: 14
-07:49:56 [INFO] factor_y: 28, float_y: 28
-07:49:56 [INFO] img width: 360
-07:49:56 [INFO] img height: 504
-07:49:56 [INFO] pw: 1120
-07:49:56 [INFO] ph: 1568
-07:49:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:56 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:49:56 [INFO] fix_disc pass 0: 635 cells changed
-07:49:56 [INFO] fix_disc pass 1: 69 cells changed
-07:49:56 [INFO] fix_disc pass 2: 2 cells changed
-07:49:56 [INFO] fix_disc pass 3: 0 cells changed
-07:49:56 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:49:56 [INFO] Render finished in 325.911099ms
-07:49:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:56 [INFO] Starting render optimization... (65 glyphs)
-07:49:56 [INFO] factor_x: 14, float_x: 14
-07:49:56 [INFO] factor_y: 28, float_y: 28
-07:49:56 [INFO] img width: 360
-07:49:56 [INFO] img height: 504
-07:49:56 [INFO] pw: 1120
-07:49:56 [INFO] ph: 1568
-07:49:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:49:57 [INFO] fix_disc pass 0: 242 cells changed
-07:49:57 [INFO] fix_disc pass 1: 12 cells changed
-07:49:57 [INFO] fix_disc pass 2: 0 cells changed
-07:49:57 [INFO] Render finished in 293.453431ms
-07:49:58 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:49:59 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:49:59 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:49:59 [INFO] Starting render optimization... (65 glyphs)
-07:49:59 [INFO] factor_x: 14, float_x: 14
-07:49:59 [INFO] factor_y: 28, float_y: 28
-07:49:59 [INFO] img width: 360
-07:49:59 [INFO] img height: 504
-07:49:59 [INFO] pw: 1120
-07:49:59 [INFO] ph: 1568
-07:49:59 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:00 [INFO] fix_disc pass 0: 313 cells changed
-07:50:00 [INFO] fix_disc pass 1: 10 cells changed
-07:50:00 [INFO] fix_disc pass 2: 0 cells changed
-07:50:00 [INFO] Render finished in 292.757725ms
-07:50:00 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:00 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:00 [INFO] Starting render optimization... (65 glyphs)
-07:50:00 [INFO] factor_x: 14, float_x: 14
-07:50:00 [INFO] factor_y: 28, float_y: 28
-07:50:00 [INFO] img width: 360
-07:50:00 [INFO] img height: 504
-07:50:00 [INFO] pw: 1120
-07:50:00 [INFO] ph: 1568
-07:50:00 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:00 [INFO] fix_disc pass 0: 364 cells changed
-07:50:00 [INFO] fix_disc pass 1: 16 cells changed
-07:50:00 [INFO] fix_disc pass 2: 0 cells changed
-07:50:00 [INFO] Render finished in 298.507854ms
-07:50:01 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:02 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:02 [INFO] Starting render optimization... (65 glyphs)
-07:50:02 [INFO] factor_x: 14, float_x: 14
-07:50:02 [INFO] factor_y: 28, float_y: 28
-07:50:02 [INFO] img width: 360
-07:50:02 [INFO] img height: 504
-07:50:02 [INFO] pw: 1120
-07:50:02 [INFO] ph: 1568
-07:50:02 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:02 [INFO] fix_disc pass 0: 394 cells changed
-07:50:02 [INFO] fix_disc pass 1: 21 cells changed
-07:50:02 [INFO] fix_disc pass 2: 0 cells changed
-07:50:02 [INFO] Render finished in 291.712434ms
-07:50:02 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:03 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:03 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:03 [INFO] Starting render optimization... (65 glyphs)
-07:50:03 [INFO] factor_x: 14, float_x: 14
-07:50:03 [INFO] factor_y: 28, float_y: 28
-07:50:03 [INFO] img width: 360
-07:50:03 [INFO] img height: 504
-07:50:03 [INFO] pw: 1120
-07:50:03 [INFO] ph: 1568
-07:50:03 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:04 [INFO] fix_disc pass 0: 504 cells changed
-07:50:04 [INFO] fix_disc pass 1: 50 cells changed
-07:50:04 [INFO] fix_disc pass 2: 1 cells changed
-07:50:04 [INFO] fix_disc pass 3: 0 cells changed
-07:50:04 [INFO] Render finished in 312.225952ms
-07:50:05 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:06 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:06 [INFO] Starting render optimization... (65 glyphs)
-07:50:06 [INFO] factor_x: 14, float_x: 14
-07:50:06 [INFO] factor_y: 28, float_y: 28
-07:50:06 [INFO] img width: 360
-07:50:06 [INFO] img height: 504
-07:50:06 [INFO] pw: 1120
-07:50:06 [INFO] ph: 1568
-07:50:06 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:06 [INFO] fix_disc pass 0: 553 cells changed
-07:50:06 [INFO] fix_disc pass 1: 52 cells changed
-07:50:06 [INFO] fix_disc pass 2: 1 cells changed
-07:50:06 [INFO] fix_disc pass 3: 0 cells changed
-07:50:06 [INFO] Render finished in 301.853791ms
-07:50:07 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:07 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:07 [INFO] Starting render optimization... (65 glyphs)
-07:50:07 [INFO] factor_x: 14, float_x: 14
-07:50:07 [INFO] factor_y: 28, float_y: 28
-07:50:07 [INFO] img width: 360
-07:50:07 [INFO] img height: 504
-07:50:07 [INFO] pw: 1120
-07:50:07 [INFO] ph: 1568
-07:50:07 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:08 [INFO] fix_disc pass 0: 591 cells changed
-07:50:08 [INFO] fix_disc pass 1: 63 cells changed
-07:50:08 [INFO] fix_disc pass 2: 1 cells changed
-07:50:08 [INFO] fix_disc pass 3: 0 cells changed
-07:50:08 [INFO] Render finished in 311.363833ms
-07:50:09 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:09 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:09 [INFO] Starting render optimization... (65 glyphs)
-07:50:09 [INFO] factor_x: 14, float_x: 14
-07:50:09 [INFO] factor_y: 28, float_y: 28
-07:50:09 [INFO] img width: 360
-07:50:09 [INFO] img height: 504
-07:50:09 [INFO] pw: 1120
-07:50:09 [INFO] ph: 1568
-07:50:09 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:09 [INFO] fix_disc pass 0: 626 cells changed
-07:50:09 [INFO] fix_disc pass 1: 66 cells changed
-07:50:09 [INFO] fix_disc pass 2: 1 cells changed
-07:50:09 [INFO] fix_disc pass 3: 0 cells changed
-07:50:09 [INFO] Render finished in 317.008053ms
-07:50:10 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:11 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:11 [INFO] Starting render optimization... (65 glyphs)
-07:50:11 [INFO] factor_x: 14, float_x: 14
-07:50:11 [INFO] factor_y: 28, float_y: 28
-07:50:11 [INFO] img width: 360
-07:50:11 [INFO] img height: 504
-07:50:11 [INFO] pw: 1120
-07:50:11 [INFO] ph: 1568
-07:50:11 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:11 [INFO] fix_disc pass 0: 591 cells changed
-07:50:11 [INFO] fix_disc pass 1: 63 cells changed
-07:50:11 [INFO] fix_disc pass 2: 1 cells changed
-07:50:11 [INFO] fix_disc pass 3: 0 cells changed
-07:50:11 [INFO] Render finished in 306.545523ms
-07:50:12 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:12 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:12 [INFO] Starting render optimization... (65 glyphs)
-07:50:12 [INFO] factor_x: 14, float_x: 14
-07:50:12 [INFO] factor_y: 28, float_y: 28
-07:50:12 [INFO] img width: 360
-07:50:12 [INFO] img height: 504
-07:50:12 [INFO] pw: 1120
-07:50:12 [INFO] ph: 1568
-07:50:12 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:12 [INFO] fix_disc pass 0: 626 cells changed
-07:50:12 [INFO] fix_disc pass 1: 66 cells changed
-07:50:12 [INFO] fix_disc pass 2: 1 cells changed
-07:50:12 [INFO] fix_disc pass 3: 0 cells changed
-07:50:12 [INFO] Render finished in 315.101596ms
-07:50:13 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:50:14 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:14 [INFO] Starting render optimization... (65 glyphs)
-07:50:14 [INFO] factor_x: 14, float_x: 14
-07:50:14 [INFO] factor_y: 28, float_y: 28
-07:50:14 [INFO] img width: 360
-07:50:14 [INFO] img height: 504
-07:50:14 [INFO] pw: 1120
-07:50:14 [INFO] ph: 1568
-07:50:14 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:14 [INFO] fix_disc pass 0: 591 cells changed
-07:50:14 [INFO] fix_disc pass 1: 63 cells changed
-07:50:14 [INFO] fix_disc pass 2: 1 cells changed
-07:50:14 [INFO] fix_disc pass 3: 0 cells changed
-07:50:14 [INFO] Render finished in 307.169512ms
-07:50:27 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:27 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:27 [INFO] Starting render optimization... (65 glyphs)
-07:50:27 [INFO] factor_x: 14, float_x: 14
-07:50:27 [INFO] factor_y: 28, float_y: 28
-07:50:27 [INFO] img width: 360
-07:50:27 [INFO] img height: 504
-07:50:27 [INFO] pw: 1120
-07:50:27 [INFO] ph: 1568
-07:50:27 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:27 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:27 [INFO] fix_disc pass 1: 653 cells changed
-07:50:27 [INFO] fix_disc pass 2: 131 cells changed
-07:50:27 [INFO] fix_disc pass 3: 22 cells changed
-07:50:27 [INFO] fix_disc pass 4: 0 cells changed
-07:50:28 [INFO] Render finished in 443.130631ms
-07:50:29 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:29 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:29 [INFO] Starting render optimization... (65 glyphs)
-07:50:29 [INFO] factor_x: 14, float_x: 14
-07:50:29 [INFO] factor_y: 28, float_y: 28
-07:50:29 [INFO] img width: 360
-07:50:29 [INFO] img height: 504
-07:50:29 [INFO] pw: 1120
-07:50:29 [INFO] ph: 1568
-07:50:29 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:29 [INFO] fix_disc pass 0: 591 cells changed
-07:50:29 [INFO] fix_disc pass 1: 63 cells changed
-07:50:29 [INFO] fix_disc pass 2: 1 cells changed
-07:50:29 [INFO] fix_disc pass 3: 0 cells changed
-07:50:29 [INFO] Render finished in 322.16206ms
-07:50:30 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:30 [INFO] Starting render optimization... (65 glyphs)
-07:50:30 [INFO] factor_x: 14, float_x: 14
-07:50:30 [INFO] factor_y: 28, float_y: 28
-07:50:30 [INFO] img width: 360
-07:50:30 [INFO] img height: 504
-07:50:30 [INFO] pw: 1120
-07:50:30 [INFO] ph: 1568
-07:50:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:31 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:31 [INFO] fix_disc pass 1: 653 cells changed
-07:50:31 [INFO] fix_disc pass 2: 131 cells changed
-07:50:31 [INFO] fix_disc pass 3: 22 cells changed
-07:50:31 [INFO] fix_disc pass 4: 0 cells changed
-07:50:31 [INFO] Render finished in 447.385022ms
-07:50:32 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:32 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:32 [INFO] Starting render optimization... (65 glyphs)
-07:50:32 [INFO] factor_x: 14, float_x: 14
-07:50:32 [INFO] factor_y: 28, float_y: 28
-07:50:32 [INFO] img width: 360
-07:50:32 [INFO] img height: 504
-07:50:32 [INFO] pw: 1120
-07:50:32 [INFO] ph: 1568
-07:50:32 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:32 [INFO] fix_disc pass 0: 591 cells changed
-07:50:32 [INFO] fix_disc pass 1: 63 cells changed
-07:50:32 [INFO] fix_disc pass 2: 1 cells changed
-07:50:32 [INFO] fix_disc pass 3: 0 cells changed
-07:50:32 [INFO] Render finished in 314.276595ms
-07:50:35 [INFO] TUI Toggled: tab=1, visual=14, id=NoiseReduction
-07:50:35 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:35 [INFO] Starting render optimization... (65 glyphs)
-07:50:35 [INFO] factor_x: 14, float_x: 14
-07:50:35 [INFO] factor_y: 28, float_y: 28
-07:50:35 [INFO] img width: 360
-07:50:35 [INFO] img height: 504
-07:50:35 [INFO] pw: 1120
-07:50:35 [INFO] ph: 1568
-07:50:35 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:35 [INFO] fix_disc pass 0: 591 cells changed
-07:50:35 [INFO] fix_disc pass 1: 63 cells changed
-07:50:35 [INFO] fix_disc pass 2: 1 cells changed
-07:50:35 [INFO] fix_disc pass 3: 0 cells changed
-07:50:35 [INFO] Render finished in 313.235261ms
-07:50:36 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:37 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:37 [INFO] Starting render optimization... (65 glyphs)
-07:50:37 [INFO] factor_x: 14, float_x: 14
-07:50:37 [INFO] factor_y: 28, float_y: 28
-07:50:37 [INFO] img width: 360
-07:50:37 [INFO] img height: 504
-07:50:37 [INFO] pw: 1120
-07:50:37 [INFO] ph: 1568
-07:50:37 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:37 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:37 [INFO] fix_disc pass 1: 653 cells changed
-07:50:37 [INFO] fix_disc pass 2: 131 cells changed
-07:50:37 [INFO] fix_disc pass 3: 22 cells changed
-07:50:37 [INFO] fix_disc pass 4: 0 cells changed
-07:50:37 [INFO] Render finished in 458.059369ms
-07:50:38 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:38 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:38 [INFO] Starting render optimization... (65 glyphs)
-07:50:38 [INFO] factor_x: 14, float_x: 14
-07:50:38 [INFO] factor_y: 28, float_y: 28
-07:50:38 [INFO] img width: 360
-07:50:38 [INFO] img height: 504
-07:50:38 [INFO] pw: 1120
-07:50:38 [INFO] ph: 1568
-07:50:38 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:39 [INFO] fix_disc pass 0: 591 cells changed
-07:50:39 [INFO] fix_disc pass 1: 63 cells changed
-07:50:39 [INFO] fix_disc pass 2: 1 cells changed
-07:50:39 [INFO] fix_disc pass 3: 0 cells changed
-07:50:39 [INFO] Render finished in 309.548573ms
-07:50:41 [INFO] TUI Toggled: tab=1, visual=15, id=Sharpen
-07:50:41 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:41 [INFO] Starting render optimization... (65 glyphs)
-07:50:41 [INFO] factor_x: 14, float_x: 14
-07:50:41 [INFO] factor_y: 28, float_y: 28
-07:50:41 [INFO] img width: 360
-07:50:41 [INFO] img height: 504
-07:50:41 [INFO] pw: 1120
-07:50:41 [INFO] ph: 1568
-07:50:41 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:42 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:42 [INFO] fix_disc pass 1: 653 cells changed
-07:50:42 [INFO] fix_disc pass 2: 131 cells changed
-07:50:42 [INFO] fix_disc pass 3: 22 cells changed
-07:50:42 [INFO] fix_disc pass 4: 0 cells changed
-07:50:42 [INFO] Render finished in 445.450179ms
-07:50:43 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:43 [INFO] Starting render optimization... (65 glyphs)
-07:50:43 [INFO] factor_x: 14, float_x: 14
-07:50:43 [INFO] factor_y: 28, float_y: 28
-07:50:43 [INFO] img width: 360
-07:50:43 [INFO] img height: 504
-07:50:43 [INFO] pw: 1120
-07:50:43 [INFO] ph: 1568
-07:50:43 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:43 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:43 [INFO] fix_disc pass 1: 653 cells changed
-07:50:43 [INFO] fix_disc pass 2: 131 cells changed
-07:50:43 [INFO] fix_disc pass 3: 22 cells changed
-07:50:43 [INFO] fix_disc pass 4: 0 cells changed
-07:50:43 [INFO] Render finished in 441.283301ms
-07:50:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:45 [INFO] Starting render optimization... (65 glyphs)
-07:50:45 [INFO] factor_x: 14, float_x: 14
-07:50:45 [INFO] factor_y: 28, float_y: 28
-07:50:45 [INFO] img width: 360
-07:50:45 [INFO] img height: 504
-07:50:45 [INFO] pw: 1120
-07:50:45 [INFO] ph: 1568
-07:50:45 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:46 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:46 [INFO] fix_disc pass 1: 653 cells changed
-07:50:46 [INFO] fix_disc pass 2: 131 cells changed
-07:50:46 [INFO] fix_disc pass 3: 22 cells changed
-07:50:46 [INFO] fix_disc pass 4: 0 cells changed
-07:50:46 [INFO] Render finished in 439.751307ms
-07:50:46 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:46 [INFO] Starting render optimization... (65 glyphs)
-07:50:46 [INFO] factor_x: 14, float_x: 14
-07:50:46 [INFO] factor_y: 28, float_y: 28
-07:50:46 [INFO] img width: 360
-07:50:46 [INFO] img height: 504
-07:50:46 [INFO] pw: 1120
-07:50:46 [INFO] ph: 1568
-07:50:46 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:47 [INFO] fix_disc pass 0: 2876 cells changed
-07:50:47 [INFO] fix_disc pass 1: 653 cells changed
-07:50:47 [INFO] fix_disc pass 2: 131 cells changed
-07:50:47 [INFO] fix_disc pass 3: 22 cells changed
-07:50:47 [INFO] fix_disc pass 4: 0 cells changed
-07:50:47 [INFO] Render finished in 445.890715ms
-07:50:48 [INFO] TUI Toggled: tab=1, visual=14, id=Sharpen
-07:50:48 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:48 [INFO] Starting render optimization... (65 glyphs)
-07:50:48 [INFO] factor_x: 14, float_x: 14
-07:50:48 [INFO] factor_y: 28, float_y: 28
-07:50:48 [INFO] img width: 360
-07:50:48 [INFO] img height: 504
-07:50:48 [INFO] pw: 1120
-07:50:48 [INFO] ph: 1568
-07:50:48 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:49 [INFO] fix_disc pass 0: 591 cells changed
-07:50:49 [INFO] fix_disc pass 1: 63 cells changed
-07:50:49 [INFO] fix_disc pass 2: 1 cells changed
-07:50:49 [INFO] fix_disc pass 3: 0 cells changed
-07:50:49 [INFO] Render finished in 313.53939ms
-07:50:49 [INFO] TUI Toggled: tab=1, visual=15, id=NoiseReduction
-07:50:50 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:50 [INFO] Starting render optimization... (65 glyphs)
-07:50:50 [INFO] factor_x: 14, float_x: 14
-07:50:50 [INFO] factor_y: 28, float_y: 28
-07:50:50 [INFO] img width: 360
-07:50:50 [INFO] img height: 504
-07:50:50 [INFO] pw: 1120
-07:50:50 [INFO] ph: 1568
-07:50:50 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:50 [INFO] fix_disc pass 0: 591 cells changed
-07:50:50 [INFO] fix_disc pass 1: 63 cells changed
-07:50:50 [INFO] fix_disc pass 2: 1 cells changed
-07:50:50 [INFO] fix_disc pass 3: 0 cells changed
-07:50:50 [INFO] Render finished in 315.813866ms
-07:50:51 [INFO] TUI Toggled: tab=1, visual=21, id=Lofi
-07:50:51 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:51 [INFO] Starting render optimization... (65 glyphs)
-07:50:51 [INFO] factor_x: 14, float_x: 14
-07:50:51 [INFO] factor_y: 28, float_y: 28
-07:50:51 [INFO] img width: 360
-07:50:51 [INFO] img height: 504
-07:50:51 [INFO] pw: 1120
-07:50:51 [INFO] ph: 1568
-07:50:51 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:52 [INFO] fix_disc pass 0: 582 cells changed
-07:50:52 [INFO] fix_disc pass 1: 62 cells changed
-07:50:52 [INFO] fix_disc pass 2: 1 cells changed
-07:50:52 [INFO] fix_disc pass 3: 0 cells changed
-07:50:52 [INFO] Render finished in 387.331847ms
-07:50:53 [INFO] TUI Toggled: tab=1, visual=21, id=Lofi
-07:50:53 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:53 [INFO] Starting render optimization... (65 glyphs)
-07:50:53 [INFO] factor_x: 14, float_x: 14
-07:50:53 [INFO] factor_y: 28, float_y: 28
-07:50:53 [INFO] img width: 360
-07:50:53 [INFO] img height: 504
-07:50:53 [INFO] pw: 1120
-07:50:53 [INFO] ph: 1568
-07:50:53 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:53 [INFO] fix_disc pass 0: 591 cells changed
-07:50:53 [INFO] fix_disc pass 1: 63 cells changed
-07:50:53 [INFO] fix_disc pass 2: 1 cells changed
-07:50:53 [INFO] fix_disc pass 3: 0 cells changed
-07:50:54 [INFO] Render finished in 343.844546ms
-07:50:54 [INFO] TUI Toggled: tab=1, visual=21, id=Lofi
-07:50:55 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:55 [INFO] Starting render optimization... (65 glyphs)
-07:50:55 [INFO] factor_x: 14, float_x: 14
-07:50:55 [INFO] factor_y: 28, float_y: 28
-07:50:55 [INFO] img width: 360
-07:50:55 [INFO] img height: 504
-07:50:55 [INFO] pw: 1120
-07:50:55 [INFO] ph: 1568
-07:50:55 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:55 [INFO] fix_disc pass 0: 582 cells changed
-07:50:55 [INFO] fix_disc pass 1: 62 cells changed
-07:50:55 [INFO] fix_disc pass 2: 1 cells changed
-07:50:55 [INFO] fix_disc pass 3: 0 cells changed
-07:50:55 [INFO] Render finished in 380.595578ms
-07:50:58 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:50:58 [INFO] Starting render optimization... (65 glyphs)
-07:50:58 [INFO] factor_x: 14, float_x: 14
-07:50:58 [INFO] factor_y: 28, float_y: 28
-07:50:58 [INFO] img width: 360
-07:50:58 [INFO] img height: 504
-07:50:58 [INFO] pw: 1120
-07:50:58 [INFO] ph: 1568
-07:50:58 [INFO] Final target dimensions (pixels): 1120x1568
-07:50:59 [INFO] fix_disc pass 0: 582 cells changed
-07:50:59 [INFO] fix_disc pass 1: 62 cells changed
-07:50:59 [INFO] fix_disc pass 2: 1 cells changed
-07:50:59 [INFO] fix_disc pass 3: 0 cells changed
-07:50:59 [INFO] Render finished in 375.801273ms
-07:51:00 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:00 [INFO] Starting render optimization... (65 glyphs)
-07:51:00 [INFO] factor_x: 14, float_x: 14
-07:51:00 [INFO] factor_y: 28, float_y: 28
-07:51:00 [INFO] img width: 360
-07:51:00 [INFO] img height: 504
-07:51:00 [INFO] pw: 1120
-07:51:00 [INFO] ph: 1568
-07:51:00 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:00 [INFO] fix_disc pass 0: 582 cells changed
-07:51:00 [INFO] fix_disc pass 1: 65 cells changed
-07:51:00 [INFO] fix_disc pass 2: 2 cells changed
-07:51:00 [INFO] fix_disc pass 3: 0 cells changed
-07:51:00 [INFO] Render finished in 383.307756ms
-07:51:02 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:02 [INFO] Starting render optimization... (65 glyphs)
-07:51:02 [INFO] factor_x: 14, float_x: 14
-07:51:02 [INFO] factor_y: 28, float_y: 28
-07:51:02 [INFO] img width: 360
-07:51:02 [INFO] img height: 504
-07:51:02 [INFO] pw: 1120
-07:51:02 [INFO] ph: 1568
-07:51:02 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:02 [INFO] fix_disc pass 0: 582 cells changed
-07:51:02 [INFO] fix_disc pass 1: 62 cells changed
-07:51:02 [INFO] fix_disc pass 2: 1 cells changed
-07:51:02 [INFO] fix_disc pass 3: 0 cells changed
-07:51:02 [INFO] Render finished in 379.216429ms
-07:51:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:03 [INFO] Starting render optimization... (65 glyphs)
-07:51:03 [INFO] factor_x: 14, float_x: 14
-07:51:03 [INFO] factor_y: 28, float_y: 28
-07:51:03 [INFO] img width: 360
-07:51:03 [INFO] img height: 504
-07:51:03 [INFO] pw: 1120
-07:51:03 [INFO] ph: 1568
-07:51:03 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:03 [INFO] fix_disc pass 0: 582 cells changed
-07:51:03 [INFO] fix_disc pass 1: 65 cells changed
-07:51:03 [INFO] fix_disc pass 2: 2 cells changed
-07:51:03 [INFO] fix_disc pass 3: 0 cells changed
-07:51:03 [INFO] Render finished in 398.846228ms
-07:51:04 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:04 [INFO] Starting render optimization... (65 glyphs)
-07:51:04 [INFO] factor_x: 14, float_x: 14
-07:51:04 [INFO] factor_y: 28, float_y: 28
-07:51:04 [INFO] img width: 360
-07:51:04 [INFO] img height: 504
-07:51:04 [INFO] pw: 1120
-07:51:04 [INFO] ph: 1568
-07:51:04 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:05 [INFO] fix_disc pass 0: 582 cells changed
-07:51:05 [INFO] fix_disc pass 1: 62 cells changed
-07:51:05 [INFO] fix_disc pass 2: 1 cells changed
-07:51:05 [INFO] fix_disc pass 3: 0 cells changed
-07:51:05 [INFO] Render finished in 384.048605ms
-07:51:08 [INFO] TUI Toggled: tab=1, visual=12, id=Emboss
-07:51:08 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:08 [INFO] Starting render optimization... (65 glyphs)
-07:51:08 [INFO] factor_x: 14, float_x: 14
-07:51:08 [INFO] factor_y: 28, float_y: 28
-07:51:08 [INFO] img width: 360
-07:51:08 [INFO] img height: 504
-07:51:08 [INFO] pw: 1120
-07:51:08 [INFO] ph: 1568
-07:51:08 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:09 [INFO] fix_disc pass 0: 2245 cells changed
-07:51:09 [INFO] fix_disc pass 1: 370 cells changed
-07:51:09 [INFO] fix_disc pass 2: 43 cells changed
-07:51:09 [INFO] fix_disc pass 3: 3 cells changed
-07:51:09 [INFO] fix_disc pass 4: 0 cells changed
-07:51:09 [INFO] Render finished in 536.572667ms
-07:51:11 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:11 [INFO] Starting render optimization... (65 glyphs)
-07:51:11 [INFO] factor_x: 14, float_x: 14
-07:51:11 [INFO] factor_y: 28, float_y: 28
-07:51:11 [INFO] img width: 360
-07:51:11 [INFO] img height: 504
-07:51:11 [INFO] pw: 1120
-07:51:11 [INFO] ph: 1568
-07:51:11 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:11 [INFO] fix_disc pass 0: 2269 cells changed
-07:51:11 [INFO] fix_disc pass 1: 396 cells changed
-07:51:11 [INFO] fix_disc pass 2: 62 cells changed
-07:51:11 [INFO] fix_disc pass 3: 12 cells changed
-07:51:11 [INFO] fix_disc pass 4: 0 cells changed
-07:51:11 [INFO] Render finished in 519.145029ms
-07:51:13 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:13 [INFO] Starting render optimization... (65 glyphs)
-07:51:13 [INFO] factor_x: 14, float_x: 14
-07:51:13 [INFO] factor_y: 28, float_y: 28
-07:51:13 [INFO] img width: 360
-07:51:13 [INFO] img height: 504
-07:51:13 [INFO] pw: 1120
-07:51:13 [INFO] ph: 1568
-07:51:13 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:13 [INFO] fix_disc pass 0: 2253 cells changed
-07:51:13 [INFO] fix_disc pass 1: 383 cells changed
-07:51:13 [INFO] fix_disc pass 2: 47 cells changed
-07:51:13 [INFO] fix_disc pass 3: 7 cells changed
-07:51:13 [INFO] fix_disc pass 4: 0 cells changed
-07:51:13 [INFO] Render finished in 526.793448ms
-07:51:14 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:14 [INFO] Starting render optimization... (65 glyphs)
-07:51:14 [INFO] factor_x: 14, float_x: 14
-07:51:14 [INFO] factor_y: 28, float_y: 28
-07:51:14 [INFO] img width: 360
-07:51:14 [INFO] img height: 504
-07:51:14 [INFO] pw: 1120
-07:51:14 [INFO] ph: 1568
-07:51:14 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:15 [INFO] fix_disc pass 0: 2245 cells changed
-07:51:15 [INFO] fix_disc pass 1: 370 cells changed
-07:51:15 [INFO] fix_disc pass 2: 43 cells changed
-07:51:15 [INFO] fix_disc pass 3: 3 cells changed
-07:51:15 [INFO] fix_disc pass 4: 0 cells changed
-07:51:15 [INFO] Render finished in 520.584438ms
-07:51:16 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:16 [INFO] Starting render optimization... (65 glyphs)
-07:51:16 [INFO] factor_x: 14, float_x: 14
-07:51:16 [INFO] factor_y: 28, float_y: 28
-07:51:16 [INFO] img width: 360
-07:51:16 [INFO] img height: 504
-07:51:16 [INFO] pw: 1120
-07:51:16 [INFO] ph: 1568
-07:51:16 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:16 [INFO] fix_disc pass 0: 2245 cells changed
-07:51:16 [INFO] fix_disc pass 1: 370 cells changed
-07:51:16 [INFO] fix_disc pass 2: 43 cells changed
-07:51:16 [INFO] fix_disc pass 3: 3 cells changed
-07:51:16 [INFO] fix_disc pass 4: 0 cells changed
-07:51:16 [INFO] Render finished in 513.343182ms
-07:51:17 [INFO] TUI Toggled: tab=1, visual=9, id=Emboss
-07:51:17 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:17 [INFO] Starting render optimization... (65 glyphs)
-07:51:17 [INFO] factor_x: 14, float_x: 14
-07:51:17 [INFO] factor_y: 28, float_y: 28
-07:51:17 [INFO] img width: 360
-07:51:17 [INFO] img height: 504
-07:51:17 [INFO] pw: 1120
-07:51:17 [INFO] ph: 1568
-07:51:17 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:18 [INFO] fix_disc pass 0: 582 cells changed
-07:51:18 [INFO] fix_disc pass 1: 62 cells changed
-07:51:18 [INFO] fix_disc pass 2: 1 cells changed
-07:51:18 [INFO] fix_disc pass 3: 0 cells changed
-07:51:18 [INFO] Render finished in 381.818919ms
-07:51:21 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:51:22 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:22 [INFO] Starting render optimization... (65 glyphs)
-07:51:22 [INFO] factor_x: 14, float_x: 14
-07:51:22 [INFO] factor_y: 28, float_y: 28
-07:51:22 [INFO] img width: 360
-07:51:22 [INFO] img height: 504
-07:51:22 [INFO] pw: 1120
-07:51:22 [INFO] ph: 1568
-07:51:22 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:22 [INFO] fix_disc pass 0: 599 cells changed
-07:51:22 [INFO] fix_disc pass 1: 72 cells changed
-07:51:22 [INFO] fix_disc pass 2: 4 cells changed
-07:51:22 [INFO] fix_disc pass 3: 0 cells changed
-07:51:22 [INFO] Render finished in 352.505582ms
-07:51:23 [INFO] TUI Adjusted: tab=1, ctrl=0, id=Dither
-07:51:23 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:23 [INFO] Starting render optimization... (65 glyphs)
-07:51:23 [INFO] factor_x: 14, float_x: 14
-07:51:23 [INFO] factor_y: 28, float_y: 28
-07:51:23 [INFO] img width: 360
-07:51:23 [INFO] img height: 504
-07:51:23 [INFO] pw: 1120
-07:51:23 [INFO] ph: 1568
-07:51:23 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:23 [INFO] fix_disc pass 0: 599 cells changed
-07:51:23 [INFO] fix_disc pass 1: 72 cells changed
-07:51:23 [INFO] fix_disc pass 2: 4 cells changed
-07:51:23 [INFO] fix_disc pass 3: 0 cells changed
-07:51:23 [INFO] Render finished in 356.448288ms
-07:51:25 [INFO] TUI Toggled: tab=1, visual=9, id=Emboss
-07:51:26 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:26 [INFO] Starting render optimization... (65 glyphs)
-07:51:26 [INFO] factor_x: 14, float_x: 14
-07:51:26 [INFO] factor_y: 28, float_y: 28
-07:51:26 [INFO] img width: 360
-07:51:26 [INFO] img height: 504
-07:51:26 [INFO] pw: 1120
-07:51:26 [INFO] ph: 1568
-07:51:26 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:26 [INFO] fix_disc pass 0: 624 cells changed
-07:51:26 [INFO] fix_disc pass 1: 79 cells changed
-07:51:26 [INFO] fix_disc pass 2: 7 cells changed
-07:51:26 [INFO] fix_disc pass 3: 0 cells changed
-07:51:26 [INFO] Render finished in 423.569989ms
-07:51:28 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:28 [INFO] Starting render optimization... (65 glyphs)
-07:51:28 [INFO] factor_x: 14, float_x: 14
-07:51:28 [INFO] factor_y: 28, float_y: 28
-07:51:28 [INFO] img width: 360
-07:51:28 [INFO] img height: 504
-07:51:28 [INFO] pw: 1120
-07:51:28 [INFO] ph: 1568
-07:51:28 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:28 [INFO] fix_disc pass 0: 623 cells changed
-07:51:28 [INFO] fix_disc pass 1: 110 cells changed
-07:51:28 [INFO] fix_disc pass 2: 5 cells changed
-07:51:28 [INFO] fix_disc pass 3: 2 cells changed
-07:51:28 [INFO] fix_disc pass 4: 0 cells changed
-07:51:28 [INFO] Render finished in 415.533682ms
-07:51:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:30 [INFO] Starting render optimization... (65 glyphs)
-07:51:30 [INFO] factor_x: 14, float_x: 14
-07:51:30 [INFO] factor_y: 28, float_y: 28
-07:51:30 [INFO] img width: 360
-07:51:30 [INFO] img height: 504
-07:51:30 [INFO] pw: 1120
-07:51:30 [INFO] ph: 1568
-07:51:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:30 [INFO] TUI Toggled: tab=1, visual=10, id=Emboss
-07:51:30 [INFO] fix_disc pass 0: 624 cells changed
-07:51:30 [INFO] fix_disc pass 1: 79 cells changed
-07:51:30 [INFO] fix_disc pass 2: 7 cells changed
-07:51:30 [INFO] fix_disc pass 3: 0 cells changed
-07:51:30 [INFO] Render finished in 415.860124ms
-07:51:31 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:31 [INFO] Starting render optimization... (65 glyphs)
-07:51:31 [INFO] factor_x: 14, float_x: 14
-07:51:31 [INFO] factor_y: 28, float_y: 28
-07:51:31 [INFO] img width: 360
-07:51:31 [INFO] img height: 504
-07:51:31 [INFO] pw: 1120
-07:51:31 [INFO] ph: 1568
-07:51:31 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:31 [INFO] fix_disc pass 0: 599 cells changed
-07:51:31 [INFO] fix_disc pass 1: 72 cells changed
-07:51:31 [INFO] fix_disc pass 2: 4 cells changed
-07:51:31 [INFO] fix_disc pass 3: 0 cells changed
-07:51:31 [INFO] Render finished in 350.968657ms
-07:51:34 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:34 [INFO] Starting render optimization... (65 glyphs)
-07:51:34 [INFO] factor_x: 14, float_x: 14
-07:51:34 [INFO] factor_y: 28, float_y: 28
-07:51:34 [INFO] img width: 360
-07:51:34 [INFO] img height: 504
-07:51:34 [INFO] pw: 1120
-07:51:34 [INFO] ph: 1568
-07:51:34 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:34 [INFO] fix_disc pass 0: 599 cells changed
-07:51:34 [INFO] fix_disc pass 1: 71 cells changed
-07:51:34 [INFO] fix_disc pass 2: 4 cells changed
-07:51:34 [INFO] fix_disc pass 3: 0 cells changed
-07:51:34 [INFO] Render finished in 354.689998ms
-07:51:42 [INFO] TUI Toggled: tab=1, visual=17, id=Cali
-07:51:42 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:42 [INFO] Starting render optimization... (65 glyphs)
-07:51:42 [INFO] factor_x: 14, float_x: 14
-07:51:42 [INFO] factor_y: 28, float_y: 28
-07:51:42 [INFO] img width: 360
-07:51:42 [INFO] img height: 504
-07:51:42 [INFO] pw: 1120
-07:51:42 [INFO] ph: 1568
-07:51:42 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:43 [INFO] fix_disc pass 0: 607 cells changed
-07:51:43 [INFO] fix_disc pass 1: 72 cells changed
-07:51:43 [INFO] fix_disc pass 2: 6 cells changed
-07:51:43 [INFO] fix_disc pass 3: 0 cells changed
-07:51:43 [INFO] Render finished in 374.106345ms
-07:51:43 [INFO] TUI Toggled: tab=1, visual=17, id=Cali
-07:51:44 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:44 [INFO] Starting render optimization... (65 glyphs)
-07:51:44 [INFO] factor_x: 14, float_x: 14
-07:51:44 [INFO] factor_y: 28, float_y: 28
-07:51:44 [INFO] img width: 360
-07:51:44 [INFO] img height: 504
-07:51:44 [INFO] pw: 1120
-07:51:44 [INFO] ph: 1568
-07:51:44 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:44 [INFO] fix_disc pass 0: 599 cells changed
-07:51:44 [INFO] fix_disc pass 1: 71 cells changed
-07:51:44 [INFO] fix_disc pass 2: 4 cells changed
-07:51:44 [INFO] fix_disc pass 3: 0 cells changed
-07:51:44 [INFO] Render finished in 352.921178ms
-07:51:45 [INFO] TUI Toggled: tab=1, visual=18, id=Dramatic
-07:51:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:45 [INFO] Starting render optimization... (65 glyphs)
-07:51:45 [INFO] factor_x: 14, float_x: 14
-07:51:45 [INFO] factor_y: 28, float_y: 28
-07:51:45 [INFO] img width: 360
-07:51:45 [INFO] img height: 504
-07:51:45 [INFO] pw: 1120
-07:51:45 [INFO] ph: 1568
-07:51:45 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:46 [INFO] fix_disc pass 0: 604 cells changed
-07:51:46 [INFO] fix_disc pass 1: 68 cells changed
-07:51:46 [INFO] fix_disc pass 2: 2 cells changed
-07:51:46 [INFO] fix_disc pass 3: 0 cells changed
-07:51:46 [INFO] Render finished in 353.039409ms
-07:51:46 [INFO] TUI Toggled: tab=1, visual=18, id=Dramatic
-07:51:47 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:47 [INFO] Starting render optimization... (65 glyphs)
-07:51:47 [INFO] factor_x: 14, float_x: 14
-07:51:47 [INFO] factor_y: 28, float_y: 28
-07:51:47 [INFO] img width: 360
-07:51:47 [INFO] img height: 504
-07:51:47 [INFO] pw: 1120
-07:51:47 [INFO] ph: 1568
-07:51:47 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:47 [INFO] fix_disc pass 0: 599 cells changed
-07:51:47 [INFO] fix_disc pass 1: 71 cells changed
-07:51:47 [INFO] fix_disc pass 2: 4 cells changed
-07:51:47 [INFO] fix_disc pass 3: 0 cells changed
-07:51:47 [INFO] Render finished in 344.189105ms
-07:51:47 [INFO] TUI Toggled: tab=1, visual=19, id=Firenze
-07:51:48 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:48 [INFO] Starting render optimization... (65 glyphs)
-07:51:48 [INFO] factor_x: 14, float_x: 14
-07:51:48 [INFO] factor_y: 28, float_y: 28
-07:51:48 [INFO] img width: 360
-07:51:48 [INFO] img height: 504
-07:51:48 [INFO] pw: 1120
-07:51:48 [INFO] ph: 1568
-07:51:48 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:48 [INFO] fix_disc pass 0: 603 cells changed
-07:51:48 [INFO] fix_disc pass 1: 73 cells changed
-07:51:48 [INFO] fix_disc pass 2: 2 cells changed
-07:51:48 [INFO] fix_disc pass 3: 0 cells changed
-07:51:48 [INFO] Render finished in 383.350799ms
-07:51:49 [INFO] TUI Toggled: tab=1, visual=19, id=Firenze
-07:51:50 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:50 [INFO] Starting render optimization... (65 glyphs)
-07:51:50 [INFO] factor_x: 14, float_x: 14
-07:51:50 [INFO] factor_y: 28, float_y: 28
-07:51:50 [INFO] img width: 360
-07:51:50 [INFO] img height: 504
-07:51:50 [INFO] pw: 1120
-07:51:50 [INFO] ph: 1568
-07:51:50 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:50 [INFO] fix_disc pass 0: 599 cells changed
-07:51:50 [INFO] fix_disc pass 1: 71 cells changed
-07:51:50 [INFO] fix_disc pass 2: 4 cells changed
-07:51:50 [INFO] fix_disc pass 3: 0 cells changed
-07:51:50 [INFO] Render finished in 346.895231ms
-07:51:51 [INFO] TUI Toggled: tab=1, visual=20, id=Golden
-07:51:51 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:51 [INFO] Starting render optimization... (65 glyphs)
-07:51:51 [INFO] factor_x: 14, float_x: 14
-07:51:51 [INFO] factor_y: 28, float_y: 28
-07:51:51 [INFO] img width: 360
-07:51:51 [INFO] img height: 504
-07:51:51 [INFO] pw: 1120
-07:51:51 [INFO] ph: 1568
-07:51:51 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:51 [INFO] fix_disc pass 0: 576 cells changed
-07:51:51 [INFO] fix_disc pass 1: 56 cells changed
-07:51:51 [INFO] fix_disc pass 2: 2 cells changed
-07:51:51 [INFO] fix_disc pass 3: 0 cells changed
-07:51:51 [INFO] Render finished in 401.513725ms
-07:51:53 [INFO] TUI Toggled: tab=1, visual=20, id=Golden
-07:51:54 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:54 [INFO] Starting render optimization... (65 glyphs)
-07:51:54 [INFO] factor_x: 14, float_x: 14
-07:51:54 [INFO] factor_y: 28, float_y: 28
-07:51:54 [INFO] img width: 360
-07:51:54 [INFO] img height: 504
-07:51:54 [INFO] pw: 1120
-07:51:54 [INFO] ph: 1568
-07:51:54 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:54 [INFO] fix_disc pass 0: 599 cells changed
-07:51:54 [INFO] fix_disc pass 1: 71 cells changed
-07:51:54 [INFO] fix_disc pass 2: 4 cells changed
-07:51:54 [INFO] fix_disc pass 3: 0 cells changed
-07:51:54 [INFO] Render finished in 350.88694ms
-07:51:55 [INFO] TUI Toggled: tab=1, visual=26, id=FrostedGlass
-07:51:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:56 [INFO] Starting render optimization... (65 glyphs)
-07:51:56 [INFO] factor_x: 14, float_x: 14
-07:51:56 [INFO] factor_y: 28, float_y: 28
-07:51:56 [INFO] img width: 360
-07:51:56 [INFO] img height: 504
-07:51:56 [INFO] pw: 1120
-07:51:56 [INFO] ph: 1568
-07:51:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:56 [INFO] fix_disc pass 0: 2118 cells changed
-07:51:56 [INFO] fix_disc pass 1: 242 cells changed
-07:51:56 [INFO] fix_disc pass 2: 41 cells changed
-07:51:56 [INFO] fix_disc pass 3: 5 cells changed
-07:51:56 [INFO] fix_disc pass 4: 2 cells changed
-07:51:56 [INFO] fix_disc pass 5: 0 cells changed
-07:51:56 [INFO] Render finished in 696.154717ms
-07:51:57 [INFO] TUI Toggled: tab=1, visual=26, id=FrostedGlass
-07:51:58 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:51:58 [INFO] Starting render optimization... (65 glyphs)
-07:51:58 [INFO] factor_x: 14, float_x: 14
-07:51:58 [INFO] factor_y: 28, float_y: 28
-07:51:58 [INFO] img width: 360
-07:51:58 [INFO] img height: 504
-07:51:58 [INFO] pw: 1120
-07:51:58 [INFO] ph: 1568
-07:51:58 [INFO] Final target dimensions (pixels): 1120x1568
-07:51:58 [INFO] fix_disc pass 0: 599 cells changed
-07:51:58 [INFO] fix_disc pass 1: 71 cells changed
-07:51:58 [INFO] fix_disc pass 2: 4 cells changed
-07:51:58 [INFO] fix_disc pass 3: 0 cells changed
-07:51:58 [INFO] Render finished in 347.367386ms
-07:51:59 [INFO] TUI Toggled: tab=1, visual=27, id=Solarize
-07:52:00 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:00 [INFO] Starting render optimization... (65 glyphs)
-07:52:00 [INFO] factor_x: 14, float_x: 14
-07:52:00 [INFO] factor_y: 28, float_y: 28
-07:52:00 [INFO] img width: 360
-07:52:00 [INFO] img height: 504
-07:52:00 [INFO] pw: 1120
-07:52:00 [INFO] ph: 1568
-07:52:00 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:00 [INFO] fix_disc pass 0: 619 cells changed
-07:52:00 [INFO] fix_disc pass 1: 71 cells changed
-07:52:00 [INFO] fix_disc pass 2: 4 cells changed
-07:52:00 [INFO] fix_disc pass 3: 0 cells changed
-07:52:00 [INFO] Render finished in 371.015975ms
-07:52:01 [INFO] TUI Toggled: tab=1, visual=27, id=Solarize
-07:52:02 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:02 [INFO] Starting render optimization... (65 glyphs)
-07:52:02 [INFO] factor_x: 14, float_x: 14
-07:52:02 [INFO] factor_y: 28, float_y: 28
-07:52:02 [INFO] img width: 360
-07:52:02 [INFO] img height: 504
-07:52:02 [INFO] pw: 1120
-07:52:02 [INFO] ph: 1568
-07:52:02 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:02 [INFO] fix_disc pass 0: 599 cells changed
-07:52:02 [INFO] fix_disc pass 1: 71 cells changed
-07:52:02 [INFO] fix_disc pass 2: 4 cells changed
-07:52:02 [INFO] fix_disc pass 3: 0 cells changed
-07:52:02 [INFO] Render finished in 350.415414ms
-07:52:02 [INFO] TUI Toggled: tab=1, visual=28, id=EdgeDetection
-07:52:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:03 [INFO] Starting render optimization... (65 glyphs)
-07:52:03 [INFO] factor_x: 14, float_x: 14
-07:52:03 [INFO] factor_y: 28, float_y: 28
-07:52:03 [INFO] img width: 360
-07:52:03 [INFO] img height: 504
-07:52:03 [INFO] pw: 1120
-07:52:03 [INFO] ph: 1568
-07:52:03 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:03 [INFO] fix_disc pass 0: 97 cells changed
-07:52:03 [INFO] fix_disc pass 1: 0 cells changed
-07:52:03 [INFO] Render finished in 384.883822ms
-07:52:04 [INFO] TUI Toggled: tab=1, visual=28, id=EdgeDetection
-07:52:05 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:05 [INFO] Starting render optimization... (65 glyphs)
-07:52:05 [INFO] factor_x: 14, float_x: 14
-07:52:05 [INFO] factor_y: 28, float_y: 28
-07:52:05 [INFO] img width: 360
-07:52:05 [INFO] img height: 504
-07:52:05 [INFO] pw: 1120
-07:52:05 [INFO] ph: 1568
-07:52:05 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:05 [INFO] fix_disc pass 0: 599 cells changed
-07:52:05 [INFO] fix_disc pass 1: 71 cells changed
-07:52:05 [INFO] fix_disc pass 2: 4 cells changed
-07:52:05 [INFO] fix_disc pass 3: 0 cells changed
-07:52:05 [INFO] Render finished in 343.509748ms
-07:52:07 [INFO] TUI Toggled: tab=1, visual=6, id=Oil
-07:52:08 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:08 [INFO] Starting render optimization... (65 glyphs)
-07:52:08 [INFO] factor_x: 14, float_x: 14
-07:52:08 [INFO] factor_y: 28, float_y: 28
-07:52:08 [INFO] img width: 360
-07:52:08 [INFO] img height: 504
-07:52:08 [INFO] pw: 1120
-07:52:08 [INFO] ph: 1568
-07:52:08 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:09 [INFO] fix_disc pass 0: 575 cells changed
-07:52:09 [INFO] fix_disc pass 1: 55 cells changed
-07:52:09 [INFO] fix_disc pass 2: 2 cells changed
-07:52:09 [INFO] fix_disc pass 3: 0 cells changed
-07:52:09 [INFO] Render finished in 1.146448825s
-07:52:10 [INFO] TUI Toggled: tab=1, visual=6, id=Oil
-07:52:11 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:11 [INFO] Starting render optimization... (65 glyphs)
-07:52:11 [INFO] factor_x: 14, float_x: 14
-07:52:11 [INFO] factor_y: 28, float_y: 28
-07:52:11 [INFO] img width: 360
-07:52:11 [INFO] img height: 504
-07:52:11 [INFO] pw: 1120
-07:52:11 [INFO] ph: 1568
-07:52:11 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:11 [INFO] fix_disc pass 0: 599 cells changed
-07:52:11 [INFO] fix_disc pass 1: 71 cells changed
-07:52:11 [INFO] fix_disc pass 2: 4 cells changed
-07:52:11 [INFO] fix_disc pass 3: 0 cells changed
-07:52:11 [INFO] Render finished in 342.456651ms
-07:52:17 [INFO] TUI Toggled: tab=0, visual=3, id=NoGlyphInvert
-07:52:18 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:18 [INFO] Starting render optimization... (65 glyphs)
-07:52:18 [INFO] factor_x: 14, float_x: 14
-07:52:18 [INFO] factor_y: 28, float_y: 28
-07:52:18 [INFO] img width: 360
-07:52:18 [INFO] img height: 504
-07:52:18 [INFO] pw: 1120
-07:52:18 [INFO] ph: 1568
-07:52:18 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:18 [INFO] fix_disc pass 0: 551 cells changed
-07:52:18 [INFO] fix_disc pass 1: 59 cells changed
-07:52:18 [INFO] fix_disc pass 2: 7 cells changed
-07:52:18 [INFO] fix_disc pass 3: 0 cells changed
-07:52:18 [INFO] Render finished in 302.647121ms
-07:52:18 [INFO] TUI Toggled: tab=0, visual=3, id=NoGlyphInvert
-07:52:19 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:19 [INFO] Starting render optimization... (65 glyphs)
-07:52:19 [INFO] factor_x: 14, float_x: 14
-07:52:19 [INFO] factor_y: 28, float_y: 28
-07:52:19 [INFO] img width: 360
-07:52:19 [INFO] img height: 504
-07:52:19 [INFO] pw: 1120
-07:52:19 [INFO] ph: 1568
-07:52:19 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:19 [INFO] fix_disc pass 0: 599 cells changed
-07:52:19 [INFO] fix_disc pass 1: 71 cells changed
-07:52:19 [INFO] fix_disc pass 2: 4 cells changed
-07:52:19 [INFO] fix_disc pass 3: 0 cells changed
-07:52:19 [INFO] Render finished in 370.08791ms
-07:52:20 [INFO] TUI Toggled: tab=0, visual=3, id=NoGlyphInvert
-07:52:21 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:21 [INFO] Starting render optimization... (65 glyphs)
-07:52:21 [INFO] factor_x: 14, float_x: 14
-07:52:21 [INFO] factor_y: 28, float_y: 28
-07:52:21 [INFO] img width: 360
-07:52:21 [INFO] img height: 504
-07:52:21 [INFO] pw: 1120
-07:52:21 [INFO] ph: 1568
-07:52:21 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:21 [INFO] fix_disc pass 0: 551 cells changed
-07:52:21 [INFO] fix_disc pass 1: 59 cells changed
-07:52:21 [INFO] fix_disc pass 2: 7 cells changed
-07:52:21 [INFO] fix_disc pass 3: 0 cells changed
-07:52:21 [INFO] Render finished in 314.809459ms
-07:52:26 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:27 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:27 [INFO] Starting render optimization... (65 glyphs)
-07:52:27 [INFO] factor_x: 14, float_x: 14
-07:52:27 [INFO] factor_y: 28, float_y: 28
-07:52:27 [INFO] img width: 360
-07:52:27 [INFO] img height: 504
-07:52:27 [INFO] pw: 1120
-07:52:27 [INFO] ph: 1568
-07:52:27 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:27 [INFO] fix_disc pass 0: 579 cells changed
-07:52:27 [INFO] fix_disc pass 1: 66 cells changed
-07:52:27 [INFO] fix_disc pass 2: 4 cells changed
-07:52:27 [INFO] fix_disc pass 3: 0 cells changed
-07:52:27 [INFO] Render finished in 314.909797ms
-07:52:28 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:29 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:29 [INFO] Starting render optimization... (65 glyphs)
-07:52:29 [INFO] factor_x: 14, float_x: 14
-07:52:29 [INFO] factor_y: 28, float_y: 28
-07:52:29 [INFO] img width: 360
-07:52:29 [INFO] img height: 504
-07:52:29 [INFO] pw: 1120
-07:52:29 [INFO] ph: 1568
-07:52:29 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:29 [INFO] fix_disc pass 0: 551 cells changed
-07:52:29 [INFO] fix_disc pass 1: 59 cells changed
-07:52:29 [INFO] fix_disc pass 2: 7 cells changed
-07:52:29 [INFO] fix_disc pass 3: 0 cells changed
-07:52:29 [INFO] Render finished in 295.944936ms
-07:52:29 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:30 [INFO] Starting render optimization... (65 glyphs)
-07:52:30 [INFO] factor_x: 14, float_x: 14
-07:52:30 [INFO] factor_y: 28, float_y: 28
-07:52:30 [INFO] img width: 360
-07:52:30 [INFO] img height: 504
-07:52:30 [INFO] pw: 1120
-07:52:30 [INFO] ph: 1568
-07:52:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:30 [INFO] fix_disc pass 0: 579 cells changed
-07:52:30 [INFO] fix_disc pass 1: 66 cells changed
-07:52:30 [INFO] fix_disc pass 2: 4 cells changed
-07:52:30 [INFO] fix_disc pass 3: 0 cells changed
-07:52:30 [INFO] Render finished in 298.684015ms
-07:52:31 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:31 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:31 [INFO] Starting render optimization... (65 glyphs)
-07:52:31 [INFO] factor_x: 14, float_x: 14
-07:52:31 [INFO] factor_y: 28, float_y: 28
-07:52:31 [INFO] img width: 360
-07:52:31 [INFO] img height: 504
-07:52:31 [INFO] pw: 1120
-07:52:31 [INFO] ph: 1568
-07:52:31 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:31 [INFO] fix_disc pass 0: 551 cells changed
-07:52:31 [INFO] fix_disc pass 1: 59 cells changed
-07:52:31 [INFO] fix_disc pass 2: 7 cells changed
-07:52:31 [INFO] fix_disc pass 3: 0 cells changed
-07:52:31 [INFO] Render finished in 301.530846ms
-07:52:32 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:33 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:33 [INFO] Starting render optimization... (65 glyphs)
-07:52:33 [INFO] factor_x: 14, float_x: 14
-07:52:33 [INFO] factor_y: 28, float_y: 28
-07:52:33 [INFO] img width: 360
-07:52:33 [INFO] img height: 504
-07:52:33 [INFO] pw: 1120
-07:52:33 [INFO] ph: 1568
-07:52:33 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:33 [INFO] fix_disc pass 0: 513 cells changed
-07:52:33 [INFO] fix_disc pass 1: 51 cells changed
-07:52:33 [INFO] fix_disc pass 2: 5 cells changed
-07:52:33 [INFO] fix_disc pass 3: 0 cells changed
-07:52:33 [INFO] Render finished in 299.856694ms
-07:52:34 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:34 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:34 [INFO] Starting render optimization... (65 glyphs)
-07:52:34 [INFO] factor_x: 14, float_x: 14
-07:52:34 [INFO] factor_y: 28, float_y: 28
-07:52:34 [INFO] img width: 360
-07:52:34 [INFO] img height: 504
-07:52:34 [INFO] pw: 1120
-07:52:34 [INFO] ph: 1568
-07:52:34 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:35 [INFO] fix_disc pass 0: 551 cells changed
-07:52:35 [INFO] fix_disc pass 1: 59 cells changed
-07:52:35 [INFO] fix_disc pass 2: 7 cells changed
-07:52:35 [INFO] fix_disc pass 3: 0 cells changed
-07:52:35 [INFO] Render finished in 310.408351ms
-07:52:35 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:36 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:36 [INFO] Starting render optimization... (65 glyphs)
-07:52:36 [INFO] factor_x: 14, float_x: 14
-07:52:36 [INFO] factor_y: 28, float_y: 28
-07:52:36 [INFO] img width: 360
-07:52:36 [INFO] img height: 504
-07:52:36 [INFO] pw: 1120
-07:52:36 [INFO] ph: 1568
-07:52:36 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:36 [INFO] fix_disc pass 0: 513 cells changed
-07:52:36 [INFO] fix_disc pass 1: 51 cells changed
-07:52:36 [INFO] fix_disc pass 2: 5 cells changed
-07:52:36 [INFO] fix_disc pass 3: 0 cells changed
-07:52:36 [INFO] Render finished in 297.136451ms
-07:52:37 [INFO] TUI Adjusted: tab=0, ctrl=8, id=FixStrength
-07:52:38 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:38 [INFO] Starting render optimization... (65 glyphs)
-07:52:38 [INFO] factor_x: 14, float_x: 14
-07:52:38 [INFO] factor_y: 28, float_y: 28
-07:52:38 [INFO] img width: 360
-07:52:38 [INFO] img height: 504
-07:52:38 [INFO] pw: 1120
-07:52:38 [INFO] ph: 1568
-07:52:38 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:38 [INFO] fix_disc pass 0: 551 cells changed
-07:52:38 [INFO] fix_disc pass 1: 59 cells changed
-07:52:38 [INFO] fix_disc pass 2: 7 cells changed
-07:52:38 [INFO] fix_disc pass 3: 0 cells changed
-07:52:38 [INFO] Render finished in 305.009291ms
-07:52:42 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:52:42 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:42 [INFO] Starting render optimization... (65 glyphs)
-07:52:42 [INFO] factor_x: 14, float_x: 14
-07:52:42 [INFO] factor_y: 28, float_y: 28
-07:52:42 [INFO] img width: 359
-07:52:42 [INFO] img height: 504
-07:52:42 [INFO] pw: 1120
-07:52:42 [INFO] ph: 1568
-07:52:42 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:43 [INFO] fix_disc pass 0: 548 cells changed
-07:52:43 [INFO] fix_disc pass 1: 56 cells changed
-07:52:43 [INFO] fix_disc pass 2: 4 cells changed
-07:52:43 [INFO] fix_disc pass 3: 0 cells changed
-07:52:43 [INFO] Render finished in 312.718815ms
-07:52:44 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:52:44 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:44 [INFO] Starting render optimization... (65 glyphs)
-07:52:44 [INFO] factor_x: 14, float_x: 14
-07:52:44 [INFO] factor_y: 28, float_y: 28
-07:52:44 [INFO] img width: 358
-07:52:44 [INFO] img height: 504
-07:52:44 [INFO] pw: 1120
-07:52:44 [INFO] ph: 1568
-07:52:44 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:44 [INFO] fix_disc pass 0: 522 cells changed
-07:52:44 [INFO] fix_disc pass 1: 68 cells changed
-07:52:44 [INFO] fix_disc pass 2: 5 cells changed
-07:52:44 [INFO] fix_disc pass 3: 0 cells changed
-07:52:44 [INFO] Render finished in 308.574379ms
-07:52:45 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:52:46 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:46 [INFO] Starting render optimization... (65 glyphs)
-07:52:46 [INFO] factor_x: 14, float_x: 14
-07:52:46 [INFO] factor_y: 28, float_y: 28
-07:52:46 [INFO] img width: 357
-07:52:46 [INFO] img height: 504
-07:52:46 [INFO] pw: 1120
-07:52:46 [INFO] ph: 1568
-07:52:46 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:46 [INFO] fix_disc pass 0: 538 cells changed
-07:52:46 [INFO] fix_disc pass 1: 65 cells changed
-07:52:46 [INFO] fix_disc pass 2: 2 cells changed
-07:52:46 [INFO] fix_disc pass 3: 1 cells changed
-07:52:46 [INFO] fix_disc pass 4: 0 cells changed
-07:52:46 [INFO] Render finished in 317.129008ms
-07:52:47 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:52:47 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:47 [INFO] Starting render optimization... (65 glyphs)
-07:52:47 [INFO] factor_x: 14, float_x: 14
-07:52:47 [INFO] factor_y: 28, float_y: 28
-07:52:47 [INFO] img width: 356
-07:52:47 [INFO] img height: 504
-07:52:47 [INFO] pw: 1120
-07:52:47 [INFO] ph: 1596
-07:52:47 [INFO] Final target dimensions (pixels): 1120x1596
-07:52:48 [INFO] fix_disc pass 0: 542 cells changed
-07:52:48 [INFO] fix_disc pass 1: 56 cells changed
-07:52:48 [INFO] fix_disc pass 2: 5 cells changed
-07:52:48 [INFO] fix_disc pass 3: 2 cells changed
-07:52:48 [INFO] fix_disc pass 4: 0 cells changed
-07:52:48 [INFO] Render finished in 330.622313ms
-07:52:48 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:52:49 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:49 [INFO] Starting render optimization... (65 glyphs)
-07:52:49 [INFO] factor_x: 14, float_x: 14
-07:52:49 [INFO] factor_y: 28, float_y: 28
-07:52:49 [INFO] img width: 355
-07:52:49 [INFO] img height: 504
-07:52:49 [INFO] pw: 1120
-07:52:49 [INFO] ph: 1596
-07:52:49 [INFO] Final target dimensions (pixels): 1120x1596
-07:52:49 [INFO] fix_disc pass 0: 542 cells changed
-07:52:49 [INFO] fix_disc pass 1: 55 cells changed
-07:52:49 [INFO] fix_disc pass 2: 2 cells changed
-07:52:49 [INFO] fix_disc pass 3: 0 cells changed
-07:52:49 [INFO] Render finished in 301.400258ms
-07:52:55 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:52:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:56 [INFO] Starting render optimization... (65 glyphs)
-07:52:56 [INFO] factor_x: 14, float_x: 14
-07:52:56 [INFO] factor_y: 28, float_y: 28
-07:52:56 [INFO] img width: 355
-07:52:56 [INFO] img height: 503
-07:52:56 [INFO] pw: 1120
-07:52:56 [INFO] ph: 1596
-07:52:56 [INFO] Final target dimensions (pixels): 1120x1596
-07:52:56 [INFO] fix_disc pass 0: 563 cells changed
-07:52:56 [INFO] fix_disc pass 1: 65 cells changed
-07:52:56 [INFO] fix_disc pass 2: 5 cells changed
-07:52:56 [INFO] fix_disc pass 3: 0 cells changed
-07:52:56 [INFO] Render finished in 306.125443ms
-07:52:56 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:52:57 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:57 [INFO] Starting render optimization... (65 glyphs)
-07:52:57 [INFO] factor_x: 14, float_x: 14
-07:52:57 [INFO] factor_y: 28, float_y: 28
-07:52:57 [INFO] img width: 355
-07:52:57 [INFO] img height: 502
-07:52:57 [INFO] pw: 1120
-07:52:57 [INFO] ph: 1596
-07:52:57 [INFO] Final target dimensions (pixels): 1120x1596
-07:52:57 [INFO] fix_disc pass 0: 556 cells changed
-07:52:57 [INFO] fix_disc pass 1: 54 cells changed
-07:52:57 [INFO] fix_disc pass 2: 7 cells changed
-07:52:57 [INFO] fix_disc pass 3: 0 cells changed
-07:52:57 [INFO] Render finished in 310.147458ms
-07:52:58 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:52:59 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:52:59 [INFO] Starting render optimization... (65 glyphs)
-07:52:59 [INFO] factor_x: 14, float_x: 14
-07:52:59 [INFO] factor_y: 28, float_y: 28
-07:52:59 [INFO] img width: 355
-07:52:59 [INFO] img height: 501
-07:52:59 [INFO] pw: 1120
-07:52:59 [INFO] ph: 1568
-07:52:59 [INFO] Final target dimensions (pixels): 1120x1568
-07:52:59 [INFO] fix_disc pass 0: 548 cells changed
-07:52:59 [INFO] fix_disc pass 1: 59 cells changed
-07:52:59 [INFO] fix_disc pass 2: 5 cells changed
-07:52:59 [INFO] fix_disc pass 3: 2 cells changed
-07:52:59 [INFO] fix_disc pass 4: 0 cells changed
-07:52:59 [INFO] Render finished in 314.233043ms
-07:53:00 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:53:00 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:00 [INFO] Starting render optimization... (65 glyphs)
-07:53:00 [INFO] factor_x: 14, float_x: 14
-07:53:00 [INFO] factor_y: 28, float_y: 28
-07:53:00 [INFO] img width: 355
-07:53:00 [INFO] img height: 500
-07:53:00 [INFO] pw: 1120
-07:53:00 [INFO] ph: 1568
-07:53:00 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:01 [INFO] fix_disc pass 0: 536 cells changed
-07:53:01 [INFO] fix_disc pass 1: 57 cells changed
-07:53:01 [INFO] fix_disc pass 2: 4 cells changed
-07:53:01 [INFO] fix_disc pass 3: 1 cells changed
-07:53:01 [INFO] fix_disc pass 4: 0 cells changed
-07:53:01 [INFO] Render finished in 303.34147ms
-07:53:02 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:53:02 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:02 [INFO] Starting render optimization... (65 glyphs)
-07:53:02 [INFO] factor_x: 14, float_x: 14
-07:53:02 [INFO] factor_y: 28, float_y: 28
-07:53:02 [INFO] img width: 355
-07:53:02 [INFO] img height: 499
-07:53:02 [INFO] pw: 1120
-07:53:02 [INFO] ph: 1568
-07:53:02 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:03 [INFO] fix_disc pass 0: 542 cells changed
-07:53:03 [INFO] fix_disc pass 1: 55 cells changed
-07:53:03 [INFO] fix_disc pass 2: 7 cells changed
-07:53:03 [INFO] fix_disc pass 3: 1 cells changed
-07:53:03 [INFO] fix_disc pass 4: 0 cells changed
-07:53:03 [INFO] Render finished in 302.354688ms
-07:53:06 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:53:07 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:07 [INFO] Starting render optimization... (65 glyphs)
-07:53:07 [INFO] factor_x: 14, float_x: 14
-07:53:07 [INFO] factor_y: 28, float_y: 28
-07:53:07 [INFO] img width: 355
-07:53:07 [INFO] img height: 498
-07:53:07 [INFO] pw: 1120
-07:53:07 [INFO] ph: 1568
-07:53:07 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:07 [INFO] fix_disc pass 0: 551 cells changed
-07:53:07 [INFO] fix_disc pass 1: 57 cells changed
-07:53:07 [INFO] fix_disc pass 2: 6 cells changed
-07:53:07 [INFO] fix_disc pass 3: 2 cells changed
-07:53:07 [INFO] fix_disc pass 4: 0 cells changed
-07:53:07 [INFO] Render finished in 311.171259ms
-07:53:08 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:53:09 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:09 [INFO] Starting render optimization... (65 glyphs)
-07:53:09 [INFO] factor_x: 14, float_x: 14
-07:53:09 [INFO] factor_y: 28, float_y: 28
-07:53:09 [INFO] img width: 355
-07:53:09 [INFO] img height: 499
-07:53:09 [INFO] pw: 1120
-07:53:09 [INFO] ph: 1568
-07:53:09 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:09 [INFO] fix_disc pass 0: 542 cells changed
-07:53:09 [INFO] fix_disc pass 1: 55 cells changed
-07:53:09 [INFO] fix_disc pass 2: 7 cells changed
-07:53:09 [INFO] fix_disc pass 3: 1 cells changed
-07:53:09 [INFO] fix_disc pass 4: 0 cells changed
-07:53:09 [INFO] Render finished in 299.66438ms
-07:53:11 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
-07:53:11 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
-07:53:11 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
-07:53:12 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
-07:53:12 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
-07:53:12 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:12 [INFO] Starting render optimization... (65 glyphs)
-07:53:12 [INFO] factor_x: 14, float_x: 14
-07:53:12 [INFO] factor_y: 28, float_y: 28
-07:53:12 [INFO] img width: 355
-07:53:12 [INFO] img height: 499
-07:53:12 [INFO] pw: 1120
-07:53:12 [INFO] ph: 1568
-07:53:12 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:13 [INFO] fix_disc pass 0: 530 cells changed
-07:53:13 [INFO] fix_disc pass 1: 54 cells changed
-07:53:13 [INFO] fix_disc pass 2: 6 cells changed
-07:53:13 [INFO] fix_disc pass 3: 1 cells changed
-07:53:13 [INFO] fix_disc pass 4: 0 cells changed
-07:53:13 [INFO] Render finished in 298.457806ms
-07:53:13 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:14 [INFO] TUI Adjusted: tab=0, ctrl=24, id=GrayTol
-07:53:15 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:15 [INFO] Starting render optimization... (65 glyphs)
-07:53:15 [INFO] factor_x: 14, float_x: 14
-07:53:15 [INFO] factor_y: 28, float_y: 28
-07:53:15 [INFO] img width: 355
-07:53:15 [INFO] img height: 499
-07:53:15 [INFO] pw: 1120
-07:53:15 [INFO] ph: 1568
-07:53:15 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:15 [INFO] fix_disc pass 0: 529 cells changed
-07:53:15 [INFO] fix_disc pass 1: 55 cells changed
-07:53:15 [INFO] fix_disc pass 2: 6 cells changed
-07:53:15 [INFO] fix_disc pass 3: 1 cells changed
-07:53:15 [INFO] fix_disc pass 4: 0 cells changed
-07:53:15 [INFO] Render finished in 507.593251ms
-07:53:18 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:18 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:18 [INFO] Starting render optimization... (65 glyphs)
-07:53:18 [INFO] factor_x: 14, float_x: 14
-07:53:18 [INFO] factor_y: 28, float_y: 28
-07:53:18 [INFO] img width: 355
-07:53:18 [INFO] img height: 499
-07:53:18 [INFO] pw: 1120
-07:53:18 [INFO] ph: 1568
-07:53:18 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:18 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:18 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:18 [INFO] fix_disc pass 0: 533 cells changed
-07:53:18 [INFO] fix_disc pass 1: 57 cells changed
-07:53:18 [INFO] fix_disc pass 2: 6 cells changed
-07:53:18 [INFO] fix_disc pass 3: 1 cells changed
-07:53:18 [INFO] fix_disc pass 4: 0 cells changed
-07:53:18 [INFO] Render finished in 298.991156ms
-07:53:19 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:19 [INFO] Starting render optimization... (65 glyphs)
-07:53:19 [INFO] factor_x: 14, float_x: 14
-07:53:19 [INFO] factor_y: 28, float_y: 28
-07:53:19 [INFO] img width: 355
-07:53:19 [INFO] img height: 499
-07:53:19 [INFO] pw: 1120
-07:53:19 [INFO] ph: 1568
-07:53:19 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:19 [INFO] fix_disc pass 0: 522 cells changed
-07:53:19 [INFO] fix_disc pass 1: 56 cells changed
-07:53:19 [INFO] fix_disc pass 2: 7 cells changed
-07:53:19 [INFO] fix_disc pass 3: 3 cells changed
-07:53:19 [INFO] fix_disc pass 4: 0 cells changed
-07:53:19 [INFO] Render finished in 305.09636ms
-07:53:20 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:21 [INFO] Starting render optimization... (65 glyphs)
-07:53:21 [INFO] factor_x: 14, float_x: 14
-07:53:21 [INFO] factor_y: 28, float_y: 28
-07:53:21 [INFO] img width: 355
-07:53:21 [INFO] img height: 499
-07:53:21 [INFO] pw: 1120
-07:53:21 [INFO] ph: 1568
-07:53:21 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:21 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] TUI Adjusted: tab=0, ctrl=28, id=Gamma
-07:53:21 [INFO] fix_disc pass 0: 510 cells changed
-07:53:21 [INFO] fix_disc pass 1: 55 cells changed
-07:53:21 [INFO] fix_disc pass 2: 9 cells changed
-07:53:21 [INFO] fix_disc pass 3: 2 cells changed
-07:53:21 [INFO] fix_disc pass 4: 0 cells changed
-07:53:21 [INFO] Render finished in 300.209581ms
-07:53:21 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:21 [INFO] Starting render optimization... (65 glyphs)
-07:53:21 [INFO] factor_x: 14, float_x: 14
-07:53:21 [INFO] factor_y: 28, float_y: 28
-07:53:21 [INFO] img width: 355
-07:53:21 [INFO] img height: 499
-07:53:21 [INFO] pw: 1120
-07:53:21 [INFO] ph: 1568
-07:53:21 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:22 [INFO] fix_disc pass 0: 509 cells changed
-07:53:22 [INFO] fix_disc pass 1: 40 cells changed
-07:53:22 [INFO] fix_disc pass 2: 1 cells changed
-07:53:22 [INFO] fix_disc pass 3: 1 cells changed
-07:53:22 [INFO] fix_disc pass 4: 0 cells changed
-07:53:22 [INFO] Render finished in 324.844971ms
-07:53:29 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:30 [INFO] Starting render optimization... (65 glyphs)
-07:53:30 [INFO] factor_x: 14, float_x: 14
-07:53:30 [INFO] factor_y: 28, float_y: 28
-07:53:30 [INFO] img width: 355
-07:53:30 [INFO] img height: 499
-07:53:30 [INFO] pw: 1120
-07:53:30 [INFO] ph: 1568
-07:53:30 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:30 [INFO] fix_disc pass 0: 499 cells changed
-07:53:30 [INFO] fix_disc pass 1: 36 cells changed
-07:53:30 [INFO] fix_disc pass 2: 3 cells changed
-07:53:30 [INFO] fix_disc pass 3: 0 cells changed
-07:53:30 [INFO] Render finished in 360.852394ms
-07:53:30 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:31 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:31 [INFO] Starting render optimization... (65 glyphs)
-07:53:31 [INFO] factor_x: 14, float_x: 14
-07:53:31 [INFO] factor_y: 28, float_y: 28
-07:53:31 [INFO] img width: 355
-07:53:31 [INFO] img height: 499
-07:53:31 [INFO] pw: 1120
-07:53:31 [INFO] ph: 1568
-07:53:31 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:31 [INFO] fix_disc pass 0: 522 cells changed
-07:53:31 [INFO] fix_disc pass 1: 50 cells changed
-07:53:31 [INFO] fix_disc pass 2: 17 cells changed
-07:53:31 [INFO] fix_disc pass 3: 2 cells changed
-07:53:31 [INFO] fix_disc pass 4: 1 cells changed
-07:53:31 [INFO] fix_disc pass 5: 0 cells changed
-07:53:31 [INFO] Render finished in 364.218298ms
-07:53:32 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:32 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:32 [INFO] Starting render optimization... (65 glyphs)
-07:53:32 [INFO] factor_x: 14, float_x: 14
-07:53:32 [INFO] factor_y: 28, float_y: 28
-07:53:32 [INFO] img width: 355
-07:53:32 [INFO] img height: 499
-07:53:32 [INFO] pw: 1120
-07:53:32 [INFO] ph: 1568
-07:53:32 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:33 [INFO] fix_disc pass 0: 514 cells changed
-07:53:33 [INFO] fix_disc pass 1: 45 cells changed
-07:53:33 [INFO] fix_disc pass 2: 10 cells changed
-07:53:33 [INFO] fix_disc pass 3: 1 cells changed
-07:53:33 [INFO] fix_disc pass 4: 0 cells changed
-07:53:33 [INFO] Render finished in 354.542045ms
-07:53:33 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:34 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:34 [INFO] Starting render optimization... (65 glyphs)
-07:53:34 [INFO] factor_x: 14, float_x: 14
-07:53:34 [INFO] factor_y: 28, float_y: 28
-07:53:34 [INFO] img width: 355
-07:53:34 [INFO] img height: 499
-07:53:34 [INFO] pw: 1120
-07:53:34 [INFO] ph: 1568
-07:53:34 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:34 [INFO] fix_disc pass 0: 514 cells changed
-07:53:34 [INFO] fix_disc pass 1: 44 cells changed
-07:53:34 [INFO] fix_disc pass 2: 10 cells changed
-07:53:34 [INFO] fix_disc pass 3: 1 cells changed
-07:53:34 [INFO] fix_disc pass 4: 0 cells changed
-07:53:34 [INFO] Render finished in 338.41044ms
-07:53:34 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:35 [INFO] Starting render optimization... (65 glyphs)
-07:53:35 [INFO] factor_x: 14, float_x: 14
-07:53:35 [INFO] factor_y: 28, float_y: 28
-07:53:35 [INFO] img width: 355
-07:53:35 [INFO] img height: 499
-07:53:35 [INFO] pw: 1120
-07:53:35 [INFO] ph: 1568
-07:53:35 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] fix_disc pass 0: 512 cells changed
-07:53:35 [INFO] fix_disc pass 1: 45 cells changed
-07:53:35 [INFO] fix_disc pass 2: 10 cells changed
-07:53:35 [INFO] fix_disc pass 3: 1 cells changed
-07:53:35 [INFO] fix_disc pass 4: 0 cells changed
-07:53:35 [INFO] Render finished in 350.976815ms
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:35 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:36 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:36 [INFO] Starting render optimization... (65 glyphs)
-07:53:36 [INFO] factor_x: 14, float_x: 14
-07:53:36 [INFO] factor_y: 28, float_y: 28
-07:53:36 [INFO] img width: 355
-07:53:36 [INFO] img height: 499
-07:53:36 [INFO] pw: 1120
-07:53:36 [INFO] ph: 1568
-07:53:36 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:36 [INFO] fix_disc pass 0: 512 cells changed
-07:53:36 [INFO] fix_disc pass 1: 44 cells changed
-07:53:36 [INFO] fix_disc pass 2: 11 cells changed
-07:53:36 [INFO] fix_disc pass 3: 1 cells changed
-07:53:36 [INFO] fix_disc pass 4: 0 cells changed
-07:53:36 [INFO] Render finished in 391.716808ms
-07:53:41 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:41 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:41 [INFO] Starting render optimization... (65 glyphs)
-07:53:41 [INFO] factor_x: 14, float_x: 14
-07:53:41 [INFO] factor_y: 28, float_y: 28
-07:53:41 [INFO] img width: 355
-07:53:41 [INFO] img height: 499
-07:53:41 [INFO] pw: 1120
-07:53:41 [INFO] ph: 1568
-07:53:41 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:42 [INFO] fix_disc pass 0: 513 cells changed
-07:53:42 [INFO] fix_disc pass 1: 44 cells changed
-07:53:42 [INFO] fix_disc pass 2: 11 cells changed
-07:53:42 [INFO] fix_disc pass 3: 1 cells changed
-07:53:42 [INFO] fix_disc pass 4: 0 cells changed
-07:53:42 [INFO] Render finished in 382.929812ms
-07:53:42 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:43 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:43 [INFO] Starting render optimization... (65 glyphs)
-07:53:43 [INFO] factor_x: 14, float_x: 14
-07:53:43 [INFO] factor_y: 28, float_y: 28
-07:53:43 [INFO] img width: 355
-07:53:43 [INFO] img height: 499
-07:53:43 [INFO] pw: 1120
-07:53:43 [INFO] ph: 1568
-07:53:43 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:43 [INFO] fix_disc pass 0: 511 cells changed
-07:53:43 [INFO] fix_disc pass 1: 45 cells changed
-07:53:43 [INFO] fix_disc pass 2: 11 cells changed
-07:53:43 [INFO] fix_disc pass 3: 1 cells changed
-07:53:43 [INFO] fix_disc pass 4: 0 cells changed
-07:53:43 [INFO] Render finished in 325.290564ms
-07:53:43 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:44 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:44 [INFO] Starting render optimization... (65 glyphs)
-07:53:44 [INFO] factor_x: 14, float_x: 14
-07:53:44 [INFO] factor_y: 28, float_y: 28
-07:53:44 [INFO] img width: 355
-07:53:44 [INFO] img height: 499
-07:53:44 [INFO] pw: 1120
-07:53:44 [INFO] ph: 1568
-07:53:44 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:44 [INFO] fix_disc pass 0: 495 cells changed
-07:53:44 [INFO] fix_disc pass 1: 37 cells changed
-07:53:44 [INFO] fix_disc pass 2: 1 cells changed
-07:53:44 [INFO] fix_disc pass 3: 0 cells changed
-07:53:44 [INFO] Render finished in 349.637081ms
-07:53:45 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:45 [INFO] Starting render optimization... (65 glyphs)
-07:53:45 [INFO] factor_x: 14, float_x: 14
-07:53:45 [INFO] factor_y: 28, float_y: 28
-07:53:45 [INFO] img width: 355
-07:53:45 [INFO] img height: 499
-07:53:45 [INFO] pw: 1120
-07:53:45 [INFO] ph: 1568
-07:53:45 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:46 [INFO] fix_disc pass 0: 514 cells changed
-07:53:46 [INFO] fix_disc pass 1: 44 cells changed
-07:53:46 [INFO] fix_disc pass 2: 1 cells changed
-07:53:46 [INFO] fix_disc pass 3: 0 cells changed
-07:53:46 [INFO] Render finished in 347.678506ms
-07:53:46 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:47 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:47 [INFO] Starting render optimization... (65 glyphs)
-07:53:47 [INFO] factor_x: 14, float_x: 14
-07:53:47 [INFO] factor_y: 28, float_y: 28
-07:53:47 [INFO] img width: 355
-07:53:47 [INFO] img height: 499
-07:53:47 [INFO] pw: 1120
-07:53:47 [INFO] ph: 1568
-07:53:47 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:47 [INFO] fix_disc pass 0: 521 cells changed
-07:53:47 [INFO] fix_disc pass 1: 42 cells changed
-07:53:47 [INFO] fix_disc pass 2: 1 cells changed
-07:53:47 [INFO] fix_disc pass 3: 0 cells changed
-07:53:47 [INFO] Render finished in 349.675011ms
-07:53:50 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:51 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:51 [INFO] Starting render optimization... (65 glyphs)
-07:53:51 [INFO] factor_x: 14, float_x: 14
-07:53:51 [INFO] factor_y: 28, float_y: 28
-07:53:51 [INFO] img width: 355
-07:53:51 [INFO] img height: 499
-07:53:51 [INFO] pw: 1120
-07:53:51 [INFO] ph: 1568
-07:53:51 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:51 [INFO] fix_disc pass 0: 546 cells changed
-07:53:51 [INFO] fix_disc pass 1: 65 cells changed
-07:53:51 [INFO] fix_disc pass 2: 11 cells changed
-07:53:51 [INFO] fix_disc pass 3: 2 cells changed
-07:53:51 [INFO] fix_disc pass 4: 0 cells changed
-07:53:51 [INFO] Render finished in 365.87264ms
-07:53:52 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:52 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:52 [INFO] Starting render optimization... (65 glyphs)
-07:53:52 [INFO] factor_x: 14, float_x: 14
-07:53:52 [INFO] factor_y: 28, float_y: 28
-07:53:52 [INFO] img width: 355
-07:53:52 [INFO] img height: 499
-07:53:52 [INFO] pw: 1120
-07:53:52 [INFO] ph: 1568
-07:53:52 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:53 [INFO] fix_disc pass 0: 533 cells changed
-07:53:53 [INFO] fix_disc pass 1: 52 cells changed
-07:53:53 [INFO] fix_disc pass 2: 3 cells changed
-07:53:53 [INFO] fix_disc pass 3: 1 cells changed
-07:53:53 [INFO] fix_disc pass 4: 0 cells changed
-07:53:53 [INFO] Render finished in 358.105588ms
-07:53:53 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:54 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:54 [INFO] Starting render optimization... (65 glyphs)
-07:53:54 [INFO] factor_x: 14, float_x: 14
-07:53:54 [INFO] factor_y: 28, float_y: 28
-07:53:54 [INFO] img width: 355
-07:53:54 [INFO] img height: 499
-07:53:54 [INFO] pw: 1120
-07:53:54 [INFO] ph: 1568
-07:53:54 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:54 [INFO] fix_disc pass 0: 539 cells changed
-07:53:54 [INFO] fix_disc pass 1: 55 cells changed
-07:53:54 [INFO] fix_disc pass 2: 8 cells changed
-07:53:54 [INFO] fix_disc pass 3: 0 cells changed
-07:53:54 [INFO] Render finished in 335.605295ms
-07:53:55 [INFO] TUI Adjusted: tab=0, ctrl=29, id=Hue
-07:53:56 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:53:56 [INFO] Starting render optimization... (65 glyphs)
-07:53:56 [INFO] factor_x: 14, float_x: 14
-07:53:56 [INFO] factor_y: 28, float_y: 28
-07:53:56 [INFO] img width: 355
-07:53:56 [INFO] img height: 499
-07:53:56 [INFO] pw: 1120
-07:53:56 [INFO] ph: 1568
-07:53:56 [INFO] Final target dimensions (pixels): 1120x1568
-07:53:56 [INFO] fix_disc pass 0: 525 cells changed
-07:53:56 [INFO] fix_disc pass 1: 48 cells changed
-07:53:56 [INFO] fix_disc pass 2: 3 cells changed
-07:53:56 [INFO] fix_disc pass 3: 0 cells changed
-07:53:56 [INFO] Render finished in 370.431613ms
-07:54:02 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:54:03 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:03 [INFO] Starting render optimization... (65 glyphs)
-07:54:03 [INFO] factor_x: 14, float_x: 14
-07:54:03 [INFO] factor_y: 28, float_y: 28
-07:54:03 [INFO] img width: 355
-07:54:03 [INFO] img height: 499
-07:54:03 [INFO] pw: 1120
-07:54:03 [INFO] ph: 1568
-07:54:03 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:03 [INFO] fix_disc pass 0: 56 cells changed
-07:54:03 [INFO] fix_disc pass 1: 14 cells changed
-07:54:03 [INFO] fix_disc pass 2: 2 cells changed
-07:54:03 [INFO] fix_disc pass 3: 0 cells changed
-07:54:03 [INFO] Render finished in 369.986326ms
-07:54:05 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:54:06 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:06 [INFO] Starting render optimization... (65 glyphs)
-07:54:06 [INFO] factor_x: 14, float_x: 14
-07:54:06 [INFO] factor_y: 28, float_y: 28
-07:54:06 [INFO] img width: 355
-07:54:06 [INFO] img height: 499
-07:54:06 [INFO] pw: 1120
-07:54:06 [INFO] ph: 1568
-07:54:06 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:06 [INFO] Render finished in 359.823189ms
-07:54:07 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:54:08 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:08 [INFO] Starting render optimization... (65 glyphs)
-07:54:08 [INFO] factor_x: 14, float_x: 14
-07:54:08 [INFO] factor_y: 28, float_y: 28
-07:54:08 [INFO] img width: 355
-07:54:08 [INFO] img height: 499
-07:54:08 [INFO] pw: 1120
-07:54:08 [INFO] ph: 1568
-07:54:08 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:08 [INFO] fix_disc pass 0: 56 cells changed
-07:54:08 [INFO] fix_disc pass 1: 14 cells changed
-07:54:08 [INFO] fix_disc pass 2: 2 cells changed
-07:54:08 [INFO] fix_disc pass 3: 0 cells changed
-07:54:08 [INFO] Render finished in 359.153382ms
-07:54:10 [INFO] TUI Toggled: tab=0, visual=2, id=Smooth
-07:54:10 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:10 [INFO] Starting render optimization... (65 glyphs)
-07:54:10 [INFO] factor_x: 14, float_x: 14
-07:54:10 [INFO] factor_y: 28, float_y: 28
-07:54:10 [INFO] img width: 355
-07:54:10 [INFO] img height: 499
-07:54:10 [INFO] pw: 1120
-07:54:10 [INFO] ph: 1568
-07:54:10 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:11 [INFO] fix_disc pass 0: 525 cells changed
-07:54:11 [INFO] fix_disc pass 1: 48 cells changed
-07:54:11 [INFO] fix_disc pass 2: 3 cells changed
-07:54:11 [INFO] fix_disc pass 3: 0 cells changed
-07:54:11 [INFO] Render finished in 348.333702ms
-07:54:11 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:54:11 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:11 [INFO] Starting render optimization... (65 glyphs)
-07:54:11 [INFO] factor_x: 14, float_x: 14
-07:54:11 [INFO] factor_y: 28, float_y: 28
-07:54:11 [INFO] img width: 355
-07:54:11 [INFO] img height: 499
-07:54:11 [INFO] pw: 1120
-07:54:11 [INFO] ph: 1568
-07:54:11 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:12 [INFO] Render finished in 322.715901ms
-07:54:13 [INFO] TUI Toggled: tab=0, visual=7, id=FixDisc
-07:54:13 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:13 [INFO] Starting render optimization... (65 glyphs)
-07:54:13 [INFO] factor_x: 14, float_x: 14
-07:54:13 [INFO] factor_y: 28, float_y: 28
-07:54:13 [INFO] img width: 355
-07:54:13 [INFO] img height: 499
-07:54:13 [INFO] pw: 1120
-07:54:13 [INFO] ph: 1568
-07:54:13 [INFO] Final target dimensions (pixels): 1120x1568
-07:54:13 [INFO] fix_disc pass 0: 525 cells changed
-07:54:13 [INFO] fix_disc pass 1: 48 cells changed
-07:54:13 [INFO] fix_disc pass 2: 3 cells changed
-07:54:13 [INFO] fix_disc pass 3: 0 cells changed
-07:54:13 [INFO] Render finished in 338.908089ms
-07:54:25 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
-07:54:25 [INFO] Flushing render args: width=90, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:25 [INFO] Starting render optimization... (65 glyphs)
-07:54:25 [INFO] factor_x: 14, float_x: 14
-07:54:25 [INFO] factor_y: 28, float_y: 28
-07:54:25 [INFO] img width: 355
-07:54:25 [INFO] img height: 499
-07:54:25 [INFO] pw: 1260
-07:54:25 [INFO] ph: 1764
-07:54:25 [INFO] Final target dimensions (pixels): 1260x1764
-07:54:26 [INFO] fix_disc pass 0: 591 cells changed
-07:54:26 [INFO] fix_disc pass 1: 43 cells changed
-07:54:26 [INFO] fix_disc pass 2: 0 cells changed
-07:54:26 [INFO] Render finished in 445.009325ms
-07:54:29 [INFO] TUI Adjusted: tab=0, ctrl=0, id=Width
-07:54:29 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:29 [INFO] Starting render optimization... (65 glyphs)
-07:54:29 [INFO] factor_x: 14, float_x: 14
-07:54:29 [INFO] factor_y: 28, float_y: 28
-07:54:29 [INFO] img width: 355
-07:54:29 [INFO] img height: 499
-07:54:29 [INFO] pw: 1400
-07:54:29 [INFO] ph: 1960
-07:54:29 [INFO] Final target dimensions (pixels): 1400x1960
-07:54:30 [INFO] fix_disc pass 0: 678 cells changed
-07:54:30 [INFO] fix_disc pass 1: 78 cells changed
-07:54:30 [INFO] fix_disc pass 2: 5 cells changed
-07:54:30 [INFO] fix_disc pass 3: 0 cells changed
-07:54:30 [INFO] Render finished in 536.607612ms
-07:54:37 [INFO] TUI Adjusted: tab=0, ctrl=14, id=TrimLeft
-07:54:38 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:38 [INFO] Starting render optimization... (65 glyphs)
-07:54:38 [INFO] factor_x: 14, float_x: 14
-07:54:38 [INFO] factor_y: 28, float_y: 28
-07:54:38 [INFO] img width: 360
-07:54:38 [INFO] img height: 499
-07:54:38 [INFO] pw: 1400
-07:54:38 [INFO] ph: 1932
-07:54:38 [INFO] Final target dimensions (pixels): 1400x1932
-07:54:38 [INFO] fix_disc pass 0: 634 cells changed
-07:54:38 [INFO] fix_disc pass 1: 58 cells changed
-07:54:38 [INFO] fix_disc pass 2: 5 cells changed
-07:54:38 [INFO] fix_disc pass 3: 0 cells changed
-07:54:38 [INFO] Render finished in 525.723632ms
-07:54:41 [INFO] TUI Adjusted: tab=0, ctrl=11, id=TrimTop
-07:54:41 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:41 [INFO] Starting render optimization... (65 glyphs)
-07:54:41 [INFO] factor_x: 14, float_x: 14
-07:54:41 [INFO] factor_y: 28, float_y: 28
-07:54:41 [INFO] img width: 360
-07:54:41 [INFO] img height: 504
-07:54:41 [INFO] pw: 1400
-07:54:41 [INFO] ph: 1960
-07:54:41 [INFO] Final target dimensions (pixels): 1400x1960
-07:54:42 [INFO] fix_disc pass 0: 671 cells changed
-07:54:42 [INFO] fix_disc pass 1: 61 cells changed
-07:54:42 [INFO] fix_disc pass 2: 6 cells changed
-07:54:42 [INFO] fix_disc pass 3: 1 cells changed
-07:54:42 [INFO] fix_disc pass 4: 0 cells changed
-07:54:42 [INFO] Render finished in 535.639424ms
-07:54:52 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:54:53 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:53 [INFO] Starting render optimization... (65 glyphs)
-07:54:53 [INFO] factor_x: 14, float_x: 14
-07:54:53 [INFO] factor_y: 28, float_y: 28
-07:54:53 [INFO] img width: 360
-07:54:53 [INFO] img height: 504
-07:54:53 [INFO] pw: 1400
-07:54:53 [INFO] ph: 1960
-07:54:53 [INFO] Final target dimensions (pixels): 1400x1960
-07:54:53 [INFO] fix_disc pass 0: 600 cells changed
-07:54:53 [INFO] fix_disc pass 1: 57 cells changed
-07:54:53 [INFO] fix_disc pass 2: 7 cells changed
-07:54:53 [INFO] fix_disc pass 3: 1 cells changed
-07:54:53 [INFO] fix_disc pass 4: 0 cells changed
-07:54:53 [INFO] Render finished in 546.814268ms
-07:54:55 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:54:55 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:55 [INFO] Starting render optimization... (65 glyphs)
-07:54:55 [INFO] factor_x: 14, float_x: 14
-07:54:55 [INFO] factor_y: 28, float_y: 28
-07:54:55 [INFO] img width: 360
-07:54:55 [INFO] img height: 504
-07:54:55 [INFO] pw: 1400
-07:54:55 [INFO] ph: 1960
-07:54:55 [INFO] Final target dimensions (pixels): 1400x1960
-07:54:56 [INFO] fix_disc pass 0: 665 cells changed
-07:54:56 [INFO] fix_disc pass 1: 59 cells changed
-07:54:56 [INFO] fix_disc pass 2: 5 cells changed
-07:54:56 [INFO] fix_disc pass 3: 3 cells changed
-07:54:56 [INFO] fix_disc pass 4: 0 cells changed
-07:54:56 [INFO] Render finished in 590.851174ms
-07:54:57 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:54:57 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:54:57 [INFO] Starting render optimization... (65 glyphs)
-07:54:57 [INFO] factor_x: 14, float_x: 14
-07:54:57 [INFO] factor_y: 28, float_y: 28
-07:54:57 [INFO] img width: 360
-07:54:57 [INFO] img height: 504
-07:54:57 [INFO] pw: 1400
-07:54:57 [INFO] ph: 1960
-07:54:57 [INFO] Final target dimensions (pixels): 1400x1960
-07:54:58 [INFO] fix_disc pass 0: 612 cells changed
-07:54:58 [INFO] fix_disc pass 1: 59 cells changed
-07:54:58 [INFO] fix_disc pass 2: 5 cells changed
-07:54:58 [INFO] fix_disc pass 3: 1 cells changed
-07:54:58 [INFO] fix_disc pass 4: 0 cells changed
-07:54:58 [INFO] Render finished in 598.104442ms
-07:55:01 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:55:01 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:55:01 [INFO] Starting render optimization... (65 glyphs)
-07:55:01 [INFO] factor_x: 14, float_x: 14
-07:55:01 [INFO] factor_y: 28, float_y: 28
-07:55:01 [INFO] img width: 360
-07:55:01 [INFO] img height: 504
-07:55:01 [INFO] pw: 1400
-07:55:01 [INFO] ph: 1960
-07:55:01 [INFO] Final target dimensions (pixels): 1400x1960
-07:55:02 [INFO] fix_disc pass 0: 729 cells changed
-07:55:02 [INFO] fix_disc pass 1: 70 cells changed
-07:55:02 [INFO] fix_disc pass 2: 5 cells changed
-07:55:02 [INFO] fix_disc pass 3: 3 cells changed
-07:55:02 [INFO] fix_disc pass 4: 0 cells changed
-07:55:02 [INFO] Render finished in 615.339235ms
-07:55:03 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:55:04 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:55:04 [INFO] Starting render optimization... (65 glyphs)
-07:55:04 [INFO] factor_x: 14, float_x: 14
-07:55:04 [INFO] factor_y: 28, float_y: 28
-07:55:04 [INFO] img width: 360
-07:55:04 [INFO] img height: 504
-07:55:04 [INFO] pw: 1400
-07:55:04 [INFO] ph: 1960
-07:55:04 [INFO] Final target dimensions (pixels): 1400x1960
-07:55:04 [INFO] fix_disc pass 0: 671 cells changed
-07:55:04 [INFO] fix_disc pass 1: 61 cells changed
-07:55:04 [INFO] fix_disc pass 2: 6 cells changed
-07:55:04 [INFO] fix_disc pass 3: 1 cells changed
-07:55:04 [INFO] fix_disc pass 4: 0 cells changed
-07:55:04 [INFO] Render finished in 533.191097ms
-07:55:05 [INFO] TUI Adjusted: tab=0, ctrl=23, id=Filter
-07:55:05 [INFO] Flushing render args: width=100, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
-07:55:05 [INFO] Starting render optimization... (65 glyphs)
-07:55:05 [INFO] factor_x: 14, float_x: 14
-07:55:05 [INFO] factor_y: 28, float_y: 28
-07:55:05 [INFO] img width: 360
-07:55:05 [INFO] img height: 504
-07:55:05 [INFO] pw: 1400
-07:55:05 [INFO] ph: 1960
-07:55:05 [INFO] Final target dimensions (pixels): 1400x1960
-07:55:06 [INFO] fix_disc pass 0: 600 cells changed
-07:55:06 [INFO] fix_disc pass 1: 57 cells changed
-07:55:06 [INFO] fix_disc pass 2: 7 cells changed
-07:55:06 [INFO] fix_disc pass 3: 1 cells changed
-07:55:06 [INFO] fix_disc pass 4: 0 cells changed
-07:55:06 [INFO] Render finished in 553.022122ms
+05:47:20 [INFO] Starting img2irc TUI...
+05:47:20 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:47:20 [INFO] Metrics: Ascender=1, Descender=-1, Height=1, Width=1, FloatW=1, FloatH=1
+05:47:20 [INFO] Rendering block 'all' (843 glyphs)
+05:47:24 [INFO] Rendering block 'ascii.space' (1 glyphs)
+05:47:24 [INFO] Rendering block 'blocks.eighth' (14 glyphs)
+05:47:24 [INFO] Rendering block 'blocks.full' (1 glyphs)
+05:47:24 [INFO] Rendering block 'blocks.half' (1 glyphs)
+05:47:24 [INFO] Rendering block 'blocks.quarter' (10 glyphs)
+05:47:24 [INFO] Rendering block 'default' (63 glyphs)
+05:47:24 [INFO] Rendering block 'hb' (7 glyphs)
+05:47:24 [INFO] Rendering block 'legacy.base.polygons' (52 glyphs)
+05:47:24 [INFO] Rendering block 'legacy.base.sextants' (60 glyphs)
+05:47:24 [INFO] Rendering block 'legacy.supp' (704 glyphs)
+05:47:24 [INFO] Rendering block 'p' (52 glyphs)
+05:47:24 [INFO] Rendering block 'p2' (48 glyphs)
+05:47:24 [INFO] Rendering block 'vb' (7 glyphs)
+05:47:24 [INFO] Auto-calculated font size: 6 (based on ratio 1.000)
+05:47:24 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:47:24 [INFO] Starting render optimization... (63 glyphs)
+05:47:24 [INFO] factor_x: 4, float_x: 4
+05:47:24 [INFO] factor_y: 7, float_y: 7
+05:47:24 [INFO] img width: 1
+05:47:24 [INFO] img height: 1
+05:47:24 [INFO] pw: 320
+05:47:24 [INFO] ph: 322
+05:47:24 [INFO] Final target dimensions (pixels): 320x322
+05:47:25 [INFO] Render finished in 50.630274ms
+05:47:25 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:47:25 [INFO] Auto-calculated font size: 6 (based on ratio 0.571)
+05:47:25 [INFO] Starting render optimization... (63 glyphs)
+05:47:25 [INFO] factor_x: 4, float_x: 4
+05:47:25 [INFO] factor_y: 7, float_y: 7
+05:47:25 [INFO] img width: 1
+05:47:25 [INFO] img height: 1
+05:47:25 [INFO] pw: 320
+05:47:25 [INFO] ph: 322
+05:47:25 [INFO] Final target dimensions (pixels): 320x322
+05:47:25 [INFO] Render finished in 43.505349ms
+05:47:47 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:47:47 [INFO] Auto-calculated font size: 14 (based on ratio 0.571)
+05:47:47 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:47:47 [INFO] Starting render optimization... (63 glyphs)
+05:47:47 [INFO] factor_x: 8, float_x: 8
+05:47:47 [INFO] factor_y: 16, float_y: 16
+05:47:47 [INFO] img width: 642
+05:47:47 [INFO] img height: 777
+05:47:47 [INFO] pw: 640
+05:47:47 [INFO] ph: 768
+05:47:47 [INFO] Final target dimensions (pixels): 640x768
+05:47:48 [INFO] Render finished in 148.792782ms
+05:47:50 [INFO] TUI Adjusted: tab=0, ctrl=1, id=RenderMode
+05:47:51 [INFO] TUI Adjusted: tab=0, ctrl=1, id=RenderMode
+05:47:51 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:47:51 [INFO] Auto-calculated font size: 16 (based on ratio 0.500)
+05:47:51 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:47:51 [INFO] Starting render optimization... (63 glyphs)
+05:47:51 [INFO] factor_x: 9, float_x: 9
+05:47:51 [INFO] factor_y: 19, float_y: 19
+05:47:51 [INFO] img width: 642
+05:47:51 [INFO] img height: 777
+05:47:51 [INFO] pw: 720
+05:47:51 [INFO] ph: 874
+05:47:51 [INFO] Final target dimensions (pixels): 720x874
+05:47:51 [INFO] Render finished in 114.58864ms
+05:47:56 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:57 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:57 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:57 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:57 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:57 [INFO] TUI Adjusted: tab=0, ctrl=26, id=Contrast
+05:47:58 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:47:58 [INFO] Auto-calculated font size: 17 (based on ratio 0.474)
+05:47:58 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:47:58 [INFO] Starting render optimization... (63 glyphs)
+05:47:58 [INFO] factor_x: 10, float_x: 10
+05:47:58 [INFO] factor_y: 20, float_y: 20
+05:47:58 [INFO] img width: 642
+05:47:58 [INFO] img height: 777
+05:47:58 [INFO] pw: 800
+05:47:58 [INFO] ph: 960
+05:47:58 [INFO] Final target dimensions (pixels): 800x960
+05:47:58 [INFO] Render finished in 143.100484ms
+05:48:03 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:04 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:04 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:04 [INFO] Auto-calculated font size: 16 (based on ratio 0.500)
+05:48:04 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:04 [INFO] Starting render optimization... (63 glyphs)
+05:48:04 [INFO] factor_x: 9, float_x: 9
+05:48:04 [INFO] factor_y: 19, float_y: 19
+05:48:04 [INFO] img width: 642
+05:48:04 [INFO] img height: 777
+05:48:04 [INFO] pw: 720
+05:48:04 [INFO] ph: 874
+05:48:04 [INFO] Final target dimensions (pixels): 720x874
+05:48:04 [INFO] Render finished in 109.600804ms
+05:48:04 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:04 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:04 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:05 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:06 [INFO] Auto-calculated font size: 17 (based on ratio 0.474)
+05:48:06 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:06 [INFO] Starting render optimization... (63 glyphs)
+05:48:06 [INFO] factor_x: 10, float_x: 10
+05:48:06 [INFO] factor_y: 20, float_y: 20
+05:48:06 [INFO] img width: 642
+05:48:06 [INFO] img height: 777
+05:48:06 [INFO] pw: 800
+05:48:06 [INFO] ph: 960
+05:48:06 [INFO] Final target dimensions (pixels): 800x960
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] Render finished in 131.813772ms
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:06 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:07 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:08 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:08 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:08 [INFO] Starting render optimization... (63 glyphs)
+05:48:08 [INFO] factor_x: 1, float_x: 1
+05:48:08 [INFO] factor_y: 1, float_y: 1
+05:48:08 [INFO] img width: 642
+05:48:08 [INFO] img height: 777
+05:48:08 [INFO] pw: 80
+05:48:08 [INFO] ph: 97
+05:48:08 [INFO] Final target dimensions (pixels): 80x97
+05:48:08 [INFO] Render finished in 81.4938ms
+05:48:09 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:09 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:09 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:09 [INFO] Metrics: Ascender=2, Descender=-1, Height=2, Width=1, FloatW=1, FloatH=2
+05:48:09 [INFO] Rendering block 'default' (63 glyphs)
+05:48:09 [INFO] Starting render optimization... (63 glyphs)
+05:48:09 [INFO] factor_x: 1, float_x: 1
+05:48:09 [INFO] factor_y: 2, float_y: 2
+05:48:09 [INFO] img width: 642
+05:48:09 [INFO] img height: 777
+05:48:09 [INFO] pw: 80
+05:48:09 [INFO] ph: 96
+05:48:09 [INFO] Final target dimensions (pixels): 80x96
+05:48:10 [INFO] Render finished in 42.294929ms
+05:48:11 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:12 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:12 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:12 [INFO] Metrics: Ascender=3, Descender=-1, Height=3, Width=2, FloatW=2, FloatH=3
+05:48:12 [INFO] Rendering block 'default' (63 glyphs)
+05:48:12 [INFO] Starting render optimization... (63 glyphs)
+05:48:12 [INFO] factor_x: 2, float_x: 2
+05:48:12 [INFO] factor_y: 3, float_y: 3
+05:48:12 [INFO] img width: 642
+05:48:12 [INFO] img height: 777
+05:48:12 [INFO] pw: 160
+05:48:12 [INFO] ph: 195
+05:48:12 [INFO] Final target dimensions (pixels): 160x195
+05:48:12 [INFO] Render finished in 59.275511ms
+05:48:13 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:13 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:13 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:13 [INFO] Rendering block 'default' (63 glyphs)
+05:48:13 [INFO] Starting render optimization... (63 glyphs)
+05:48:13 [INFO] factor_x: 2, float_x: 2
+05:48:13 [INFO] factor_y: 5, float_y: 5
+05:48:13 [INFO] img width: 642
+05:48:13 [INFO] img height: 777
+05:48:13 [INFO] pw: 160
+05:48:13 [INFO] ph: 195
+05:48:13 [INFO] Final target dimensions (pixels): 160x195
+05:48:13 [INFO] Render finished in 37.348099ms
+05:48:14 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:14 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:14 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:14 [INFO] Metrics: Ascender=5, Descender=-2, Height=6, Width=3, FloatW=3, FloatH=6
+05:48:14 [INFO] Rendering block 'default' (63 glyphs)
+05:48:14 [INFO] Starting render optimization... (63 glyphs)
+05:48:14 [INFO] factor_x: 3, float_x: 3
+05:48:14 [INFO] factor_y: 6, float_y: 6
+05:48:14 [INFO] img width: 642
+05:48:14 [INFO] img height: 777
+05:48:14 [INFO] pw: 240
+05:48:14 [INFO] ph: 288
+05:48:14 [INFO] Final target dimensions (pixels): 240x288
+05:48:14 [INFO] Render finished in 51.32608ms
+05:48:15 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:15 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:15 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:15 [INFO] Starting render optimization... (63 glyphs)
+05:48:15 [INFO] factor_x: 4, float_x: 4
+05:48:15 [INFO] factor_y: 7, float_y: 7
+05:48:15 [INFO] img width: 642
+05:48:15 [INFO] img height: 777
+05:48:15 [INFO] pw: 320
+05:48:15 [INFO] ph: 385
+05:48:15 [INFO] Final target dimensions (pixels): 320x385
+05:48:15 [INFO] Render finished in 64.309114ms
+05:48:16 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:16 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:16 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:16 [INFO] Rendering block 'default' (63 glyphs)
+05:48:16 [INFO] Starting render optimization... (63 glyphs)
+05:48:16 [INFO] factor_x: 4, float_x: 4
+05:48:16 [INFO] factor_y: 8, float_y: 8
+05:48:16 [INFO] img width: 642
+05:48:16 [INFO] img height: 777
+05:48:16 [INFO] pw: 320
+05:48:16 [INFO] ph: 384
+05:48:16 [INFO] Final target dimensions (pixels): 320x384
+05:48:16 [INFO] Render finished in 62.032293ms
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:17 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:17 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:17 [INFO] Rendering block 'default' (63 glyphs)
+05:48:17 [INFO] Starting render optimization... (63 glyphs)
+05:48:17 [INFO] factor_x: 5, float_x: 5
+05:48:17 [INFO] factor_y: 9, float_y: 9
+05:48:17 [INFO] img width: 642
+05:48:17 [INFO] img height: 777
+05:48:17 [INFO] pw: 400
+05:48:17 [INFO] ph: 486
+05:48:17 [INFO] Final target dimensions (pixels): 400x486
+05:48:17 [INFO] Render finished in 72.430558ms
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:17 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:18 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:18 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:18 [INFO] Starting render optimization... (63 glyphs)
+05:48:18 [INFO] factor_x: 8, float_x: 8
+05:48:18 [INFO] factor_y: 15, float_y: 15
+05:48:18 [INFO] img width: 642
+05:48:18 [INFO] img height: 777
+05:48:18 [INFO] pw: 640
+05:48:18 [INFO] ph: 780
+05:48:18 [INFO] Final target dimensions (pixels): 640x780
+05:48:18 [INFO] Render finished in 104.153526ms
+05:48:18 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:19 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:19 [INFO] Starting render optimization... (63 glyphs)
+05:48:19 [INFO] factor_x: 8, float_x: 8
+05:48:19 [INFO] factor_y: 16, float_y: 16
+05:48:19 [INFO] img width: 642
+05:48:19 [INFO] img height: 777
+05:48:19 [INFO] pw: 640
+05:48:19 [INFO] ph: 768
+05:48:19 [INFO] Final target dimensions (pixels): 640x768
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] Render finished in 98.202463ms
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:19 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:20 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:20 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:20 [INFO] Starting render optimization... (63 glyphs)
+05:48:20 [INFO] factor_x: 12, float_x: 12
+05:48:20 [INFO] factor_y: 24, float_y: 24
+05:48:20 [INFO] img width: 642
+05:48:20 [INFO] img height: 777
+05:48:20 [INFO] pw: 960
+05:48:20 [INFO] ph: 1152
+05:48:20 [INFO] Final target dimensions (pixels): 960x1152
+05:48:20 [INFO] Render finished in 181.805009ms
+05:48:21 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:22 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:22 [INFO] Metrics: Ascender=21, Descender=-6, Height=26, Width=13, FloatW=13, FloatH=26
+05:48:22 [INFO] Rendering block 'default' (63 glyphs)
+05:48:22 [INFO] Starting render optimization... (63 glyphs)
+05:48:22 [INFO] factor_x: 13, float_x: 13
+05:48:22 [INFO] factor_y: 26, float_y: 26
+05:48:22 [INFO] img width: 642
+05:48:22 [INFO] img height: 777
+05:48:22 [INFO] pw: 1040
+05:48:22 [INFO] ph: 1248
+05:48:22 [INFO] Final target dimensions (pixels): 1040x1248
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] Render finished in 213.961359ms
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:22 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:23 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:24 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:24 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:24 [INFO] Metrics: Ascender=53, Descender=-14, Height=66, Width=33, FloatW=33, FloatH=66
+05:48:24 [INFO] Rendering block 'default' (63 glyphs)
+05:48:24 [INFO] Starting render optimization... (63 glyphs)
+05:48:24 [INFO] factor_x: 33, float_x: 33
+05:48:24 [INFO] factor_y: 66, float_y: 66
+05:48:24 [INFO] img width: 642
+05:48:24 [INFO] img height: 777
+05:48:24 [INFO] pw: 2640
+05:48:24 [INFO] ph: 3168
+05:48:24 [INFO] Final target dimensions (pixels): 2640x3168
+05:48:25 [INFO] Render finished in 1.112384765s
+05:48:25 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:26 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:26 [INFO] Metrics: Ascender=54, Descender=-14, Height=67, Width=34, FloatW=34, FloatH=67
+05:48:26 [INFO] Rendering block 'default' (63 glyphs)
+05:48:26 [INFO] Starting render optimization... (63 glyphs)
+05:48:26 [INFO] factor_x: 34, float_x: 34
+05:48:26 [INFO] factor_y: 67, float_y: 67
+05:48:26 [INFO] img width: 642
+05:48:26 [INFO] img height: 777
+05:48:26 [INFO] pw: 2720
+05:48:26 [INFO] ph: 3283
+05:48:26 [INFO] Final target dimensions (pixels): 2720x3283
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:26 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] Render finished in 1.177292713s
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:27 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:28 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:29 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:30 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:30 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:30 [INFO] Rendering block 'default' (63 glyphs)
+05:48:30 [INFO] Starting render optimization... (63 glyphs)
+05:48:30 [INFO] factor_x: 79, float_x: 79
+05:48:30 [INFO] factor_y: 156, float_y: 156
+05:48:30 [INFO] img width: 642
+05:48:30 [INFO] img height: 777
+05:48:30 [INFO] pw: 6320
+05:48:30 [INFO] ph: 7644
+05:48:30 [INFO] Final target dimensions (pixels): 6320x7644
+05:48:36 [INFO] Render finished in 6.358576684s
+05:48:36 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:37 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:37 [INFO] Rendering block 'default' (63 glyphs)
+05:48:37 [INFO] Starting render optimization... (63 glyphs)
+05:48:37 [INFO] factor_x: 78, float_x: 78
+05:48:37 [INFO] factor_y: 155, float_y: 155
+05:48:37 [INFO] img width: 642
+05:48:37 [INFO] img height: 777
+05:48:37 [INFO] pw: 6240
+05:48:37 [INFO] ph: 7595
+05:48:37 [INFO] Final target dimensions (pixels): 6240x7595
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:37 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:38 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:39 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:40 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:41 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:42 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] Render finished in 6.016720061s
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:43 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:44 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:48:45 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:48:45 [INFO] Starting render optimization... (63 glyphs)
+05:48:45 [INFO] factor_x: 1, float_x: 1
+05:48:45 [INFO] factor_y: 1, float_y: 1
+05:48:45 [INFO] img width: 642
+05:48:45 [INFO] img height: 777
+05:48:45 [INFO] pw: 80
+05:48:45 [INFO] ph: 97
+05:48:45 [INFO] Final target dimensions (pixels): 80x97
+05:48:45 [INFO] Render finished in 76.682275ms
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:45 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:46 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:47 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:48 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:49 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:50 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:51 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:52 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:53 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:54 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:55 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:56 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:57 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:58 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:48:59 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:00 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] TUI Adjusted: tab=0, ctrl=20, id=FontSize
+05:49:01 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+05:49:01 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+05:49:01 [INFO] Metrics: Ascender=368, Descender=-93, Height=460, Width=232, FloatW=232, FloatH=460
+05:49:01 [INFO] Rendering block 'default' (63 glyphs)
+05:49:01 [INFO] Starting render optimization... (63 glyphs)
+05:49:01 [INFO] factor_x: 232, float_x: 232
+05:49:01 [INFO] factor_y: 460, float_y: 460
+05:49:01 [INFO] img width: 642
+05:49:01 [INFO] img height: 777
+05:49:01 [INFO] pw: 18560
+05:49:01 [INFO] ph: 22540
+05:49:01 [INFO] Final target dimensions (pixels): 18560x22540

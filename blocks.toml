@@ -44,7 +44,7 @@ ranges = [[0x1CC00, 0x1CEBF]]
 
 [default]
 include = [
-    "p",
+    "p2",
     "vb",
     "hb",
     "ascii.space"

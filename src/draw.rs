@@ -507,53 +507,31 @@ pub fn emit_colourized(
                 }
             }
             Render::Irc => {
-                if need_fg && need_bg {
-                    // Both changed: \x03FG,BG
-                    out.push('\x03');
-                    match fg {
+                // IRC clients often reset the background color if \x03FG is used without a BG.
+                // We MUST always output \x03FG,BG when any color state changes.
+                let effective_fg = if is_space {
+                    lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
+                } else {
+                    &fg
+                };
+
+                out.push('\x03');
+                match effective_fg {
+                    Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                    _ => out.push_str("1"),
+                }
+
+                if let Some(bg_c) = &bg {
+                    out.push(',');
+                    match bg_c {
                         Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                        _ => out.push_str("1"),
-                    }
-                    if let Some(bg_c) = &bg {
-                        out.push(',');
-                        match bg_c {
-                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                            _ => out.push_str("0"),
-                        }
-                    }
-                } else if need_fg {
-                    // Only FG changed (BG inherited): \x03FG
-                    out.push('\x03');
-                    match fg {
-                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                        _ => out.push_str("1"),
-                    }
-                } else if need_bg {
-                    // Only BG changed. IRC requires FG to set BG.
-                    // For spaces (FG invisible), use lookahead FG to pre-set
-                    // and avoid a redundant code on the next visible glyph.
-                    // For non-spaces, we MUST use the current FG (== last_fg)
-                    // since the glyph is visible and its FG must be correct.
-                    if let Some(bg_c) = &bg {
-                        let effective_fg = if is_space {
-                            lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
-                        } else {
-                            last_fg.as_ref().unwrap_or(&fg)
-                        };
-                        out.push('\x03');
-                        match effective_fg {
-                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                            _ => out.push_str("1"),
-                        }
-                        out.push(',');
-                        match bg_c {
-                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                            _ => out.push_str("0"),
-                        }
-                        // Pre-set last_fg so the next glyph with this FG won't re-emit it
-                        *last_fg = Some(effective_fg.clone());
+                        _ => out.push_str("0"),
                     }
                 }
+
+                // Track exactly what we emitted to the terminal so next cell diffs against it
+                // (e.g. if we used lookahead, last_fg is now whatever the lookahead was)
+                *last_fg = Some(effective_fg.clone());
             }
         }
         *first = false;

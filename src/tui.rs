@@ -368,7 +368,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Font Size",
         kind: ControlKind::Slider {
             min: 0,
-            max: 2560,
+            max: 10240,
             default: 0,
         },
     },
@@ -1323,7 +1323,7 @@ impl App {
             ControlId::Rotate => self.rotate,
             ControlId::ScaleX => self.scalex,
             ControlId::ScaleY => self.scaley,
-            ControlId::FontSize => self.font_size as i32,
+            ControlId::FontSize => (self.font_size * 10.0) as i32,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
@@ -2200,11 +2200,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         &render_args.include_range,
         render_args.include.as_ref(),
         &render_args.font,
-        if (render_args.font_size - 0.0).abs() < f32::EPSILON {
-            24.0
-        } else {
-            render_args.font_size
-        },
+        render_args.font_size,
+        // if (render_args.font_size - 0.0).abs() < f32::EPSILON {
+        //     24.0
+        // } else {
+        //     render_args.font_size
+        // },
         true,
         None,
     );
