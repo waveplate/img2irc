@@ -22,7 +22,7 @@ async fn main() {
     if args.tui {
         let render_args = img2irc_rs::args_to_render_args(&args);
         if let Err(e) = img2irc_rs::tui::run(render_args).await {
-            eprintln!("Error running TUI: {}", e);
+            log::error!("Error running TUI: {}", e);
             std::process::exit(1);
         }
         std::process::exit(0);

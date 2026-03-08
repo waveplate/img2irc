@@ -52,9 +52,9 @@ pub fn render_blocks_gpu(
     total_blocks: usize,
 ) -> Vec<GpuResult> {
     let (device, queue) = std::thread::spawn(|| {
-        eprintln!("Initializing WGPU instance...");
+        log::debug!("Initializing WGPU instance...");
         let instance = wgpu::Instance::default();
-        eprintln!("Requesting adapter...");
+        log::debug!("Requesting adapter...");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
@@ -63,11 +63,13 @@ pub fn render_blocks_gpu(
         .expect("Failed to find an appropriate adapter");
 
         let info = adapter.get_info();
-        eprintln!(
+        log::error!(
             "Using WGPU Adapter: {} (Backend: {:?}, Device Type: {:?})",
-            info.name, info.backend, info.device_type
+            info.name,
+            info.backend,
+            info.device_type
         );
-        eprintln!("Requesting device from adapter...");
+        log::debug!("Requesting device from adapter...");
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: wgpu::Features::empty(),
@@ -77,7 +79,7 @@ pub fn render_blocks_gpu(
         }))
         .expect("Failed to create device");
 
-        eprintln!("WGPU Device and Queue obtained successfully!");
+        log::debug!("WGPU Device and Queue obtained successfully!");
         (device, queue)
     })
     .join()
@@ -328,9 +330,9 @@ pub fn render_blocks_gpu(
         total_gpu_time += t_batch_gpu.elapsed();
     }
 
-    eprintln!("Total Prep Time: {:?}", total_prep_time);
-    eprintln!("Total GPU Time: {:?}", total_gpu_time);
-    eprintln!("Total Render blocks gpu time: {:?}", t_total.elapsed());
+    log::debug!("Total Prep Time: {:?}", total_prep_time);
+    log::debug!("Total GPU Time: {:?}", total_gpu_time);
+    log::debug!("Total Render blocks gpu time: {:?}", t_total.elapsed());
 
     final_results
 }
@@ -409,25 +411,26 @@ fn process_batch(
     });
 
     encoder.copy_buffer_to_buffer(results_buf, 0, &staging_buf, 0, results_size);
-    eprintln!("Submitting {} blocks to queue", batch_blocks);
+    log::debug!("Submitting {} blocks to queue", batch_blocks);
     queue.submit(Some(encoder.finish()));
 
     let buffer_slice = staging_buf.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
     buffer_slice.map_async(wgpu::MapMode::Read, move |v| {
-        eprintln!("Map Async Callback Fired! Status: {:?}", v);
+        log::debug!("Map Async Callback Fired! Status: {:?}", v);
         tx.send(v).unwrap()
     });
 
-    eprintln!("Polling device Wait...");
+    log::debug!("Polling device Wait...");
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
     });
-    eprintln!("Poll returned! Receiving from channel...");
+    log::debug!("Poll returned! Receiving from channel...");
 
+    // Wait for the async mapping to complete
     rx.recv().unwrap().unwrap();
-    eprintln!("Channel received data payload successfully!");
+    log::debug!("Channel received data payload successfully!");
 
     let data = buffer_slice.get_mapped_range();
     let res: &[GpuResult] = bytemuck::cast_slice(&data);

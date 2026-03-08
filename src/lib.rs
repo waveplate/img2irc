@@ -1,9 +1,9 @@
 pub mod args;
 pub mod config;
 pub mod draw;
-pub mod gpu;
 pub mod effects;
 pub mod font;
+pub mod gpu;
 pub mod palette;
 
 pub mod tui;
@@ -123,8 +123,6 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         smooth: args.smooth,
         no_glyph_invert: args.no_glyph_invert,
-        relax: args.relax,
-        relax_strength: param_base(&args.relax_strength),
         show_discontinuities: args.show_discontinuities,
         fix_disc: args.fix_disc,
         fix_strength: args.fix_strength,

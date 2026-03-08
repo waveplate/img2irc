@@ -67,8 +67,7 @@ enum ControlId {
     RenderMode,
     Smooth,
     NoGlyphInvert,
-    Relax,
-    RelaxStrength,
+    Gpu,
     HighlightDisc,
     FixDisc,
     FixStrength,
@@ -186,18 +185,9 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
-        id: ControlId::Relax,
-        label: "Relax",
+        id: ControlId::Gpu,
+        label: "GPU Mode",
         kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::RelaxStrength,
-        label: "Relax Str",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 4000,
-            default: 0,
-        },
     },
     ControlDef {
         id: ControlId::HighlightDisc,
@@ -916,8 +906,7 @@ struct App {
     dither: i32,
     smooth: bool,
     no_glyph_invert: bool,
-    relax: bool,
-    relax_strength: i32,
+    gpu: bool,
     show_discontinuities: bool,
     fix_disc: bool,
     fix_strength: u32,
@@ -1074,8 +1063,7 @@ impl App {
             dither: render_args.dither as i32,
             smooth: render_args.smooth,
             no_glyph_invert: render_args.no_glyph_invert,
-            relax: render_args.relax,
-            relax_strength: (render_args.relax_strength * 10.0) as i32,
+            gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
             fix_strength: render_args.fix_strength,
@@ -1204,8 +1192,7 @@ impl App {
         self.dither = render_args.dither as i32;
         self.smooth = render_args.smooth;
         self.no_glyph_invert = render_args.no_glyph_invert;
-        self.relax = render_args.relax;
-        self.relax_strength = (render_args.relax_strength * 10.0) as i32;
+        self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
         self.fix_disc = render_args.fix_disc;
         self.fix_strength = render_args.fix_strength;
@@ -1338,8 +1325,7 @@ impl App {
             ControlId::Dither => self.dither,
             ControlId::Smooth => self.smooth as i32,
             ControlId::NoGlyphInvert => self.no_glyph_invert as i32,
-            ControlId::Relax => self.relax as i32,
-            ControlId::RelaxStrength => self.relax_strength,
+            ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::FixDisc => self.fix_disc as i32,
             ControlId::FixStrength => self.fix_strength as i32,
@@ -1411,8 +1397,7 @@ impl App {
             ControlId::Dither => self.dither = val,
             ControlId::Smooth => self.smooth = val != 0,
             ControlId::NoGlyphInvert => self.no_glyph_invert = val != 0,
-            ControlId::Relax => self.relax = val != 0,
-            ControlId::RelaxStrength => self.relax_strength = val,
+            ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::FixDisc => self.fix_disc = val != 0,
             ControlId::FixStrength => self.fix_strength = val as u32,
@@ -1524,8 +1509,7 @@ impl App {
         self.render_args.grayscale = self.grayscale;
         self.render_args.smooth = self.smooth;
         self.render_args.no_glyph_invert = self.no_glyph_invert;
-        self.render_args.relax = self.relax;
-        self.render_args.relax_strength = self.relax_strength as f32 / 10.0;
+        self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
         self.render_args.fix_strength = self.fix_strength;
@@ -2183,7 +2167,6 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
             .unwrap_or_else(|| "unknown location".to_string());
         log::error!("PANIC at {}: {}", location, message);
-        eprintln!("PANIC at {}: {}", location, message);
     }));
 
     log::info!("Starting img2irc TUI...");
@@ -3782,44 +3765,35 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .as_ref()
             .and_then(|r| r.save_content.as_ref())
             .unwrap_or(&app.cached_render);
-        let line_count = stats_content.lines().count();
         let max_bytes = stats_content.lines().map(|l| l.len()).max().unwrap_or(0);
-        let title_base = format!(" {}×{} │ {}B ", max_bytes, line_count, stats_content.len());
 
-        let mut technical_info = String::new();
+        let width_chars = app
+            .cached_result
+            .as_ref()
+            .and_then(|r| r.grid.first())
+            .map_or(0, |row| row.len());
+        let height_chars = app.cached_result.as_ref().map_or(0, |r| r.grid.len());
 
-        if let Some(res) = &app.cached_result {
-            let width_chars = res.grid.first().map_or(0, |row| row.len());
-            let height_chars = res.grid.len();
-            technical_info.push_str(&format!("Size: {}x{} chars", width_chars, height_chars));
-        }
+        let (cw, ch) = app.arc_glyphs.as_ref().map_or((0, 0), |g| g.metrics);
+        let (fw, fh) = app
+            .arc_glyphs
+            .as_ref()
+            .map_or((0.0, 0.0), |g| g.float_metrics);
 
-        if let Some(g) = &app.arc_glyphs {
-            let (gw, gh) = g.metrics;
-            if !technical_info.is_empty() {
-                technical_info.push_str(" │ ");
-            }
-            technical_info.push_str(&format!("Cell: {}x{}", gw, gh));
-        }
+        let mut title_right = format!(
+            " Output: {}x{} chars | Cell: {}x{} px | Font: {:.1}x{:.1} px | Longest line: {} bytes ",
+            width_chars, height_chars, cw, ch, fw, fh, max_bytes
+        );
 
         if let Some((r, g, b)) = app.eyedropper_color {
             let col_u32 = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
             let irc_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::IRC99);
             let ansi_code = crate::draw::nearest_hex_colour_fast(col_u32, &crate::palette::ANSI256);
-            if !technical_info.is_empty() {
-                technical_info.push_str(" │ ");
-            }
-            technical_info.push_str(&format!(
-                "#{:02X}{:02X}{:02X} IRC:{:02} ANSI:{:03}",
+            title_right.push_str(&format!(
+                "| #{:02X}{:02X}{:02X} IRC:{:02} ANSI:{:03} ",
                 r, g, b, irc_code, ansi_code
             ));
         }
-
-        let title_right = if technical_info.is_empty() {
-            title_base
-        } else {
-            format!(" {} │ {} ", technical_info, title_base.trim())
-        };
 
         let block_with_bottom_title = block
             .title_bottom(Line::from(Span::styled(

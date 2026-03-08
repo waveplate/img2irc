@@ -159,8 +159,6 @@ pub struct RenderArgs {
     pub edge_detection: bool,
     pub smooth: bool,
     pub no_glyph_invert: bool,
-    pub relax: bool,
-    pub relax_strength: f32,
     pub show_discontinuities: bool,
     pub fix_disc: bool,
     pub fix_strength: u32,
@@ -518,14 +516,6 @@ pub struct Args {
     /// prevent glyphs from being used in their inverted state
     #[arg(long, default_value_t = false)]
     pub no_glyph_invert: bool,
-
-    /// topological relaxation pass to smooth jagged boundaries
-    #[arg(long, default_value_t = false)]
-    pub relax: bool,
-
-    /// strength of the relaxation sharpness penalty (0.0-20.0)
-    #[arg(long, default_value = "4.0")]
-    pub relax_strength: Param,
 
     /// highlight cells with discontinuities in red
     #[arg(long, default_value_t = false)]
