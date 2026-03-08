@@ -172,6 +172,7 @@ pub struct RenderArgs {
     pub misc6: i32,
     pub misc7: i32,
     pub misc8: i32,
+    pub gpu: bool,
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<String>,
@@ -203,6 +204,10 @@ pub struct Args {
     /// launch the TUI
     #[arg(long, default_value_t = false)]
     pub tui: bool,
+
+    /// enable gpu acceleration
+    #[arg(long, default_value_t = false)]
+    pub gpu: bool,
 
     #[arg(help = "input image path or URL")]
     pub image: Option<String>,

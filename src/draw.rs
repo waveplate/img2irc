@@ -609,7 +609,6 @@ pub fn render_blocks_smooth(
 
     // --- Phase 1: Pre-calculate Block Data (Colors & Pixels) ---
     struct BlockData {
-        pixels: Vec<PrePixel>,
         fg: [u8; 3],            // High Color
         bg: [u8; 3],            // Low Color
         fg_col: Option<Colour>, // Cached Colour enum
@@ -620,294 +619,44 @@ pub fn render_blocks_smooth(
 
     let scales = vec![(1.0, 1.0)];
 
+    eprintln!("DEBUG: args.gpu = {}", args.gpu);
     // Parallel Processing
-    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = image
-        .block
-        .par_iter()
-        .map(|block_row| {
-            if let Some(flag) = &abort_flag {
-                if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    return (Vec::new(), Vec::new());
-                }
-            }
-            let mut row_data = Vec::with_capacity(block_row.len());
-            let mut row_state = Vec::with_capacity(block_row.len());
-            let mut working_pixels_buffer = Vec::with_capacity(bp);
-
-            for blk in block_row {
-                // 1. Capture Base Pixels
-                let mut original_pixels = Vec::with_capacity(bp);
-                for y in 0..gh {
-                    for x in 0..gw {
-                        let px_orig = blk.pixels[y][x].orig;
-                        let rgb = unpack_rgb(px_orig);
-                        let p = PrePixel {
-                            r: rgb[0] as u64,
-                            g: rgb[1] as u64,
-                            b: rgb[2] as u64,
-                            sq: (rgb[0] as u64).pow(2)
-                                + (rgb[1] as u64).pow(2)
-                                + (rgb[2] as u64).pow(2),
-                        };
-                        original_pixels.push(p);
-                    }
-                }
-
-                let mut best_overall_cost = u64::MAX;
-                let mut best_overall_glyph = 0;
-                let mut best_overall_inv = false;
-                let mut best_overall_fg = [0u8; 3];
-                let mut best_overall_bg = [0u8; 3];
-                let mut best_block_pixels = original_pixels.clone();
-
-                for (sx, sy) in &scales {
-                    if *sx == 1.0 && *sy == 1.0 {
-                        working_pixels_buffer.clear();
-                        working_pixels_buffer.extend_from_slice(&original_pixels);
-                    } else {
-                        get_transformed_block_pixels_into(
-                            &original_pixels,
-                            gw,
-                            gh,
-                            *sx,
-                            *sy,
-                            &mut working_pixels_buffer,
-                        );
-                    }
-                    let pixels = &working_pixels_buffer;
-
-                    let mut block_sum_r = 0u64;
-                    let mut block_sum_g = 0u64;
-                    let mut block_sum_b = 0u64;
-                    let mut block_sum_sq = 0u64;
-
-                    let mut p_r = [0u64; 256];
-                    let mut p_g = [0u64; 256];
-                    let mut p_b = [0u64; 256];
-                    let mut p_sq = [0u64; 256];
-
-                    for (i, p) in pixels.iter().enumerate().take(256) {
-                        block_sum_r += p.r;
-                        block_sum_g += p.g;
-                        block_sum_b += p.b;
-                        block_sum_sq += p.sq;
-                        p_r[i] = p.r;
-                        p_g[i] = p.g;
-                        p_b[i] = p.b;
-                        p_sq[i] = p.sq;
-                    }
-
-                    // 2. Find Best Fit for Scale
-                    let mut scale_best_cost = u64::MAX;
-                    let mut scale_best_glyph = 0;
-                    let mut scale_best_inv = false;
-                    let mut scale_best_fg = [0u8; 3];
-                    let mut scale_best_bg = [0u8; 3];
-
-                    if render != Render::Ansi24 {
-                        // --- Indexed Mode (Frequency/Mode Logic) ---
-                        let palette: &[u32] = if render == Render::Ansi {
-                            &ANSI256
-                        } else {
-                            &IRC99
-                        };
-                        let mut indices = Vec::with_capacity(bp);
-                        for p in pixels {
-                            let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                            let idx = match render {
-                                Render::Ansi => nearest_strict_partitioned_hex_colour(
-                                    rgb_u32,
-                                    &ANSI256,
-                                    args.grayscale_tolerance,
-                                ),
-                                Render::Irc | Render::Preview => {
-                                    nearest_strict_partitioned_hex_colour(
-                                        rgb_u32,
-                                        &IRC99,
-                                        args.grayscale_tolerance,
-                                    )
-                                }
-                                _ => 0,
-                            };
-                            indices.push(idx);
-                        }
-
-                        for (gi, fglyph) in glyphs.iter().enumerate() {
-                            let invert_opts: &[bool] = if args.no_glyph_invert {
-                                &[false]
-                            } else {
-                                &[false, true]
-                            };
-                            for &inv in invert_opts {
-                                let mut fg_cnt = [0u16; 256];
-                                let mut bg_cnt = [0u16; 256];
-                                let mut fg_len = 0;
-                                let mut bg_len = 0;
-
-                                let (fg_iter, bg_iter) = if inv {
-                                    (&fglyph.zeros, &fglyph.ones)
-                                } else {
-                                    (&fglyph.ones, &fglyph.zeros)
-                                };
-
-                                for &i in fg_iter {
-                                    fg_cnt[indices[i] as usize] += 1;
-                                    fg_len += 1;
-                                }
-                                for &i in bg_iter {
-                                    bg_cnt[indices[i] as usize] += 1;
-                                    bg_len += 1;
-                                }
-                                let (fgi_raw, fx) = fg_cnt
-                                    .iter()
-                                    .enumerate()
-                                    .max_by_key(|&(_, c)| c)
-                                    .unwrap_or((0, &0));
-                                let (bgi_raw, bx) = bg_cnt
-                                    .iter()
-                                    .enumerate()
-                                    .max_by_key(|&(_, c)| c)
-                                    .unwrap_or((0, &0));
-
-                                // Fix: when a partition is empty, its argmax is
-                                // meaningless. Inherit the other partition's index
-                                // so that uniform cells get fg==bg correctly.
-                                let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
-                                let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
-
-                                let cost = ((fg_len as u64) - (*fx as u64))
-                                    + ((bg_len as u64) - (*bx as u64));
-
-                                if cost < scale_best_cost {
-                                    scale_best_cost = cost;
-                                    scale_best_glyph = gi;
-                                    scale_best_inv = inv;
-                                    scale_best_fg = unpack_rgb(palette[fgi.min(palette.len() - 1)]);
-                                    scale_best_bg = unpack_rgb(palette[bgi.min(palette.len() - 1)]);
-                                }
-                            }
-                        }
-                    } else {
-                        // --- TrueColor Mode (RGB Average + Noise Threshold) ---
-                        let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
-                        let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
-                        let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
-                        let term_sq = avg_r * avg_r + avg_g * avg_g + avg_b * avg_b;
-                        let term_linear =
-                            avg_r * block_sum_r + avg_g * block_sum_g + avg_b * block_sum_b;
-                        let uniform_cost =
-                            (block_sum_sq + (bp as u64 * term_sq)).saturating_sub(2 * term_linear);
-                        let noise_gain_threshold = 800u64;
-
-                        for (gi, fglyph) in glyphs.iter().enumerate() {
-                            let mut sum_ones_r = 0u64;
-                            let mut sum_ones_g = 0u64;
-                            let mut sum_ones_b = 0u64;
-                            let mut sum_ones_sq = 0u64;
-                            let count_ones = fglyph.ones.len() as u64;
-
-                            for &i in &fglyph.ones {
-                                // SAFETY: fglyph.ones contains valid indices < bp
-                                let px = unsafe { pixels.get_unchecked(i) };
-                                sum_ones_r += px.r;
-                                sum_ones_g += px.g;
-                                sum_ones_b += px.b;
-                                sum_ones_sq += px.sq;
-                            }
-                            let count_zeros = bp as u64 - count_ones;
-                            let sum_zeros_r = block_sum_r - sum_ones_r;
-                            let sum_zeros_g = block_sum_g - sum_ones_g;
-                            let sum_zeros_b = block_sum_b - sum_ones_b;
-                            let sum_zeros_sq = block_sum_sq - sum_ones_sq;
-
-                            let avg_ones = if count_ones > 0 {
-                                [
-                                    (sum_ones_r / count_ones) as u8,
-                                    (sum_ones_g / count_ones) as u8,
-                                    (sum_ones_b / count_ones) as u8,
-                                ]
-                            } else {
-                                [0, 0, 0]
-                            };
-                            let avg_zeros = if count_zeros > 0 {
-                                [
-                                    (sum_zeros_r / count_zeros) as u8,
-                                    (sum_zeros_g / count_zeros) as u8,
-                                    (sum_zeros_b / count_zeros) as u8,
-                                ]
-                            } else {
-                                [0, 0, 0]
-                            };
-
-                            let t1_1 = sum_ones_sq;
-                            let t2_1 = 2
-                                * (avg_ones[0] as u64 * sum_ones_r
-                                    + avg_ones[1] as u64 * sum_ones_g
-                                    + avg_ones[2] as u64 * sum_ones_b);
-                            let t3_1 = count_ones
-                                * (avg_ones[0] as u64 * avg_ones[0] as u64
-                                    + avg_ones[1] as u64 * avg_ones[1] as u64
-                                    + avg_ones[2] as u64 * avg_ones[2] as u64);
-                            let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-
-                            let t1_0 = sum_zeros_sq;
-                            let t2_0 = 2
-                                * (avg_zeros[0] as u64 * sum_zeros_r
-                                    + avg_zeros[1] as u64 * sum_zeros_g
-                                    + avg_zeros[2] as u64 * sum_zeros_b);
-                            let t3_0 = count_zeros
-                                * (avg_zeros[0] as u64 * avg_zeros[0] as u64
-                                    + avg_zeros[1] as u64 * avg_zeros[1] as u64
-                                    + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                            let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-
-                            let cost_normal = c1 + c0;
-                            if cost_normal < scale_best_cost {
-                                scale_best_cost = cost_normal;
-                                scale_best_glyph = gi;
-                                scale_best_inv = false;
-                                scale_best_fg = avg_ones;
-                                scale_best_bg = avg_zeros;
-                            }
-                        }
-
-                        let gain = uniform_cost.saturating_sub(scale_best_cost);
-                        if args.smooth && gain < noise_gain_threshold {
-                            let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
-                            scale_best_fg = flat_col;
-                            scale_best_bg = flat_col;
-                        }
-                    }
-
-                    if scale_best_cost < best_overall_cost {
-                        best_overall_cost = scale_best_cost;
-                        best_overall_glyph = scale_best_glyph;
-                        best_overall_inv = scale_best_inv;
-                        best_overall_fg = scale_best_fg;
-                        best_overall_bg = scale_best_bg;
-                        best_block_pixels = pixels.to_vec();
-                    }
-                }
-
-                let best_fg_rgb = best_overall_fg;
-                let best_bg_rgb = best_overall_bg;
-                let best_glyph_idx = best_overall_glyph;
-                let best_inv = best_overall_inv;
-                let pixels = best_block_pixels;
+    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = if args.gpu {
+        let gpu_res = crate::gpu::render_blocks_gpu(
+            image,
+            glyphs,
+            render.clone(),
+            args.grayscale_tolerance,
+            bp as u32,
+            grid_h * grid_w,
+        );
+        let mut results = Vec::with_capacity(grid_h);
+        let mut r_idx = 0;
+        for _y in 0..grid_h {
+            let mut row_data = Vec::with_capacity(grid_w);
+            let mut row_state = Vec::with_capacity(grid_w);
+            for _x in 0..grid_w {
+                let res = &gpu_res[r_idx];
+                r_idx += 1;
 
                 let (final_fg, final_bg, fg_obj, bg_obj, alt_fg_obj, alt_bg_obj) =
                     if render == Render::Ansi24 {
+                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
                         (
-                            best_fg_rgb,
-                            best_bg_rgb,
-                            Some(Colour::RGB(best_fg_rgb)),
-                            Some(Colour::RGB(best_bg_rgb)),
+                            final_fg,
+                            final_bg,
+                            Some(Colour::RGB(final_fg)),
+                            Some(Colour::RGB(final_bg)),
                             None,
                             None,
                         )
-                    } else if render == Render::Preview {
-                        let col_hi = make_rgb_u32(&best_fg_rgb);
-                        let col_lo = make_rgb_u32(&best_bg_rgb);
+                    } else if render == Render::Irc {
+                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+
+                        let col_hi = make_rgb_u32(&final_fg);
+                        let col_lo = make_rgb_u32(&final_bg);
                         let hi_idx = nearest_strict_partitioned_hex_colour(
                             col_hi,
                             &IRC99,
@@ -918,31 +667,38 @@ pub fn render_blocks_smooth(
                             &IRC99,
                             args.grayscale_tolerance,
                         );
+
                         let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
                         let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+
                         (
                             hi_rgb,
                             lo_rgb,
-                            Some(Colour::RGB(hi_rgb)),
-                            Some(Colour::RGB(lo_rgb)),
                             Some(Colour::Index(hi_idx)),
                             Some(Colour::Index(lo_idx)),
+                            None,
+                            None,
                         )
-                    } else if render == Render::Irc {
-                        let col_hi = make_rgb_u32(&best_fg_rgb);
-                        let col_lo = make_rgb_u32(&best_bg_rgb);
+                    } else if render == Render::Ansi {
+                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+
+                        let col_hi = make_rgb_u32(&final_fg);
+                        let col_lo = make_rgb_u32(&final_bg);
                         let hi_idx = nearest_strict_partitioned_hex_colour(
                             col_hi,
-                            &IRC99,
+                            &ANSI256,
                             args.grayscale_tolerance,
                         );
                         let lo_idx = nearest_strict_partitioned_hex_colour(
                             col_lo,
-                            &IRC99,
+                            &ANSI256,
                             args.grayscale_tolerance,
                         );
-                        let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
-                        let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+
+                        let hi_rgb = unpack_rgb(ANSI256[hi_idx as usize]);
+                        let lo_rgb = unpack_rgb(ANSI256[lo_idx as usize]);
+
                         (
                             hi_rgb,
                             lo_rgb,
@@ -952,35 +708,48 @@ pub fn render_blocks_smooth(
                             None,
                         )
                     } else {
-                        let palette = &ANSI256[..];
-                        let col_hi = make_rgb_u32(&best_fg_rgb);
-                        let col_lo = make_rgb_u32(&best_bg_rgb);
+                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
 
-                        let hi_idx = nearest_strict_partitioned_hex_colour(
+                        let col_hi = make_rgb_u32(&final_fg);
+                        let col_lo = make_rgb_u32(&final_bg);
+
+                        let hi_ansi = nearest_strict_partitioned_hex_colour(
                             col_hi,
-                            palette,
+                            &ANSI256,
                             args.grayscale_tolerance,
                         );
-                        let lo_idx = nearest_strict_partitioned_hex_colour(
+                        let lo_ansi = nearest_strict_partitioned_hex_colour(
                             col_lo,
-                            palette,
+                            &ANSI256,
                             args.grayscale_tolerance,
                         );
 
-                        let hi_rgb = unpack_rgb(palette[hi_idx as usize]);
-                        let lo_rgb = unpack_rgb(palette[lo_idx as usize]);
+                        let hi_irc = nearest_strict_partitioned_hex_colour(
+                            col_hi,
+                            &IRC99,
+                            args.grayscale_tolerance,
+                        );
+                        let lo_irc = nearest_strict_partitioned_hex_colour(
+                            col_lo,
+                            &IRC99,
+                            args.grayscale_tolerance,
+                        );
+
+                        let hi_rgb = unpack_rgb(ANSI256[hi_ansi as usize]);
+                        let lo_rgb = unpack_rgb(ANSI256[lo_ansi as usize]);
+
                         (
                             hi_rgb,
                             lo_rgb,
-                            Some(Colour::Index(hi_idx)),
-                            Some(Colour::Index(lo_idx)),
-                            None,
-                            None,
+                            Some(Colour::Index(hi_ansi)),
+                            Some(Colour::Index(lo_ansi)),
+                            Some(Colour::Index(hi_irc)),
+                            Some(Colour::Index(lo_irc)),
                         )
                     };
 
                 row_data.push(BlockData {
-                    pixels,
                     fg: final_fg,
                     bg: final_bg,
                     fg_col: fg_obj,
@@ -988,11 +757,384 @@ pub fn render_blocks_smooth(
                     alt_fg_col: alt_fg_obj,
                     alt_bg_col: alt_bg_obj,
                 });
-                row_state.push((best_glyph_idx, best_inv));
+                row_state.push((res.best_glyph as usize, res.best_inv != 0));
             }
-            (row_data, row_state)
-        })
-        .collect();
+            results.push((row_data, row_state));
+        }
+        results
+    } else {
+        image
+            .block
+            .par_iter()
+            .map(|block_row| {
+                if let Some(flag) = &abort_flag {
+                    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        return (Vec::new(), Vec::new());
+                    }
+                }
+                let mut row_data = Vec::with_capacity(block_row.len());
+                let mut row_state = Vec::with_capacity(block_row.len());
+                let mut working_pixels_buffer = Vec::with_capacity(bp);
+
+                for blk in block_row {
+                    // 1. Capture Base Pixels
+                    let mut original_pixels = Vec::with_capacity(bp);
+                    for y in 0..gh {
+                        for x in 0..gw {
+                            let px_orig = blk.pixels[y][x].orig;
+                            let rgb = unpack_rgb(px_orig);
+                            let p = PrePixel {
+                                r: rgb[0] as u64,
+                                g: rgb[1] as u64,
+                                b: rgb[2] as u64,
+                                sq: (rgb[0] as u64).pow(2)
+                                    + (rgb[1] as u64).pow(2)
+                                    + (rgb[2] as u64).pow(2),
+                            };
+                            original_pixels.push(p);
+                        }
+                    }
+
+                    let mut best_overall_cost = u64::MAX;
+                    let mut best_overall_glyph = 0;
+                    let mut best_overall_inv = false;
+                    let mut best_overall_fg = [0u8; 3];
+                    let mut best_overall_bg = [0u8; 3];
+
+                    for (sx, sy) in &scales {
+                        if *sx == 1.0 && *sy == 1.0 {
+                            working_pixels_buffer.clear();
+                            working_pixels_buffer.extend_from_slice(&original_pixels);
+                        } else {
+                            get_transformed_block_pixels_into(
+                                &original_pixels,
+                                gw,
+                                gh,
+                                *sx,
+                                *sy,
+                                &mut working_pixels_buffer,
+                            );
+                        }
+                        let pixels = &working_pixels_buffer;
+
+                        let mut block_sum_r = 0u64;
+                        let mut block_sum_g = 0u64;
+                        let mut block_sum_b = 0u64;
+                        let mut block_sum_sq = 0u64;
+
+                        let mut p_r = [0u64; 256];
+                        let mut p_g = [0u64; 256];
+                        let mut p_b = [0u64; 256];
+                        let mut p_sq = [0u64; 256];
+
+                        for (i, p) in pixels.iter().enumerate().take(256) {
+                            block_sum_r += p.r;
+                            block_sum_g += p.g;
+                            block_sum_b += p.b;
+                            block_sum_sq += p.sq;
+                            p_r[i] = p.r;
+                            p_g[i] = p.g;
+                            p_b[i] = p.b;
+                            p_sq[i] = p.sq;
+                        }
+
+                        // 2. Find Best Fit for Scale
+                        let mut scale_best_cost = u64::MAX;
+                        let mut scale_best_glyph = 0;
+                        let mut scale_best_inv = false;
+                        let mut scale_best_fg = [0u8; 3];
+                        let mut scale_best_bg = [0u8; 3];
+
+                        if render != Render::Ansi24 {
+                            // --- Indexed Mode (Frequency/Mode Logic) ---
+                            let palette: &[u32] = if render == Render::Ansi {
+                                &ANSI256
+                            } else {
+                                &IRC99
+                            };
+                            let mut indices = Vec::with_capacity(bp);
+                            for p in pixels {
+                                let rgb_u32 =
+                                    ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
+                                let idx = match render {
+                                    Render::Ansi => nearest_strict_partitioned_hex_colour(
+                                        rgb_u32,
+                                        &ANSI256,
+                                        args.grayscale_tolerance,
+                                    ),
+                                    Render::Irc | Render::Preview => {
+                                        nearest_strict_partitioned_hex_colour(
+                                            rgb_u32,
+                                            &IRC99,
+                                            args.grayscale_tolerance,
+                                        )
+                                    }
+                                    _ => 0,
+                                };
+                                indices.push(idx);
+                            }
+
+                            for (gi, fglyph) in glyphs.iter().enumerate() {
+                                let invert_opts: &[bool] = if args.no_glyph_invert {
+                                    &[false]
+                                } else {
+                                    &[false, true]
+                                };
+                                for &inv in invert_opts {
+                                    let mut fg_cnt = [0u16; 256];
+                                    let mut bg_cnt = [0u16; 256];
+                                    let mut fg_len = 0;
+                                    let mut bg_len = 0;
+
+                                    let (fg_iter, bg_iter) = if inv {
+                                        (&fglyph.zeros, &fglyph.ones)
+                                    } else {
+                                        (&fglyph.ones, &fglyph.zeros)
+                                    };
+
+                                    for &i in fg_iter {
+                                        fg_cnt[indices[i] as usize] += 1;
+                                        fg_len += 1;
+                                    }
+                                    for &i in bg_iter {
+                                        bg_cnt[indices[i] as usize] += 1;
+                                        bg_len += 1;
+                                    }
+                                    let (fgi_raw, fx) = fg_cnt
+                                        .iter()
+                                        .enumerate()
+                                        .max_by_key(|&(_, c)| c)
+                                        .unwrap_or((0, &0));
+                                    let (bgi_raw, bx) = bg_cnt
+                                        .iter()
+                                        .enumerate()
+                                        .max_by_key(|&(_, c)| c)
+                                        .unwrap_or((0, &0));
+
+                                    // Fix: when a partition is empty, its argmax is
+                                    // meaningless. Inherit the other partition's index
+                                    // so that uniform cells get fg==bg correctly.
+                                    let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
+                                    let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
+
+                                    let cost = ((fg_len as u64) - (*fx as u64))
+                                        + ((bg_len as u64) - (*bx as u64));
+
+                                    if cost < scale_best_cost {
+                                        scale_best_cost = cost;
+                                        scale_best_glyph = gi;
+                                        scale_best_inv = inv;
+                                        scale_best_fg =
+                                            unpack_rgb(palette[fgi.min(palette.len() - 1)]);
+                                        scale_best_bg =
+                                            unpack_rgb(palette[bgi.min(palette.len() - 1)]);
+                                    }
+                                }
+                            }
+                        } else {
+                            // --- TrueColor Mode (RGB Average + Noise Threshold) ---
+                            let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
+                            let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
+                            let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
+                            let term_sq = avg_r * avg_r + avg_g * avg_g + avg_b * avg_b;
+                            let term_linear =
+                                avg_r * block_sum_r + avg_g * block_sum_g + avg_b * block_sum_b;
+                            let uniform_cost = (block_sum_sq + (bp as u64 * term_sq))
+                                .saturating_sub(2 * term_linear);
+                            let noise_gain_threshold = 800u64;
+
+                            for (gi, fglyph) in glyphs.iter().enumerate() {
+                                let mut sum_ones_r = 0u64;
+                                let mut sum_ones_g = 0u64;
+                                let mut sum_ones_b = 0u64;
+                                let mut sum_ones_sq = 0u64;
+                                let count_ones = fglyph.ones.len() as u64;
+
+                                for &i in &fglyph.ones {
+                                    // SAFETY: fglyph.ones contains valid indices < bp
+                                    let px = unsafe { pixels.get_unchecked(i) };
+                                    sum_ones_r += px.r;
+                                    sum_ones_g += px.g;
+                                    sum_ones_b += px.b;
+                                    sum_ones_sq += px.sq;
+                                }
+                                let count_zeros = bp as u64 - count_ones;
+                                let sum_zeros_r = block_sum_r - sum_ones_r;
+                                let sum_zeros_g = block_sum_g - sum_ones_g;
+                                let sum_zeros_b = block_sum_b - sum_ones_b;
+                                let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+
+                                let avg_ones = if count_ones > 0 {
+                                    [
+                                        (sum_ones_r / count_ones) as u8,
+                                        (sum_ones_g / count_ones) as u8,
+                                        (sum_ones_b / count_ones) as u8,
+                                    ]
+                                } else {
+                                    [0, 0, 0]
+                                };
+                                let avg_zeros = if count_zeros > 0 {
+                                    [
+                                        (sum_zeros_r / count_zeros) as u8,
+                                        (sum_zeros_g / count_zeros) as u8,
+                                        (sum_zeros_b / count_zeros) as u8,
+                                    ]
+                                } else {
+                                    [0, 0, 0]
+                                };
+
+                                let t1_1 = sum_ones_sq;
+                                let t2_1 = 2
+                                    * (avg_ones[0] as u64 * sum_ones_r
+                                        + avg_ones[1] as u64 * sum_ones_g
+                                        + avg_ones[2] as u64 * sum_ones_b);
+                                let t3_1 = count_ones
+                                    * (avg_ones[0] as u64 * avg_ones[0] as u64
+                                        + avg_ones[1] as u64 * avg_ones[1] as u64
+                                        + avg_ones[2] as u64 * avg_ones[2] as u64);
+                                let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
+
+                                let t1_0 = sum_zeros_sq;
+                                let t2_0 = 2
+                                    * (avg_zeros[0] as u64 * sum_zeros_r
+                                        + avg_zeros[1] as u64 * sum_zeros_g
+                                        + avg_zeros[2] as u64 * sum_zeros_b);
+                                let t3_0 = count_zeros
+                                    * (avg_zeros[0] as u64 * avg_zeros[0] as u64
+                                        + avg_zeros[1] as u64 * avg_zeros[1] as u64
+                                        + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                                let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
+
+                                let cost_normal = c1 + c0;
+                                if cost_normal < scale_best_cost {
+                                    scale_best_cost = cost_normal;
+                                    scale_best_glyph = gi;
+                                    scale_best_inv = false;
+                                    scale_best_fg = avg_ones;
+                                    scale_best_bg = avg_zeros;
+                                }
+                            }
+
+                            let gain = uniform_cost.saturating_sub(scale_best_cost);
+                            if args.smooth && gain < noise_gain_threshold {
+                                let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
+                                scale_best_fg = flat_col;
+                                scale_best_bg = flat_col;
+                            }
+                        }
+
+                        if scale_best_cost < best_overall_cost {
+                            best_overall_cost = scale_best_cost;
+                            best_overall_glyph = scale_best_glyph;
+                            best_overall_inv = scale_best_inv;
+                            best_overall_fg = scale_best_fg;
+                            best_overall_bg = scale_best_bg;
+                        }
+                    }
+
+                    let best_fg_rgb = best_overall_fg;
+                    let best_bg_rgb = best_overall_bg;
+                    let best_glyph_idx = best_overall_glyph;
+                    let best_inv = best_overall_inv;
+
+                    let (final_fg, final_bg, fg_obj, bg_obj, alt_fg_obj, alt_bg_obj) =
+                        if render == Render::Ansi24 {
+                            (
+                                best_fg_rgb,
+                                best_bg_rgb,
+                                Some(Colour::RGB(best_fg_rgb)),
+                                Some(Colour::RGB(best_bg_rgb)),
+                                None,
+                                None,
+                            )
+                        } else if render == Render::Preview {
+                            let col_hi = make_rgb_u32(&best_fg_rgb);
+                            let col_lo = make_rgb_u32(&best_bg_rgb);
+                            let hi_idx = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
+                            let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::RGB(hi_rgb)),
+                                Some(Colour::RGB(lo_rgb)),
+                                Some(Colour::Index(hi_idx)),
+                                Some(Colour::Index(lo_idx)),
+                            )
+                        } else if render == Render::Irc {
+                            let col_hi = make_rgb_u32(&best_fg_rgb);
+                            let col_lo = make_rgb_u32(&best_bg_rgb);
+                            let hi_idx = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
+                            let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::Index(hi_idx)),
+                                Some(Colour::Index(lo_idx)),
+                                None,
+                                None,
+                            )
+                        } else {
+                            let palette = &ANSI256[..];
+                            let col_hi = make_rgb_u32(&best_fg_rgb);
+                            let col_lo = make_rgb_u32(&best_bg_rgb);
+
+                            let hi_idx = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                palette,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                palette,
+                                args.grayscale_tolerance,
+                            );
+
+                            let hi_rgb = unpack_rgb(palette[hi_idx as usize]);
+                            let lo_rgb = unpack_rgb(palette[lo_idx as usize]);
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::Index(hi_idx)),
+                                Some(Colour::Index(lo_idx)),
+                                None,
+                                None,
+                            )
+                        };
+
+                    row_data.push(BlockData {
+                        fg: final_fg,
+                        bg: final_bg,
+                        fg_col: fg_obj,
+                        bg_col: bg_obj,
+                        alt_fg_col: alt_fg_obj,
+                        alt_bg_col: alt_bg_obj,
+                    });
+                    row_state.push((best_glyph_idx, best_inv));
+                }
+                (row_data, row_state)
+            })
+            .collect()
+    };
 
     let mut grid_data = Vec::with_capacity(grid_h * grid_w);
     let mut grid_state = Vec::with_capacity(grid_h * grid_w);
@@ -1090,7 +1232,12 @@ pub fn render_blocks_smooth(
     let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.relax || args.fix_disc {
         grid_data
             .par_iter()
-            .map(|data| {
+            .enumerate()
+            .map(|(curr_idx, data)| {
+                let x = curr_idx % grid_w;
+                let y = curr_idx / grid_w;
+                let blk = &image.block[y][x];
+
                 if let Some(flag) = &abort_flag {
                     if flag.load(std::sync::atomic::Ordering::Relaxed) {
                         return Vec::new();
@@ -1118,12 +1265,17 @@ pub fn render_blocks_smooth(
                 let mut diff = vec![0i64; bp];
 
                 for i in 0..bp {
-                    let px = &data.pixels[i];
+                    let lx = i % gw;
+                    let ly = i / gw;
+                    let rgb = unpack_rgb(blk.pixels[ly][lx].orig);
+                    let p_r = rgb[0] as u64;
+                    let p_g = rgb[1] as u64;
+                    let p_b = rgb[2] as u64;
+                    let p_sq = p_r * p_r + p_g * p_g + p_b * p_b;
+
                     // Binary classification: is this pixel closer to FG or BG?
-                    let c_fg =
-                        px.sq + fg_p.sq - 2 * (px.r * fg_p.r + px.g * fg_p.g + px.b * fg_p.b);
-                    let c_bg =
-                        px.sq + bg_p.sq - 2 * (px.r * bg_p.r + px.g * bg_p.g + px.b * bg_p.b);
+                    let c_fg = p_sq + fg_p.sq - 2 * (p_r * fg_p.r + p_g * fg_p.g + p_b * fg_p.b);
+                    let c_bg = p_sq + bg_p.sq - 2 * (p_r * bg_p.r + p_g * bg_p.g + p_b * bg_p.b);
                     // 0 if pixel is closer to BG (correct assignment), 1 if closer to FG (mismatch)
                     let bg_wins = if c_bg <= c_fg { 0i64 } else { 1i64 };
                     base_cost += bg_wins as u64;
@@ -1162,7 +1314,8 @@ pub fn render_blocks_smooth(
 
     // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
     if args.smooth {
-        let iterations = args.misc1 as usize;
+        let iterations = args.misc3 as usize;
+        eprintln!("DEBUG: Starting Phase 3 with {} iterations", iterations);
 
         for pass in 0..iterations {
             if let Some(flag) = &abort_flag {

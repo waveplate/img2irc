@@ -1,6 +1,7 @@
 pub mod args;
 pub mod config;
 pub mod draw;
+pub mod gpu;
 pub mod effects;
 pub mod font;
 pub mod palette;
@@ -135,6 +136,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         misc6: args.misc6,
         misc7: args.misc7,
         misc8: args.misc8,
+        gpu: args.gpu,
         save: args.save.clone(),
 
         score: args.score,
