@@ -1306,7 +1306,7 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    if args.smooth || args.fix_disc {
+    if (args.smooth || args.fix_disc) && block_glyph_costs.iter().any(|v| v.is_empty()) {
         return "Cancelled".into();
     }
 

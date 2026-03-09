@@ -63,7 +63,7 @@ pub fn render_blocks_gpu(
         .expect("Failed to find an appropriate adapter");
 
         let info = adapter.get_info();
-        log::error!(
+        log::info!(
             "Using WGPU Adapter: {} (Backend: {:?}, Device Type: {:?})",
             info.name,
             info.backend,
