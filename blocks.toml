@@ -1,6 +1,9 @@
 [ascii.space]
 glyphs = [0x20]
 
+[ascii.alpha]
+ranges = [[0x61, 0x7A]]
+
 [blocks.full]
 glyphs = [0x2588]
 
@@ -42,6 +45,21 @@ ranges = [[0x1FB00, 0x1FB3B]]
 [legacy.supp]
 ranges = [[0x1CC00, 0x1CEBF]]
 
+[box]
+ranges = [[0x2500, 0x257F]]
+
+[braille]
+ranges = [[0x2800, 0x28FF]]
+
+[geo]
+ranges = [[0x25A0, 0x25FF]]
+
+[geo2]
+ranges = [[0x1F780, 0x1F7FF]]
+
+[arrows]
+ranges = [[0x2190, 0x21FF]]
+
 [default]
 include = [
     "p2",
@@ -53,11 +71,17 @@ include = [
 [all]
 include = [
     "ascii.space",
+    "ascii.alpha",
     "blocks.full",
     "blocks.half",
     "blocks.quarter",
     "blocks.eighth",
     "legacy.base.polygons",
     "legacy.base.sextants",
-    "legacy.supp"
+    "legacy.supp",
+    "box",
+    "braille",
+    "geo",
+    "geo2",
+    "arrows"
 ]
