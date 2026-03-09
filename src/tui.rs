@@ -3139,7 +3139,7 @@ fn adjust_control(app: &mut App, delta: i32) {
         ControlKind::EyedropperWidget => {}
     }
 
-    log::info!(
+    log::debug!(
         "TUI Adjusted: tab={}, ctrl={}, id={:?}",
         app.current_tab,
         app.selected_control,
@@ -3157,7 +3157,7 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
 
     app.set_value(id, val);
 
-    log::info!(
+    log::debug!(
         "Value set: tab={}, visual={}, id={:?}, val={}",
         app.current_tab,
         visual_idx,
