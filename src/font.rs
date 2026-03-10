@@ -574,10 +574,21 @@ pub fn glyph_store(
     let mut blocks_to_load = HashSet::new();
     let mut blocks_to_select = HashSet::new();
 
-    // Always select specified blocks
+    // Always select specified blocks or prefixes
     for name in blocks {
-        blocks_to_select.insert(name.to_lowercase());
-        blocks_to_load.insert(name.to_lowercase());
+        let name_lc = name.to_lowercase();
+        let mut matched = false;
+        for key in config_groups.keys() {
+            if key == &name_lc || key.starts_with(&format!("{}.", name_lc)) {
+                blocks_to_select.insert(key.clone());
+                blocks_to_load.insert(key.clone());
+                matched = true;
+            }
+        }
+        if !matched {
+            blocks_to_select.insert(name_lc.clone());
+            blocks_to_load.insert(name_lc);
+        }
     }
 
     if blocks.is_empty() && !load_all {

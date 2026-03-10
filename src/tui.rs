@@ -94,12 +94,6 @@ enum ControlId {
     Encoding,
     Misc1,
     Misc2,
-    Misc3,
-    Misc4,
-    Misc5,
-    Misc6,
-    Misc7,
-    Misc8,
     Dither,
     Invert,
     Grayscale,
@@ -1331,12 +1325,7 @@ impl App {
             ControlId::FixStrength => self.fix_strength as i32,
             ControlId::Misc1 => self.misc1,
             ControlId::Misc2 => self.misc2,
-            ControlId::Misc3 => self.misc3,
-            ControlId::Misc4 => self.misc4,
-            ControlId::Misc5 => self.misc5,
-            ControlId::Misc6 => self.misc6,
-            ControlId::Misc7 => self.misc7,
-            ControlId::Misc8 => self.misc8,
+
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
             ControlId::Pixelize => self.pixelize,
@@ -1403,12 +1392,7 @@ impl App {
             ControlId::FixStrength => self.fix_strength = val as u32,
             ControlId::Misc1 => self.misc1 = val,
             ControlId::Misc2 => self.misc2 = val,
-            ControlId::Misc3 => self.misc3 = val,
-            ControlId::Misc4 => self.misc4 = val,
-            ControlId::Misc5 => self.misc5 = val,
-            ControlId::Misc6 => self.misc6 = val,
-            ControlId::Misc7 => self.misc7 = val,
-            ControlId::Misc8 => self.misc8 = val,
+
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
             ControlId::Pixelize => self.pixelize = val,
@@ -1929,7 +1913,11 @@ fn render_bar(
     }
 
     // Draw label on the left
-    let label_text = format!(" {}", label);
+    let label_text = if selected {
+        format!("> {}", label)
+    } else {
+        format!("  {}", label)
+    };
     let lx = area.x + 1;
     let ly = area.y + area.height.saturating_sub(1) / 2;
     for (i, ch) in label_text.chars().enumerate() {
@@ -1948,11 +1936,7 @@ fn render_bar(
     }
 
     // Draw value on the right
-    let value_text = if value == 0 {
-        "Auto ".to_string()
-    } else {
-        format!("{} ", value)
-    };
+    let value_text = format!("{} ", value);
     let vx = area.x + area.width - value_text.len() as u16;
     for (i, ch) in value_text.chars().enumerate() {
         let x = vx + i as u16;
@@ -1996,7 +1980,11 @@ fn render_enum(
     buf.set_style(area, Style::new().bg(bg));
 
     let ly = area.y + area.height.saturating_sub(1) / 2;
-    let label_text = format!(" {}", label);
+    let label_text = if selected {
+        format!("> {}", label)
+    } else {
+        format!("  {}", label)
+    };
     for (i, ch) in label_text.chars().enumerate() {
         let x = area.x + 1 + i as u16;
         if x >= area.x + area.width {
@@ -2051,7 +2039,11 @@ fn render_eyedropper_widget(
     buf.set_style(area, Style::new().bg(bg));
 
     let ly = area.y + area.height.saturating_sub(1) / 2;
-    let label_text = format!(" {}", label);
+    let label_text = if selected {
+        format!("> {}", label)
+    } else {
+        format!("  {}", label)
+    };
     for (i, ch) in label_text.chars().enumerate() {
         let x = area.x + 1 + i as u16;
         if x >= area.x + area.width {
@@ -2104,7 +2096,11 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
     let ly = area.y + area.height.saturating_sub(1) / 2;
 
     // Label
-    let label_text = format!(" {}", label);
+    let label_text = if selected {
+        format!("> {}", label)
+    } else {
+        format!("  {}", label)
+    };
     for (i, ch) in label_text.chars().enumerate() {
         let x = area.x + 1 + i as u16;
         if x >= area.x + area.width {
@@ -2814,31 +2810,39 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= area.y
                                     && mouse.row < area.y + area.height
                                 {
+                                    app.dragged_control = Some(i);
+                                    let controls = app.tab_controls(app.current_tab);
+                                    let was_selected = app.selected_control == i;
                                     app.selected_control = i;
                                     if app.current_tab == 1 && mouse.column < area.x + 4 {
                                         app.reordering_grabbed = Some(i);
                                     } else {
-                                        app.dragged_control = Some(i);
-                                        let controls = app.tab_controls(app.current_tab);
                                         if let Some(ctrl) = controls.get(i) {
                                             match &ctrl.kind {
                                                 ControlKind::Slider { min, max, .. } => {
-                                                    let rel_x = (mouse.column - area.x) as f64;
-                                                    let ratio =
-                                                        (rel_x / area.width as f64).clamp(0.0, 1.0);
-                                                    let new_val = *min
-                                                        + (((*max - *min) as f64) * ratio) as i32;
-                                                    set_control_value(
-                                                        &mut app,
-                                                        i,
-                                                        new_val.clamp(*min, *max),
-                                                    );
+                                                    if was_selected {
+                                                        let rel_x = (mouse.column - area.x) as f64;
+                                                        let ratio = (rel_x / area.width as f64)
+                                                            .clamp(0.0, 1.0);
+                                                        let new_val = *min
+                                                            + (((*max - *min) as f64) * ratio)
+                                                                as i32;
+                                                        set_control_value(
+                                                            &mut app,
+                                                            i,
+                                                            new_val.clamp(*min, *max),
+                                                        );
+                                                    }
                                                 }
                                                 ControlKind::Toggle { .. } => {
-                                                    toggle_control(&mut app)
+                                                    if was_selected {
+                                                        toggle_control(&mut app)
+                                                    }
                                                 }
                                                 ControlKind::Enum { .. } => {
-                                                    toggle_control(&mut app)
+                                                    if was_selected {
+                                                        toggle_control(&mut app)
+                                                    }
                                                 }
                                                 ControlKind::EyedropperWidget => {
                                                     // Placeholder behaviour when clicked
@@ -3394,6 +3398,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(panel, area);
 
     if app.current_tab == 2 {
+        app.control_areas.clear();
         render_tree(f, app, inner);
         return;
     }
@@ -3779,10 +3784,13 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .arc_glyphs
             .as_ref()
             .map_or((0.0, 0.0), |g| g.float_metrics);
+        let w_px = width_chars * cw;
+        let h_px = height_chars * ch;
+        let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
 
         let mut title_right = format!(
-            " Output: {}x{} chars | Cell: {}x{} px | Font: {:.1}x{:.1} px | Longest line: {} bytes ",
-            width_chars, height_chars, cw, ch, fw, fh, max_bytes
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Max Line: {} bytes | Disc. {:.1}% ",
+            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, max_bytes, p_score
         );
 
         if let Some((r, g, b)) = app.eyedropper_color {
