@@ -43,6 +43,8 @@ pub struct GpuResult {
     pub bg_b: u32,
 }
 
+static GPU_CONTEXT: std::sync::OnceLock<(wgpu::Device, wgpu::Queue)> = std::sync::OnceLock::new();
+
 pub fn render_blocks_gpu(
     image: &crate::draw::AnsiImage,
     glyphs: &[FastGlyph],
@@ -51,39 +53,43 @@ pub fn render_blocks_gpu(
     bp: u32,
     total_blocks: usize,
 ) -> Vec<GpuResult> {
-    let (device, queue) = std::thread::spawn(|| {
-        log::debug!("Initializing WGPU instance...");
-        let instance = wgpu::Instance::default();
-        log::debug!("Requesting adapter...");
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        }))
-        .expect("Failed to find an appropriate adapter");
+    let (device, queue) = GPU_CONTEXT.get_or_init(|| {
+        std::thread::spawn(|| {
+            log::debug!("Initializing WGPU instance...");
+            let instance = wgpu::Instance::default();
+            log::debug!("Requesting adapter...");
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    force_fallback_adapter: false,
+                    compatible_surface: None,
+                }))
+                .expect("Failed to find an appropriate adapter");
 
-        let info = adapter.get_info();
-        log::info!(
-            "Using WGPU Adapter: {} (Backend: {:?}, Device Type: {:?})",
-            info.name,
-            info.backend,
-            info.device_type
-        );
-        log::debug!("Requesting device from adapter...");
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            required_limits: adapter.limits(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            ..Default::default()
-        }))
-        .expect("Failed to create device");
+            let info = adapter.get_info();
+            log::info!(
+                "Using WGPU Adapter: {} (Backend: {:?}, Device Type: {:?})",
+                info.name,
+                info.backend,
+                info.device_type
+            );
+            log::debug!("Requesting device from adapter...");
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: adapter.limits(),
+                    memory_hints: wgpu::MemoryHints::Performance,
+                    ..Default::default()
+                }))
+                .expect("Failed to create device");
 
-        log::debug!("WGPU Device and Queue obtained successfully!");
-        (device, queue)
-    })
-    .join()
-    .unwrap();
+            log::debug!("WGPU Device and Queue obtained successfully!");
+            (device, queue)
+        })
+        .join()
+        .unwrap()
+    });
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Compute Shader"),
@@ -252,6 +258,53 @@ pub fn render_blocks_gpu(
         cache: None,
     });
 
+    let blocks_buf_size =
+        (max_blocks_per_batch as u64) * bp as u64 * std::mem::size_of::<GpuBlockPixel>() as u64;
+    let blocks_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Blocks Buffer"),
+        size: blocks_buf_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Staging Buffer"),
+        size: max_results_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: blocks_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: glyphs_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: ones_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: palette_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: meta_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: results_buf.as_entire_binding(),
+            },
+        ],
+    });
+
     let t_total = std::time::Instant::now();
     let mut t_prep = std::time::Instant::now();
     let mut total_prep_time = std::time::Duration::new(0, 0);
@@ -289,15 +342,13 @@ pub fn render_blocks_gpu(
                 total_prep_time += t_prep.elapsed();
                 let t_batch_gpu = std::time::Instant::now();
                 process_batch(
-                    &device,
-                    &queue,
+                    device,
+                    queue,
                     &compute_pipeline,
-                    &bind_group_layout,
-                    &palette_buf,
-                    &glyphs_buf,
-                    &ones_buf,
-                    &meta_buf,
+                    &bind_group,
+                    &blocks_buf,
                     &results_buf,
+                    &staging_buf,
                     &current_gpu_blocks,
                     batch_count,
                     &mut final_results,
@@ -314,15 +365,13 @@ pub fn render_blocks_gpu(
         total_prep_time += t_prep.elapsed();
         let t_batch_gpu = std::time::Instant::now();
         process_batch(
-            &device,
-            &queue,
+            device,
+            queue,
             &compute_pipeline,
-            &bind_group_layout,
-            &palette_buf,
-            &glyphs_buf,
-            &ones_buf,
-            &meta_buf,
+            &bind_group,
+            &blocks_buf,
             &results_buf,
+            &staging_buf,
             &current_gpu_blocks,
             batch_count,
             &mut final_results,
@@ -341,53 +390,15 @@ fn process_batch(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     compute_pipeline: &wgpu::ComputePipeline,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    palette_buf: &wgpu::Buffer,
-    glyphs_buf: &wgpu::Buffer,
-    ones_buf: &wgpu::Buffer,
-    meta_buf: &wgpu::Buffer,
+    bind_group: &wgpu::BindGroup,
+    blocks_buf: &wgpu::Buffer,
     results_buf: &wgpu::Buffer,
+    staging_buf: &wgpu::Buffer,
     gpu_blocks: &[GpuBlockPixel],
     batch_blocks: usize,
     final_results: &mut Vec<GpuResult>,
 ) {
-    use wgpu::util::DeviceExt;
-    let blocks_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Blocks Buffer"),
-        contents: bytemuck::cast_slice(gpu_blocks),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: blocks_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: glyphs_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ones_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: palette_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: meta_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: results_buf.as_entire_binding(),
-            },
-        ],
-    });
+    queue.write_buffer(blocks_buf, 0, bytemuck::cast_slice(gpu_blocks));
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -397,18 +408,12 @@ fn process_batch(
             timestamp_writes: None,
         });
         cpass.set_pipeline(compute_pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.set_bind_group(0, bind_group, &[]);
         let workgroups = ((batch_blocks as u32) + 63) / 64;
         cpass.dispatch_workgroups(workgroups, 1, 1);
     }
 
     let results_size = (batch_blocks as u64) * std::mem::size_of::<GpuResult>() as u64;
-    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Staging Buffer"),
-        size: results_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
 
     encoder.copy_buffer_to_buffer(results_buf, 0, &staging_buf, 0, results_size);
     log::debug!("Submitting {} blocks to queue", batch_blocks);

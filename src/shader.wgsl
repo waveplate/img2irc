@@ -177,67 +177,74 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var fg_cnt: array<u32, 256>;
         var bg_cnt: array<u32, 256>;
         
+        var base_cnt: array<u32, 256>;
         for (var i: u32 = 0u; i < 256u; i++) {
-            fg_cnt[i] = 0u;
-            bg_cnt[i] = 0u;
+            base_cnt[i] = 0u;
         }
-        
+        for (var i: u32 = 0u; i < bp; i++) {
+            base_cnt[indices[i]]++;
+        }
+
         for (var gi: u32 = 0u; gi < metadata.num_glyphs; gi++) {
             let glyph = glyphs[gi];
-            
+            let ones_start = glyph.ones_starts;
+            let ones_len = glyph.ones_len;
+
             for (var inv_iter: u32 = 0u; inv_iter < 2u; inv_iter++) {
                 
-                for (var i: u32 = 0u; i < bp; i++) {
-                    fg_cnt[indices[i]] = 0u;
-                    bg_cnt[indices[i]] = 0u;
+                for (var i: u32 = 0u; i < 256u; i++) {
+                    if (base_cnt[i] > 0u) {
+                        if (inv_iter == 0u) {
+                            fg_cnt[i] = 0u;
+                            bg_cnt[i] = base_cnt[i];
+                        } else {
+                            fg_cnt[i] = base_cnt[i];
+                            bg_cnt[i] = 0u;
+                        }
+                    } else {
+                        fg_cnt[i] = 0u;
+                        bg_cnt[i] = 0u;
+                    }
                 }
                 
-                var fg_len: u32 = 0u;
-                var bg_len: u32 = 0u;
-                
-                let ones_start = glyph.ones_starts;
-                let ones_len = glyph.ones_len;
-                
+                var fg_len: u32;
+                var bg_len: u32;
+
                 if (inv_iter == 0u) {
-                    for (var i: u32 = 0u; i < bp; i++) {
-                        bg_cnt[indices[i]]++;
-                    }
-                    bg_len = bp;
+                    fg_len = ones_len;
+                    bg_len = bp - ones_len;
                     for (var j: u32 = 0u; j < ones_len; j++) {
                         let p = glyph_ones[ones_start + j];
-                        bg_cnt[indices[p]]--;
-                        bg_len--;
-                        fg_cnt[indices[p]]++;
-                        fg_len++;
+                        let idx = indices[p];
+                        bg_cnt[idx]--;
+                        fg_cnt[idx]++;
                     }
                 } else {
-                    for (var i: u32 = 0u; i < bp; i++) {
-                        fg_cnt[indices[i]]++;
-                    }
-                    fg_len = bp;
+                    fg_len = bp - ones_len;
+                    bg_len = ones_len;
                     for (var j: u32 = 0u; j < ones_len; j++) {
                         let p = glyph_ones[ones_start + j];
-                        fg_cnt[indices[p]]--;
-                        fg_len--;
-                        bg_cnt[indices[p]]++;
-                        bg_len++;
+                        let idx = indices[p];
+                        fg_cnt[idx]--;
+                        bg_cnt[idx]++;
                     }
                 }
                 
                 // Find modes
                 var fgi_raw: u32 = 0u;
                 var fx: u32 = 0u;
-                for (var i: u32 = 0u; i < 256u; i++) {
-                    if (fg_cnt[i] >= fx) {
-                        fx = fg_cnt[i];
-                        fgi_raw = i;
-                    }
-                }
                 var bgi_raw: u32 = 0u;
                 var bx: u32 = 0u;
+                
                 for (var i: u32 = 0u; i < 256u; i++) {
-                    if (bg_cnt[i] >= bx) {
-                        bx = bg_cnt[i];
+                    let fc = fg_cnt[i];
+                    if (fc >= fx) {
+                        fx = fc;
+                        fgi_raw = i;
+                    }
+                    let bc = bg_cnt[i];
+                    if (bc >= bx) {
+                        bx = bc;
                         bgi_raw = i;
                     }
                 }
