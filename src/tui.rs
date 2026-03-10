@@ -186,7 +186,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Fix Strength",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1000000000,
+            max: 100,
             default: 4,
         },
     },
@@ -904,6 +904,12 @@ struct App {
     colorspace_idx: usize,
     encoding_idx: usize,
 
+    // Slider state
+    slider_pending_dir: i32,
+    slider_pending_start: Option<std::time::Instant>,
+    slider_last_press: Option<std::time::Instant>,
+    slider_repeat_count: u32,
+
     // Effects
     pixelize: i32,
     gaussian_blur: i32,
@@ -1038,6 +1044,12 @@ impl App {
             saturation: 0,
             gamma: render_args.gamma as i32,
             hue: render_args.hue as i32,
+
+            slider_pending_dir: 0,
+            slider_pending_start: None,
+            slider_last_press: None,
+            slider_repeat_count: 0,
+
             trim_top: render_args.trim.map(|t| t.0 as i32).unwrap_or(0),
             trim_right: render_args.trim.map(|t| t.1 as i32).unwrap_or(0),
             trim_bottom: render_args.trim.map(|t| t.2 as i32).unwrap_or(0),
@@ -2871,6 +2883,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('r') | KeyCode::Delete => {
                                 reset_control(&mut app);
                             }
+                            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => {
+                                let ctrl_id = app.get_current_control_id();
+                                let def = get_control_def(ctrl_id);
+                                if let ControlKind::Slider { .. } = def.kind {
+                                    app.value_edit_buffer = c.to_string();
+                                    app.input_mode = InputMode::ValueEdit;
+                                    continue;
+                                }
+                            }
                             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.open_explorer(ExplorerMode::Open);
                             }
@@ -2981,7 +3002,41 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else {
                                         1
                                     };
-                                    adjust_control(&mut app, -d);
+                                    let ctrl_id = app.get_current_control_id();
+                                    if let ControlKind::Slider { .. } =
+                                        get_control_def(ctrl_id).kind
+                                    {
+                                        let now = std::time::Instant::now();
+                                        if app.slider_pending_dir == -1
+                                            && app.slider_last_press.map_or(false, |t| {
+                                                now.duration_since(t).as_millis() < 500
+                                            })
+                                        {
+                                            app.slider_repeat_count += 1;
+                                            let base = if app.slider_repeat_count == 1 {
+                                                2 * d
+                                            } else {
+                                                d
+                                            };
+                                            let multiplier = 2_i32
+                                                .pow((app.slider_repeat_count / 10).min(10) as u32);
+                                            let applied_delta = -base * multiplier;
+                                            app.slider_pending_dir = 0;
+                                            app.slider_last_press = Some(now);
+                                            adjust_control(&mut app, applied_delta);
+                                        } else {
+                                            if app.slider_pending_dir != 0 {
+                                                let old_pending = app.slider_pending_dir;
+                                                adjust_control(&mut app, old_pending);
+                                            }
+                                            app.slider_pending_dir = -1;
+                                            app.slider_pending_start = Some(now);
+                                            app.slider_repeat_count = 0;
+                                            app.slider_last_press = Some(now);
+                                        }
+                                    } else {
+                                        adjust_control(&mut app, -d);
+                                    }
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
@@ -2995,7 +3050,41 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else {
                                         1
                                     };
-                                    adjust_control(&mut app, d);
+                                    let ctrl_id = app.get_current_control_id();
+                                    if let ControlKind::Slider { .. } =
+                                        get_control_def(ctrl_id).kind
+                                    {
+                                        let now = std::time::Instant::now();
+                                        if app.slider_pending_dir == 1
+                                            && app.slider_last_press.map_or(false, |t| {
+                                                now.duration_since(t).as_millis() < 500
+                                            })
+                                        {
+                                            app.slider_repeat_count += 1;
+                                            let base = if app.slider_repeat_count == 1 {
+                                                2 * d
+                                            } else {
+                                                d
+                                            };
+                                            let multiplier = 2_i32
+                                                .pow((app.slider_repeat_count / 10).min(10) as u32);
+                                            let applied_delta = base * multiplier;
+                                            app.slider_pending_dir = 0;
+                                            app.slider_last_press = Some(now);
+                                            adjust_control(&mut app, applied_delta);
+                                        } else {
+                                            if app.slider_pending_dir != 0 {
+                                                let old_pending = app.slider_pending_dir;
+                                                adjust_control(&mut app, old_pending);
+                                            }
+                                            app.slider_pending_dir = 1;
+                                            app.slider_pending_start = Some(now);
+                                            app.slider_repeat_count = 0;
+                                            app.slider_last_press = Some(now);
+                                        }
+                                    } else {
+                                        adjust_control(&mut app, d);
+                                    }
                                 }
                             }
                             KeyCode::Char(' ') | KeyCode::Enter => {
@@ -3039,6 +3128,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             }
         }
 
+        if let Some(start) = app.slider_pending_start {
+            if app.slider_pending_dir != 0 && start.elapsed().as_millis() >= 500 {
+                let pending_dir = app.slider_pending_dir;
+                adjust_control(&mut app, pending_dir);
+                app.slider_pending_dir = 0;
+                app.slider_pending_start = None;
+            }
+        }
+
         if app.args_dirty {
             if let Some(last) = app.last_args_change {
                 if last.elapsed() >= std::time::Duration::from_millis(500) {
@@ -3055,8 +3153,9 @@ fn adjust_control(app: &mut App, delta: i32) {
     let def = get_control_def(id);
 
     match def.kind {
-        ControlKind::Slider { .. } => {
-            // Require user to press enter to edit slider values via keyboard
+        ControlKind::Slider { min, max, .. } => {
+            let val = app.get_value(id);
+            app.set_value(id, (val + delta).clamp(min, max));
         }
         ControlKind::Enum { options, .. } => {
             let val = app.get_value(id);
