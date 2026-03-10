@@ -554,6 +554,7 @@ pub struct RenderResult {
     pub total_pixels: u64,
     pub dynamic_scaling_count: u64,
     pub grid: Vec<Vec<RenderedCell>>,
+    pub score: f64,
 }
 
 impl From<&str> for RenderResult {
@@ -565,6 +566,7 @@ impl From<&str> for RenderResult {
             total_pixels: 0,
             dynamic_scaling_count: 0,
             grid: Vec::new(),
+            score: 0.0,
         }
     }
 }
@@ -875,11 +877,7 @@ pub fn render_blocks_smooth(
                             }
 
                             for (gi, fglyph) in glyphs.iter().enumerate() {
-                                let invert_opts: &[bool] = if args.no_glyph_invert {
-                                    &[false]
-                                } else {
-                                    &[false, true]
-                                };
+                                let invert_opts: &[bool] = &[false, true];
                                 for &inv in invert_opts {
                                     let mut fg_cnt = [0u16; 256];
                                     let mut bg_cnt = [0u16; 256];
@@ -932,16 +930,7 @@ pub fn render_blocks_smooth(
                                 }
                             }
                         } else {
-                            // --- TrueColor Mode (RGB Average + Noise Threshold) ---
-                            let avg_r = if bp > 0 { block_sum_r / bp as u64 } else { 0 };
-                            let avg_g = if bp > 0 { block_sum_g / bp as u64 } else { 0 };
-                            let avg_b = if bp > 0 { block_sum_b / bp as u64 } else { 0 };
-                            let term_sq = avg_r * avg_r + avg_g * avg_g + avg_b * avg_b;
-                            let term_linear =
-                                avg_r * block_sum_r + avg_g * block_sum_g + avg_b * block_sum_b;
-                            let uniform_cost = (block_sum_sq + (bp as u64 * term_sq))
-                                .saturating_sub(2 * term_linear);
-                            let noise_gain_threshold = 800u64;
+                            // --- TrueColor Mode ---
 
                             for (gi, fglyph) in glyphs.iter().enumerate() {
                                 let mut sum_ones_r = 0u64;
@@ -1013,13 +1002,6 @@ pub fn render_blocks_smooth(
                                     scale_best_fg = avg_ones;
                                     scale_best_bg = avg_zeros;
                                 }
-                            }
-
-                            let gain = uniform_cost.saturating_sub(scale_best_cost);
-                            if args.smooth && gain < noise_gain_threshold {
-                                let flat_col = [avg_r as u8, avg_g as u8, avg_b as u8];
-                                scale_best_fg = flat_col;
-                                scale_best_bg = flat_col;
                             }
                         }
 
@@ -1155,81 +1137,7 @@ pub fn render_blocks_smooth(
         return "Cancelled".into();
     }
 
-    // // --- Phase 1.5: Color Smoothing (Fix Aliasing Jitter) ---
-    if args.smooth {
-        if let Some(flag) = &abort_flag {
-            if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                return "Cancelled".into();
-            }
-        }
-        let smoothing_threshold_sq = args.misc1 as u64;
-        let dist_sq_local = |a: [u8; 3], b: [u8; 3]| -> u64 {
-            let dr = a[0] as i64 - b[0] as i64;
-            let dg = a[1] as i64 - b[1] as i64;
-            let db = a[2] as i64 - b[2] as i64;
-            (dr * dr + dg * dg + db * db) as u64
-        };
-
-        for y in 0..grid_h {
-            for x in 0..grid_w {
-                let idx = y * grid_w + x;
-                let mut new_fg = grid_data[idx].fg;
-                let mut new_bg = grid_data[idx].bg;
-                let mut changed = false;
-
-                if x > 0 {
-                    let left_idx = idx - 1;
-                    if dist_sq_local(new_fg, grid_data[left_idx].fg) < smoothing_threshold_sq {
-                        new_fg = [
-                            ((new_fg[0] as u16 + grid_data[left_idx].fg[0] as u16) / 2) as u8,
-                            ((new_fg[1] as u16 + grid_data[left_idx].fg[1] as u16) / 2) as u8,
-                            ((new_fg[2] as u16 + grid_data[left_idx].fg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                    if dist_sq_local(new_bg, grid_data[left_idx].bg) < smoothing_threshold_sq {
-                        new_bg = [
-                            ((new_bg[0] as u16 + grid_data[left_idx].bg[0] as u16) / 2) as u8,
-                            ((new_bg[1] as u16 + grid_data[left_idx].bg[1] as u16) / 2) as u8,
-                            ((new_bg[2] as u16 + grid_data[left_idx].bg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                }
-                if y > 0 {
-                    let top_idx = idx - grid_w;
-                    if dist_sq_local(new_fg, grid_data[top_idx].fg) < smoothing_threshold_sq {
-                        new_fg = [
-                            ((new_fg[0] as u16 + grid_data[top_idx].fg[0] as u16) / 2) as u8,
-                            ((new_fg[1] as u16 + grid_data[top_idx].fg[1] as u16) / 2) as u8,
-                            ((new_fg[2] as u16 + grid_data[top_idx].fg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                    if dist_sq_local(new_bg, grid_data[top_idx].bg) < smoothing_threshold_sq {
-                        new_bg = [
-                            ((new_bg[0] as u16 + grid_data[top_idx].bg[0] as u16) / 2) as u8,
-                            ((new_bg[1] as u16 + grid_data[top_idx].bg[1] as u16) / 2) as u8,
-                            ((new_bg[2] as u16 + grid_data[top_idx].bg[2] as u16) / 2) as u8,
-                        ];
-                        changed = true;
-                    }
-                }
-
-                if changed {
-                    grid_data[idx].fg = new_fg;
-                    grid_data[idx].bg = new_bg;
-                    if render == Render::Ansi24 || render == Render::Preview {
-                        grid_data[idx].fg_col = Some(Colour::RGB(new_fg));
-                        grid_data[idx].bg_col = Some(Colour::RGB(new_bg));
-                    }
-                }
-            }
-        }
-    }
-
-    // --- Phase 2: Precompute internal block-glyph costs ---
-    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth || args.fix_disc {
+    let block_glyph_costs: Vec<Vec<u64>> = if args.fix_disc {
         grid_data
             .par_iter()
             .enumerate()
@@ -1305,236 +1213,6 @@ pub fn render_blocks_smooth(
     } else {
         Vec::new()
     };
-
-    // --- Phase 3: Iterative Smoothing (Gauss-Seidel) ---
-    let t_smooth = std::time::Instant::now();
-    if args.smooth {
-        let iterations = args.misc3 as usize;
-        log::info!(
-            "Starting Phase 3 (Iterative Smoothing) with {} iterations",
-            iterations
-        );
-
-        for pass in 0..iterations {
-            if let Some(flag) = &abort_flag {
-                if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    return "Cancelled".into();
-                }
-            }
-            let forward = pass % 2 == 0;
-            let indices: Vec<usize> = if forward {
-                (0..grid_h * grid_w).collect()
-            } else {
-                (0..grid_h * grid_w).rev().collect()
-            };
-
-            let mut changes = 0u32;
-
-            for &curr_idx in &indices {
-                if let Some(flag) = &abort_flag {
-                    if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        return "Cancelled".into();
-                    }
-                }
-
-                let cx = curr_idx % grid_w;
-                let cy = curr_idx / grid_w;
-                let data = &grid_data[curr_idx];
-
-                let edge_importance_weight = args.misc2 as u64;
-                // Binary match/mismatch: cost is 0 (colors match) or 1 (colors differ)
-                let dist_bin = |a: [u8; 3], b: [u8; 3]| -> u64 {
-                    if a == b {
-                        0
-                    } else {
-                        1
-                    }
-                };
-
-                let mut top_diff = [0i64; 256];
-                let mut bottom_diff = [0i64; 256];
-                let mut left_diff = [0i64; 256];
-                let mut right_diff = [0i64; 256];
-                let mut corner_diff = [0i64; 4];
-                let mut edge_base_cost = 0u64;
-
-                if cy > 0 {
-                    let n_idx = curr_idx - grid_w;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    let g_bottom = &glyphs[ni].bottom;
-                    for i in 0..gw {
-                        let n_on = (g_bottom[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on { n_fg } else { n_bg };
-                        let c_fg = dist_bin(n_col, data.fg) as i64;
-                        let c_bg = dist_bin(n_col, data.bg) as i64;
-                        edge_base_cost += c_bg as u64;
-                        top_diff[i] = c_fg - c_bg;
-                    }
-                }
-                if cy < grid_h - 1 {
-                    let n_idx = curr_idx + grid_w;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    let g_top = &glyphs[ni].top;
-                    for i in 0..gw {
-                        let n_on = (g_top[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on { n_fg } else { n_bg };
-                        let c_fg = dist_bin(n_col, data.fg) as i64;
-                        let c_bg = dist_bin(n_col, data.bg) as i64;
-                        edge_base_cost += c_bg as u64;
-                        bottom_diff[i] = c_fg - c_bg;
-                    }
-                }
-                if cx > 0 {
-                    let n_idx = curr_idx - 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    let g_right = &glyphs[ni].right;
-                    for i in 0..gh {
-                        let n_on = (g_right[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on { n_fg } else { n_bg };
-                        let c_fg = dist_bin(n_col, data.fg) as i64;
-                        let c_bg = dist_bin(n_col, data.bg) as i64;
-                        edge_base_cost += c_bg as u64;
-                        left_diff[i] = c_fg - c_bg;
-                    }
-                }
-                if cx < grid_w - 1 {
-                    let n_idx = curr_idx + 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_fg = grid_data[n_idx].fg;
-                    let n_bg = grid_data[n_idx].bg;
-                    let g_left = &glyphs[ni].left;
-                    for i in 0..gh {
-                        let n_on = (g_left[i] ^ (niv as u8)) == 1;
-                        let n_col = if n_on { n_fg } else { n_bg };
-                        let c_fg = dist_bin(n_col, data.fg) as i64;
-                        let c_bg = dist_bin(n_col, data.bg) as i64;
-                        edge_base_cost += c_bg as u64;
-                        right_diff[i] = c_fg - c_bg;
-                    }
-                }
-
-                if cy > 0 && cx > 0 {
-                    let n_idx = (curr_idx - grid_w) - 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_on = (glyphs[ni].bottom[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on {
-                        grid_data[n_idx].fg
-                    } else {
-                        grid_data[n_idx].bg
-                    };
-                    let c_fg = dist_bin(n_col, data.fg) as i64;
-                    let c_bg = dist_bin(n_col, data.bg) as i64;
-                    edge_base_cost += c_bg as u64;
-                    corner_diff[0] = c_fg - c_bg;
-                }
-                if cy > 0 && cx < grid_w - 1 {
-                    let n_idx = (curr_idx - grid_w) + 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_on = (glyphs[ni].bottom[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on {
-                        grid_data[n_idx].fg
-                    } else {
-                        grid_data[n_idx].bg
-                    };
-                    let c_fg = dist_bin(n_col, data.fg) as i64;
-                    let c_bg = dist_bin(n_col, data.bg) as i64;
-                    edge_base_cost += c_bg as u64;
-                    corner_diff[1] = c_fg - c_bg;
-                }
-                if cy < grid_h - 1 && cx > 0 {
-                    let n_idx = (curr_idx + grid_w) - 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_on = (glyphs[ni].top[gw - 1] ^ (niv as u8)) == 1;
-                    let n_col = if n_on {
-                        grid_data[n_idx].fg
-                    } else {
-                        grid_data[n_idx].bg
-                    };
-                    let c_fg = dist_bin(n_col, data.fg) as i64;
-                    let c_bg = dist_bin(n_col, data.bg) as i64;
-                    edge_base_cost += c_bg as u64;
-                    corner_diff[2] = c_fg - c_bg;
-                }
-                if cy < grid_h - 1 && cx < grid_w - 1 {
-                    let n_idx = (curr_idx + grid_w) + 1;
-                    let (ni, niv) = grid_state[n_idx];
-                    let n_on = (glyphs[ni].top[0] ^ (niv as u8)) == 1;
-                    let n_col = if n_on {
-                        grid_data[n_idx].fg
-                    } else {
-                        grid_data[n_idx].bg
-                    };
-                    let c_fg = dist_bin(n_col, data.fg) as i64;
-                    let c_bg = dist_bin(n_col, data.bg) as i64;
-                    edge_base_cost += c_bg as u64;
-                    corner_diff[3] = c_fg - c_bg;
-                }
-
-                let total_edge_diff: i64 = top_diff[..gw].iter().sum::<i64>()
-                    + bottom_diff[..gw].iter().sum::<i64>()
-                    + left_diff[..gh].iter().sum::<i64>()
-                    + right_diff[..gh].iter().sum::<i64>()
-                    + corner_diff.iter().sum::<i64>();
-
-                let mut best_cost = u64::MAX;
-                let mut best_choice = grid_state[curr_idx];
-
-                for (gi, fglyph) in glyphs.iter().enumerate() {
-                    let mut dot = 0i64;
-                    for i in 0..gw {
-                        dot += top_diff[i] * (fglyph.top[i] as i64);
-                        dot += bottom_diff[i] * (fglyph.bottom[i] as i64);
-                    }
-                    for i in 0..gh {
-                        dot += left_diff[i] * (fglyph.left[i] as i64);
-                        dot += right_diff[i] * (fglyph.right[i] as i64);
-                    }
-                    dot += corner_diff[0] * (fglyph.top[0] as i64);
-                    dot += corner_diff[1] * (fglyph.top[gw - 1] as i64);
-                    dot += corner_diff[2] * (fglyph.bottom[0] as i64);
-                    dot += corner_diff[3] * (fglyph.bottom[gw - 1] as i64);
-
-                    let edge_cost_normal =
-                        ((edge_base_cost as i64 + dot) as u64) * edge_importance_weight;
-                    let total_normal = edge_cost_normal + block_glyph_costs[curr_idx][gi * 2];
-                    if total_normal < best_cost {
-                        best_cost = total_normal;
-                        best_choice = (gi, false);
-                    }
-
-                    if !args.no_glyph_invert {
-                        // Inverted glyph flips all edge bits: bitmap[i] → (1 - bitmap[i])
-                        // So dot_inv = Σ diff[i] * (1 - bitmap[i]) = total_edge_diff - dot
-                        let dot_inv = total_edge_diff - dot;
-                        let edge_cost_inverted = ((edge_base_cost as i64 + dot_inv).max(0) as u64)
-                            * edge_importance_weight;
-                        let total_inverted =
-                            edge_cost_inverted + block_glyph_costs[curr_idx][gi * 2 + 1];
-                        if total_inverted < best_cost {
-                            best_cost = total_inverted;
-                            best_choice = (gi, true);
-                        }
-                    }
-                }
-
-                if grid_state[curr_idx] != best_choice {
-                    grid_state[curr_idx] = best_choice;
-                    changes += 1;
-                }
-            }
-
-            if changes == 0 {
-                break;
-            }
-        }
-        log::info!("Phase 3 completed in {:?}", t_smooth.elapsed());
-    }
 
     // --- Phase 5: Boundary Continuity Resolution ---
     //
@@ -1685,7 +1363,7 @@ pub fn render_blocks_smooth(
                 let mut best_choice = (cur_gi, cur_inv);
 
                 for (gi, glyph) in glyphs.iter().enumerate() {
-                    let max_inv = if args.no_glyph_invert { 1 } else { 2 };
+                    let max_inv = 2;
                     for inv_idx in 0..max_inv {
                         let inv_u8 = inv_idx as u8;
 
@@ -2118,6 +1796,7 @@ pub fn render_blocks_smooth(
         total_pixels: (bp * grid_h * grid_w) as u64,
         dynamic_scaling_count: 0,
         grid: grid_out,
+        score: relative_disc_score,
     }
 }
 pub fn render_braille(
@@ -2254,6 +1933,7 @@ pub fn render_braille(
         total_pixels: (h * w) as u64,
         dynamic_scaling_count: 0,
         grid: Vec::new(),
+        score: 0.0,
     }
 }
 

@@ -65,8 +65,7 @@ const STATUS_BG: Color = Color::Rgb(35, 35, 50);
 enum ControlId {
     Width,
     RenderMode,
-    Smooth,
-    NoGlyphInvert,
+
     Gpu,
     HighlightDisc,
     FixDisc,
@@ -92,8 +91,7 @@ enum ControlId {
     Hue,
     Colorspace,
     Encoding,
-    Misc1,
-    Misc2,
+
     Dither,
     Invert,
     Grayscale,
@@ -169,16 +167,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::Smooth,
-        label: "Smooth",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::NoGlyphInvert,
-        label: "No Inv Glyphs",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
         id: ControlId::Gpu,
         label: "GPU Mode",
         kind: ControlKind::Toggle { default: false },
@@ -200,24 +188,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             min: 0,
             max: 1000000000,
             default: 4,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc1,
-        label: "Smooth Iter",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Misc2,
-        label: "Edge Importance",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 1000,
-            default: 0,
         },
     },
     // ControlDef {
@@ -898,15 +868,11 @@ struct App {
     width: i32,
     render_mode_idx: usize,
     dither: i32,
-    smooth: bool,
-    no_glyph_invert: bool,
     gpu: bool,
     show_discontinuities: bool,
     fix_disc: bool,
     fix_strength: u32,
 
-    misc1: i32,
-    misc2: i32,
     misc3: i32,
     misc4: i32,
     misc5: i32,
@@ -1055,14 +1021,10 @@ impl App {
                 Render::Irc => 0,
             },
             dither: render_args.dither as i32,
-            smooth: render_args.smooth,
-            no_glyph_invert: render_args.no_glyph_invert,
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
             fix_strength: render_args.fix_strength,
-            misc1: render_args.misc1,
-            misc2: render_args.misc2,
             misc3: render_args.misc3,
             misc4: render_args.misc4,
             misc5: render_args.misc5,
@@ -1184,14 +1146,10 @@ impl App {
             Render::Irc => 0,
         };
         self.dither = render_args.dither as i32;
-        self.smooth = render_args.smooth;
-        self.no_glyph_invert = render_args.no_glyph_invert;
         self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
         self.fix_disc = render_args.fix_disc;
         self.fix_strength = render_args.fix_strength;
-        self.misc1 = render_args.misc1;
-        self.misc2 = render_args.misc2;
         self.misc3 = render_args.misc3;
         self.misc4 = render_args.misc4;
         self.misc5 = render_args.misc5;
@@ -1317,14 +1275,10 @@ impl App {
             ControlId::Encoding => self.encoding_idx as i32,
 
             ControlId::Dither => self.dither,
-            ControlId::Smooth => self.smooth as i32,
-            ControlId::NoGlyphInvert => self.no_glyph_invert as i32,
             ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::FixDisc => self.fix_disc as i32,
             ControlId::FixStrength => self.fix_strength as i32,
-            ControlId::Misc1 => self.misc1,
-            ControlId::Misc2 => self.misc2,
 
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
@@ -1384,14 +1338,10 @@ impl App {
             ControlId::Encoding => self.encoding_idx = val as usize,
 
             ControlId::Dither => self.dither = val,
-            ControlId::Smooth => self.smooth = val != 0,
-            ControlId::NoGlyphInvert => self.no_glyph_invert = val != 0,
             ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::FixDisc => self.fix_disc = val != 0,
             ControlId::FixStrength => self.fix_strength = val as u32,
-            ControlId::Misc1 => self.misc1 = val,
-            ControlId::Misc2 => self.misc2 = val,
 
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
@@ -1491,14 +1441,10 @@ impl App {
         self.render_args.dither = self.dither as u32;
         self.render_args.invert = self.invert;
         self.render_args.grayscale = self.grayscale;
-        self.render_args.smooth = self.smooth;
-        self.render_args.no_glyph_invert = self.no_glyph_invert;
         self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
         self.render_args.fix_strength = self.fix_strength;
-        self.render_args.misc1 = self.misc1;
-        self.render_args.misc2 = self.misc2;
         self.render_args.misc3 = self.misc3;
         self.render_args.misc4 = self.misc4;
         self.render_args.misc5 = self.misc5;
@@ -3109,9 +3055,8 @@ fn adjust_control(app: &mut App, delta: i32) {
     let def = get_control_def(id);
 
     match def.kind {
-        ControlKind::Slider { min, max, .. } => {
-            let val = app.get_value(id);
-            app.set_value(id, (val + delta).clamp(min, max));
+        ControlKind::Slider { .. } => {
+            // Require user to press enter to edit slider values via keyboard
         }
         ControlKind::Enum { options, .. } => {
             let val = app.get_value(id);

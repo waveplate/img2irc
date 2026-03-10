@@ -1,4 +1,3 @@
-use fontconfig::Fontconfig;
 use freetype::{face::LoadFlag, Library};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -99,10 +98,16 @@ impl FontContext {
     }
 }
 
+static FC: Lazy<Mutex<Option<fontconfig::Fontconfig>>> =
+    Lazy::new(|| Mutex::new(fontconfig::Fontconfig::new()));
+
 fn find_font_path(font_name: &str) -> Option<String> {
-    let fc = Fontconfig::new()?;
-    fc.find(font_name, None)
-        .map(|f| f.path.display().to_string())
+    if let Some(fc) = FC.lock().unwrap().as_mut() {
+        fc.find(font_name, None)
+            .map(|f| f.path.display().to_string())
+    } else {
+        None
+    }
 }
 
 static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Option<String>>>> =

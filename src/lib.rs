@@ -121,13 +121,9 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         frosted_glass: args.frosted_glass,
         solarize: args.solarize,
         edge_detection: args.edge_detection,
-        smooth: args.smooth,
-        no_glyph_invert: args.no_glyph_invert,
         show_discontinuities: args.show_discontinuities,
         fix_disc: args.fix_disc,
         fix_strength: args.fix_strength,
-        misc1: args.misc1,
-        misc2: args.misc2,
         misc3: args.misc3,
         misc4: args.misc4,
         misc5: args.misc5,
@@ -180,7 +176,7 @@ pub fn render_from_canvas(
     canvas: &draw::AnsiImage,
     luma_canvas: Option<&draw::AnsiImage>,
     glyphs: &[draw::FastGlyph],
-    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    _abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> draw::RenderResult {
     if args.braille {
         if let Some(lc) = luma_canvas {
@@ -197,37 +193,6 @@ pub fn render_from_canvas(
             }
         } else {
             draw::RenderResult::from("Error: Braille mode without luma canvas")
-        }
-    } else if args.smooth {
-        match args.render {
-            crate::args::Render::Irc => draw::render_blocks_smooth(
-                canvas,
-                args,
-                crate::args::Render::Irc,
-                glyphs,
-                abort_flag,
-            ),
-            crate::args::Render::Ansi => draw::render_blocks_smooth(
-                canvas,
-                args,
-                crate::args::Render::Ansi,
-                glyphs,
-                abort_flag,
-            ),
-            crate::args::Render::Ansi24 => draw::render_blocks_smooth(
-                canvas,
-                args,
-                crate::args::Render::Ansi24,
-                glyphs,
-                abort_flag,
-            ),
-            crate::args::Render::Preview => draw::render_blocks_smooth(
-                canvas,
-                args,
-                crate::args::Render::Preview,
-                glyphs,
-                abort_flag,
-            ),
         }
     } else {
         match args.render {
@@ -250,15 +215,10 @@ pub fn render_from_canvas(
 pub fn resolve_auto_font_size(
     args: &mut RenderArgs,
     image: &PhotonImage,
-    glyphs: &font::GlyphStore,
+    _glyphs: &font::GlyphStore,
 ) {
     if (args.font_size - 0.0).abs() < f32::EPSILON {
-        let (float_w, float_h) = if args.braille {
-            (2.0, 4.0)
-        } else {
-            glyphs.float_metrics
-        };
-        let font_ratio = float_w / float_h;
+        let font_ratio = 0.5;
         let img_w = image.get_width() as f32;
         let target_char_w = args.width.unwrap_or(80) as f32;
 

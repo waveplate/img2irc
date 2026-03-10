@@ -157,13 +157,9 @@ pub struct RenderArgs {
     pub frosted_glass: bool,
     pub solarize: bool,
     pub edge_detection: bool,
-    pub smooth: bool,
-    pub no_glyph_invert: bool,
     pub show_discontinuities: bool,
     pub fix_disc: bool,
     pub fix_strength: u32,
-    pub misc1: i32,
-    pub misc2: i32,
     pub misc3: i32,
     pub misc4: i32,
     pub misc5: i32,
@@ -509,14 +505,6 @@ pub struct Args {
     #[arg(long = "edgedetection", default_value_t = false)]
     pub edge_detection: bool,
 
-    /// experimental smoothness optimization mode
-    #[arg(long, default_value_t = false, alias = "connected")]
-    pub smooth: bool,
-
-    /// prevent glyphs from being used in their inverted state
-    #[arg(long, default_value_t = false)]
-    pub no_glyph_invert: bool,
-
     /// highlight cells with discontinuities in red
     #[arg(long, default_value_t = false)]
     pub show_discontinuities: bool,
@@ -528,12 +516,6 @@ pub struct Args {
     /// strength of the fix
     #[arg(long, default_value = "4")]
     pub fix_strength: u32,
-
-    #[arg(long, default_value = "0", hide = true)]
-    pub misc1: i32,
-
-    #[arg(long, default_value = "0", hide = true)]
-    pub misc2: i32,
 
     #[arg(long, default_value = "0", hide = true)]
     pub misc3: i32,
