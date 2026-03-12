@@ -70,8 +70,25 @@ pub fn calculate_dimensions(
 
     log::info!("Final target dimensions (pixels): {}x{}", pw, ph);
 
-    let out_w = pw.round().max(1.0) as u32;
-    let out_h = ph.round().max(1.0) as u32;
+    let mut out_w = pw.round().max(1.0) as u32;
+    let mut out_h = ph.round().max(1.0) as u32;
+
+    // Safety cap: prevent absurd allocations (e.g. 46TB VRAM) from stale glyph metrics
+    const MAX_TOTAL_PIXELS: u64 = 100_000_000; // 100M pixels
+    let total = out_w as u64 * out_h as u64;
+    if total > MAX_TOTAL_PIXELS {
+        let scale = (MAX_TOTAL_PIXELS as f64 / total as f64).sqrt();
+        out_w = (out_w as f64 * scale).round().max(1.0) as u32;
+        out_h = (out_h as f64 * scale).round().max(1.0) as u32;
+        log::warn!(
+            "Clamped dimensions from {}x{} to {}x{} (exceeded {}M pixel cap)",
+            pw.round() as u32,
+            ph.round() as u32,
+            out_w,
+            out_h,
+            MAX_TOTAL_PIXELS / 1_000_000
+        );
+    }
 
     (out_w, out_h)
 }

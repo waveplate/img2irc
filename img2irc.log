@@ -1,0 +1,24 @@
+08:59:16 [INFO] Starting img2irc TUI...
+08:59:16 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+08:59:16 [INFO] Auto-calculated font size: 6 (based on ratio 0.500)
+08:59:16 [INFO] Loaded font: /usr/share/fonts/OTF/CascadiaMono-Regular.otf
+08:59:16 [INFO] Starting render optimization... (63 glyphs)
+08:59:16 [INFO] factor_x: 4, float_x: 4
+08:59:16 [INFO] factor_y: 7, float_y: 7
+08:59:16 [INFO] img width: 1
+08:59:16 [INFO] img height: 1
+08:59:16 [INFO] pw: 320
+08:59:16 [INFO] ph: 322
+08:59:16 [INFO] Final target dimensions (pixels): 320x322
+08:59:16 [INFO] Render finished in 47.257374ms
+08:59:16 [INFO] Flushing render args: width=80, scale=Some((1.0, 1.0)), font=["Cascadia Mono"]
+08:59:16 [INFO] Auto-calculated font size: 6 (based on ratio 0.500)
+08:59:16 [INFO] Starting render optimization... (63 glyphs)
+08:59:16 [INFO] factor_x: 4, float_x: 4
+08:59:16 [INFO] factor_y: 7, float_y: 7
+08:59:16 [INFO] img width: 1
+08:59:16 [INFO] img height: 1
+08:59:16 [INFO] pw: 320
+08:59:16 [INFO] ph: 322
+08:59:16 [INFO] Final target dimensions (pixels): 320x322
+08:59:17 [INFO] Render finished in 42.370493ms

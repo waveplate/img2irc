@@ -150,6 +150,14 @@ struct ControlDef {
 
 const GENERAL_CONTROLS: &[ControlDef] = &[
     ControlDef {
+        id: ControlId::RenderMode,
+        label: "Mode",
+        kind: ControlKind::Enum {
+            options: &["IRC", "ANSI", "ANSI24"],
+            default: 1,
+        },
+    },
+    ControlDef {
         id: ControlId::Width,
         label: "Width",
         kind: ControlKind::Slider {
@@ -159,11 +167,48 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::RenderMode,
-        label: "Mode",
-        kind: ControlKind::Enum {
-            options: &["IRC", "ANSI", "ANSI24"],
-            default: 1,
+        id: ControlId::Brightness,
+        label: "Brightness",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Contrast,
+        label: "Contrast",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Saturation,
+        label: "Saturation",
+        kind: ControlKind::Slider {
+            min: -255,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Gamma,
+        label: "Gamma",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 255,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::Hue,
+        label: "Hue",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 360,
+            default: 0,
         },
     },
     ControlDef {
@@ -187,7 +232,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 0,
             max: 100,
-            default: 4,
+            default: 0,
         },
     },
     // ControlDef {
@@ -350,51 +395,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 0,
             max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Brightness,
-        label: "Brightness",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Contrast,
-        label: "Contrast",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Saturation,
-        label: "Saturation",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Gamma,
-        label: "Gamma",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Hue,
-        label: "Hue",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 360,
             default: 0,
         },
     },
@@ -721,6 +721,7 @@ impl TreeState {
         }
     }
 
+    #[allow(dead_code)]
     fn expand_selected(&mut self) {
         if let Some(node) = self.get_selected_node_mut() {
             if !node.is_leaf {
@@ -905,8 +906,6 @@ struct App {
     encoding_idx: usize,
 
     // Slider state
-    slider_pending_dir: i32,
-    slider_pending_start: Option<std::time::Instant>,
     slider_last_press: Option<std::time::Instant>,
     slider_repeat_count: u32,
 
@@ -1045,8 +1044,6 @@ impl App {
             gamma: render_args.gamma as i32,
             hue: render_args.hue as i32,
 
-            slider_pending_dir: 0,
-            slider_pending_start: None,
             slider_last_press: None,
             slider_repeat_count: 0,
 
@@ -1337,7 +1334,7 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = (val / 10) as f32,
+            ControlId::FontSize => self.font_size = val as f32 / 10.0,
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
@@ -1731,7 +1728,11 @@ impl App {
                 "png" // assume PNG as fallback
             };
 
-            let tmp_path = format!("/tmp/img2irc_clipboard.{}", ext);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let tmp_path = format!("/tmp/img2irc_clipboard_{}.{}", ts, ext);
             match std::fs::File::create(&tmp_path) {
                 Ok(mut f) => {
                     if let Err(e) = f.write_all(&data) {
@@ -1836,6 +1837,7 @@ fn render_bar(
     min: i32,
     max: i32,
     selected: bool,
+    display_value: Option<&str>,
 ) {
     if area.height < 1 || area.width < 4 {
         return;
@@ -1894,7 +1896,11 @@ fn render_bar(
     }
 
     // Draw value on the right
-    let value_text = format!("{} ", value);
+    let value_text = if let Some(dv) = display_value {
+        format!("{} ", dv)
+    } else {
+        format!("{} ", value)
+    };
     let vx = area.x + area.width - value_text.len() as u16;
     for (i, ch) in value_text.chars().enumerate() {
         let x = vx + i as u16;
@@ -2015,7 +2021,7 @@ fn render_eyedropper_widget(
         cell.set_style(style);
     }
 
-    let val_text = "🯩███🯫 ";
+    let val_text = "◖██◗ ";
     let vx = area.x + area.width - val_text.chars().count() as u16;
 
     let swatch_style = if let Some((r, g, b)) = color {
@@ -2993,8 +2999,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if app.current_tab == 2 {
-                                    if app.selected_control == 0 {
-                                        app.tree_state.collapse_selected();
+                                    // Switch focus left between tree(0) / glyphs(1)
+                                    if app.selected_control > 0 {
+                                        app.selected_control -= 1;
                                     }
                                 } else {
                                     let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3007,33 +3014,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         get_control_def(ctrl_id).kind
                                     {
                                         let now = std::time::Instant::now();
-                                        if app.slider_pending_dir == -1
-                                            && app.slider_last_press.map_or(false, |t| {
-                                                now.duration_since(t).as_millis() < 500
-                                            })
-                                        {
+                                        if app.slider_last_press.map_or(false, |t| {
+                                            now.duration_since(t).as_millis() < 300
+                                        }) {
                                             app.slider_repeat_count += 1;
-                                            let base = if app.slider_repeat_count == 1 {
-                                                2 * d
-                                            } else {
-                                                d
-                                            };
-                                            let multiplier = 2_i32
-                                                .pow((app.slider_repeat_count / 10).min(10) as u32);
-                                            let applied_delta = -base * multiplier;
-                                            app.slider_pending_dir = 0;
-                                            app.slider_last_press = Some(now);
-                                            adjust_control(&mut app, applied_delta);
                                         } else {
-                                            if app.slider_pending_dir != 0 {
-                                                let old_pending = app.slider_pending_dir;
-                                                adjust_control(&mut app, old_pending);
-                                            }
-                                            app.slider_pending_dir = -1;
-                                            app.slider_pending_start = Some(now);
                                             app.slider_repeat_count = 0;
-                                            app.slider_last_press = Some(now);
                                         }
+                                        let multiplier =
+                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32);
+                                        let applied_delta = -d * multiplier;
+                                        app.slider_last_press = Some(now);
+                                        adjust_control(&mut app, applied_delta);
                                     } else {
                                         adjust_control(&mut app, -d);
                                     }
@@ -3041,8 +3033,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
                                 if app.current_tab == 2 {
-                                    if app.selected_control == 0 {
-                                        app.tree_state.expand_selected();
+                                    // Switch focus right between tree(0) / glyphs(1)
+                                    if app.selected_control < 1 {
+                                        app.selected_control += 1;
                                     }
                                 } else {
                                     let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3055,33 +3048,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         get_control_def(ctrl_id).kind
                                     {
                                         let now = std::time::Instant::now();
-                                        if app.slider_pending_dir == 1
-                                            && app.slider_last_press.map_or(false, |t| {
-                                                now.duration_since(t).as_millis() < 500
-                                            })
-                                        {
+                                        if app.slider_last_press.map_or(false, |t| {
+                                            now.duration_since(t).as_millis() < 300
+                                        }) {
                                             app.slider_repeat_count += 1;
-                                            let base = if app.slider_repeat_count == 1 {
-                                                2 * d
-                                            } else {
-                                                d
-                                            };
-                                            let multiplier = 2_i32
-                                                .pow((app.slider_repeat_count / 10).min(10) as u32);
-                                            let applied_delta = base * multiplier;
-                                            app.slider_pending_dir = 0;
-                                            app.slider_last_press = Some(now);
-                                            adjust_control(&mut app, applied_delta);
                                         } else {
-                                            if app.slider_pending_dir != 0 {
-                                                let old_pending = app.slider_pending_dir;
-                                                adjust_control(&mut app, old_pending);
-                                            }
-                                            app.slider_pending_dir = 1;
-                                            app.slider_pending_start = Some(now);
                                             app.slider_repeat_count = 0;
-                                            app.slider_last_press = Some(now);
                                         }
+                                        let multiplier =
+                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32);
+                                        let applied_delta = d * multiplier;
+                                        app.slider_last_press = Some(now);
+                                        adjust_control(&mut app, applied_delta);
                                     } else {
                                         adjust_control(&mut app, d);
                                     }
@@ -3128,14 +3106,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             }
         }
 
-        if let Some(start) = app.slider_pending_start {
-            if app.slider_pending_dir != 0 && start.elapsed().as_millis() >= 500 {
-                let pending_dir = app.slider_pending_dir;
-                adjust_control(&mut app, pending_dir);
-                app.slider_pending_dir = 0;
-                app.slider_pending_start = None;
-            }
-        }
+        // Slider pending logic removed — changes apply immediately now
 
         if app.args_dirty {
             if let Some(last) = app.last_args_change {
@@ -3503,7 +3474,21 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                             .map(|cell| cell.set_char(ch).set_style(style));
                     }
                 } else {
-                    render_bar(buf, ctrl_area, &label_text, value, min, max, selected);
+                    let dv = if ctrl.id == ControlId::FontSize {
+                        Some(format!("{:.1}", value as f32 / 10.0))
+                    } else {
+                        None
+                    };
+                    render_bar(
+                        buf,
+                        ctrl_area,
+                        &label_text,
+                        value,
+                        min,
+                        max,
+                        selected,
+                        dv.as_deref(),
+                    );
                 }
             }
             ControlKind::Enum { options, .. } => {
@@ -3592,7 +3577,13 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let actual_idx = start_idx + i;
         let selected = actual_idx == app.tree_state.selected_idx;
 
-        let style = if selected {
+        let is_tree_focused = app.current_tab == 2 && app.selected_control == 0;
+        let style = if selected && is_tree_focused {
+            Style::new()
+                .bg(ACCENT)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else if selected {
             Style::new().bg(SURFACE).fg(Color::White)
         } else {
             Style::new().fg(TEXT)
@@ -3638,11 +3629,10 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // 1. Render normal background content (Image or Glyphs tab)
     if app.current_tab == 2 {
-        // Show glyphs/preview in top 1/3, output in bottom 2/3
-        let glyphs_layout =
-            Layout::vertical([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]).split(area);
-        render_glyphs_tab(f, app, glyphs_layout[0]);
-        render_normal_output_content(f, app, glyphs_layout[1]);
+        // Horizontal layout: narrow glyphs+preview column | wide output
+        let cols = Layout::horizontal([Constraint::Length(30), Constraint::Min(0)]).split(area);
+        render_glyphs_tab(f, app, cols[0]);
+        render_normal_output_content(f, app, cols[1]);
     } else {
         render_normal_output_content(f, app, area);
     }
@@ -3948,13 +3938,27 @@ fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Vertical layout: glyph list on top, bitmap preview on bottom
     let chunks =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(area);
+        Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).split(area);
 
     app.glyph_list_area = chunks[0];
     app.preview_area = chunks[1];
 
-    let glyph_block = Block::default().borders(Borders::ALL).title(" Glyphs ");
+    let is_focused = app.current_tab == 2 && app.selected_control == 1;
+    let border_style = if is_focused {
+        Style::new().fg(ACCENT)
+    } else {
+        Style::new().fg(BORDER)
+    };
+    let glyph_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(if is_focused {
+            " Glyphs ◄► "
+        } else {
+            " Glyphs "
+        });
 
     if let Some(node) = app.tree_state.get_selected_node() {
         let (config_groups, _) = crate::font::load_blocks_config();
@@ -3974,12 +3978,18 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 })
                 .collect();
 
+            let highlight_style = Style::default()
+                .bg(ACCENT)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD);
+
             let list = List::new(items)
                 .block(glyph_block)
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                .highlight_style(highlight_style)
+                .highlight_symbol("▸ ");
             f.render_stateful_widget(list, chunks[0], &mut app.glyph_list_state);
 
-            // Preview
+            // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);
             if let Some(&code) = codes.get(idx) {
                 if let Some(ch) = char::from_u32(code) {

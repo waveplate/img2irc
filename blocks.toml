@@ -65,7 +65,9 @@ include = [
     "p2",
     "vb",
     "hb",
-    "ascii.space"
+    "ascii.space",
+    "blocks.half",
+    "blocks.ufll",
 ]
 
 [all]

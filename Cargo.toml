@@ -20,7 +20,6 @@ opt-level = 3
 [profile.release.package."*"]
 opt-level = 3
 
-
 [target.x86_64-unknown-linux-musl]
 linker = "musl-gcc"
 
