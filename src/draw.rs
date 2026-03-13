@@ -1426,100 +1426,112 @@ pub fn render_blocks_smooth(
         log::info!("fix_disc completed in {:?}", t_fix.elapsed());
     }
 
+    let mut relative_disc_score = 0.0;
+
     let full_disc_data: Vec<(usize, Option<([u8; 3], [u8; 3])>)> = if args.show_discontinuities {
         let disc_threshold = args.fix_strength as usize;
 
         // Precompute rendered FG/BG colors for each cell
         let cell_colors: Vec<([u8; 3], [u8; 3])> = grid_data.iter().map(|d| (d.fg, d.bg)).collect();
+        
+        let img_w = grid_w * gw;
+        let img_h = grid_h * gh;
+        let mut img = vec![[0u8; 3]; img_w * img_h];
 
-        (0..grid_h * grid_w)
-            .map(|curr_idx| {
-                let cx = curr_idx % grid_w;
-                let cy = curr_idx / grid_w;
+        for cy in 0..grid_h {
+            for cx in 0..grid_w {
+                let curr_idx = cy * grid_w + cx;
                 let (gi, inv) = grid_state[curr_idx];
                 let glyph = &glyphs[gi];
                 let (my_fg, my_bg) = cell_colors[curr_idx];
 
-                let mut fixable_mismatches = 0usize;
-
-                // Rendered color of a pixel given its bitmap value and inversion
-                // (bitmap_val ^ inv) == 1 → FG, else → BG
-                let my_pixel_color = |bmp_val: u8| -> [u8; 3] {
-                    if (bmp_val ^ (inv as u8)) == 1 {
-                        my_fg
-                    } else {
-                        my_bg
+                for i in 0..gh {
+                    for j in 0..gw {
+                        let bit = glyph.bitmap[i * gw + j];
+                        let color = if (bit ^ (inv as u8)) == 1 { my_fg } else { my_bg };
+                        img[(cy * gh + i) * img_w + (cx * gw + j)] = color;
                     }
-                };
+                }
+            }
+        }
 
-                macro_rules! check_edge {
-                    ($cond:expr, $n_idx:expr, $len:expr, $my_edge:expr, $n_edge_fn:expr) => {
-                        if $cond {
-                            let n_idx = $n_idx;
-                            let (ni, niv) = grid_state[n_idx];
-                            let (n_fg, n_bg) = cell_colors[n_idx];
-                            for i in 0..$len {
-                                let my_col = my_pixel_color($my_edge[i]);
-                                let n_bmp = $n_edge_fn(ni, i);
-                                let n_col = if (n_bmp ^ (niv as u8)) == 1 {
-                                    n_fg
-                                } else {
-                                    n_bg
-                                };
+        let mut cell_disc_counts = vec![0usize; grid_h * grid_w];
+        let mut total_corners = 0;
+        let mut disc_corners = 0;
 
-                                if my_col != n_col {
-                                    // Only count if this is "fixable": the mismatched color
-                                    // exists in the other cell's palette. Natural transitions
-                                    // (e.g., white meeting black across a boundary) won't be
-                                    // fixable because white isn't in the black cell's palette.
-                                    let my_in_n = my_col == n_fg || my_col == n_bg;
-                                    let n_in_me = n_col == my_fg || n_col == my_bg;
-                                    if my_in_n || n_in_me {
-                                        fixable_mismatches += 1;
-                                    }
-                                }
-                            }
-                        }
-                    };
+        for y in 1..img_h {
+            for x in 1..img_w {
+                let tl = img[(y - 1) * img_w + (x - 1)];
+                let tr = img[(y - 1) * img_w + x];
+                let bl = img[y * img_w + (x - 1)];
+                let br = img[y * img_w + x];
+
+                let mut is_disc = false;
+
+                if tl == tr && tl == bl && tl != br {
+                    total_corners += 1;
+                    let c1 = tl; let c2 = br;
+                    let mut lh = 0;
+                    while x + lh < img_w && img[(y - 1) * img_w + x + lh] == c1 && img[y * img_w + x + lh] == c2 { lh += 1; }
+                    let mut lv = 0;
+                    while y + lv < img_h && img[(y + lv) * img_w + x - 1] == c1 && img[(y + lv) * img_w + x] == c2 { lv += 1; }
+                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                } else if tr == tl && tr == br && tr != bl {
+                    total_corners += 1;
+                    let c1 = tr; let c2 = bl;
+                    let mut lh = 0;
+                    while x > lh && img[(y - 1) * img_w + x - 1 - lh] == c1 && img[y * img_w + x - 1 - lh] == c2 { lh += 1; }
+                    let mut lv = 0;
+                    while y + lv < img_h && img[(y + lv) * img_w + x] == c1 && img[(y + lv) * img_w + x - 1] == c2 { lv += 1; }
+                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                } else if bl == tl && bl == br && bl != tr {
+                    total_corners += 1;
+                    let c1 = bl; let c2 = tr;
+                    let mut lh = 0;
+                    while x + lh < img_w && img[y * img_w + x + lh] == c1 && img[(y - 1) * img_w + x + lh] == c2 { lh += 1; }
+                    let mut lv = 0;
+                    while y > lv && img[(y - 1 - lv) * img_w + x - 1] == c1 && img[(y - 1 - lv) * img_w + x] == c2 { lv += 1; }
+                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                } else if br == tr && br == bl && br != tl {
+                    total_corners += 1;
+                    let c1 = br; let c2 = tl;
+                    let mut lh = 0;
+                    while x > lh && img[y * img_w + x - 1 - lh] == c1 && img[(y - 1) * img_w + x - 1 - lh] == c2 { lh += 1; }
+                    let mut lv = 0;
+                    while y > lv && img[(y - 1 - lv) * img_w + x] == c1 && img[(y - 1 - lv) * img_w + x - 1] == c2 { lv += 1; }
+                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                } else if tl == br && tr == bl && tl != tr {
+                    total_corners += 2;
+                    // Checkerboard patches (1x1 steps) are smooth
                 }
 
-                check_edge!(
-                    cy > 0,
-                    curr_idx - grid_w,
-                    gw,
-                    glyph.top,
-                    |ni: usize, i: usize| glyphs[ni].bottom[i]
-                );
-                check_edge!(
-                    cy < grid_h - 1,
-                    curr_idx + grid_w,
-                    gw,
-                    glyph.bottom,
-                    |ni: usize, i: usize| glyphs[ni].top[i]
-                );
-                check_edge!(
-                    cx > 0,
-                    curr_idx - 1,
-                    gh,
-                    glyph.left,
-                    |ni: usize, i: usize| glyphs[ni].right[i]
-                );
-                check_edge!(
-                    cx < grid_w - 1,
-                    curr_idx + 1,
-                    gh,
-                    glyph.right,
-                    |ni: usize, i: usize| glyphs[ni].left[i]
-                );
+                if is_disc {
+                    disc_corners += 1;
+                    let cx = x / gw;
+                    let cy = y / gh;
+                    if cx < grid_w && cy < grid_h {
+                        cell_disc_counts[cy * grid_w + cx] += 1;
+                    }
+                }
+            }
+        }
 
-                if fixable_mismatches > disc_threshold {
-                    let max_edge = (2 * gw + 2 * gh) as f32;
-                    let severity = (fixable_mismatches as f32 / max_edge).min(1.0);
+        if total_corners > 0 {
+            relative_disc_score = 100.0 * (1.0 - (disc_corners as f64) / (total_corners as f64));
+        } else {
+            relative_disc_score = 100.0;
+        }
+
+        (0..grid_h * grid_w)
+            .map(|curr_idx| {
+                let count = cell_disc_counts[curr_idx];
+                if count > disc_threshold {
+                    let severity = (count as f32 / 4.0).min(1.0);
                     let red = (80.0 + 175.0 * severity).min(255.0) as u8;
                     let bg_int = (red / 2).max(30);
-                    (fixable_mismatches, Some(([red, 20, 20], [bg_int, 10, 10])))
+                    (count, Some(([red, 20, 20], [bg_int, 10, 10])))
                 } else {
-                    (fixable_mismatches, None)
+                    (count, None)
                 }
             })
             .collect::<Vec<(usize, Option<([u8; 3], [u8; 3])>)>>()
@@ -1527,18 +1539,8 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    let total_fixable_mismatches: usize = full_disc_data.iter().map(|(cnt, _)| *cnt).sum();
     let disc_overlay: Vec<Option<([u8; 3], [u8; 3])>> =
         full_disc_data.into_iter().map(|(_, ovr)| ovr).collect();
-
-    // Relative score (0 to 100), based on total possible mismatching edge pixels.
-    // Each cell has roughly (gw * 2 + gh * 2) edges, shared between adjacent cells.
-    let max_possible_mismatches = grid_w * grid_h * (gw * 2 + gh * 2);
-    let relative_disc_score = if max_possible_mismatches > 0 {
-        total_fixable_mismatches as f64 / (max_possible_mismatches as f64) * 100.0
-    } else {
-        0.0
-    };
 
     if args.show_discontinuities {
         log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
