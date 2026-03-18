@@ -59,6 +59,14 @@ const SELECTED_BG: Color = Color::Rgb(50, 50, 72);
 const TAB_ACTIVE: Color = Color::Rgb(130, 140, 255);
 const TAB_INACTIVE: Color = Color::Rgb(80, 80, 100);
 const STATUS_BG: Color = Color::Rgb(35, 35, 50);
+const OPTIMIZE_BG: Color = Color::Rgb(40, 60, 40);
+
+#[derive(Debug)]
+enum OptimizationUpdate {
+    Progress(String),
+    BestResult(RenderArgs),
+    Finished,
+}
 
 // ── Control types ────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,6 +129,7 @@ enum ControlId {
     FrostedGlass,
     Solarize,
     EdgeDetection,
+    AutoOptimize,
 }
 
 #[derive(Clone, Copy)]
@@ -139,6 +148,7 @@ enum ControlKind {
     },
     FontSelector,
     EyedropperWidget,
+    Action,
 }
 
 #[derive(Clone, Copy)]
@@ -413,6 +423,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             options: &["UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "CESU-8"],
             default: 0,
         },
+    },
+    ControlDef {
+        id: ControlId::AutoOptimize,
+        label: "Auto-Optimize",
+        kind: ControlKind::Action,
     },
 ];
 
@@ -904,6 +919,7 @@ struct App {
     grayscale_tolerance: i32,
     colorspace_idx: usize,
     encoding_idx: usize,
+    rx_optimization: Option<mpsc::Receiver<OptimizationUpdate>>,
 
     // Slider state
     slider_last_press: Option<std::time::Instant>,
@@ -964,6 +980,8 @@ struct App {
 
     // Eyedropper state
     eyedropper_color: Option<(u8, u8, u8)>,
+    is_optimizing: bool,
+    optimization_progress: String,
 }
 
 impl App {
@@ -1142,6 +1160,9 @@ impl App {
             options_pane_area: Rect::default(),
             options_areas: Vec::new(),
             eyedropper_color: None,
+            is_optimizing: false,
+            optimization_progress: String::new(),
+            rx_optimization: None,
         }
     }
 
@@ -1318,6 +1339,7 @@ impl App {
             ControlId::Solarize => self.solarize as i32,
             ControlId::EdgeDetection => self.edge_detection as i32,
             ControlId::Eyedropper => 0,
+            ControlId::AutoOptimize => 0,
         }
     }
 
@@ -1380,7 +1402,7 @@ impl App {
             ControlId::FrostedGlass => self.frosted_glass = val != 0,
             ControlId::Solarize => self.solarize = val != 0,
             ControlId::EdgeDetection => self.edge_detection = val != 0,
-            ControlId::Eyedropper => {}
+            ControlId::Eyedropper | ControlId::AutoOptimize => {}
         }
     }
 
@@ -1434,6 +1456,82 @@ impl App {
     fn mark_args_dirty(&mut self) {
         self.args_dirty = true;
         self.last_args_change = Some(Instant::now());
+    }
+
+    fn perform_auto_optimize(&mut self) {
+        if self.is_optimizing {
+            return;
+        }
+        self.is_optimizing = true;
+        self.optimization_progress = "Starting...".into();
+
+        let (tx, rx) = mpsc::channel(10);
+        self.rx_optimization = Some(rx);
+
+        let args = self.render_args.clone();
+        let glyph_store = self.arc_glyphs.clone().unwrap();
+        // We need the original image. In tui.rs, App doesn't store the image,
+        // it's in the render block of run(). We might need to store it in App or load it again.
+        // Actually run() has arc_image. Let's assume we can reload from image_path.
+        let image_path = self.image_path.clone();
+
+        tokio::spawn(async move {
+            let image = if image_path.is_empty() {
+                PhotonImage::new(vec![0; 4], 1, 1)
+            } else {
+                match crate::load_image_from_url_or_path(&image_path, &args, &glyph_store).await {
+                    Ok(img) => img,
+                    Err(_) => PhotonImage::new(vec![0; 4], 1, 1),
+                }
+            };
+
+            let char_w = glyph_store.metrics.0 as f32;
+            let char_h = glyph_store.metrics.1 as f32;
+
+            let mut best_score: f64 = f64::MAX;
+            let mut best_args = args.clone();
+
+            let steps = 4;
+            let max_ox = (char_w / 2.0) as u32;
+            let max_oy = (char_h / 2.0) as u32;
+
+            let ox_step = (max_ox / steps).max(1);
+            let oy_step = (max_oy / steps).max(1);
+
+            for oy in (0..=max_oy).step_by(oy_step as usize) {
+                for ox in (0..=max_ox).step_by(ox_step as usize) {
+                    let mut current_args = args.clone();
+                    // Using trim for offsets as it's what apply_effects uses for cropping-like behavior
+                    let (t, r, b, l) = args.trim.unwrap_or((0, 0, 0, 0));
+                    current_args.trim = Some((t + oy, r, b, l + ox));
+
+                    let _ = tx
+                        .send(OptimizationUpdate::Progress(format!(
+                            "Offset {},{}",
+                            ox, oy
+                        )))
+                        .await;
+
+                    let fast_glyphs = draw::prepare_glyphs(&glyph_store, &current_args);
+                    let result = crate::render_output(
+                        current_args.clone(),
+                        &glyph_store,
+                        image.clone(), // Clone photon image
+                        &fast_glyphs,
+                        None,
+                    );
+
+                    if result.score < best_score {
+                        best_score = result.score;
+                        best_args = current_args;
+                        let _ = tx
+                            .send(OptimizationUpdate::BestResult(best_args.clone()))
+                            .await;
+                    }
+                }
+            }
+            let _ = tx.send(OptimizationUpdate::Finished).await;
+        });
     }
 
     fn flush_render_args(&mut self) {
@@ -2105,6 +2203,53 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
     }
 }
 
+fn render_button(buf: &mut Buffer, area: Rect, label: &str, selected: bool, status: &str) {
+    let bg = if selected {
+        SELECTED_BG
+    } else if !status.is_empty() {
+        OPTIMIZE_BG
+    } else {
+        SURFACE
+    };
+    buf.set_style(area, Style::new().bg(bg));
+
+    let ly = area.y + area.height.saturating_sub(1) / 2;
+    let label_text = if selected {
+        format!("> [ {} ]", label)
+    } else {
+        format!("  [ {} ]", label)
+    };
+
+    buf.set_string(
+        area.x,
+        ly,
+        &label_text,
+        Style::new()
+            .fg(if selected { Color::White } else { TEXT })
+            .add_modifier(Modifier::BOLD),
+    );
+
+    if !status.is_empty() {
+        let status_text = format!("({}) ", status);
+        let sx = area.x + area.width - status_text.len() as u16;
+        if sx > area.x + label_text.len() as u16 {
+            buf.set_string(
+                sx,
+                ly,
+                &status_text,
+                Style::new().fg(ACCENT).add_modifier(Modifier::ITALIC),
+            );
+        }
+    }
+
+    if selected {
+        let accent_style = Style::new().bg(ACCENT).fg(ACCENT);
+        for y in area.y..area.y + area.height {
+            buf.set_string(area.x, y, "▎", accent_style);
+        }
+    }
+}
+
 // ── Main Entry Point ─────────────────────────────────────────────────────────
 pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     // Initialize logging to file
@@ -2306,6 +2451,24 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         app.render_tick = app.render_tick.wrapping_add(1);
+
+        if let Some(mut rx) = app.rx_optimization.take() {
+            while let Ok(update) = rx.try_recv() {
+                match update {
+                    OptimizationUpdate::Progress(p) => app.optimization_progress = p,
+                    OptimizationUpdate::BestResult(args) => {
+                        app.apply_settings(&args);
+                        app.mark_args_dirty();
+                    }
+                    OptimizationUpdate::Finished => {
+                        app.is_optimizing = false;
+                        app.optimization_progress = "Finished".to_string();
+                    }
+                }
+            }
+            app.rx_optimization = Some(rx);
+        }
+
         while let Ok((result, glyphs)) = app.rx_result.try_recv() {
             if result.content == "Cancelled" {
                 continue;
@@ -2814,6 +2977,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 ControlKind::FontSelector => {
                                                     app.selected_control = i;
                                                 }
+                                                ControlKind::Action => {
+                                                    if was_selected {
+                                                        toggle_control(&mut app)
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -3155,7 +3323,7 @@ fn adjust_control(app: &mut App, delta: i32) {
                 app.set_value(id, if val == 0 { 1 } else { 0 });
             }
         }
-        ControlKind::EyedropperWidget => {}
+        ControlKind::EyedropperWidget | ControlKind::Action => {}
     }
 
     log::debug!(
@@ -3204,6 +3372,11 @@ fn toggle_control(app: &mut App) {
                 app.font_idx = (app.font_idx + 1) % app.fonts.len();
             }
         }
+        ControlKind::Action => {
+            if id == ControlId::AutoOptimize {
+                app.perform_auto_optimize();
+            }
+        }
         _ => {}
     }
 
@@ -3225,7 +3398,7 @@ fn reset_control(app: &mut App) {
         ControlKind::Toggle { default } => app.set_value(id, if default { 1 } else { 0 }),
         ControlKind::Enum { default, .. } => app.set_value(id, default as i32),
         ControlKind::FontSelector => app.font_idx = 0,
-        ControlKind::EyedropperWidget => {}
+        ControlKind::EyedropperWidget | ControlKind::Action => {}
     }
 
     log::info!("Control reset: tab={}, id={:?}", app.current_tab, id);
@@ -3516,6 +3689,14 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                     selected,
                 );
             }
+            ControlKind::Action => {
+                let status = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
+                    &app.optimization_progress
+                } else {
+                    ""
+                };
+                render_button(buf, ctrl_area, &label_text, selected, status);
+            }
         }
 
         control_rects.push(ctrl_area);
@@ -3804,7 +3985,22 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .as_ref()
             .and_then(|r| r.save_content.as_ref())
             .unwrap_or(&app.cached_render);
-        let max_bytes = stats_content.lines().map(|l| l.len()).max().unwrap_or(0);
+        //let max_bytes = stats_content.lines().map(|l| l.len()).max().unwrap_or(0);
+
+        // also get the index of the longest line
+        let longest_line_idx = stats_content
+            .lines()
+            .enumerate()
+            .max_by_key(|(_, line)| line.len())
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+
+        // get the length of the longest line
+        let max_bytes = stats_content
+            .lines()
+            .nth(longest_line_idx)
+            .map(|l| l.len())
+            .unwrap_or(0);
 
         let width_chars = app
             .cached_result
@@ -3823,8 +4019,8 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
         let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
 
         let mut title_right = format!(
-            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Max Line: {} bytes | Disc. {:.1}% ",
-            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, max_bytes, p_score
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Line {} ({} bytes) | Error: {:.3}% ",
+            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, p_score
         );
 
         if let Some((r, g, b)) = app.eyedropper_color {

@@ -273,12 +273,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
             }
         }
-        
     } else {
         // TrueColor Mode
-        let term_sq = (block_sum_r * block_sum_r / bp) + (block_sum_g * block_sum_g / bp) + (block_sum_b * block_sum_b / bp);
-        let uniform_cost = (block_sum_sq + bp * term_sq); // simplified, not matching CPU exactly yet, but actually CPU `uniform_cost` is a bit complex.
-        
         for (var gi: u32 = 0u; gi < metadata.num_glyphs; gi++) {
             let glyph = glyphs[gi];
             var sum_ones_r: u32 = 0u;
@@ -320,6 +316,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 avg_zeros_b = sum_zeros_b / count_zeros;
             }
             
+            // Cost calculation: sum of squared differences from partition means
+            // dist = sum(x - mean)^2 = sum(x^2) - 2*mean*sum(x) + count*mean^2
             let t1_1 = sum_ones_sq;
             let t2_1 = 2u * (avg_ones_r * sum_ones_r + avg_ones_g * sum_ones_g + avg_ones_b * sum_ones_b);
             let t3_1 = count_ones * (avg_ones_r * avg_ones_r + avg_ones_g * avg_ones_g + avg_ones_b * avg_ones_b);
@@ -344,27 +342,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 scale_best_bg_g = avg_zeros_g;
                 scale_best_bg_b = avg_zeros_b;
             }
-        }
-        
-        let term_linear = (block_sum_r / bp) * block_sum_r + (block_sum_g / bp) * block_sum_g + (block_sum_b / bp) * block_sum_b;
-        var act_uniform = 0u;
-        let uniform_term = block_sum_sq + bp * term_sq;
-        if (uniform_term > 2u * term_linear) { act_uniform = uniform_term - 2u * term_linear; }
-        var gain = 0u;
-        if (act_uniform > scale_best_cost) {
-            gain = act_uniform - scale_best_cost;
-        }
-        let noise_gain_threshold = 800u;
-        if (gain < noise_gain_threshold) { // CPU `args.smooth` check, GPU will always smooth when in auto? Yes!
-            let r = block_sum_r / bp;
-            let g = block_sum_g / bp;
-            let b = block_sum_b / bp;
-            scale_best_fg_r = r;
-            scale_best_fg_g = g;
-            scale_best_fg_b = b;
-            scale_best_bg_r = r;
-            scale_best_bg_g = g;
-            scale_best_bg_b = b;
         }
     }
     

@@ -1,2 +1,6 @@
 /target
 Cargo.lock
+img2irc.log
+/inputs
+*.jpg
+*.png
