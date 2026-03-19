@@ -199,6 +199,88 @@ pub fn render_blocks_gpu(
     let bind_group_layout = &state.bind_group_layout;
     let compute_pipeline = &state.compute_pipeline;
 
+    let mut gpu_glyphs = Vec::new();
+    let mut gpu_ones = Vec::new();
+    for g in glyphs {
+        let start = gpu_ones.len() as u32;
+        for &one in &g.ones {
+            gpu_ones.push(one as u32);
+        }
+        gpu_glyphs.push(GpuGlyph {
+            ones_starts: start,
+            ones_len: g.ones.len() as u32,
+        });
+    }
+
+    let palette = match render_mode {
+        Render::Ansi => &ANSI256[..],
+        Render::Irc | Render::Preview => &IRC99[..],
+        Render::Ansi24 => &[],
+    };
+
+    let mode_val = match render_mode {
+        Render::Ansi => 0,
+        Render::Irc | Render::Preview => 1,
+        Render::Ansi24 => 2,
+    };
+
+    let meta = GpuMetadata {
+        bp,
+        num_glyphs: glyphs.len() as u32,
+        render_mode: mode_val,
+        tolerance: tolerance as u32,
+    };
+
+    use wgpu::util::DeviceExt;
+
+    let glyphs_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Glyphs Buffer"),
+        contents: bytemuck::cast_slice(&gpu_glyphs),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    let ones_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Glyph Ones Buffer"),
+        contents: bytemuck::cast_slice(&gpu_ones),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    // WebGL fallback if empty palette
+    let pal = if palette.is_empty() {
+        vec![0u32]
+    } else {
+        palette.to_vec()
+    };
+    let palette_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Palette Buffer"),
+        contents: bytemuck::cast_slice(&pal),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
+    let meta_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Metadata Buffer"),
+        contents: bytemuck::cast_slice(&[meta]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    // Maximum blocks per batch. Reduced to 4 Million pixels to avoid potential limit issues.
+    let max_pixels_per_batch = 4_000_000;
+    let max_blocks_per_batch = (max_pixels_per_batch / bp as usize).max(1);
+
+    let mut final_results = Vec::with_capacity(total_blocks);
+
+    let mut current_gpu_blocks = Vec::with_capacity(max_blocks_per_batch * bp as usize);
+    let mut batch_count = 0;
+
+    // We prepare a reusable Results Buffer scaled to max_blocks_per_batch
+    let max_results_size = (max_blocks_per_batch as u64) * std::mem::size_of::<GpuResult>() as u64;
+    let results_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Results Buffer"),
+        size: max_results_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
     let blocks_buf_size =
         (max_blocks_per_batch as u64) * bp as u64 * std::mem::size_of::<GpuBlockPixel>() as u64;
     let blocks_buf = device.create_buffer(&wgpu::BufferDescriptor {
