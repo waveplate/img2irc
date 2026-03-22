@@ -607,6 +607,12 @@ enum InputMode {
     Explorer,
     ValueEdit,
     MetadataPrompt,
+    AutoOptimize,
+}
+
+struct AutoOptimizeState {
+    inputs: Vec<TextArea<'static>>,
+    focused_idx: usize,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -982,6 +988,7 @@ struct App {
     eyedropper_color: Option<(u8, u8, u8)>,
     is_optimizing: bool,
     optimization_progress: String,
+    auto_optimize_state: Option<AutoOptimizeState>,
 }
 
 impl App {
@@ -1163,6 +1170,7 @@ impl App {
             is_optimizing: false,
             optimization_progress: String::new(),
             rx_optimization: None,
+            auto_optimize_state: None,
         }
     }
 
@@ -1460,20 +1468,125 @@ impl App {
 
     fn perform_auto_optimize(&mut self) {
         if self.is_optimizing {
+            self.is_optimizing = false;
+            self.optimization_progress = "Cancelled".to_string();
+            self.rx_optimization = None; // Drop receiver to signal task stop
             return;
         }
-        self.is_optimizing = true;
-        self.optimization_progress = "Starting...".into();
 
-        let (tx, rx) = mpsc::channel(10);
+        let mut inputs = Vec::new();
+        let labels = [
+            format!("Width Range (current {})", self.width),
+            format!("Crop Top Range (current {})", self.trim_top),
+            format!("Crop Right Range (current {})", self.trim_right),
+            format!("Crop Bottom Range (current {})", self.trim_bottom),
+            format!("Crop Left Range (current {})", self.trim_left),
+            format!("Font Size Range (current {:.1})", self.font_size),
+            format!("Scale X Range (current {})", self.scalex),
+            format!("Scale Y Range (current {})", self.scaley),
+        ];
+
+        for label in labels.iter() {
+            let mut ta = TextArea::default();
+            ta.set_block(Block::default().borders(Borders::ALL).title(label.clone()));
+            inputs.push(ta);
+        }
+
+        self.auto_optimize_state = Some(AutoOptimizeState {
+            inputs,
+            focused_idx: 0,
+        });
+        self.input_mode = InputMode::AutoOptimize;
+    }
+
+    fn start_auto_optimization(&mut self) {
+        if self.is_optimizing {
+            return;
+        }
+
+        let state = self.auto_optimize_state.take().unwrap();
+        
+        fn parse_range_i32(s: &str, current: i32) -> Vec<i32> {
+            if s.trim().is_empty() { return vec![current]; }
+            let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+            if parts.len() == 2 {
+                let min = parts[0].parse().unwrap_or(current);
+                let max = parts[1].parse().unwrap_or(current);
+                (min..=max).collect()
+            } else if parts.len() == 1 {
+                vec![parts[0].parse().unwrap_or(current)]
+            } else {
+                vec![current]
+            }
+        }
+
+        fn parse_range_f32(s: &str, current: f32) -> Vec<f32> {
+            if s.trim().is_empty() { return vec![current]; }
+            let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+            if parts.len() == 2 {
+                let min = parts[0].parse().unwrap_or(current);
+                let max = parts[1].parse().unwrap_or(current);
+                let mut v = Vec::new();
+                let mut c = min;
+                while c <= max {
+                    v.push(c);
+                    c += 0.5;
+                }
+                if v.is_empty() { v.push(current); }
+                v
+            } else if parts.len() == 1 {
+                vec![parts[0].parse().unwrap_or(current)]
+            } else {
+                vec![current]
+            }
+        }
+
+        let ws = parse_range_i32(state.inputs[0].lines()[0].as_str(), self.width);
+        let ct = parse_range_i32(state.inputs[1].lines()[0].as_str(), self.trim_top);
+        let cr = parse_range_i32(state.inputs[2].lines()[0].as_str(), self.trim_right);
+        let cb = parse_range_i32(state.inputs[3].lines()[0].as_str(), self.trim_bottom);
+        let cl = parse_range_i32(state.inputs[4].lines()[0].as_str(), self.trim_left);
+        let fs = parse_range_f32(state.inputs[5].lines()[0].as_str(), self.font_size);
+        let sx = parse_range_i32(state.inputs[6].lines()[0].as_str(), self.scalex);
+        let sy = parse_range_i32(state.inputs[7].lines()[0].as_str(), self.scaley);
+
+        let total_perms = ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
+
+        self.is_optimizing = true;
+        self.optimization_progress = format!("Starting... ({} perms)", total_perms);
+
+        let (tx, rx) = mpsc::channel(100);
         self.rx_optimization = Some(rx);
 
-        let args = self.render_args.clone();
+        let mut args = self.render_args.clone();
+        args.show_discontinuities = true; 
+
         let glyph_store = self.arc_glyphs.clone().unwrap();
-        // We need the original image. In tui.rs, App doesn't store the image,
-        // it's in the render block of run(). We might need to store it in App or load it again.
-        // Actually run() has arc_image. Let's assume we can reload from image_path.
         let image_path = self.image_path.clone();
+        
+        let mut all_args = Vec::with_capacity(total_perms.min(1000000));
+        for &w in &ws {
+            for &t in &ct {
+                for &r in &cr {
+                    for &b in &cb {
+                        for &l in &cl {
+                            for &f in &fs {
+                                for &x in &sx {
+                                    for &y in &sy {
+                                        let mut a = args.clone();
+                                        a.width = Some(w as u32);
+                                        a.trim = Some((t as u32, r as u32, b as u32, l as u32));
+                                        a.font_size = f;
+                                        a.scale = Some((x as f32 / 100.0, y as f32 / 100.0));
+                                        all_args.push(a);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         tokio::spawn(async move {
             let image = if image_path.is_empty() {
@@ -1484,52 +1597,46 @@ impl App {
                     Err(_) => PhotonImage::new(vec![0; 4], 1, 1),
                 }
             };
-
-            let char_w = glyph_store.metrics.0 as f32;
-            let char_h = glyph_store.metrics.1 as f32;
-
-            let mut best_score: f64 = f64::MAX;
+            
+            let mut best_score = f64::MAX;
             let mut best_args = args.clone();
+            let total = all_args.len();
+            let mut curr = 0;
 
-            let steps = 4;
-            let max_ox = (char_w / 2.0) as u32;
-            let max_oy = (char_h / 2.0) as u32;
+            let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_threads));
+            let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(num_threads * 2);
 
-            let ox_step = (max_ox / steps).max(1);
-            let oy_step = (max_oy / steps).max(1);
+            let args_len = all_args.len();
+            for a in all_args {
+                if tx.is_closed() { break; }
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let img = image.clone();
+                let gs = glyph_store.clone();
+                let rtx = res_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let fg = crate::draw::prepare_glyphs(&gs, &a);
+                    let result = crate::render_output(a.clone(), &gs, img, &fg, None);
+                    let _ = rtx.blocking_send((a, result.score));
+                    drop(permit);
+                });
+            }
+            drop(res_tx); // close
 
-            for oy in (0..=max_oy).step_by(oy_step as usize) {
-                for ox in (0..=max_ox).step_by(ox_step as usize) {
-                    let mut current_args = args.clone();
-                    // Using trim for offsets as it's what apply_effects uses for cropping-like behavior
-                    let (t, r, b, l) = args.trim.unwrap_or((0, 0, 0, 0));
-                    current_args.trim = Some((t + oy, r, b, l + ox));
-
-                    let _ = tx
-                        .send(OptimizationUpdate::Progress(format!(
-                            "Offset {},{}",
-                            ox, oy
-                        )))
-                        .await;
-
-                    let fast_glyphs = draw::prepare_glyphs(&glyph_store, &current_args);
-                    let result = crate::render_output(
-                        current_args.clone(),
-                        &glyph_store,
-                        image.clone(), // Clone photon image
-                        &fast_glyphs,
-                        None,
-                    );
-
-                    if result.score < best_score {
-                        best_score = result.score;
-                        best_args = current_args;
-                        let _ = tx
-                            .send(OptimizationUpdate::BestResult(best_args.clone()))
-                            .await;
-                    }
+            while let Some((a, score)) = res_rx.recv().await {
+                curr += 1;
+                if score < best_score {
+                    best_score = score;
+                    best_args = a;
+                    let _ = tx.send(OptimizationUpdate::BestResult(best_args.clone())).await;
+                }
+                
+                if curr % 10 == 0 || curr == args_len {
+                    let progress = (curr as f64 / args_len as f64 * 100.0) as u32;
+                    let _ = tx.send(OptimizationUpdate::Progress(format!("{}% -> {}/{} (Best: {:.2})", progress, curr, args_len, best_score))).await;
                 }
             }
+
             let _ = tx.send(OptimizationUpdate::Finished).await;
         });
     }
@@ -2701,6 +2808,45 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue;
             }
 
+            // --- Auto Optimize Mode ---
+            if app.input_mode == InputMode::AutoOptimize {
+                if let Event::Key(key) = event {
+                    if key.kind == KeyEventKind::Press {
+                        if let Some(state) = &mut app.auto_optimize_state {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.input_mode = InputMode::Normal;
+                                }
+                                KeyCode::Enter => {
+                                    app.input_mode = InputMode::Normal;
+                                    app.start_auto_optimization();
+                                }
+                                KeyCode::Up | KeyCode::BackTab => {
+                                    if state.focused_idx > 0 {
+                                        state.focused_idx -= 1;
+                                    } else {
+                                        state.focused_idx = state.inputs.len().saturating_sub(1);
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Tab => {
+                                    if state.focused_idx + 1 < state.inputs.len() {
+                                        state.focused_idx += 1;
+                                    } else {
+                                        state.focused_idx = 0;
+                                    }
+                                }
+                                _ => {
+                                    if state.focused_idx < state.inputs.len() {
+                                        state.inputs[state.focused_idx].input(key);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
             match event {
                 Event::Mouse(mouse) => {
                     match mouse.kind {
@@ -3483,6 +3629,74 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
 
         f.render_stateful_widget(list, area, &mut app.font_list_state);
+    }
+
+    if app.input_mode == InputMode::AutoOptimize {
+        let vert = Layout::vertical([
+            Constraint::Percentage(20),
+            Constraint::Length(26),
+            Constraint::Percentage(20),
+        ]).split(area);
+        let horiz = Layout::horizontal([
+            Constraint::Percentage(20),
+            Constraint::Length(60),
+            Constraint::Percentage(20),
+        ]).split(vert[1]);
+        
+        let overlay_area = horiz[1];
+        f.render_widget(Clear, overlay_area);
+        render_auto_optimize_dialog(f, app, overlay_area);
+    }
+}
+
+fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if let Some(state) = &mut app.auto_optimize_state {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Auto Optimize (Enter: start, Esc: cancel) ")
+            .style(Style::default().fg(Color::Yellow));
+            
+        let inner_area = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+
+        let constraints: Vec<_> = state.inputs.iter().map(|_| Constraint::Length(3)).collect();
+        let chunks = Layout::vertical(constraints).split(inner_area);
+
+        let titles = [
+            "Width Range",
+            "Crop Top Range",
+            "Crop Right Range",
+            "Crop Bottom Range",
+            "Crop Left Range",
+            "Font Size Range",
+            "Scale X Range",
+            "Scale Y Range",
+        ];
+
+        for (i, input) in state.inputs.iter_mut().enumerate() {
+            let title = titles.get(i).unwrap_or(&"");
+            if i == state.focused_idx {
+                input.set_style(Style::default().fg(ACCENT));
+                input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(*title)
+                        .border_style(Style::default().fg(ACCENT)),
+                );
+            } else {
+                input.set_style(Style::default());
+                input.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(*title)
+                        .border_style(Style::default()),
+                );
+            }
+            if i < chunks.len() {
+                f.render_widget(&*input, chunks[i]);
+            }
+        }
     }
 }
 
