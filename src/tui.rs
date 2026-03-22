@@ -3271,6 +3271,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.selected_control = 0;
                             }
                             KeyCode::Esc => {
+                                if app.is_optimizing {
+                                    app.perform_auto_optimize(); // this zeroes everything and aborts
+                                    continue;
+                                }
+
                                 if app.current_tab == 2 {
                                     if app.selected_control > 0 {
                                         app.selected_control = 0;
@@ -3684,6 +3689,28 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         let overlay_area = horiz[1];
         f.render_widget(Clear, overlay_area);
         render_auto_optimize_dialog(f, app, overlay_area);
+    } else if app.is_optimizing {
+        let th = 5;
+        let p_area = Rect::new(
+            main[1].x.saturating_add(4),
+            main[1].y.saturating_add(main[1].height).saturating_sub(th + 2),
+            main[1].width.saturating_sub(8),
+            th,
+        );
+
+        f.render_widget(Clear, p_area);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" ⭐ Auto-Optimization Running (Press Esc to Stop) ")
+            .style(Style::default().fg(ratatui::style::Color::Cyan).bg(BG));
+
+        let progress_text = app.optimization_progress.clone();
+        let content = Paragraph::new(progress_text)
+            .block(block)
+            .alignment(Alignment::Center);
+
+        f.render_widget(content, p_area);
     }
 }
 
@@ -3877,6 +3904,8 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             format!("≡ {}", ctrl.label)
         } else if app.current_tab == 2 && v_idx < app.available_blocks.len() {
             app.available_blocks[v_idx].clone()
+        } else if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
+            "🛑 STOP AUTO-OPTIMIZE".to_string()
         } else {
             ctrl.label.to_string()
         };
