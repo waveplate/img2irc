@@ -1517,9 +1517,12 @@ pub fn render_blocks_smooth(
         }
 
         if total_corners > 0 {
-            relative_disc_score = 100.0 * (1.0 - (disc_corners as f64) / (total_corners as f64));
+            // Divide by the square root of total area (sqrt(corners)) to normalize
+            // against linear scaling. This makes the error metric size-independent,
+            // so larger outputs don't automatically score better.
+            relative_disc_score = (disc_corners as f64) / (total_corners as f64).sqrt();
         } else {
-            relative_disc_score = 100.0;
+            relative_disc_score = 0.0;
         }
 
         (0..grid_h * grid_w)
