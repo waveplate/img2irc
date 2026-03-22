@@ -989,6 +989,8 @@ struct App {
     is_optimizing: bool,
     optimization_progress: String,
     auto_optimize_state: Option<AutoOptimizeState>,
+    saved_auto_optimize_inputs: Vec<String>,
+    auto_optimize_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl App {
@@ -1171,6 +1173,8 @@ impl App {
             optimization_progress: String::new(),
             rx_optimization: None,
             auto_optimize_state: None,
+            saved_auto_optimize_inputs: Vec::new(),
+            auto_optimize_cancel: None,
         }
     }
 
@@ -1469,8 +1473,10 @@ impl App {
     fn perform_auto_optimize(&mut self) {
         if self.is_optimizing {
             self.is_optimizing = false;
-            self.optimization_progress = "Cancelled".to_string();
-            self.rx_optimization = None; // Drop receiver to signal task stop
+            self.optimization_progress = "Cancelling...".to_string();
+            if let Some(flag) = &self.auto_optimize_cancel {
+                flag.store(true, Ordering::Relaxed);
+            }
             return;
         }
 
@@ -1486,8 +1492,12 @@ impl App {
             format!("Scale Y Range (current {})", self.scaley),
         ];
 
-        for label in labels.iter() {
-            let mut ta = TextArea::default();
+        for (i, label) in labels.iter().enumerate() {
+            let mut ta = if self.saved_auto_optimize_inputs.len() == labels.len() {
+                TextArea::new(vec![self.saved_auto_optimize_inputs[i].clone()])
+            } else {
+                TextArea::default()
+            };
             ta.set_block(Block::default().borders(Borders::ALL).title(label.clone()));
             inputs.push(ta);
         }
@@ -1510,8 +1520,10 @@ impl App {
             if s.trim().is_empty() { return vec![current]; }
             let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
             if parts.len() == 2 {
-                let min = parts[0].parse().unwrap_or(current);
-                let max = parts[1].parse().unwrap_or(current);
+                let p0 = parts[0].parse().unwrap_or(current);
+                let p1 = parts[1].parse().unwrap_or(current);
+                let min = p0.min(p1);
+                let max = p0.max(p1);
                 (min..=max).collect()
             } else if parts.len() == 1 {
                 vec![parts[0].parse().unwrap_or(current)]
@@ -1524,8 +1536,10 @@ impl App {
             if s.trim().is_empty() { return vec![current]; }
             let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
             if parts.len() == 2 {
-                let min = parts[0].parse().unwrap_or(current);
-                let max = parts[1].parse().unwrap_or(current);
+                let p0 = parts[0].parse().unwrap_or(current);
+                let p1 = parts[1].parse().unwrap_or(current);
+                let min = p0.min(p1);
+                let max = p0.max(p1);
                 let mut v = Vec::new();
                 let mut c = min;
                 while c <= max {
@@ -1551,42 +1565,29 @@ impl App {
         let sy = parse_range_i32(state.inputs[7].lines()[0].as_str(), self.scaley);
 
         let total_perms = ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
+        
+        if total_perms == 0 {
+            self.is_optimizing = false;
+            return;
+        }
+        
+        self.saved_auto_optimize_inputs = state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
 
         self.is_optimizing = true;
         self.optimization_progress = format!("Starting... ({} perms)", total_perms);
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        self.auto_optimize_cancel = Some(cancel_flag.clone());
 
         let (tx, rx) = mpsc::channel(100);
         self.rx_optimization = Some(rx);
 
         let mut args = self.render_args.clone();
+        let original_show_disc = args.show_discontinuities;
         args.show_discontinuities = true; 
 
         let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
-        
-        let mut all_args = Vec::with_capacity(total_perms.min(1000000));
-        for &w in &ws {
-            for &t in &ct {
-                for &r in &cr {
-                    for &b in &cb {
-                        for &l in &cl {
-                            for &f in &fs {
-                                for &x in &sx {
-                                    for &y in &sy {
-                                        let mut a = args.clone();
-                                        a.width = Some(w as u32);
-                                        a.trim = Some((t as u32, r as u32, b as u32, l as u32));
-                                        a.font_size = f;
-                                        a.scale = Some((x as f32 / 100.0, y as f32 / 100.0));
-                                        all_args.push(a);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         tokio::spawn(async move {
             let image = if image_path.is_empty() {
@@ -1600,28 +1601,63 @@ impl App {
             
             let mut best_score = f64::MAX;
             let mut best_args = args.clone();
-            let total = all_args.len();
             let mut curr = 0;
 
             let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_threads));
             let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(num_threads * 2);
 
-            let args_len = all_args.len();
-            for a in all_args {
-                if tx.is_closed() { break; }
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
-                let img = image.clone();
-                let gs = glyph_store.clone();
-                let rtx = res_tx.clone();
-                tokio::task::spawn_blocking(move || {
-                    let fg = crate::draw::prepare_glyphs(&gs, &a);
-                    let result = crate::render_output(a.clone(), &gs, img, &fg, None);
-                    let _ = rtx.blocking_send((a, result.score));
-                    drop(permit);
-                });
-            }
-            drop(res_tx); // close
+            let args_len = total_perms;
+            let tx_clone = tx.clone();
+            let img_clone = image.clone();
+            let gs_clone = glyph_store.clone();
+            let cancel_clone = cancel_flag.clone();
+            
+            tokio::spawn(async move {
+                let mut aborted = false;
+                for &w in &ws {
+                    if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) { break; }
+                    for &t in &ct {
+                        for &r in &cr {
+                            for &b in &cb {
+                                for &l in &cl {
+                                    for &f in &fs {
+                                        for &x in &sx {
+                                            for &y in &sy {
+                                                if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) { aborted = true; break; }
+                                                let mut a = args.clone();
+                                                a.width = Some(w as u32);
+                                                a.trim = Some((t as u32, r as u32, b as u32, l as u32));
+                                                a.font_size = f;
+                                                a.scale = Some((x as f32 / 100.0, y as f32 / 100.0));
+                                                
+                                                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                                                let img = img_clone.clone();
+                                                let gs = gs_clone.clone();
+                                                let rtx = res_tx.clone();
+                                                let cancel_inner = cancel_clone.clone();
+                                                tokio::task::spawn_blocking(move || {
+                                                    let fg = crate::draw::prepare_glyphs(&gs, &a);
+                                                    let result = crate::render_output(a.clone(), &gs, img, &fg, Some(cancel_inner));
+                                                    let _ = rtx.blocking_send((a, result.score));
+                                                    drop(permit);
+                                                });
+                                            }
+                                            if aborted { break; }
+                                        }
+                                        if aborted { break; }
+                                    }
+                                    if aborted { break; }
+                                }
+                                if aborted { break; }
+                            }
+                            if aborted { break; }
+                        }
+                        if aborted { break; }
+                    }
+                    if aborted { break; }
+                }
+            });
 
             while let Some((a, score)) = res_rx.recv().await {
                 curr += 1;
@@ -1637,6 +1673,8 @@ impl App {
                 }
             }
 
+            best_args.show_discontinuities = original_show_disc;
+            let _ = tx.send(OptimizationUpdate::BestResult(best_args)).await;
             let _ = tx.send(OptimizationUpdate::Finished).await;
         });
     }
