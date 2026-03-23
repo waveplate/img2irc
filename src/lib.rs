@@ -3,6 +3,7 @@ pub mod config;
 pub mod draw;
 pub mod effects;
 pub mod font;
+pub mod pipeline;
 pub mod gpu;
 pub mod palette;
 

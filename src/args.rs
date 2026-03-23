@@ -169,7 +169,7 @@ pub struct RenderArgs {
     pub gpu: bool,
     pub score: bool,
     pub save: Option<String>,
-    pub pipeline: Vec<String>,
+    pub pipeline: Vec<crate::pipeline::ImageEffect>,
 }
 
 #[derive(Parser, Clone, Debug)]

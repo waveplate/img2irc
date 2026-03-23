@@ -166,226 +166,99 @@ pub fn apply_effects(
     let pipeline = if !args.pipeline.is_empty() {
         args.pipeline.clone()
     } else {
-        vec![
-            "Dither".to_string(),
-            "Brightness".to_string(),
-            "Saturation".to_string(),
-            "Contrast".to_string(),
-            "Hue".to_string(),
-            "Gamma".to_string(),
-            "Gauss Blur".to_string(),
-            "Pixelize".to_string(),
-            "Halftone".to_string(),
-            "Invert".to_string(),
-            "Sepia".to_string(),
-            "Solarize".to_string(),
-            "Normalize".to_string(),
-            "Noise".to_string(),
-            "Sharpen".to_string(),
-            "EdgeDetect".to_string(),
-            "Emboss".to_string(),
-            "FrostGlass".to_string(),
-            "Box Blur".to_string(),
-            "Grayscale".to_string(),
-            "Identity".to_string(),
-            "Laplace".to_string(),
-            "Cali".to_string(),
-            "Dramatic".to_string(),
-            "Firenze".to_string(),
-            "Golden".to_string(),
-            "Lix".to_string(),
-            "Lofi".to_string(),
-            "Neue".to_string(),
-            "Obsidian".to_string(),
-            "PastelPink".to_string(),
-            "Ryo".to_string(),
-            "Oil".to_string(),
-        ]
+        use crate::pipeline::ImageEffect;
+        let mut p = Vec::new();
+        if args.dither > 0 { p.push(ImageEffect::Dither(args.dither)); }
+        if args.brightness != 0.0 { p.push(ImageEffect::Brightness(args.brightness)); }
+        if args.saturation != 0.0 { p.push(ImageEffect::Saturation(args.saturation)); }
+        if args.contrast != 0.0 { p.push(ImageEffect::Contrast(args.contrast)); }
+        if args.hue != 0.0 { p.push(ImageEffect::Hue(args.hue)); }
+        if args.gamma != 0.0 { p.push(ImageEffect::Gamma(args.gamma)); }
+        if args.gaussian_blur > 0 { p.push(ImageEffect::GaussBlur(args.gaussian_blur)); }
+        if args.pixelize > 0 { p.push(ImageEffect::Pixelize(args.pixelize)); }
+        if args.halftone { p.push(ImageEffect::Halftone); }
+        if args.invert { p.push(ImageEffect::Invert); }
+        if args.sepia { p.push(ImageEffect::Sepia); }
+        if args.solarize { p.push(ImageEffect::Solarize); }
+        if args.normalize { p.push(ImageEffect::Normalize); }
+        if args.noise { p.push(ImageEffect::Noise); }
+        if args.sharpen { p.push(ImageEffect::Sharpen); }
+        if args.edge_detection { p.push(ImageEffect::EdgeDetect); }
+        if args.emboss { p.push(ImageEffect::Emboss); }
+        if args.frosted_glass { p.push(ImageEffect::FrostGlass); }
+        if args.box_blur { p.push(ImageEffect::BoxBlur); }
+        if args.grayscale { p.push(ImageEffect::Grayscale); }
+        if args.identity { p.push(ImageEffect::Identity); }
+        if args.laplace { p.push(ImageEffect::Laplace); }
+        if args.cali { p.push(ImageEffect::Cali); }
+        if args.dramatic { p.push(ImageEffect::Dramatic); }
+        if args.firenze { p.push(ImageEffect::Firenze); }
+        if args.golden { p.push(ImageEffect::Golden); }
+        if args.lix { p.push(ImageEffect::Lix); }
+        if args.lofi { p.push(ImageEffect::Lofi); }
+        if args.neue { p.push(ImageEffect::Neue); }
+        if args.obsidian { p.push(ImageEffect::Obsidian); }
+        if args.pastel_pink { p.push(ImageEffect::PastelPink); }
+        if args.ryo { p.push(ImageEffect::Ryo); }
+        if let Some(oil) = &args.oil {
+            let vals: Vec<&str> = oil.split(",").collect();
+            if vals.len() == 2 {
+                if let (Ok(r), Ok(i)) = (vals[0].parse::<i32>(), vals[1].parse::<f64>()) {
+                    p.push(ImageEffect::Oil(r, i));
+                }
+            }
+        }
+        p
     };
 
     for effect in pipeline {
-        match effect.as_str() {
-            "Dither" => {
-                if args.dither > 0 {
-                    effects::dither(&mut photon_image, args.dither);
-                }
-            }
-            "Brightness" => match args.brightness {
-                x if x > 0.0 => colour_func(&mut photon_image, "lighten", args.brightness / 100.0),
-                x if x < 0.0 => {
-                    colour_func(&mut photon_image, "darken", args.brightness.abs() / 100.0)
-                }
+        use crate::pipeline::ImageEffect::*;
+        match effect {
+            Dither(d) => if d > 0 { effects::dither(&mut photon_image, d); },
+            Brightness(b) => match b {
+                x if x > 0.0 => colour_func(&mut photon_image, "lighten", b / 100.0),
+                x if x < 0.0 => colour_func(&mut photon_image, "darken", b.abs() / 100.0),
                 _ => {}
             },
-            "Saturation" => match args.saturation {
-                x if x > 0.0 => colour_func(&mut photon_image, "saturate", args.saturation / 100.0),
-                x if x < 0.0 => colour_func(
-                    &mut photon_image,
-                    "desaturate",
-                    args.saturation.abs() / 100.0,
-                ),
+            Saturation(s) => match s {
+                x if x > 0.0 => colour_func(&mut photon_image, "saturate", s / 100.0),
+                x if x < 0.0 => colour_func(&mut photon_image, "desaturate", s.abs() / 100.0),
                 _ => {}
             },
-            "Contrast" => {
-                if args.contrast != 0.0 {
-                    effects::adjust_contrast(&mut photon_image, args.contrast);
-                }
-            }
-            "Hue" => {
-                if args.hue > 0.0 {
-                    colour_func(&mut photon_image, "shift_hue", args.hue / 360.0);
-                }
-            }
-            "Gamma" => {
-                if args.gamma != 0.0 {
-                    let g = 1.0 - args.gamma / 255.0;
-                    colour_spaces::gamma_correction(&mut photon_image, g, g, g);
-                }
-            }
-            "Gauss Blur" => {
-                if args.gaussian_blur > 0 {
-                    conv::gaussian_blur(
-                        &mut photon_image,
-                        (args.gaussian_blur as u32).try_into().unwrap(),
-                    );
-                }
-            }
-            "Pixelize" => {
-                if args.pixelize > 0 {
-                    effects::pixelize(&mut photon_image, args.pixelize);
-                }
-            }
-            "Halftone" => {
-                if args.halftone {
-                    effects::halftone(&mut photon_image);
-                }
-            }
-            "Invert" => {
-                if args.invert {
-                    channels::invert(&mut photon_image);
-                }
-            }
-            "Sepia" => {
-                if args.sepia {
-                    monochrome::sepia(&mut photon_image);
-                }
-            }
-            "Solarize" => {
-                if args.solarize {
-                    effects::solarize(&mut photon_image);
-                }
-            }
-            "Normalize" => {
-                if args.normalize {
-                    effects::normalize(&mut photon_image);
-                }
-            }
-            "Noise" => {
-                if args.noise {
-                    noise::add_noise_rand(&mut photon_image);
-                }
-            }
-            "Sharpen" => {
-                if args.sharpen {
-                    conv::sharpen(&mut photon_image);
-                }
-            }
-            "EdgeDetect" => {
-                if args.edge_detection {
-                    conv::edge_detection(&mut photon_image);
-                }
-            }
-            "Emboss" => {
-                if args.emboss {
-                    conv::emboss(&mut photon_image);
-                }
-            }
-            "FrostGlass" => {
-                if args.frosted_glass {
-                    effects::frosted_glass(&mut photon_image);
-                }
-            }
-            "Box Blur" => {
-                if args.box_blur {
-                    conv::box_blur(&mut photon_image);
-                }
-            }
-            "Grayscale" => {
-                if args.grayscale {
-                    monochrome::grayscale(&mut photon_image);
-                }
-            }
-            "Identity" => {
-                if args.identity {
-                    conv::identity(&mut photon_image);
-                }
-            }
-            "Laplace" => {
-                if args.laplace {
-                    conv::laplace(&mut photon_image);
-                }
-            }
-            "Cali" => {
-                if args.cali {
-                    filters::cali(&mut photon_image);
-                }
-            }
-            "Dramatic" => {
-                if args.dramatic {
-                    filters::dramatic(&mut photon_image);
-                }
-            }
-            "Firenze" => {
-                if args.firenze {
-                    filters::firenze(&mut photon_image);
-                }
-            }
-            "Golden" => {
-                if args.golden {
-                    filters::golden(&mut photon_image);
-                }
-            }
-            "Lix" => {
-                if args.lix {
-                    filters::lix(&mut photon_image);
-                }
-            }
-            "Lofi" => {
-                if args.lofi {
-                    filters::lofi(&mut photon_image);
-                }
-            }
-            "Neue" => {
-                if args.neue {
-                    filters::neue(&mut photon_image);
-                }
-            }
-            "Obsidian" => {
-                if args.obsidian {
-                    filters::obsidian(&mut photon_image);
-                }
-            }
-            "PastelPink" => {
-                if args.pastel_pink {
-                    filters::pastel_pink(&mut photon_image);
-                }
-            }
-            "Ryo" => {
-                if args.ryo {
-                    filters::ryo(&mut photon_image);
-                }
-            }
-            "Oil" => {
-                if let Some(oil) = &args.oil {
-                    let vals: Vec<&str> = oil.split(",").collect();
-                    if vals.len() == 2 {
-                        if let (Ok(r), Ok(i)) = (vals[0].parse::<i32>(), vals[1].parse::<f64>()) {
-                            effects::oil(&mut photon_image, r, i);
-                        }
-                    }
-                }
-            }
-            _ => {}
+            Contrast(c) => if c != 0.0 { effects::adjust_contrast(&mut photon_image, c); },
+            Hue(h) => if h > 0.0 { colour_func(&mut photon_image, "shift_hue", h / 360.0); },
+            Gamma(g_val) => if g_val != 0.0 {
+                let g = 1.0 - g_val / 255.0;
+                colour_spaces::gamma_correction(&mut photon_image, g, g, g);
+            },
+            GaussBlur(r) => if r > 0 { conv::gaussian_blur(&mut photon_image, r.try_into().unwrap()); },
+            LumaBlur(_) => { /* not supported here natively but space for it */ },
+            Pixelize(p) => if p > 0 { effects::pixelize(&mut photon_image, p); },
+            Halftone => { effects::halftone(&mut photon_image); },
+            Invert => { channels::invert(&mut photon_image); },
+            Sepia => { monochrome::sepia(&mut photon_image); },
+            Solarize => { effects::solarize(&mut photon_image); },
+            Normalize => { effects::normalize(&mut photon_image); },
+            Noise => { noise::add_noise_rand(&mut photon_image); },
+            Sharpen => { conv::sharpen(&mut photon_image); },
+            EdgeDetect => { conv::edge_detection(&mut photon_image); },
+            Emboss => { conv::emboss(&mut photon_image); },
+            FrostGlass => { effects::frosted_glass(&mut photon_image); },
+            BoxBlur => { conv::box_blur(&mut photon_image); },
+            Grayscale => { monochrome::grayscale(&mut photon_image); },
+            Identity => { conv::identity(&mut photon_image); },
+            Laplace => { conv::laplace(&mut photon_image); },
+            Cali => { filters::cali(&mut photon_image); },
+            Dramatic => { filters::dramatic(&mut photon_image); },
+            Firenze => { filters::firenze(&mut photon_image); },
+            Golden => { filters::golden(&mut photon_image); },
+            Lix => { filters::lix(&mut photon_image); },
+            Lofi => { filters::lofi(&mut photon_image); },
+            Neue => { filters::neue(&mut photon_image); },
+            Obsidian => { filters::obsidian(&mut photon_image); },
+            PastelPink => { filters::pastel_pink(&mut photon_image); },
+            Ryo => { filters::ryo(&mut photon_image); },
+            Oil(r, i) => { effects::oil(&mut photon_image, r, i); },
         }
     }
 

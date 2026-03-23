@@ -177,51 +177,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::Brightness,
-        label: "Brightness",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Contrast,
-        label: "Contrast",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Saturation,
-        label: "Saturation",
-        kind: ControlKind::Slider {
-            min: -255,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Gamma,
-        label: "Gamma",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 255,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::Hue,
-        label: "Hue",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 360,
-            default: 0,
-        },
-    },
-    ControlDef {
         id: ControlId::Gpu,
         label: "GPU Mode",
         kind: ControlKind::Toggle { default: false },
@@ -594,11 +549,45 @@ const EFFECT_CONTROLS: &[ControlDef] = &[
 fn get_control_def(id: ControlId) -> ControlDef {
     GENERAL_CONTROLS
         .iter()
-        .chain(EFFECT_CONTROLS.iter())
         .find(|c| c.id == id)
         .copied()
-        .expect("Control ID not found")
+        .expect("Control ID not found in GENERAL_CONTROLS")
 }
+
+const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
+    crate::pipeline::ImageEffect::Brightness(0.0),
+    crate::pipeline::ImageEffect::Contrast(0.0),
+    crate::pipeline::ImageEffect::Saturation(0.0),
+    crate::pipeline::ImageEffect::Gamma(0.0),
+    crate::pipeline::ImageEffect::Hue(0.0),
+    crate::pipeline::ImageEffect::Invert,
+    crate::pipeline::ImageEffect::BoxBlur,
+    crate::pipeline::ImageEffect::GaussBlur(1),
+    crate::pipeline::ImageEffect::Pixelize(2),
+    crate::pipeline::ImageEffect::Halftone,
+    crate::pipeline::ImageEffect::Sepia,
+    crate::pipeline::ImageEffect::Solarize,
+    crate::pipeline::ImageEffect::Normalize,
+    crate::pipeline::ImageEffect::Noise,
+    crate::pipeline::ImageEffect::Sharpen,
+    crate::pipeline::ImageEffect::EdgeDetect,
+    crate::pipeline::ImageEffect::Emboss,
+    crate::pipeline::ImageEffect::FrostGlass,
+    crate::pipeline::ImageEffect::Grayscale,
+    crate::pipeline::ImageEffect::Identity,
+    crate::pipeline::ImageEffect::Laplace,
+    crate::pipeline::ImageEffect::Cali,
+    crate::pipeline::ImageEffect::Dramatic,
+    crate::pipeline::ImageEffect::Firenze,
+    crate::pipeline::ImageEffect::Golden,
+    crate::pipeline::ImageEffect::Lix,
+    crate::pipeline::ImageEffect::Lofi,
+    crate::pipeline::ImageEffect::Neue,
+    crate::pipeline::ImageEffect::Obsidian,
+    crate::pipeline::ImageEffect::PastelPink,
+    crate::pipeline::ImageEffect::Ryo,
+    crate::pipeline::ImageEffect::Dither(1),
+];
 
 // ── App State ────────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -867,8 +856,10 @@ struct App {
     dragged_control: Option<usize>,
     value_edit_buffer: String,
 
-    effects_pipeline: Vec<ControlId>,
-    reordering_grabbed: Option<usize>,
+    pipeline_nodes: Vec<crate::pipeline::ImageEffectNode>,
+    pipeline_next_id: usize,
+    pipeline_dragging: Option<(usize, i16, i16)>,
+    pipeline_scroll: u16,
 
     // Shared state for PNG saving
     arc_glyphs: Option<Arc<font::GlyphStore>>,
@@ -1153,8 +1144,10 @@ impl App {
             solarize: render_args.solarize,
             edge_detection: render_args.edge_detection,
 
-            effects_pipeline: EFFECT_CONTROLS.iter().map(|c| c.id).collect(),
-            reordering_grabbed: None,
+            pipeline_nodes: Vec::new(),
+            pipeline_next_id: 1,
+            pipeline_dragging: None,
+            pipeline_scroll: 0,
 
             available_blocks,
             explorer_dialog: None,
@@ -1287,7 +1280,7 @@ impl App {
         if self.current_tab == 0 {
             GENERAL_CONTROLS[self.selected_control.min(GENERAL_CONTROLS.len() - 1)].id
         } else {
-            self.effects_pipeline[self.selected_control.min(self.effects_pipeline.len() - 1)]
+            ControlId::Width // Fallback
         }
     }
 
@@ -1421,11 +1414,7 @@ impl App {
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
         match tab {
             0 => GENERAL_CONTROLS.to_vec(),
-            1 => self
-                .effects_pipeline
-                .iter()
-                .map(|&id| get_control_def(id))
-                .collect(),
+            1 => vec![], // Pipeline Canvas is handled totally separately
             2 => self
                 .available_blocks
                 .iter()
@@ -1460,7 +1449,7 @@ impl App {
         let id = if self.current_tab == 0 {
             GENERAL_CONTROLS[idx.min(GENERAL_CONTROLS.len() - 1)].id
         } else {
-            self.effects_pipeline[idx.min(self.effects_pipeline.len() - 1)]
+            ControlId::Width
         };
         self.get_value(id)
     }
@@ -1782,19 +1771,18 @@ impl App {
         } else {
             self.render_args.trim = None;
         }
-        self.render_args.crop = None;
+        // Sort pipeline nodes by X coordinate left-to-right
+        self.pipeline_nodes.sort_by_key(|n| n.x);
+        for i in 0..self.pipeline_nodes.len() {
+            let next_id = self.pipeline_nodes.get(i + 1).map(|n| n.id);
+            self.pipeline_nodes[i].next = next_id;
+        }
 
         // Pipeline
-        let mut pipeline = vec![
-            "Brightness".to_string(),
-            "Saturation".to_string(),
-            "Contrast".to_string(),
-            "Hue".to_string(),
-            "Gamma".to_string(),
-        ];
-        for &id in &self.effects_pipeline {
-            pipeline.push(get_control_def(id).label.to_string());
-        }
+        let pipeline: Vec<crate::pipeline::ImageEffect> = self.pipeline_nodes.iter()
+            .map(|node| node.effect.clone())
+            .collect();
+        
         self.render_args.pipeline = pipeline;
 
         // Cancel previous render
@@ -2902,6 +2890,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
+                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                                let catalog_area = app.control_areas[0];
+                                let canvas_area = app.control_areas[1];
+                                if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
+                                    app.pipeline_scroll = app.pipeline_scroll.saturating_sub(1);
+                                    continue;
+                                } else if mouse.column >= canvas_area.x && mouse.column < canvas_area.x + canvas_area.width && mouse.row >= canvas_area.y && mouse.row < canvas_area.y + canvas_area.height {
+                                    let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
+                                    let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as u16;
+                                    for node in app.pipeline_nodes.iter_mut() {
+                                        if inner_x >= node.x && inner_x < node.x + 14 && inner_y >= node.y && inner_y < node.y + 3 {
+                                            use crate::pipeline::ImageEffect::*;
+                                            let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { 10.0 } else { 1.0 };
+                                            match &mut node.effect {
+                                                Brightness(v) | Contrast(v) | Saturation(v) | Gamma(v) | Hue(v) => *v += delta,
+                                                GaussBlur(v) | Pixelize(v) => *v = (*v as f32 + delta).max(0.0) as i32,
+                                                Dither(v) => *v = (*v as f32 + delta).max(0.0) as u32,
+                                                _ => {}
+                                            }
+                                            app.mark_args_dirty();
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+
                             if app.current_tab == 2 {
                                 // Scroll focused pane in Glyphs tab
                                 match app.selected_control {
@@ -2928,6 +2943,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.scroll = app.scroll.saturating_add(3);
                                 }
                                 continue;
+                            }
+
+                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                                let catalog_area = app.control_areas[0];
+                                let canvas_area = app.control_areas[1];
+                                if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
+                                    app.pipeline_scroll = app.pipeline_scroll.saturating_add(1);
+                                    continue;
+                                } else if mouse.column >= canvas_area.x && mouse.column < canvas_area.x + canvas_area.width && mouse.row >= canvas_area.y && mouse.row < canvas_area.y + canvas_area.height {
+                                    let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
+                                    let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as u16;
+                                    for node in app.pipeline_nodes.iter_mut() {
+                                        if inner_x >= node.x && inner_x < node.x + 14 && inner_y >= node.y && inner_y < node.y + 3 {
+                                            use crate::pipeline::ImageEffect::*;
+                                            let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { -10.0 } else { -1.0 };
+                                            match &mut node.effect {
+                                                Brightness(v) | Contrast(v) | Saturation(v) | Gamma(v) | Hue(v) => *v += delta,
+                                                GaussBlur(v) | Pixelize(v) => *v = (*v as f32 + delta).max(0.0) as i32,
+                                                Dither(v) => *v = (*v as f32 + delta).max(0.0) as u32,
+                                                _ => {}
+                                            }
+                                            app.mark_args_dirty();
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                }
                             }
 
                             if app.current_tab == 2 {
@@ -3110,7 +3152,77 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     break;
                                 }
                             }
-                            // Check control clicks
+                            // Check Pipeline Canvas Tab 1 Clicks
+                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                                let catalog_area = app.control_areas[0];
+                                let canvas_area = app.control_areas[1];
+
+                                if mouse.column >= catalog_area.x
+                                    && mouse.column < catalog_area.x + catalog_area.width
+                                    && mouse.row >= catalog_area.y
+                                    && mouse.row < catalog_area.y + catalog_area.height
+                                {
+                                    // Clicked catalog item
+                                    let inner_y = mouse.row.saturating_sub(catalog_area.y + 1); // +1 for border
+                                    let clicked_idx = (app.pipeline_scroll as usize) + inner_y as usize;
+                                    
+                                    if clicked_idx < AVAILABLE_EFFECTS.len() {
+                                        let effect = AVAILABLE_EFFECTS[clicked_idx].clone();
+                                        app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
+                                            id: app.pipeline_next_id,
+                                            effect,
+                                            x: 2,
+                                            y: 2,
+                                            next: None,
+                                        });
+                                        app.pipeline_next_id += 1;
+                                        app.mark_args_dirty();
+                                    }
+                                    continue;
+                                }
+
+                                if mouse.column >= canvas_area.x
+                                    && mouse.column < canvas_area.x + canvas_area.width
+                                    && mouse.row >= canvas_area.y
+                                    && mouse.row < canvas_area.y + canvas_area.height
+                                {
+                                    // Clicked canvas
+                                    let inner_x = mouse.column.saturating_sub(canvas_area.x + 1);
+                                    let inner_y = mouse.row.saturating_sub(canvas_area.y + 1);
+                                    
+                                    // Find clicked node
+                                    let mut clicked_node = None;
+                                    for node in app.pipeline_nodes.iter().rev() {
+                                        let nx = node.x;
+                                        let ny = node.y;
+                                        if inner_x >= nx && inner_x < nx + 14 && inner_y >= ny && inner_y < ny + 3 {
+                                            clicked_node = Some(node.id);
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if let Some(id) = clicked_node {
+                                        // Find original coords to calculate drag offset
+                                        let mut orig_nx = 0;
+                                        let mut orig_ny = 0;
+                                        for n in &app.pipeline_nodes {
+                                            if n.id == id {
+                                                orig_nx = n.x;
+                                                orig_ny = n.y;
+                                                break;
+                                            }
+                                        }
+                                        let offset_x = inner_x as i16 - orig_nx as i16;
+                                        let offset_y = inner_y as i16 - orig_ny as i16;
+                                        app.pipeline_dragging = Some((id, offset_x, offset_y));
+                                    } else {
+                                        app.pipeline_dragging = None;
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            // Check general control clicks
                             for i in 0..app.control_areas.len() {
                                 let area = app.control_areas[i];
                                 if area.width == 0 {
@@ -3125,9 +3237,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let controls = app.tab_controls(app.current_tab);
                                     let was_selected = app.selected_control == i;
                                     app.selected_control = i;
-                                    if app.current_tab == 1 && mouse.column < area.x + 4 {
-                                        app.reordering_grabbed = Some(i);
-                                    } else {
+                                    if app.current_tab != 1 {
                                         if let Some(ctrl) = controls.get(i) {
                                             match &ctrl.kind {
                                                 ControlKind::Slider { min, max, .. } => {
@@ -3174,50 +3284,75 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
-                            if let Some(f) = app.reordering_grabbed {
-                                for (t, to_area) in app.control_areas.iter().enumerate() {
-                                    if to_area.width > 0
-                                        && mouse.row >= to_area.y
-                                        && mouse.row < to_area.y + to_area.height
-                                    {
-                                        if f != t {
-                                            let real_item = app.effects_pipeline.remove(f);
-                                            app.effects_pipeline.insert(t, real_item);
-                                            app.reordering_grabbed = Some(t);
-                                            app.selected_control = t;
+                            if app.current_tab == 1 {
+                                if let Some((id, offset_x, offset_y)) = app.pipeline_dragging {
+                                    if let Some(canvas_area) = app.control_areas.get(1) {
+                                        let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as i16;
+                                        let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as i16;
+                                        
+                                        let mut new_x = inner_x - offset_x;
+                                        let mut new_y = inner_y - offset_y;
+                                        
+                                        if new_x < 0 { new_x = 0; }
+                                        if new_y < 0 { new_y = 0; }
+                                        
+                                        if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == id) {
+                                            node.x = new_x as u16;
+                                            node.y = new_y as u16;
                                             app.mark_args_dirty();
                                         }
-                                        break;
                                     }
                                 }
                             } else if let Some(visual_idx) = app.dragged_control {
-                                if let Some(area) = app.control_areas.get(visual_idx) {
-                                    if area.width > 0 {
-                                        let controls = app.tab_controls(app.current_tab);
-                                        if let Some(ctrl) = controls.get(visual_idx) {
-                                            if let ControlKind::Slider { min, max, .. } = &ctrl.kind
-                                            {
-                                                let rel_x = (mouse.column as i32 - area.x as i32)
-                                                    .max(0)
-                                                    as f64;
-                                                let ratio =
-                                                    (rel_x / area.width as f64).clamp(0.0, 1.0);
-                                                let new_val =
-                                                    *min + (((*max - *min) as f64) * ratio) as i32;
-                                                set_control_value(
-                                                    &mut app,
-                                                    visual_idx,
-                                                    new_val.clamp(*min, *max),
-                                                );
+                                    if let Some(area) = app.control_areas.get(visual_idx) {
+                                        if area.width > 0 {
+                                            let controls = app.tab_controls(app.current_tab);
+                                            if let Some(ctrl) = controls.get(visual_idx) {
+                                                if let ControlKind::Slider { min, max, .. } = &ctrl.kind
+                                                {
+                                                    let rel_x = (mouse.column as i32 - area.x as i32)
+                                                        .max(0)
+                                                        as f64;
+                                                    let ratio =
+                                                        (rel_x / area.width as f64).clamp(0.0, 1.0);
+                                                    let new_val =
+                                                        *min + (((*max - *min) as f64) * ratio) as i32;
+                                                    set_control_value(
+                                                        &mut app,
+                                                        visual_idx,
+                                                        new_val.clamp(*min, *max),
+                                                    );
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
                             app.dragged_control = None;
-                            app.reordering_grabbed = None;
+                        }
+                        MouseEventKind::Down(MouseButton::Right) => {
+                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                                let canvas_area = app.control_areas[1];
+                                if mouse.column >= canvas_area.x && mouse.column < canvas_area.x + canvas_area.width && mouse.row >= canvas_area.y && mouse.row < canvas_area.y + canvas_area.height {
+                                    let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
+                                    let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as u16;
+                                    let mut to_remove = None;
+                                    for node in app.pipeline_nodes.iter().rev() {
+                                        if inner_x >= node.x && inner_x < node.x + 16 && inner_y >= node.y && inner_y < node.y + 3 {
+                                            to_remove = Some(node.id);
+                                            break;
+                                        }
+                                    }
+                                    if let Some(id) = to_remove {
+                                        app.pipeline_nodes.retain(|n| n.id != id);
+                                        if app.pipeline_dragging.map(|d| d.0) == Some(id) {
+                                            app.pipeline_dragging = None;
+                                        }
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -3237,6 +3372,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
+                            }
+                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 1 => {
+                                // Delete the last selected pipeline node (the one being dragged)
+                                if let Some((id, _, _)) = app.pipeline_dragging {
+                                    app.pipeline_nodes.retain(|n| n.id != id);
+                                    app.pipeline_dragging = None;
+                                    app.mark_args_dirty();
+                                }
                             }
                             KeyCode::Char('r') | KeyCode::Delete => {
                                 reset_control(&mut app);
@@ -3290,8 +3433,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && app.current_tab == 1
                                 {
                                     let i = app.selected_control;
-                                    if i + 1 < app.effects_pipeline.len() {
-                                        app.effects_pipeline.swap(i, i + 1);
+                                    if i + 1 < app.pipeline_nodes.len() {
+                                        app.pipeline_nodes.swap(i, i + 1);
                                         app.selected_control += 1;
                                         app.mark_args_dirty();
                                     }
@@ -3325,7 +3468,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 {
                                     let i = app.selected_control;
                                     if i > 0 {
-                                        app.effects_pipeline.swap(i, i - 1);
+                                        app.pipeline_nodes.swap(i, i - 1);
                                         app.selected_control -= 1;
                                         app.mark_args_dirty();
                                     }
@@ -3528,7 +3671,7 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
     let id = if app.current_tab == 0 {
         GENERAL_CONTROLS[visual_idx.min(GENERAL_CONTROLS.len() - 1)].id
     } else {
-        app.effects_pipeline[visual_idx.min(app.effects_pipeline.len() - 1)]
+        return;
     };
 
     app.set_value(id, val);
@@ -3612,25 +3755,48 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // ── Title bar with tabs ──
     render_title_bar(f, app, root[0]);
 
-    // ── Main content: left panel + output ──
-    let main = Layout::horizontal([
-        Constraint::Length(44), // left panel
-        Constraint::Min(0),     // output
-    ])
-    .split(root[1]);
+    if app.current_tab == 1 {
+        let main = Layout::horizontal([
+            Constraint::Length(20), // Catalog
+            Constraint::Min(0),     // output
+        ])
+        .split(root[1]);
 
-    // ── Left panel: controls ──
-    render_controls(f, app, main[0]);
+        let right_split = Layout::vertical([
+            Constraint::Length(12), // Pipeline height
+            Constraint::Min(0),
+        ]).split(main[1]);
 
-    // ── Right panel: output ──
-    render_output(f, app, main[1]);
+        render_pipeline_catalog(f, app, main[0]);
+        render_pipeline_canvas(f, app, right_split[0]);
+        render_output(f, app, right_split[1]);
+        app.output_area = right_split[1];
+        
+        // Stash the catalog/canvas areas so Mouse dragging works
+        app.control_areas.clear();
+        app.control_areas.push(main[0]);
+        app.control_areas.push(right_split[0]);
+    } else {
+        let main = Layout::horizontal([
+            Constraint::Length(44), // left panel
+            Constraint::Min(0),     // output
+        ])
+        .split(root[1]);
+
+        // ── Left panel: controls ──
+        render_controls(f, app, main[0]);
+
+        // ── Right panel: output ──
+        render_output(f, app, main[1]);
+        app.output_area = main[1];
+    }
 
     // ── Status bar ──
     render_status_bar(f, app, root[2]);
 
     // ── Font Picker Overlay ──
     if app.show_font_picker {
-        let output_area = main[1];
+        let output_area = app.output_area;
         let height = (output_area.height / 2).max(5);
         let area = Rect::new(
             output_area.x,
@@ -3692,9 +3858,9 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     } else if app.is_optimizing {
         let th = 5;
         let p_area = Rect::new(
-            main[1].x.saturating_add(4),
-            main[1].y.saturating_add(main[1].height).saturating_sub(th + 2),
-            main[1].width.saturating_sub(8),
+            app.output_area.x.saturating_add(4),
+            app.output_area.y.saturating_add(app.output_area.height).saturating_sub(th + 2),
+            app.output_area.width.saturating_sub(8),
             th,
         );
 
@@ -4523,6 +4689,110 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
         }
     }
 }
+
+fn render_pipeline_catalog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().fg(if app.current_tab == 1 && app.selected_control == 0 { ACCENT } else { BORDER }))
+        .title(Span::styled(" Available Effects ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut items = Vec::new();
+    for effect in AVAILABLE_EFFECTS.iter() {
+        items.push(ListItem::new(effect.name()).style(Style::default().fg(TEXT_DIM)));
+    }
+    
+    let mut state = ListState::default();
+    state.select(Some((app.pipeline_scroll as usize).min(items.len().saturating_sub(1))));
+    f.render_stateful_widget(List::new(items).highlight_style(Style::default().bg(SELECTED_BG).fg(TEXT)), inner, &mut state);
+}
+
+fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    use ratatui::widgets::canvas::{Canvas, Line as CanvasLine};
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().fg(BORDER))
+        .title(Span::styled(" Pipeline Canvas — scroll wheel adjusts params · drag to move · Del to remove ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+
+    // Helper to get display label with param value
+    fn node_label(node: &crate::pipeline::ImageEffectNode) -> String {
+        use crate::pipeline::ImageEffect::*;
+        match &node.effect {
+            Brightness(v) => format!("Bright {:.0}", v),
+            Contrast(v)   => format!("Cntst  {:.0}", v),
+            Saturation(v) => format!("Sat    {:.0}", v),
+            Gamma(v)      => format!("Gamma  {:.0}", v),
+            Hue(v)        => format!("Hue    {:.0}", v),
+            GaussBlur(v)  => format!("GBlur  {}", v),
+            Pixelize(v)   => format!("Pixel  {}", v),
+            Dither(v)     => format!("Dither {}", v),
+            Oil(r, t)     => format!("Oil  {}|{:.0}", r, t),
+            _ => node.effect.name().to_string(),
+        }
+    }
+
+    // Draw connections via canvas
+    let canvas = Canvas::default()
+        .block(block.clone())
+        .x_bounds([0.0, inner.width as f64])
+        .y_bounds([0.0, inner.height as f64])
+        .paint(|ctx| {
+            for node in &app.pipeline_nodes {
+                if let Some(next_id) = node.next {
+                    if let Some(next_node) = app.pipeline_nodes.iter().find(|n| n.id == next_id) {
+                        let y1 = inner.height as f64 - node.y as f64 - 1.5;
+                        let y2 = inner.height as f64 - next_node.y as f64 - 1.5;
+                        ctx.draw(&CanvasLine {
+                            x1: node.x as f64 + 15.0,
+                            y1,
+                            x2: next_node.x as f64,
+                            y2,
+                            color: ACCENT,
+                        });
+                    }
+                }
+            }
+        });
+    f.render_widget(canvas, area);
+
+    if app.pipeline_nodes.is_empty() {
+        let hint = Paragraph::new("← Click effects on the left to add them to the pipeline")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(TEXT_DIM));
+        f.render_widget(hint, inner);
+    }
+
+    // Draw node boxes over the canvas
+    for node in &app.pipeline_nodes {
+        let x = inner.x + node.x.min(inner.width.saturating_sub(16));
+        let y = inner.y + node.y.min(inner.height.saturating_sub(3));
+        let node_rect = Rect::new(x, y, 16, 3);
+
+        let is_selected = app.pipeline_dragging.map(|d| d.0) == Some(node.id);
+
+        let (bg, fg, border_fg) = if is_selected {
+            (SELECTED_BG, Color::White, ACCENT)
+        } else {
+            (BG, TEXT, Color::Rgb(90, 90, 130))
+        };
+
+        let node_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_fg))
+            .style(Style::default().bg(bg).fg(fg));
+
+        let label = node_label(node);
+        f.render_widget(ratatui::widgets::Clear, node_rect);
+        f.render_widget(
+            Paragraph::new(label).block(node_block).alignment(Alignment::Center),
+            node_rect,
+        );
+    }
+}
+
 
 fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
     let keys = [
