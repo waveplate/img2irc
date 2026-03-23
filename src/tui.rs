@@ -483,8 +483,9 @@ fn get_control_def(id: ControlId) -> ControlDef {
         .expect("Control ID not found in GENERAL_CONTROLS")
 }
 
-const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
-    // ─ Color adjustments ─
+/// Tab 1 — Adjustments: color, geometry, per-image transforms
+const ADJUSTMENTS: &[crate::pipeline::ImageEffect] = &[
+    // ─ Color ─
     crate::pipeline::ImageEffect::Brightness(0.0),
     crate::pipeline::ImageEffect::Contrast(0.0),
     crate::pipeline::ImageEffect::Saturation(0.0),
@@ -500,6 +501,10 @@ const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
     crate::pipeline::ImageEffect::Rotate(0.0),
     crate::pipeline::ImageEffect::ScaleX(100),
     crate::pipeline::ImageEffect::ScaleY(100),
+];
+
+/// Tab 2 — Effects: stylize, blur, filters
+const EFFECTS: &[crate::pipeline::ImageEffect] = &[
     // ─ Blur / Technical ─
     crate::pipeline::ImageEffect::GaussBlur(1),
     crate::pipeline::ImageEffect::BoxBlur,
@@ -1378,7 +1383,7 @@ impl App {
     }
 
     fn get_control_value(&self, _tab: usize, idx: usize) -> i32 {
-        if self.current_tab == 2 {
+        if self.current_tab == 3 {
             if idx < self.available_blocks.len() {
                 let name = &self.available_blocks[idx];
                 return if self.render_args.blocks.is_empty()
@@ -2840,7 +2845,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                            if (app.current_tab == 1 || app.current_tab == 2) && app.control_areas.len() >= 2 {
                                 let catalog_area = app.control_areas[0];
                                 let canvas_area = app.control_areas[1];
                                 if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
@@ -2864,7 +2869,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
 
-                            if app.current_tab == 2 {
+                            if app.current_tab == 3 {
                                 // Scroll focused pane in Glyphs tab
                                 match app.selected_control {
                                     0 => app.tree_state.select_prev(),
@@ -2892,7 +2897,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                            if (app.current_tab == 1 || app.current_tab == 2) && app.control_areas.len() >= 2 {
                                 let catalog_area = app.control_areas[0];
                                 let canvas_area = app.control_areas[1];
                                 if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
@@ -2916,7 +2921,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
 
-                            if app.current_tab == 2 {
+                            if app.current_tab == 3 {
                                 // Scroll focused pane in Glyphs tab
                                 match app.selected_control {
                                     0 => app.tree_state.select_next(),
@@ -3032,7 +3037,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
 
                             // Check glyph tab special areas
-                            if app.current_tab == 2 {
+                            if app.current_tab == 3 {
                                 if mouse.column >= app.tree_area.x
                                     && mouse.column < app.tree_area.x + app.tree_area.width
                                     && mouse.row >= app.tree_area.y
@@ -3096,8 +3101,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     break;
                                 }
                             }
-                            // Check Pipeline Canvas Tab 1 Clicks
-                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                            // Check Pipeline Canvas Tab 1/2 Clicks
+                            if (app.current_tab == 1 || app.current_tab == 2) && app.control_areas.len() >= 2 {
                                 let catalog_area = app.control_areas[0];
                                 let canvas_area = app.control_areas[1];
 
@@ -3109,14 +3114,16 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Clicked catalog item
                                     let inner_y = mouse.row.saturating_sub(catalog_area.y + 1); // +1 for border
                                     let clicked_idx = (app.pipeline_scroll as usize) + inner_y as usize;
-                                    
-                                    if clicked_idx < AVAILABLE_EFFECTS.len() {
+
+                                    let catalog: &[crate::pipeline::ImageEffect] = if app.current_tab == 1 { ADJUSTMENTS } else { EFFECTS };
+
+                                    if clicked_idx < catalog.len() {
                                         // Only add if image is loaded
                                         if app.render_args.image.as_deref().map(|p| !p.is_empty()).unwrap_or(false) {
-                                            let effect = AVAILABLE_EFFECTS[clicked_idx].clone();
+                                            let effect = catalog[clicked_idx].clone();
                                             // Place to the right of the rightmost existing node, at y=1
                                             let new_x = app.pipeline_nodes.iter()
-                                                .map(|n| n.x + 18) // node width 16 + 2 gap
+                                                .map(|n| n.x + 18)
                                                 .max()
                                                 .unwrap_or(1);
                                             let new_id = app.pipeline_next_id;
@@ -3260,7 +3267,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
-                            if app.current_tab == 1 {
+                            if app.current_tab == 1 || app.current_tab == 2 {
                                 // Drag on param slider bar
                                 if let Some(slider_area) = app.control_areas.get(2) {
                                     let slider_area = *slider_area;
@@ -3329,7 +3336,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             app.dragged_control = None;
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
-                            if app.current_tab == 1 && app.control_areas.len() >= 2 {
+                            if (app.current_tab == 1 || app.current_tab == 2) && app.control_areas.len() >= 2 {
                                 let canvas_area = app.control_areas[1];
                                 if mouse.column >= canvas_area.x && mouse.column < canvas_area.x + canvas_area.width && mouse.row >= canvas_area.y && mouse.row < canvas_area.y + canvas_area.height {
                                     let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
@@ -3358,19 +3365,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     if key.kind == KeyEventKind::Press {
                         match key.code {
                             KeyCode::Tab => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     app.selected_control = (app.selected_control + 1) % 3;
                                 }
                             }
                             KeyCode::BackTab => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     app.selected_control = (app.selected_control + 2) % 3;
                                 }
                             }
                             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
                             }
-                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 1 => {
+                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 1 || app.current_tab == 2 => {
                                 // Delete the last selected pipeline node (the one being dragged)
                                 if let Some((id, _, _)) = app.pipeline_dragging {
                                     app.pipeline_nodes.retain(|n| n.id != id);
@@ -3416,7 +3423,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     continue;
                                 }
 
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     if app.selected_control > 0 {
                                         app.selected_control = 0;
                                     } else {
@@ -3427,7 +3434,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
                                 if (key.modifiers.contains(KeyModifiers::SHIFT)
                                     || key.code == KeyCode::Char('J'))
-                                    && app.current_tab == 1
+                                    && (app.current_tab == 1 || app.current_tab == 2)
                                 {
                                     let i = app.selected_control;
                                     if i + 1 < app.pipeline_nodes.len() {
@@ -3435,7 +3442,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.selected_control += 1;
                                         app.mark_args_dirty();
                                     }
-                                } else if app.current_tab == 2 {
+                                } else if app.current_tab == 3 {
                                     match app.selected_control {
                                         0 => app.tree_state.select_next(),
                                         1 => {
@@ -3461,7 +3468,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
                                 if (key.modifiers.contains(KeyModifiers::SHIFT)
                                     || key.code == KeyCode::Char('K'))
-                                    && app.current_tab == 1
+                                    && (app.current_tab == 1 || app.current_tab == 2)
                                 {
                                     let i = app.selected_control;
                                     if i > 0 {
@@ -3469,7 +3476,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.selected_control -= 1;
                                         app.mark_args_dirty();
                                     }
-                                } else if app.current_tab == 2 {
+                                } else if app.current_tab == 3 {
                                     match app.selected_control {
                                         0 => app.tree_state.select_prev(),
                                         1 => {
@@ -3495,7 +3502,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     // Switch focus left between tree(0) / glyphs(1)
                                     if app.selected_control > 0 {
                                         app.selected_control -= 1;
@@ -3529,7 +3536,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     // Switch focus right between tree(0) / glyphs(1)
                                     if app.selected_control < 1 {
                                         app.selected_control += 1;
@@ -3563,7 +3570,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Char(' ') | KeyCode::Enter => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
                                     if app.selected_control == 0 {
                                         app.toggle_tree_selection();
                                     }
@@ -3752,7 +3759,9 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // ── Title bar with tabs ──
     render_title_bar(f, app, root[0]);
 
-    if app.current_tab == 1 {
+    if app.current_tab == 1 || app.current_tab == 2 {
+        let catalog = if app.current_tab == 1 { ADJUSTMENTS } else { EFFECTS };
+
         let main = Layout::horizontal([
             Constraint::Length(22), // Catalog
             Constraint::Min(0),     // right side
@@ -3767,19 +3776,19 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
         let right_split = if has_param_slider {
             Layout::vertical([
-                Constraint::Length(8),  // Pipeline canvas
+                Constraint::Length(10), // Pipeline canvas
                 Constraint::Length(3),  // Param slider
                 Constraint::Min(0),     // Output
             ]).split(main[1])
         } else {
             Layout::vertical([
-                Constraint::Length(8),  // Pipeline canvas
+                Constraint::Length(10), // Pipeline canvas
                 Constraint::Length(0),  // (placeholder — slider hidden)
                 Constraint::Min(0),     // Output
             ]).split(main[1])
         };
 
-        render_pipeline_catalog(f, app, main[0]);
+        render_pipeline_catalog_list(f, app, main[0], catalog);
         render_pipeline_canvas(f, app, right_split[0]);
         if has_param_slider {
             render_pipeline_param_slider(f, app, right_split[1]);
@@ -3787,11 +3796,11 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         render_output(f, app, right_split[2]);
         app.output_area = right_split[2];
 
-        // Stash catalog/canvas areas for mouse interaction
+        // Stash catalog/canvas/slider areas for mouse interaction
         app.control_areas.clear();
-        app.control_areas.push(main[0]);
-        app.control_areas.push(right_split[0]);
-        app.control_areas.push(right_split[1]); // slider area at [2]
+        app.control_areas.push(main[0]);          // [0] catalog
+        app.control_areas.push(right_split[0]);   // [1] canvas
+        app.control_areas.push(right_split[1]);   // [2] slider (may be zero-height)
     } else {
         let main = Layout::horizontal([
             Constraint::Length(44), // left panel
@@ -3965,7 +3974,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
 
     // Tabs + filename + spinner
-    let tab_names = [" General ", " Effects ", " Glyphs "];
+    let tab_names = [" General ", " Adjustments ", " Effects ", " Glyphs "];
     let mut tab_rects = Vec::new();
 
     let mut x = layout[1].x;
@@ -4046,7 +4055,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let inner = panel.inner(area);
     f.render_widget(panel, area);
 
-    if app.current_tab == 2 {
+    if app.current_tab == 3 {
         app.control_areas.clear();
         render_tree(f, app, inner);
         return;
@@ -4082,9 +4091,9 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
         let selected = v_idx == app.selected_control;
 
-        let label_text = if app.current_tab == 1 {
+        let label_text = if app.current_tab == 1 || app.current_tab == 2 {
             format!("≡ {}", ctrl.label)
-        } else if app.current_tab == 2 && v_idx < app.available_blocks.len() {
+        } else if app.current_tab == 3 && v_idx < app.available_blocks.len() {
             app.available_blocks[v_idx].clone()
         } else if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
             "🛑 STOP AUTO-OPTIMIZE".to_string()
@@ -4221,7 +4230,7 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let actual_idx = start_idx + i;
         let selected = actual_idx == app.tree_state.selected_idx;
 
-        let is_tree_focused = app.current_tab == 2 && app.selected_control == 0;
+        let is_tree_focused = app.current_tab == 3 && app.selected_control == 0;
         let style = if selected && is_tree_focused {
             Style::new()
                 .bg(ACCENT)
@@ -4272,7 +4281,7 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.output_area = area;
 
     // 1. Render normal background content (Image or Glyphs tab)
-    if app.current_tab == 2 {
+    if app.current_tab == 3 {
         // Horizontal layout: narrow glyphs+preview column | wide output
         let cols = Layout::horizontal([Constraint::Length(30), Constraint::Min(0)]).split(area);
         render_glyphs_tab(f, app, cols[0]);
@@ -4604,7 +4613,7 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.glyph_list_area = chunks[0];
     app.preview_area = chunks[1];
 
-    let is_focused = app.current_tab == 2 && app.selected_control == 1;
+    let is_focused = app.current_tab == 3 && app.selected_control == 1;
     let border_style = if is_focused {
         Style::new().fg(ACCENT)
     } else {
@@ -4706,41 +4715,43 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
     }
 }
 
-fn render_pipeline_catalog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+fn render_pipeline_catalog_list(
+    f: &mut ratatui::Frame,
+    app: &mut App,
+    area: Rect,
+    catalog: &[crate::pipeline::ImageEffect],
+) {
     let no_image = app.render_args.image.as_deref().map(|p| p.is_empty()).unwrap_or(true);
-    let border_color = if no_image { Color::Rgb(80,40,40) } else { BORDER };
+    let border_color = if no_image { Color::Rgb(80, 40, 40) } else { BORDER };
+    let title = if app.current_tab == 1 { " Adjustments " } else { " Effects " };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(" Effects ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(title, Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     if no_image {
         f.render_widget(
-            Paragraph::new("Load an image first")
+            Paragraph::new("Load an image\nfirst")
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Rgb(180,80,80))),
+                .style(Style::default().fg(Color::Rgb(180, 80, 80))),
             inner,
         );
         return;
     }
 
     let scroll = app.pipeline_scroll as usize;
-    let items: Vec<ListItem> = AVAILABLE_EFFECTS.iter()
-        .skip(scroll)
-        .map(|e| ListItem::new(e.name()).style(Style::default().fg(TEXT_DIM)))
-        .collect();
-
     let highlighted = app.pipeline_selected
         .and_then(|id| app.pipeline_nodes.iter().find(|n| n.id == id))
         .map(|n| n.effect.name())
         .unwrap_or("");
 
-    let items_with_sel: Vec<ListItem> = AVAILABLE_EFFECTS.iter()
+    let items: Vec<ListItem> = catalog.iter()
         .skip(scroll)
         .map(|e| {
-            let style = if e.name() == highlighted {
+            let is_hl = e.name() == highlighted;
+            let style = if is_hl {
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(TEXT_DIM)
@@ -4749,8 +4760,7 @@ fn render_pipeline_catalog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
-    f.render_widget(List::new(items_with_sel), inner);
-    let _ = items; // suppress unused
+    f.render_widget(List::new(items), inner);
 }
 
 fn render_pipeline_param_slider(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
