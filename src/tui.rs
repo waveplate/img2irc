@@ -555,15 +555,30 @@ fn get_control_def(id: ControlId) -> ControlDef {
 }
 
 const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
+    // ─ Color adjustments ─
     crate::pipeline::ImageEffect::Brightness(0.0),
     crate::pipeline::ImageEffect::Contrast(0.0),
     crate::pipeline::ImageEffect::Saturation(0.0),
     crate::pipeline::ImageEffect::Gamma(0.0),
     crate::pipeline::ImageEffect::Hue(0.0),
-    crate::pipeline::ImageEffect::Invert,
-    crate::pipeline::ImageEffect::BoxBlur,
+    // ─ Geometry ─
+    crate::pipeline::ImageEffect::CropTop(0),
+    crate::pipeline::ImageEffect::CropBottom(0),
+    crate::pipeline::ImageEffect::CropLeft(0),
+    crate::pipeline::ImageEffect::CropRight(0),
+    crate::pipeline::ImageEffect::FlipH,
+    crate::pipeline::ImageEffect::FlipV,
+    crate::pipeline::ImageEffect::Rotate(0.0),
+    crate::pipeline::ImageEffect::ScaleX(100),
+    crate::pipeline::ImageEffect::ScaleY(100),
+    // ─ Blur / Technical ─
     crate::pipeline::ImageEffect::GaussBlur(1),
+    crate::pipeline::ImageEffect::BoxBlur,
     crate::pipeline::ImageEffect::Pixelize(2),
+    crate::pipeline::ImageEffect::Dither(1),
+    // ─ Stylize ─
+    crate::pipeline::ImageEffect::Invert,
+    crate::pipeline::ImageEffect::Grayscale,
     crate::pipeline::ImageEffect::Halftone,
     crate::pipeline::ImageEffect::Sepia,
     crate::pipeline::ImageEffect::Solarize,
@@ -573,9 +588,9 @@ const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
     crate::pipeline::ImageEffect::EdgeDetect,
     crate::pipeline::ImageEffect::Emboss,
     crate::pipeline::ImageEffect::FrostGlass,
-    crate::pipeline::ImageEffect::Grayscale,
-    crate::pipeline::ImageEffect::Identity,
     crate::pipeline::ImageEffect::Laplace,
+    crate::pipeline::ImageEffect::Identity,
+    // ─ Filters ─
     crate::pipeline::ImageEffect::Cali,
     crate::pipeline::ImageEffect::Dramatic,
     crate::pipeline::ImageEffect::Firenze,
@@ -586,7 +601,6 @@ const AVAILABLE_EFFECTS: &[crate::pipeline::ImageEffect] = &[
     crate::pipeline::ImageEffect::Obsidian,
     crate::pipeline::ImageEffect::PastelPink,
     crate::pipeline::ImageEffect::Ryo,
-    crate::pipeline::ImageEffect::Dither(1),
 ];
 
 // ── App State ────────────────────────────────────────────────────────────────
@@ -860,6 +874,7 @@ struct App {
     pipeline_next_id: usize,
     pipeline_dragging: Option<(usize, i16, i16)>,
     pipeline_scroll: u16,
+    pipeline_selected: Option<usize>, // ID of selected node for param editing
 
     // Shared state for PNG saving
     arc_glyphs: Option<Arc<font::GlyphStore>>,
@@ -1148,6 +1163,7 @@ impl App {
             pipeline_next_id: 1,
             pipeline_dragging: None,
             pipeline_scroll: 0,
+            pipeline_selected: None,
 
             available_blocks,
             explorer_dialog: None,
@@ -1670,6 +1686,11 @@ impl App {
 
     fn flush_render_args(&mut self) {
         if !self.args_dirty {
+            return;
+        }
+        // Don't render if no image is loaded
+        if self.render_args.image.as_deref().map(|p| p.is_empty()).unwrap_or(true) {
+            self.args_dirty = false;
             return;
         }
 
@@ -2900,16 +2921,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
                                     let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as u16;
                                     for node in app.pipeline_nodes.iter_mut() {
-                                        if inner_x >= node.x && inner_x < node.x + 14 && inner_y >= node.y && inner_y < node.y + 3 {
-                                            use crate::pipeline::ImageEffect::*;
+                                        if inner_x >= node.x && inner_x < node.x + 16 && inner_y >= node.y && inner_y < node.y + 3 {
                                             let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { 10.0 } else { 1.0 };
-                                            match &mut node.effect {
-                                                Brightness(v) | Contrast(v) | Saturation(v) | Gamma(v) | Hue(v) => *v += delta,
-                                                GaussBlur(v) | Pixelize(v) => *v = (*v as f32 + delta).max(0.0) as i32,
-                                                Dither(v) => *v = (*v as f32 + delta).max(0.0) as u32,
-                                                _ => {}
+                                            if let Some(v) = node.effect.param_f32() {
+                                                let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
+                                                node.effect.set_param((v + delta).clamp(min, max));
+                                                app.mark_args_dirty();
                                             }
-                                            app.mark_args_dirty();
                                             break;
                                         }
                                     }
@@ -2956,15 +2974,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as u16;
                                     for node in app.pipeline_nodes.iter_mut() {
                                         if inner_x >= node.x && inner_x < node.x + 14 && inner_y >= node.y && inner_y < node.y + 3 {
-                                            use crate::pipeline::ImageEffect::*;
                                             let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { -10.0 } else { -1.0 };
-                                            match &mut node.effect {
-                                                Brightness(v) | Contrast(v) | Saturation(v) | Gamma(v) | Hue(v) => *v += delta,
-                                                GaussBlur(v) | Pixelize(v) => *v = (*v as f32 + delta).max(0.0) as i32,
-                                                Dither(v) => *v = (*v as f32 + delta).max(0.0) as u32,
-                                                _ => {}
+                                            if let Some(v) = node.effect.param_f32() {
+                                                let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
+                                                node.effect.set_param((v + delta).clamp(min, max));
+                                                app.mark_args_dirty();
                                             }
-                                            app.mark_args_dirty();
                                             break;
                                         }
                                     }
@@ -3167,16 +3182,26 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let clicked_idx = (app.pipeline_scroll as usize) + inner_y as usize;
                                     
                                     if clicked_idx < AVAILABLE_EFFECTS.len() {
-                                        let effect = AVAILABLE_EFFECTS[clicked_idx].clone();
-                                        app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
-                                            id: app.pipeline_next_id,
-                                            effect,
-                                            x: 2,
-                                            y: 2,
-                                            next: None,
-                                        });
-                                        app.pipeline_next_id += 1;
-                                        app.mark_args_dirty();
+                                        // Only add if image is loaded
+                                        if app.render_args.image.as_deref().map(|p| !p.is_empty()).unwrap_or(false) {
+                                            let effect = AVAILABLE_EFFECTS[clicked_idx].clone();
+                                            // Place to the right of the rightmost existing node, at y=1
+                                            let new_x = app.pipeline_nodes.iter()
+                                                .map(|n| n.x + 18) // node width 16 + 2 gap
+                                                .max()
+                                                .unwrap_or(1);
+                                            let new_id = app.pipeline_next_id;
+                                            app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
+                                                id: new_id,
+                                                effect,
+                                                x: new_x,
+                                                y: 1,
+                                                next: None,
+                                            });
+                                            app.pipeline_next_id += 1;
+                                            app.pipeline_selected = Some(new_id);
+                                            app.mark_args_dirty();
+                                        }
                                     }
                                     continue;
                                 }
@@ -3186,37 +3211,32 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= canvas_area.y
                                     && mouse.row < canvas_area.y + canvas_area.height
                                 {
-                                    // Clicked canvas
+                                    // Clicked canvas - find node by raw inner coords
                                     let inner_x = mouse.column.saturating_sub(canvas_area.x + 1);
                                     let inner_y = mouse.row.saturating_sub(canvas_area.y + 1);
-                                    
-                                    // Find clicked node
+
                                     let mut clicked_node = None;
                                     for node in app.pipeline_nodes.iter().rev() {
-                                        let nx = node.x;
-                                        let ny = node.y;
-                                        if inner_x >= nx && inner_x < nx + 14 && inner_y >= ny && inner_y < ny + 3 {
+                                        // Use raw node.x/y (without clamping) for hit-test
+                                        if inner_x >= node.x && inner_x < node.x + 16 && inner_y >= node.y && inner_y < node.y + 3 {
                                             clicked_node = Some(node.id);
                                             break;
                                         }
                                     }
-                                    
+
                                     if let Some(id) = clicked_node {
-                                        // Find original coords to calculate drag offset
-                                        let mut orig_nx = 0;
-                                        let mut orig_ny = 0;
+                                        app.pipeline_selected = Some(id);
+                                        let mut orig_nx = 0u16;
+                                        let mut orig_ny = 0u16;
                                         for n in &app.pipeline_nodes {
-                                            if n.id == id {
-                                                orig_nx = n.x;
-                                                orig_ny = n.y;
-                                                break;
-                                            }
+                                            if n.id == id { orig_nx = n.x; orig_ny = n.y; break; }
                                         }
                                         let offset_x = inner_x as i16 - orig_nx as i16;
                                         let offset_y = inner_y as i16 - orig_ny as i16;
                                         app.pipeline_dragging = Some((id, offset_x, offset_y));
                                     } else {
                                         app.pipeline_dragging = None;
+                                        // Don't deselect on empty-space click - makes it easier to keep the slider visible
                                     }
                                     continue;
                                 }
@@ -3757,22 +3777,40 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
     if app.current_tab == 1 {
         let main = Layout::horizontal([
-            Constraint::Length(20), // Catalog
-            Constraint::Min(0),     // output
+            Constraint::Length(22), // Catalog
+            Constraint::Min(0),     // right side
         ])
         .split(root[1]);
 
-        let right_split = Layout::vertical([
-            Constraint::Length(12), // Pipeline height
-            Constraint::Min(0),
-        ]).split(main[1]);
+        // Has selected node with param? show slider row
+        let has_param_slider = app.pipeline_selected
+            .and_then(|id| app.pipeline_nodes.iter().find(|n| n.id == id))
+            .map(|n| n.effect.has_param())
+            .unwrap_or(false);
+
+        let right_split = if has_param_slider {
+            Layout::vertical([
+                Constraint::Length(8),  // Pipeline canvas
+                Constraint::Length(3),  // Param slider
+                Constraint::Min(0),     // Output
+            ]).split(main[1])
+        } else {
+            Layout::vertical([
+                Constraint::Length(8),  // Pipeline canvas
+                Constraint::Length(0),  // (placeholder — slider hidden)
+                Constraint::Min(0),     // Output
+            ]).split(main[1])
+        };
 
         render_pipeline_catalog(f, app, main[0]);
         render_pipeline_canvas(f, app, right_split[0]);
-        render_output(f, app, right_split[1]);
-        app.output_area = right_split[1];
-        
-        // Stash the catalog/canvas areas so Mouse dragging works
+        if has_param_slider {
+            render_pipeline_param_slider(f, app, right_split[1]);
+        }
+        render_output(f, app, right_split[2]);
+        app.output_area = right_split[2];
+
+        // Stash catalog/canvas areas for mouse interaction
         app.control_areas.clear();
         app.control_areas.push(main[0]);
         app.control_areas.push(right_split[0]);
@@ -4691,21 +4729,82 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
 }
 
 fn render_pipeline_catalog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let no_image = app.render_args.image.as_deref().map(|p| p.is_empty()).unwrap_or(true);
+    let border_color = if no_image { Color::Rgb(80,40,40) } else { BORDER };
     let block = Block::default()
         .borders(Borders::ALL)
-        .style(Style::default().fg(if app.current_tab == 1 && app.selected_control == 0 { ACCENT } else { BORDER }))
-        .title(Span::styled(" Available Effects ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(border_color))
+        .title(Span::styled(" Effects ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let mut items = Vec::new();
-    for effect in AVAILABLE_EFFECTS.iter() {
-        items.push(ListItem::new(effect.name()).style(Style::default().fg(TEXT_DIM)));
+    if no_image {
+        f.render_widget(
+            Paragraph::new("Load an image first")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Rgb(180,80,80))),
+            inner,
+        );
+        return;
     }
-    
-    let mut state = ListState::default();
-    state.select(Some((app.pipeline_scroll as usize).min(items.len().saturating_sub(1))));
-    f.render_stateful_widget(List::new(items).highlight_style(Style::default().bg(SELECTED_BG).fg(TEXT)), inner, &mut state);
+
+    let scroll = app.pipeline_scroll as usize;
+    let items: Vec<ListItem> = AVAILABLE_EFFECTS.iter()
+        .skip(scroll)
+        .map(|e| ListItem::new(e.name()).style(Style::default().fg(TEXT_DIM)))
+        .collect();
+
+    let highlighted = app.pipeline_selected
+        .and_then(|id| app.pipeline_nodes.iter().find(|n| n.id == id))
+        .map(|n| n.effect.name())
+        .unwrap_or("");
+
+    let items_with_sel: Vec<ListItem> = AVAILABLE_EFFECTS.iter()
+        .skip(scroll)
+        .map(|e| {
+            let style = if e.name() == highlighted {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TEXT_DIM)
+            };
+            ListItem::new(format!(" {}", e.name())).style(style)
+        })
+        .collect();
+
+    f.render_widget(List::new(items_with_sel), inner);
+    let _ = items; // suppress unused
+}
+
+fn render_pipeline_param_slider(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let sel_id = match app.pipeline_selected { Some(id) => id, None => return };
+    let node = match app.pipeline_nodes.iter().find(|n| n.id == sel_id) { Some(n) => n, None => return };
+    let (val, (min, max)) = match (node.effect.param_f32(), node.effect.param_range()) {
+        (Some(v), Some(r)) => (v, r),
+        _ => return,
+    };
+
+    let block = Block::default()
+        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            format!(" {} — {:.0} (scroll ±1, Shift ±10) ", node.effect.name(), val),
+            Style::default().fg(ACCENT),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    // Draw slider bar
+    if inner.width > 4 {
+        let ratio = ((val - min) / (max - min)).clamp(0.0, 1.0);
+        let filled = (ratio * inner.width as f32) as u16;
+        let bar_filled = "█".repeat(filled as usize);
+        let bar_empty  = "░".repeat((inner.width - filled) as usize);
+        let bar = Line::from(vec![
+            Span::styled(bar_filled, Style::default().fg(ACCENT)),
+            Span::styled(bar_empty,  Style::default().fg(Color::Rgb(50,50,80))),
+        ]);
+        f.render_widget(Paragraph::new(bar), inner);
+    }
 }
 
 fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
@@ -4713,28 +4812,23 @@ fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .style(Style::default().fg(BORDER))
-        .title(Span::styled(" Pipeline Canvas — scroll wheel adjusts params · drag to move · Del to remove ", Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)));
+        .border_style(Style::default().fg(BORDER))
+        .title(Span::styled(
+            " Pipeline  [click+drag=move · scroll=param · right-click/Del=remove] ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
     let inner = block.inner(area);
 
-    // Helper to get display label with param value
+    // Helper: readable label for a node
     fn node_label(node: &crate::pipeline::ImageEffectNode) -> String {
-        use crate::pipeline::ImageEffect::*;
-        match &node.effect {
-            Brightness(v) => format!("Bright {:.0}", v),
-            Contrast(v)   => format!("Cntst  {:.0}", v),
-            Saturation(v) => format!("Sat    {:.0}", v),
-            Gamma(v)      => format!("Gamma  {:.0}", v),
-            Hue(v)        => format!("Hue    {:.0}", v),
-            GaussBlur(v)  => format!("GBlur  {}", v),
-            Pixelize(v)   => format!("Pixel  {}", v),
-            Dither(v)     => format!("Dither {}", v),
-            Oil(r, t)     => format!("Oil  {}|{:.0}", r, t),
-            _ => node.effect.name().to_string(),
+        if let Some(v) = node.effect.param_f32() {
+            format!("{} {:.0}", node.effect.name(), v)
+        } else {
+            node.effect.name().to_string()
         }
     }
 
-    // Draw connections via canvas
+    // Draw connection lines via canvas widget
     let canvas = Canvas::default()
         .block(block.clone())
         .x_bounds([0.0, inner.width as f64])
@@ -4746,7 +4840,7 @@ fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                         let y1 = inner.height as f64 - node.y as f64 - 1.5;
                         let y2 = inner.height as f64 - next_node.y as f64 - 1.5;
                         ctx.draw(&CanvasLine {
-                            x1: node.x as f64 + 15.0,
+                            x1: node.x as f64 + 16.0,
                             y1,
                             x2: next_node.x as f64,
                             y2,
@@ -4758,25 +4852,28 @@ fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         });
     f.render_widget(canvas, area);
 
+    // Empty-state hint
     if app.pipeline_nodes.is_empty() {
-        let hint = Paragraph::new("← Click effects on the left to add them to the pipeline")
+        let hint = Paragraph::new("← Click an effect on the left to add it to the pipeline\n\nNodes connect left-to-right by X position")
             .alignment(Alignment::Center)
             .style(Style::default().fg(TEXT_DIM));
         f.render_widget(hint, inner);
     }
 
-    // Draw node boxes over the canvas
+    // Draw node boxes on top
     for node in &app.pipeline_nodes {
-        let x = inner.x + node.x.min(inner.width.saturating_sub(16));
-        let y = inner.y + node.y.min(inner.height.saturating_sub(3));
+        // Clamp to visible area
+        let x = inner.x.saturating_add(node.x).min(inner.x + inner.width.saturating_sub(16));
+        let y = inner.y.saturating_add(node.y).min(inner.y + inner.height.saturating_sub(3));
         let node_rect = Rect::new(x, y, 16, 3);
 
-        let is_selected = app.pipeline_dragging.map(|d| d.0) == Some(node.id);
+        let is_dragging = app.pipeline_dragging.map(|d| d.0) == Some(node.id);
+        let is_selected = app.pipeline_selected == Some(node.id);
 
-        let (bg, fg, border_fg) = if is_selected {
+        let (bg, fg, border_fg) = if is_dragging || is_selected {
             (SELECTED_BG, Color::White, ACCENT)
         } else {
-            (BG, TEXT, Color::Rgb(90, 90, 130))
+            (BG, TEXT, Color::Rgb(80, 80, 120))
         };
 
         let node_block = Block::default()
@@ -4784,10 +4881,11 @@ fn render_pipeline_canvas(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             .border_style(Style::default().fg(border_fg))
             .style(Style::default().bg(bg).fg(fg));
 
-        let label = node_label(node);
         f.render_widget(ratatui::widgets::Clear, node_rect);
         f.render_widget(
-            Paragraph::new(label).block(node_block).alignment(Alignment::Center),
+            Paragraph::new(node_label(node))
+                .block(node_block)
+                .alignment(Alignment::Center),
             node_rect,
         );
     }

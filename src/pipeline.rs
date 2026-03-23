@@ -36,6 +36,16 @@ pub enum ImageEffect {
     Ryo,
     Oil(i32, f64),
     Dither(u32),
+    // Geometry — these replace the old GENERAL_CONTROLS entries
+    CropTop(i32),
+    CropBottom(i32),
+    CropLeft(i32),
+    CropRight(i32),
+    FlipH,
+    FlipV,
+    Rotate(f32),    // degrees
+    ScaleX(i32),    // percent (100 = no scale)
+    ScaleY(i32),    // percent (100 = no scale)
 }
 
 impl ImageEffect {
@@ -75,6 +85,73 @@ impl ImageEffect {
             ImageEffect::Ryo => "Ryo",
             ImageEffect::Oil(_, _) => "Oil",
             ImageEffect::Dither(_) => "Dither",
+            ImageEffect::CropTop(_) => "Crop Top",
+            ImageEffect::CropBottom(_) => "Crop Bottom",
+            ImageEffect::CropLeft(_) => "Crop Left",
+            ImageEffect::CropRight(_) => "Crop Right",
+            ImageEffect::FlipH => "Flip H",
+            ImageEffect::FlipV => "Flip V",
+            ImageEffect::Rotate(_) => "Rotate",
+            ImageEffect::ScaleX(_) => "Scale X",
+            ImageEffect::ScaleY(_) => "Scale Y",
+        }
+    }
+
+    /// Returns true if this effect has a numeric parameter that can be scrolled
+    pub fn has_param(&self) -> bool {
+        matches!(self,
+            ImageEffect::Brightness(_) | ImageEffect::Contrast(_) | ImageEffect::Saturation(_) |
+            ImageEffect::Gamma(_) | ImageEffect::Hue(_) | ImageEffect::GaussBlur(_) |
+            ImageEffect::LumaBlur(_) | ImageEffect::Pixelize(_) | ImageEffect::Dither(_) |
+            ImageEffect::Oil(_, _) | ImageEffect::CropTop(_) | ImageEffect::CropBottom(_) |
+            ImageEffect::CropLeft(_) | ImageEffect::CropRight(_) | ImageEffect::Rotate(_) |
+            ImageEffect::ScaleX(_) | ImageEffect::ScaleY(_)
+        )
+    }
+
+    /// Get param as f32 for display
+    pub fn param_f32(&self) -> Option<f32> {
+        match self {
+            ImageEffect::Brightness(v) | ImageEffect::Contrast(v) | ImageEffect::Saturation(v) |
+            ImageEffect::Gamma(v) | ImageEffect::Hue(v) | ImageEffect::Rotate(v) => Some(*v),
+            ImageEffect::GaussBlur(v) | ImageEffect::LumaBlur(v) | ImageEffect::Pixelize(v) |
+            ImageEffect::CropTop(v) | ImageEffect::CropBottom(v) | ImageEffect::CropLeft(v) |
+            ImageEffect::CropRight(v) | ImageEffect::ScaleX(v) | ImageEffect::ScaleY(v) => Some(*v as f32),
+            ImageEffect::Dither(v) => Some(*v as f32),
+            ImageEffect::Oil(r, _) => Some(*r as f32),
+            _ => None,
+        }
+    }
+
+    /// Get param range (min, max) for slider display
+    pub fn param_range(&self) -> Option<(f32, f32)> {
+        match self {
+            ImageEffect::Brightness(_) | ImageEffect::Contrast(_) | ImageEffect::Saturation(_) => Some((-255.0, 255.0)),
+            ImageEffect::Gamma(_) => Some((0.0, 255.0)),
+            ImageEffect::Hue(_) => Some((0.0, 360.0)),
+            ImageEffect::GaussBlur(_) | ImageEffect::LumaBlur(_) => Some((0.0, 20.0)),
+            ImageEffect::Pixelize(_) => Some((1.0, 64.0)),
+            ImageEffect::Dither(_) => Some((0.0, 8.0)),
+            ImageEffect::Oil(_, _) => Some((1.0, 16.0)),
+            ImageEffect::CropTop(_) | ImageEffect::CropBottom(_) |
+            ImageEffect::CropLeft(_) | ImageEffect::CropRight(_) => Some((0.0, 500.0)),
+            ImageEffect::Rotate(_) => Some((-180.0, 180.0)),
+            ImageEffect::ScaleX(_) | ImageEffect::ScaleY(_) => Some((50.0, 200.0)),
+            _ => None,
+        }
+    }
+
+    /// Set param from f32
+    pub fn set_param(&mut self, val: f32) {
+        match self {
+            ImageEffect::Brightness(v) | ImageEffect::Contrast(v) | ImageEffect::Saturation(v) |
+            ImageEffect::Gamma(v) | ImageEffect::Hue(v) | ImageEffect::Rotate(v) => *v = val,
+            ImageEffect::GaussBlur(v) | ImageEffect::LumaBlur(v) | ImageEffect::Pixelize(v) |
+            ImageEffect::CropTop(v) | ImageEffect::CropBottom(v) | ImageEffect::CropLeft(v) |
+            ImageEffect::CropRight(v) | ImageEffect::ScaleX(v) | ImageEffect::ScaleY(v) => *v = val as i32,
+            ImageEffect::Dither(v) => *v = val as u32,
+            ImageEffect::Oil(r, _) => *r = val as i32,
+            _ => {}
         }
     }
 }

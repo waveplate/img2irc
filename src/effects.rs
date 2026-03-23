@@ -259,6 +259,49 @@ pub fn apply_effects(
             PastelPink => { filters::pastel_pink(&mut photon_image); },
             Ryo => { filters::ryo(&mut photon_image); },
             Oil(r, i) => { effects::oil(&mut photon_image, r, i); },
+            // Geometry effects applied inline
+            CropTop(v) | CropBottom(v) | CropLeft(v) | CropRight(v) => {
+                let w = photon_image.get_width();
+                let h = photon_image.get_height();
+                let (top, right, bottom, left) = match &effect {
+                    CropTop(v) => (*v as u32, 0, 0, 0),
+                    CropBottom(v) => (0, 0, *v as u32, 0),
+                    CropLeft(v) => (0, 0, 0, *v as u32),
+                    CropRight(v) => (0, *v as u32, 0, 0),
+                    _ => unreachable!(),
+                };
+                let t = top.min(h.saturating_sub(1));
+                let b = bottom.min(h.saturating_sub(1 + t));
+                let l = left.min(w.saturating_sub(1));
+                let r_val = right.min(w.saturating_sub(1 + l));
+                if l + r_val < w && t + b < h {
+                    photon_image = crop(&photon_image, l, t, w - r_val, h - b);
+                }
+            },
+            FlipH => { fliph(&mut photon_image); },
+            FlipV => { flipv(&mut photon_image); },
+            Rotate(deg) => {
+                if deg != 0.0 {
+                    use image::Rgba;
+                    use imageproc::geometric_transformations::{rotate_about_center, Interpolation};
+                    let angle_rad = deg.to_radians();
+                    let w = photon_image.get_width();
+                    let h = photon_image.get_height();
+                    let buf = image::ImageBuffer::from_raw(w, h, photon_image.get_raw_pixels()).unwrap();
+                    let rotated = rotate_about_center(&buf, angle_rad, Interpolation::Bilinear, Rgba([0,0,0,0]));
+                    photon_image = PhotonImage::new(rotated.into_raw(), w, h);
+                }
+            },
+            ScaleX(sx) => {
+                let w = ((photon_image.get_width() as f32 * sx as f32 / 100.0) as u32).max(1);
+                let h = photon_image.get_height();
+                photon_image = resize(&photon_image, w, h, SamplingFilter::Lanczos3);
+            },
+            ScaleY(sy) => {
+                let w = photon_image.get_width();
+                let h = ((photon_image.get_height() as f32 * sy as f32 / 100.0) as u32).max(1);
+                photon_image = resize(&photon_image, w, h, SamplingFilter::Lanczos3);
+            },
         }
     }
 
