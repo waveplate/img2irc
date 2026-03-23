@@ -254,79 +254,8 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     //         default: 0,
     //     },
     // },
-    ControlDef {
-        id: ControlId::TrimTop,
-        label: "Crop Top",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 2000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::TrimRight,
-        label: "Crop Right",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 2000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::TrimBottom,
-        label: "Crop Bottom",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 2000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::TrimLeft,
-        label: "Crop Left",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 2000,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::FlipH,
-        label: "Flip H",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::FlipV,
-        label: "Flip V",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::Rotate,
-        label: "Rotate",
-        kind: ControlKind::Slider {
-            min: -180,
-            max: 180,
-            default: 0,
-        },
-    },
-    ControlDef {
-        id: ControlId::ScaleX,
-        label: "Scale X %",
-        kind: ControlKind::Slider {
-            min: 10,
-            max: 500,
-            default: 100,
-        },
-    },
-    ControlDef {
-        id: ControlId::ScaleY,
-        label: "Scale Y %",
-        kind: ControlKind::Slider {
-            min: 10,
-            max: 500,
-            default: 100,
-        },
-    },
+    // (Crop Top/Right/Bottom/Left, Flip H/V, Rotate, Scale X/Y are now handled
+    //  as pipeline nodes on Tab 1 — removed from here)
     ControlDef {
         id: ControlId::FontSize,
         label: "Font Size",
@@ -3240,6 +3169,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                     continue;
                                 }
+
+                                // Param slider click (control_areas[2])
+                                if app.control_areas.len() > 2 {
+                                    let slider_area = app.control_areas[2];
+                                    if slider_area.height > 0
+                                        && mouse.column >= slider_area.x
+                                        && mouse.column < slider_area.x + slider_area.width
+                                        && mouse.row >= slider_area.y
+                                        && mouse.row < slider_area.y + slider_area.height
+                                    {
+                                        if let Some(sel_id) = app.pipeline_selected {
+                                            if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == sel_id) {
+                                                if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
+                                                    let inner_x = slider_area.x + 1; // +1 border
+                                                    let inner_w = slider_area.width.saturating_sub(2);
+                                                    if inner_w > 0 {
+                                                        let ratio = (mouse.column.saturating_sub(inner_x) as f32 / inner_w as f32).clamp(0.0, 1.0);
+                                                        let val = min + ratio * (max - min);
+                                                        node.effect.set_param(val);
+                                                        app.mark_args_dirty();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
                             }
 
                             // Check general control clicks
@@ -3305,20 +3261,41 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if app.current_tab == 1 {
+                                // Drag on param slider bar
+                                if let Some(slider_area) = app.control_areas.get(2) {
+                                    let slider_area = *slider_area;
+                                    if slider_area.height > 0
+                                        && mouse.column >= slider_area.x
+                                        && mouse.column < slider_area.x + slider_area.width
+                                        && mouse.row >= slider_area.y
+                                        && mouse.row < slider_area.y + slider_area.height
+                                    {
+                                        if let Some(sel_id) = app.pipeline_selected {
+                                            if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == sel_id) {
+                                                if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
+                                                    let inner_x = slider_area.x + 1;
+                                                    let inner_w = slider_area.width.saturating_sub(2);
+                                                    if inner_w > 0 {
+                                                        let ratio = (mouse.column.saturating_sub(inner_x) as f32 / inner_w as f32).clamp(0.0, 1.0);
+                                                        node.effect.set_param(min + ratio * (max - min));
+                                                        app.mark_args_dirty();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                                // Drag on canvas node
                                 if let Some((id, offset_x, offset_y)) = app.pipeline_dragging {
                                     if let Some(canvas_area) = app.control_areas.get(1) {
                                         let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as i16;
                                         let inner_y = mouse.row.saturating_sub(canvas_area.y + 1) as i16;
-                                        
-                                        let mut new_x = inner_x - offset_x;
-                                        let mut new_y = inner_y - offset_y;
-                                        
-                                        if new_x < 0 { new_x = 0; }
-                                        if new_y < 0 { new_y = 0; }
-                                        
+                                        let new_x = (inner_x - offset_x).max(0) as u16;
+                                        let new_y = (inner_y - offset_y).max(0) as u16;
                                         if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == id) {
-                                            node.x = new_x as u16;
-                                            node.y = new_y as u16;
+                                            node.x = new_x;
+                                            node.y = new_y;
                                             app.mark_args_dirty();
                                         }
                                     }
@@ -3352,7 +3329,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             app.dragged_control = None;
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
-                            if app.current_tab == 1 && app.control_areas.len() == 2 {
+                            if app.current_tab == 1 && app.control_areas.len() >= 2 {
                                 let canvas_area = app.control_areas[1];
                                 if mouse.column >= canvas_area.x && mouse.column < canvas_area.x + canvas_area.width && mouse.row >= canvas_area.y && mouse.row < canvas_area.y + canvas_area.height {
                                     let inner_x = mouse.column.saturating_sub(canvas_area.x + 1) as u16;
@@ -3814,6 +3791,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         app.control_areas.clear();
         app.control_areas.push(main[0]);
         app.control_areas.push(right_split[0]);
+        app.control_areas.push(right_split[1]); // slider area at [2]
     } else {
         let main = Layout::horizontal([
             Constraint::Length(44), // left panel
