@@ -783,7 +783,10 @@ struct App {
     render_args: RenderArgs,
     input_mode: InputMode,
     selected_control: usize,
-    current_tab: usize,
+    current_tab: usize, // Keeps track of focused pane for keyboard navigation (although mouse is primarily used)
+    show_general: bool,
+    show_pipeline: bool,
+    show_glyphs: bool,
     scroll: u16,
 
     // Cancellation & Debouncing
@@ -951,6 +954,9 @@ impl App {
             input_mode: InputMode::Normal,
             selected_control: 0,
             current_tab: 0,
+            show_general: true,
+            show_pipeline: false,
+            show_glyphs: false,
             scroll: 0,
             tx_args,
             current_cancel_flag: initial_flag,
@@ -3079,6 +3085,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= area.y
                                     && mouse.row < area.y + area.height
                                 {
+                                    match i {
+                                        0 => app.show_general = !app.show_general,
+                                        1 => app.show_pipeline = !app.show_pipeline,
+                                        2 => app.show_glyphs = !app.show_glyphs,
+                                        _ => {}
+                                    }
                                     app.current_tab = i;
                                     app.selected_control = 0;
                                     break;
@@ -3120,41 +3132,28 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= active_list_area.y
                                     && mouse.row < active_list_area.y + active_list_area.height
                                 {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1);
-                                    let clicked_idx = inner_y as usize;
+                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
                                     
-                                    if clicked_idx < app.pipeline_nodes.len() {
-                                        let node_id = app.pipeline_nodes[clicked_idx].id;
+                                    if inner_y < app.pipeline_nodes.len() {
+                                        let node_id = app.pipeline_nodes[inner_y].id;
                                         app.pipeline_selected = Some(node_id);
+                                        
+                                        // Slider is from inner_x = 21 to 53
+                                        let inner_x = mouse.column.saturating_sub(active_list_area.x);
+                                        if inner_x >= 21 && inner_x <= 53 {
+                                            // Handle slider click immediately
+                                            let node = &mut app.pipeline_nodes[inner_y];
+                                            if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
+                                                let ratio = ((inner_x - 21) as f32 / 32.0).clamp(0.0, 1.0);
+                                                node.effect.set_param(min + ratio * (max - min));
+                                                app.mark_args_dirty();
+                                                app.pipeline_dragging = Some((node_id, 1, 0)); // 1 signals slider dragging
+                                            }
+                                        } else {
+                                            app.pipeline_dragging = Some((node_id, 0, 0)); // 0 signals item dragging
+                                        }
                                     }
                                     continue;
-                                }
-
-                                // Param slider click (control_areas[2])
-                                if app.control_areas.len() > 2 {
-                                    let slider_area = app.control_areas[2];
-                                    if slider_area.height > 0
-                                        && mouse.column >= slider_area.x
-                                        && mouse.column < slider_area.x + slider_area.width
-                                        && mouse.row >= slider_area.y
-                                        && mouse.row < slider_area.y + slider_area.height
-                                    {
-                                        if let Some(sel_id) = app.pipeline_selected {
-                                            if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == sel_id) {
-                                                if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
-                                                    let inner_x = slider_area.x + 1; // +1 border
-                                                    let inner_w = slider_area.width.saturating_sub(2);
-                                                    if inner_w > 0 {
-                                                        let ratio = (mouse.column.saturating_sub(inner_x) as f32 / inner_w as f32).clamp(0.0, 1.0);
-                                                        let val = min + ratio * (max - min);
-                                                        node.effect.set_param(val);
-                                                        app.mark_args_dirty();
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        continue;
-                                    }
                                 }
                             }
                             // Check general control clicks
@@ -3200,16 +3199,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         toggle_control(&mut app)
                                                     }
                                                 }
-                                                ControlKind::EyedropperWidget => {
-                                                    // Placeholder behaviour when clicked
-                                                }
+                                                ControlKind::EyedropperWidget => {}
                                                 ControlKind::FontSelector => {
                                                     app.selected_control = i;
                                                 }
                                                 ControlKind::Action => {
-                                                    if was_selected {
-                                                        toggle_control(&mut app)
-                                                    }
+                                                    if was_selected { toggle_control(&mut app) }
                                                 }
                                             }
                                         }
@@ -3220,32 +3215,36 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if app.current_tab == 1 {
-                                // Drag on param slider bar
-                                if let Some(slider_area) = app.control_areas.get(2) {
-                                    let slider_area = *slider_area;
-                                    if slider_area.height > 0
-                                        && mouse.column >= slider_area.x
-                                        && mouse.column < slider_area.x + slider_area.width
-                                        && mouse.row >= slider_area.y
-                                        && mouse.row < slider_area.y + slider_area.height
-                                    {
-                                        if let Some(sel_id) = app.pipeline_selected {
-                                            if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == sel_id) {
-                                                if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
-                                                    let inner_x = slider_area.x + 1;
-                                                    let inner_w = slider_area.width.saturating_sub(2);
-                                                    if inner_w > 0 {
-                                                        let ratio = (mouse.column.saturating_sub(inner_x) as f32 / inner_w as f32).clamp(0.0, 1.0);
+                                if let Some((id, drag_mode, _)) = app.pipeline_dragging {
+                                    if let Some(active_list_area) = app.control_areas.get(1) {
+                                        let active_list_area = *active_list_area;
+                                        if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
+                                            let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
+                                            
+                                            if drag_mode == 1 {
+                                                // Dragging inline slider
+                                                let inner_x = mouse.column.saturating_sub(active_list_area.x);
+                                                if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == id) {
+                                                    if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
+                                                        let ratio = ((inner_x.saturating_sub(21)) as f32 / 32.0).clamp(0.0, 1.0);
                                                         node.effect.set_param(min + ratio * (max - min));
+                                                        app.mark_args_dirty();
+                                                    }
+                                                }
+                                            } else if drag_mode == 0 {
+                                                // Dragging list item
+                                                if inner_y < app.pipeline_nodes.len() {
+                                                    let current_idx = app.pipeline_nodes.iter().position(|n| n.id == id).unwrap();
+                                                    if current_idx != inner_y {
+                                                        let node = app.pipeline_nodes.remove(current_idx);
+                                                        app.pipeline_nodes.insert(inner_y, node);
                                                         app.mark_args_dirty();
                                                     }
                                                 }
                                             }
                                         }
-                                        continue;
                                     }
                                 }
-                                // Mouse dragging logic removed.
                             } else if let Some(visual_idx) = app.dragged_control {
                                     if let Some(area) = app.control_areas.get(visual_idx) {
                                         if area.width > 0 {
@@ -3272,9 +3271,23 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
+                            app.pipeline_dragging = None;
                             app.dragged_control = None;
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
+                            if (app.current_tab == 1) && app.control_areas.len() >= 2 {
+                                let active_list_area = app.control_areas[1];
+                                if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
+                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
+                                    if inner_y < app.pipeline_nodes.len() {
+                                        let node = &mut app.pipeline_nodes[inner_y];
+                                        node.disabled = !node.disabled;
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Middle) => {
                             if (app.current_tab == 1) && app.control_areas.len() >= 2 {
                                 let active_list_area = app.control_areas[1];
                                 if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
@@ -3912,11 +3925,20 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     buf.set_style(layout[1], Style::new().bg(BG));
 
     for (i, name) in tab_names.iter().enumerate() {
-        let w = name.len() as u16;
+        let is_visible = match i {
+            0 => app.show_general,
+            1 => app.show_pipeline,
+            2 => app.show_glyphs,
+            _ => false,
+        };
+        let is_focused = i == app.current_tab;
+
+        let display_name = if is_visible { format!(" {} ", name.trim()) } else { format!(" {} ", name.trim()) };
+        let w = display_name.len() as u16;
         let tab_area = Rect::new(x, layout[1].y, w, 1);
         tab_rects.push(tab_area);
 
-        let (fg, bg_color) = if i == app.current_tab {
+        let (fg, bg_color) = if is_visible {
             (Color::White, TAB_ACTIVE)
         } else {
             (TEXT_DIM, TAB_INACTIVE)
@@ -3925,13 +3947,9 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let style = Style::new()
             .fg(fg)
             .bg(bg_color)
-            .add_modifier(if i == app.current_tab {
-                Modifier::BOLD
-            } else {
-                Modifier::empty()
-            });
+            .add_modifier(if is_focused { Modifier::BOLD } else { Modifier::empty() });
         buf.set_style(tab_area, style);
-        buf.set_string(x, tab_area.y, name, style);
+        buf.set_string(x, tab_area.y, display_name, style);
 
         x += w + 1;
     }
@@ -3985,22 +4003,19 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let inner = panel.inner(area);
     f.render_widget(panel, area);
 
-    if app.current_tab == 2 {
-        app.control_areas.clear();
-        render_tree(f, app, inner);
-        return;
-    }
+    app.control_areas.clear();
 
     let buf = f.buffer_mut();
 
-    let controls = app.tab_controls(app.current_tab);
+    let controls = app.tab_controls(0);
     let avail_height = inner.height as usize;
     let item_height: u16 = 2; // 1 row content + 1 row spacing
     let max_visible = avail_height / item_height as usize;
 
     // Scrolling offset for controls
-    let scroll_offset = if app.selected_control >= max_visible {
-        app.selected_control - max_visible + 1
+    let selected_ctrl = if app.current_tab == 0 { app.selected_control } else { usize::MAX };
+    let scroll_offset = if selected_ctrl != usize::MAX && selected_ctrl >= max_visible {
+        selected_ctrl - max_visible + 1
     } else {
         0
     };
@@ -4019,13 +4034,9 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
 
         let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
-        let selected = v_idx == app.selected_control;
+        let selected = v_idx == selected_ctrl;
 
-        let label_text = if app.current_tab == 1 {
-            format!("≡ {}", ctrl.label)
-        } else if app.current_tab == 2 && v_idx < app.available_blocks.len() {
-            app.available_blocks[v_idx].clone()
-        } else if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
+        let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
             "🛑 STOP AUTO-OPTIMIZE".to_string()
         } else {
             ctrl.label.to_string()
@@ -4033,7 +4044,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
         match ctrl.kind {
             ControlKind::Slider { min, max, .. } => {
-                let value = app.get_control_value(app.current_tab, v_idx);
+                let value = app.get_control_value(0, v_idx);
                 if selected && app.input_mode == InputMode::ValueEdit {
                     // Show edit buffer with cursor
                     let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
@@ -4067,11 +4078,11 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 }
             }
             ControlKind::Enum { options, .. } => {
-                let value = app.get_control_value(app.current_tab, v_idx) as usize;
+                let value = app.get_control_value(0, v_idx) as usize;
                 render_enum(buf, ctrl_area, &label_text, options, value, selected);
             }
             ControlKind::Toggle { .. } => {
-                let on = app.get_control_value(app.current_tab, v_idx) != 0;
+                let on = app.get_control_value(0, v_idx) != 0;
                 render_toggle(buf, ctrl_area, &label_text, on, selected);
             }
             ControlKind::FontSelector => {
@@ -4110,7 +4121,7 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Draw scroll indicator if needed
     let total = controls.len();
     if total > max_visible {
-        let indicator = format!(" {}/{} ", app.selected_control + 1, total);
+        let indicator = format!(" {}/{} ", if selected_ctrl != usize::MAX { selected_ctrl + 1 } else { 1 }, total);
         let ix = inner.x + inner.width - indicator.len() as u16 - 1;
         let iy = inner.y + inner.height - 1;
         if iy < area.y + area.height {
@@ -4536,12 +4547,26 @@ fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    // Vertical layout: glyph list on top, bitmap preview on bottom
+    // Vertical layout: Unicode tree blocks on top, glyph list in middle, preview on bottom
     let chunks =
-        Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).split(area);
+        Layout::vertical([
+            Constraint::Percentage(33), 
+            Constraint::Percentage(33), 
+            Constraint::Min(0)
+        ]).split(area);
 
-    app.glyph_list_area = chunks[0];
-    app.preview_area = chunks[1];
+    // Render tree in the first section
+    let tree_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER))
+        .border_set(symbols::border::ROUNDED)
+        .style(Style::new().bg(SURFACE));
+    let tree_area = tree_block.inner(chunks[0]);
+    f.render_widget(tree_block, chunks[0]);
+    render_tree(f, app, tree_area);
+
+    app.glyph_list_area = chunks[1];
+    app.preview_area = chunks[2];
 
     let is_focused = app.current_tab == 2 && app.selected_control == 1;
     let border_style = if is_focused {
@@ -4585,19 +4610,19 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 .block(glyph_block)
                 .highlight_style(highlight_style)
                 .highlight_symbol("▸ ");
-            f.render_stateful_widget(list, chunks[0], &mut app.glyph_list_state);
+            f.render_stateful_widget(list, chunks[1], &mut app.glyph_list_state);
 
             // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);
             if let Some(&code) = codes.get(idx) {
                 if let Some(ch) = char::from_u32(code) {
-                    render_block_bitmap(f, app, chunks[1], ch);
+                    render_block_bitmap(f, app, chunks[2], ch);
                 }
             }
         } else {
             f.render_widget(
                 Paragraph::new("No known glyphs").block(glyph_block),
-                chunks[0],
+                chunks[1],
             );
         }
     }
@@ -4753,9 +4778,23 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
         }
 
         let prefix = if node.disabled { "[ ]" } else { "[x]" };
-        let mut text = format!(" {} {}", prefix, node.effect.name());
+        let mut text = format!(" {} {:<14}", prefix, node.effect.name());
         if let Some(v) = node.effect.param_f32() {
-            text.push_str(&format!(" ({:.0})", v));
+            let (min, max) = node.effect.param_range().unwrap_or((0.0, 255.0));
+            let ratio = ((v - min) / (max - min)).clamp(0.0, 1.0);
+            let total_eighths = (ratio * 256.0).round() as i32;
+            let full_blocks = (total_eighths / 8).max(0) as usize;
+            let remainder = (total_eighths % 8).max(0) as usize;
+            
+            let blocks = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+            let mut bar = "█".repeat(full_blocks.min(32));
+            if remainder > 0 && full_blocks < 32 {
+                bar.push_str(blocks[remainder]);
+            }
+            let pad = 32usize.saturating_sub(full_blocks + if remainder > 0 { 1 } else { 0 });
+            let empty = " ".repeat(pad);
+            
+            text.push_str(&format!(" │{}{}| {:>4.0}", bar, empty, v));
         }
         
         items.push(ListItem::new(text).style(style));
