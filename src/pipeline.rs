@@ -7,6 +7,7 @@ pub enum ImageEffect {
     Saturation(f32),
     Gamma(f32),
     Hue(f32),
+    Eyedropper, // Added Eyedropper
     Invert,
     BoxBlur,
     GaussBlur(i32),
@@ -56,6 +57,7 @@ impl ImageEffect {
             ImageEffect::Saturation(_) => "Saturation",
             ImageEffect::Gamma(_) => "Gamma",
             ImageEffect::Hue(_) => "Hue",
+            ImageEffect::Eyedropper => "Select Color",
             ImageEffect::Invert => "Invert",
             ImageEffect::BoxBlur => "Box Blur",
             ImageEffect::GaussBlur(_) => "Gauss Blur",
@@ -160,7 +162,6 @@ impl ImageEffect {
 pub struct ImageEffectNode {
     pub id: usize,
     pub effect: ImageEffect,
-    pub x: u16,
-    pub y: u16,
-    pub next: Option<usize>,
+    pub disabled: bool,
 }
+

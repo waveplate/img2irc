@@ -259,6 +259,7 @@ pub fn apply_effects(
             PastelPink => { filters::pastel_pink(&mut photon_image); },
             Ryo => { filters::ryo(&mut photon_image); },
             Oil(r, i) => { effects::oil(&mut photon_image, r, i); },
+            Eyedropper => {}, // Implementation comes later
             // Geometry effects applied inline
             CropTop(v) | CropBottom(v) | CropLeft(v) | CropRight(v) => {
                 let w = photon_image.get_width();
