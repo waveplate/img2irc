@@ -29,7 +29,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
     Terminal,
 };
 use ratatui_explorer::FileExplorer;
@@ -52,14 +52,17 @@ const TEXT_DIM: Color = Color::Rgb(110, 110, 140);
 const ACCENT: Color = Color::Rgb(130, 140, 255);
 const ACCENT_DIM: Color = Color::Rgb(80, 85, 160);
 const BAR_FG: Color = Color::Rgb(100, 120, 255);
-const BAR_BG: Color = Color::Rgb(40, 40, 58);
 const TOGGLE_ON: Color = Color::Rgb(70, 190, 120);
 const TOGGLE_OFF: Color = Color::Rgb(70, 70, 90);
 const SELECTED_BG: Color = Color::Rgb(50, 50, 72);
 const TAB_ACTIVE: Color = Color::Rgb(130, 140, 255);
-const TAB_INACTIVE: Color = Color::Rgb(80, 80, 100);
 const STATUS_BG: Color = Color::Rgb(35, 35, 50);
 const OPTIMIZE_BG: Color = Color::Rgb(40, 60, 40);
+const GENERAL_PANE_WIDTH: u16 = 40;
+const PIPELINE_PANE_WIDTH: u16 = 62;
+const GLYPHS_PANE_WIDTH: u16 = 40;
+const SLIDER_BAR_CELLS: usize = 32;
+const EIGHTH_BLOCKS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 
 #[derive(Debug)]
 enum OptimizationUpdate {
@@ -254,8 +257,70 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     //         default: 0,
     //     },
     // },
-    // (Crop Top/Right/Bottom/Left, Flip H/V, Rotate, Scale X/Y are now handled
-    //  as pipeline nodes on Tab 1 — removed from here)
+    ControlDef {
+        id: ControlId::TrimTop,
+        label: "Crop Top",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 500,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimBottom,
+        label: "Crop Bottom",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 500,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimLeft,
+        label: "Crop Left",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 500,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::TrimRight,
+        label: "Crop Right",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 500,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::FlipH,
+        label: "Flip H",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::FlipV,
+        label: "Flip V",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::ScaleX,
+        label: "Scale X",
+        kind: ControlKind::Slider {
+            min: 50,
+            max: 200,
+            default: 100,
+        },
+    },
+    ControlDef {
+        id: ControlId::ScaleY,
+        label: "Scale Y",
+        kind: ControlKind::Slider {
+            min: 50,
+            max: 200,
+            default: 100,
+        },
+    },
     ControlDef {
         id: ControlId::FontSize,
         label: "Font Size",
@@ -484,53 +549,154 @@ struct CatalogItem {
 }
 
 const PIPELINE_CATALOG: &[CatalogItem] = &[
-    CatalogItem { label: "── Adjustments ──", effect: None },
-    CatalogItem { label: "Select Color", effect: Some(crate::pipeline::ImageEffect::Eyedropper) },
-    CatalogItem { label: "Brightness", effect: Some(crate::pipeline::ImageEffect::Brightness(0.0)) },
-    CatalogItem { label: "Contrast", effect: Some(crate::pipeline::ImageEffect::Contrast(0.0)) },
-    CatalogItem { label: "Saturation", effect: Some(crate::pipeline::ImageEffect::Saturation(0.0)) },
-    CatalogItem { label: "Gamma", effect: Some(crate::pipeline::ImageEffect::Gamma(0.0)) },
-    CatalogItem { label: "Hue", effect: Some(crate::pipeline::ImageEffect::Hue(0.0)) },
-    CatalogItem { label: "── Geometry ──", effect: None },
-    CatalogItem { label: "Crop Top", effect: Some(crate::pipeline::ImageEffect::CropTop(0)) },
-    CatalogItem { label: "Crop Bottom", effect: Some(crate::pipeline::ImageEffect::CropBottom(0)) },
-    CatalogItem { label: "Crop Left", effect: Some(crate::pipeline::ImageEffect::CropLeft(0)) },
-    CatalogItem { label: "Crop Right", effect: Some(crate::pipeline::ImageEffect::CropRight(0)) },
-    CatalogItem { label: "Flip H", effect: Some(crate::pipeline::ImageEffect::FlipH) },
-    CatalogItem { label: "Flip V", effect: Some(crate::pipeline::ImageEffect::FlipV) },
-    CatalogItem { label: "Rotate", effect: Some(crate::pipeline::ImageEffect::Rotate(0.0)) },
-    CatalogItem { label: "Scale X", effect: Some(crate::pipeline::ImageEffect::ScaleX(100)) },
-    CatalogItem { label: "Scale Y", effect: Some(crate::pipeline::ImageEffect::ScaleY(100)) },
-    CatalogItem { label: "── Effects ──", effect: None },
-    CatalogItem { label: "Gauss Blur", effect: Some(crate::pipeline::ImageEffect::GaussBlur(1)) },
-    CatalogItem { label: "Box Blur", effect: Some(crate::pipeline::ImageEffect::BoxBlur) },
-    CatalogItem { label: "Pixelize", effect: Some(crate::pipeline::ImageEffect::Pixelize(2)) },
-    CatalogItem { label: "Dither", effect: Some(crate::pipeline::ImageEffect::Dither(1)) },
-    CatalogItem { label: "── Stylize ──", effect: None },
-    CatalogItem { label: "Invert", effect: Some(crate::pipeline::ImageEffect::Invert) },
-    CatalogItem { label: "Grayscale", effect: Some(crate::pipeline::ImageEffect::Grayscale) },
-    CatalogItem { label: "Halftone", effect: Some(crate::pipeline::ImageEffect::Halftone) },
-    CatalogItem { label: "Sepia", effect: Some(crate::pipeline::ImageEffect::Sepia) },
-    CatalogItem { label: "Solarize", effect: Some(crate::pipeline::ImageEffect::Solarize) },
-    CatalogItem { label: "Normalize", effect: Some(crate::pipeline::ImageEffect::Normalize) },
-    CatalogItem { label: "Noise", effect: Some(crate::pipeline::ImageEffect::Noise) },
-    CatalogItem { label: "Sharpen", effect: Some(crate::pipeline::ImageEffect::Sharpen) },
-    CatalogItem { label: "Edge Detect", effect: Some(crate::pipeline::ImageEffect::EdgeDetect) },
-    CatalogItem { label: "Emboss", effect: Some(crate::pipeline::ImageEffect::Emboss) },
-    CatalogItem { label: "Frost Glass", effect: Some(crate::pipeline::ImageEffect::FrostGlass) },
-    CatalogItem { label: "Laplace", effect: Some(crate::pipeline::ImageEffect::Laplace) },
-    CatalogItem { label: "Identity", effect: Some(crate::pipeline::ImageEffect::Identity) },
-    CatalogItem { label: "── Filters ──", effect: None },
-    CatalogItem { label: "Cali", effect: Some(crate::pipeline::ImageEffect::Cali) },
-    CatalogItem { label: "Dramatic", effect: Some(crate::pipeline::ImageEffect::Dramatic) },
-    CatalogItem { label: "Firenze", effect: Some(crate::pipeline::ImageEffect::Firenze) },
-    CatalogItem { label: "Golden", effect: Some(crate::pipeline::ImageEffect::Golden) },
-    CatalogItem { label: "Lix", effect: Some(crate::pipeline::ImageEffect::Lix) },
-    CatalogItem { label: "Lofi", effect: Some(crate::pipeline::ImageEffect::Lofi) },
-    CatalogItem { label: "Neue", effect: Some(crate::pipeline::ImageEffect::Neue) },
-    CatalogItem { label: "Obsidian", effect: Some(crate::pipeline::ImageEffect::Obsidian) },
-    CatalogItem { label: "Pastel Pink", effect: Some(crate::pipeline::ImageEffect::PastelPink) },
-    CatalogItem { label: "Ryo", effect: Some(crate::pipeline::ImageEffect::Ryo) },
+    CatalogItem {
+        label: "── Adjustments ──",
+        effect: None,
+    },
+    CatalogItem {
+        label: "Select Color",
+        effect: Some(crate::pipeline::ImageEffect::Eyedropper),
+    },
+    CatalogItem {
+        label: "Brightness",
+        effect: Some(crate::pipeline::ImageEffect::Brightness(0.0)),
+    },
+    CatalogItem {
+        label: "Contrast",
+        effect: Some(crate::pipeline::ImageEffect::Contrast(0.0)),
+    },
+    CatalogItem {
+        label: "Saturation",
+        effect: Some(crate::pipeline::ImageEffect::Saturation(0.0)),
+    },
+    CatalogItem {
+        label: "Gamma",
+        effect: Some(crate::pipeline::ImageEffect::Gamma(0.0)),
+    },
+    CatalogItem {
+        label: "Hue",
+        effect: Some(crate::pipeline::ImageEffect::Hue(0.0)),
+    },
+    CatalogItem {
+        label: "── Effects ──",
+        effect: None,
+    },
+    CatalogItem {
+        label: "Gauss Blur",
+        effect: Some(crate::pipeline::ImageEffect::GaussBlur(1)),
+    },
+    CatalogItem {
+        label: "Box Blur",
+        effect: Some(crate::pipeline::ImageEffect::BoxBlur),
+    },
+    CatalogItem {
+        label: "Pixelize",
+        effect: Some(crate::pipeline::ImageEffect::Pixelize(2)),
+    },
+    CatalogItem {
+        label: "Dither",
+        effect: Some(crate::pipeline::ImageEffect::Dither(1)),
+    },
+    CatalogItem {
+        label: "── Stylize ──",
+        effect: None,
+    },
+    CatalogItem {
+        label: "Invert",
+        effect: Some(crate::pipeline::ImageEffect::Invert),
+    },
+    CatalogItem {
+        label: "Grayscale",
+        effect: Some(crate::pipeline::ImageEffect::Grayscale),
+    },
+    CatalogItem {
+        label: "Halftone",
+        effect: Some(crate::pipeline::ImageEffect::Halftone),
+    },
+    CatalogItem {
+        label: "Sepia",
+        effect: Some(crate::pipeline::ImageEffect::Sepia),
+    },
+    CatalogItem {
+        label: "Solarize",
+        effect: Some(crate::pipeline::ImageEffect::Solarize),
+    },
+    CatalogItem {
+        label: "Normalize",
+        effect: Some(crate::pipeline::ImageEffect::Normalize),
+    },
+    CatalogItem {
+        label: "Noise",
+        effect: Some(crate::pipeline::ImageEffect::Noise),
+    },
+    CatalogItem {
+        label: "Sharpen",
+        effect: Some(crate::pipeline::ImageEffect::Sharpen),
+    },
+    CatalogItem {
+        label: "Edge Detect",
+        effect: Some(crate::pipeline::ImageEffect::EdgeDetect),
+    },
+    CatalogItem {
+        label: "Emboss",
+        effect: Some(crate::pipeline::ImageEffect::Emboss),
+    },
+    CatalogItem {
+        label: "Frost Glass",
+        effect: Some(crate::pipeline::ImageEffect::FrostGlass),
+    },
+    CatalogItem {
+        label: "Laplace",
+        effect: Some(crate::pipeline::ImageEffect::Laplace),
+    },
+    CatalogItem {
+        label: "Identity",
+        effect: Some(crate::pipeline::ImageEffect::Identity),
+    },
+    CatalogItem {
+        label: "── Filters ──",
+        effect: None,
+    },
+    CatalogItem {
+        label: "Cali",
+        effect: Some(crate::pipeline::ImageEffect::Cali),
+    },
+    CatalogItem {
+        label: "Dramatic",
+        effect: Some(crate::pipeline::ImageEffect::Dramatic),
+    },
+    CatalogItem {
+        label: "Firenze",
+        effect: Some(crate::pipeline::ImageEffect::Firenze),
+    },
+    CatalogItem {
+        label: "Golden",
+        effect: Some(crate::pipeline::ImageEffect::Golden),
+    },
+    CatalogItem {
+        label: "Lix",
+        effect: Some(crate::pipeline::ImageEffect::Lix),
+    },
+    CatalogItem {
+        label: "Lofi",
+        effect: Some(crate::pipeline::ImageEffect::Lofi),
+    },
+    CatalogItem {
+        label: "Neue",
+        effect: Some(crate::pipeline::ImageEffect::Neue),
+    },
+    CatalogItem {
+        label: "Obsidian",
+        effect: Some(crate::pipeline::ImageEffect::Obsidian),
+    },
+    CatalogItem {
+        label: "Pastel Pink",
+        effect: Some(crate::pipeline::ImageEffect::PastelPink),
+    },
+    CatalogItem {
+        label: "Ryo",
+        effect: Some(crate::pipeline::ImageEffect::Ryo),
+    },
 ];
 
 // ── App State ────────────────────────────────────────────────────────────────
@@ -541,6 +707,37 @@ enum InputMode {
     ValueEdit,
     MetadataPrompt,
     AutoOptimize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PipelineFocus {
+    Active,
+    Library,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusTarget {
+    General,
+    PipelineLibrary,
+    PipelineActive,
+    GlyphTree,
+    GlyphList,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SplitterKind {
+    General,
+    Pipeline,
+    PipelineActive,
+    Glyphs,
+    GlyphTreeRows,
+    GlyphListRows,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SplitterArea {
+    kind: SplitterKind,
+    area: Rect,
 }
 
 struct AutoOptimizeState {
@@ -783,7 +980,7 @@ struct App {
     render_args: RenderArgs,
     input_mode: InputMode,
     selected_control: usize,
-    current_tab: usize, // Keeps track of focused pane for keyboard navigation (although mouse is primarily used)
+    current_tab: usize, // Focused pane group: 0=general, 1=pipeline, 2=glyphs
     show_general: bool,
     show_pipeline: bool,
     show_glyphs: bool,
@@ -808,6 +1005,9 @@ struct App {
     pipeline_dragging: Option<(usize, i16, i16)>,
     pipeline_scroll: u16,
     pipeline_selected: Option<usize>, // ID of selected node for param editing
+    pipeline_focus: PipelineFocus,
+    pipeline_library_selected: usize,
+    pipeline_preview_effect: Option<crate::pipeline::ImageEffect>,
 
     // Shared state for PNG saving
     arc_glyphs: Option<Arc<font::GlyphStore>>,
@@ -910,6 +1110,11 @@ struct App {
     control_areas: Vec<Rect>,
     tab_areas: Vec<Rect>,
     path_area: Rect,
+    general_area: Rect,
+    pipeline_column_area: Rect,
+    pipeline_active_area: Rect,
+    pipeline_library_area: Rect,
+    glyphs_area: Rect,
     tree_area: Rect,
     glyph_list_area: Rect,
     explorer_area: Rect,
@@ -930,6 +1135,15 @@ struct App {
     auto_optimize_state: Option<AutoOptimizeState>,
     saved_auto_optimize_inputs: Vec<String>,
     auto_optimize_cancel: Option<Arc<AtomicBool>>,
+    general_pane_width: u16,
+    pipeline_pane_width: u16,
+    pipeline_active_width: u16,
+    glyphs_pane_width: u16,
+    pipeline_library_height: u16,
+    glyph_tree_height: u16,
+    glyph_list_height: u16,
+    splitter_areas: Vec<SplitterArea>,
+    dragging_splitter: Option<SplitterKind>,
 }
 
 impl App {
@@ -1100,12 +1314,20 @@ impl App {
             pipeline_dragging: None,
             pipeline_scroll: 0,
             pipeline_selected: None,
+            pipeline_focus: PipelineFocus::Active,
+            pipeline_library_selected: 1,
+            pipeline_preview_effect: PIPELINE_CATALOG.get(1).and_then(|item| item.effect.clone()),
 
             available_blocks,
             explorer_dialog: None,
             control_areas: Vec::new(),
             tab_areas: Vec::new(),
             path_area: Rect::default(),
+            general_area: Rect::default(),
+            pipeline_column_area: Rect::default(),
+            pipeline_active_area: Rect::default(),
+            pipeline_library_area: Rect::default(),
+            glyphs_area: Rect::default(),
             tree_area: Rect::default(),
             glyph_list_area: Rect::default(),
             explorer_area: Rect::default(),
@@ -1120,6 +1342,15 @@ impl App {
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
             auto_optimize_cancel: None,
+            general_pane_width: GENERAL_PANE_WIDTH,
+            pipeline_pane_width: PIPELINE_PANE_WIDTH,
+            pipeline_active_width: 28,
+            glyphs_pane_width: GLYPHS_PANE_WIDTH,
+            pipeline_library_height: 14,
+            glyph_tree_height: 10,
+            glyph_list_height: 10,
+            splitter_areas: Vec::new(),
+            dragging_splitter: None,
         }
     }
 
@@ -1233,6 +1464,141 @@ impl App {
             GENERAL_CONTROLS[self.selected_control.min(GENERAL_CONTROLS.len() - 1)].id
         } else {
             ControlId::Width // Fallback
+        }
+    }
+
+    fn is_tab_visible(&self, tab: usize) -> bool {
+        match tab {
+            0 => self.show_general,
+            1 => self.show_pipeline,
+            2 => self.show_glyphs,
+            _ => false,
+        }
+    }
+
+    fn visible_tabs(&self) -> Vec<usize> {
+        vec![0, 1, 2]
+    }
+
+    fn visible_focus_targets(&self) -> Vec<FocusTarget> {
+        match self.current_tab {
+            0 => vec![FocusTarget::General],
+            1 => vec![FocusTarget::PipelineLibrary, FocusTarget::PipelineActive],
+            2 => vec![FocusTarget::GlyphTree, FocusTarget::GlyphList],
+            _ => vec![FocusTarget::General],
+        }
+    }
+
+    fn focus_target(&self) -> Option<FocusTarget> {
+        match self.current_tab {
+            0 => Some(FocusTarget::General),
+            1 => Some(match self.pipeline_focus {
+                PipelineFocus::Library => FocusTarget::PipelineLibrary,
+                PipelineFocus::Active => FocusTarget::PipelineActive,
+            }),
+            2 => Some(match self.selected_control {
+                0 => FocusTarget::GlyphTree,
+                _ => FocusTarget::GlyphList,
+            }),
+            _ => None,
+        }
+    }
+
+    fn set_focus_target(&mut self, target: FocusTarget) {
+        match target {
+            FocusTarget::General => {
+                self.current_tab = 0;
+            }
+            FocusTarget::PipelineLibrary => {
+                self.current_tab = 1;
+                self.pipeline_focus = PipelineFocus::Library;
+            }
+            FocusTarget::PipelineActive => {
+                self.current_tab = 1;
+                self.pipeline_focus = PipelineFocus::Active;
+                self.ensure_pipeline_selection();
+            }
+            FocusTarget::GlyphTree => {
+                self.current_tab = 2;
+                self.selected_control = 0;
+            }
+            FocusTarget::GlyphList => {
+                self.current_tab = 2;
+                self.selected_control = 1;
+            }
+        }
+    }
+
+    fn cycle_focus_target(&mut self, direction: i32) {
+        let targets = self.visible_focus_targets();
+        if targets.is_empty() {
+            return;
+        }
+
+        let current_idx = self
+            .focus_target()
+            .and_then(|target| targets.iter().position(|candidate| *candidate == target))
+            .unwrap_or(0) as i32;
+        let next_idx = (current_idx + direction).rem_euclid(targets.len() as i32) as usize;
+        self.set_focus_target(targets[next_idx]);
+    }
+
+    fn ensure_visible_focus(&mut self) {
+        if self.focus_target().is_some() {
+            return;
+        }
+
+        if let Some(target) = self.visible_focus_targets().into_iter().next() {
+            self.set_focus_target(target);
+        } else {
+            self.current_tab = 0;
+            self.selected_control = 0;
+        }
+    }
+
+    fn toggle_tab(&mut self, tab: usize) {
+        self.current_tab = tab.min(2);
+        self.selected_control = 0;
+        self.pipeline_focus = PipelineFocus::Library;
+    }
+
+    fn focus_next_visible_tab(&mut self, direction: i32) {
+        let visible = self.visible_tabs();
+        if visible.is_empty() {
+            self.current_tab = 0;
+            self.selected_control = 0;
+            return;
+        }
+
+        let current_idx = visible
+            .iter()
+            .position(|tab| *tab == self.current_tab)
+            .unwrap_or(0) as i32;
+        let next_idx = (current_idx + direction).rem_euclid(visible.len() as i32) as usize;
+        self.current_tab = visible[next_idx];
+        self.selected_control = 0;
+    }
+
+    fn pipeline_selected_index(&self) -> Option<usize> {
+        self.pipeline_selected
+            .and_then(|id| self.pipeline_nodes.iter().position(|node| node.id == id))
+    }
+
+    fn ensure_pipeline_selection(&mut self) {
+        match self.pipeline_selected_index() {
+            Some(idx) => self.selected_control = idx,
+            None if !self.pipeline_nodes.is_empty() => {
+                self.selected_control = self.selected_control.min(self.pipeline_nodes.len() - 1);
+                self.pipeline_selected = Some(self.pipeline_nodes[self.selected_control].id);
+            }
+            None => {
+                self.selected_control = 0;
+                self.pipeline_selected = None;
+            }
+        }
+
+        if self.pipeline_library_selected >= PIPELINE_CATALOG.len() {
+            self.pipeline_library_selected = PIPELINE_CATALOG.len().saturating_sub(1);
         }
     }
 
@@ -1456,10 +1822,16 @@ impl App {
         }
 
         let state = self.auto_optimize_state.take().unwrap();
-        
+
         fn parse_range_i32(s: &str, current: i32) -> Vec<i32> {
-            if s.trim().is_empty() { return vec![current]; }
-            let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+            if s.trim().is_empty() {
+                return vec![current];
+            }
+            let parts: Vec<&str> = s
+                .split('-')
+                .map(|x| x.trim())
+                .filter(|x| !x.is_empty())
+                .collect();
             if parts.len() == 2 {
                 let p0 = parts[0].parse().unwrap_or(current);
                 let p1 = parts[1].parse().unwrap_or(current);
@@ -1474,8 +1846,14 @@ impl App {
         }
 
         fn parse_range_f32(s: &str, current: f32) -> Vec<f32> {
-            if s.trim().is_empty() { return vec![current]; }
-            let parts: Vec<&str> = s.split('-').map(|x| x.trim()).filter(|x| !x.is_empty()).collect();
+            if s.trim().is_empty() {
+                return vec![current];
+            }
+            let parts: Vec<&str> = s
+                .split('-')
+                .map(|x| x.trim())
+                .filter(|x| !x.is_empty())
+                .collect();
             if parts.len() == 2 {
                 let p0 = parts[0].parse().unwrap_or(current);
                 let p1 = parts[1].parse().unwrap_or(current);
@@ -1487,7 +1865,9 @@ impl App {
                     v.push(c);
                     c += 0.5;
                 }
-                if v.is_empty() { v.push(current); }
+                if v.is_empty() {
+                    v.push(current);
+                }
                 v
             } else if parts.len() == 1 {
                 vec![parts[0].parse().unwrap_or(current)]
@@ -1505,14 +1885,16 @@ impl App {
         let sx = parse_range_i32(state.inputs[6].lines()[0].as_str(), self.scalex);
         let sy = parse_range_i32(state.inputs[7].lines()[0].as_str(), self.scaley);
 
-        let total_perms = ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
-        
+        let total_perms =
+            ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
+
         if total_perms == 0 {
             self.is_optimizing = false;
             return;
         }
-        
-        self.saved_auto_optimize_inputs = state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
+
+        self.saved_auto_optimize_inputs =
+            state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
 
         self.is_optimizing = true;
         self.optimization_progress = format!("Starting... ({} perms)", total_perms);
@@ -1525,7 +1907,7 @@ impl App {
 
         let mut args = self.render_args.clone();
         let original_show_disc = args.show_discontinuities;
-        args.show_discontinuities = true; 
+        args.show_discontinuities = true;
 
         let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
@@ -1539,12 +1921,14 @@ impl App {
                     Err(_) => PhotonImage::new(vec![0; 4], 1, 1),
                 }
             };
-            
+
             let mut best_score = f64::MAX;
             let mut best_args = args.clone();
             let mut curr = 0;
 
-            let num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            let num_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
             let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_threads));
             let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(num_threads * 2);
 
@@ -1553,11 +1937,13 @@ impl App {
             let img_clone = image.clone();
             let gs_clone = glyph_store.clone();
             let cancel_clone = cancel_flag.clone();
-            
+
             tokio::spawn(async move {
                 let mut aborted = false;
                 for &w in &ws {
-                    if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) { break; }
+                    if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) {
+                        break;
+                    }
                     for &t in &ct {
                         for &r in &cr {
                             for &b in &cb {
@@ -1565,38 +1951,69 @@ impl App {
                                     for &f in &fs {
                                         for &x in &sx {
                                             for &y in &sy {
-                                                if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) { aborted = true; break; }
+                                                if tx_clone.is_closed()
+                                                    || cancel_clone.load(Ordering::Relaxed)
+                                                {
+                                                    aborted = true;
+                                                    break;
+                                                }
                                                 let mut a = args.clone();
                                                 a.width = Some(w as u32);
-                                                a.trim = Some((t as u32, r as u32, b as u32, l as u32));
+                                                a.trim =
+                                                    Some((t as u32, r as u32, b as u32, l as u32));
                                                 a.font_size = f;
-                                                a.scale = Some((x as f32 / 100.0, y as f32 / 100.0));
-                                                
-                                                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                                                a.scale =
+                                                    Some((x as f32 / 100.0, y as f32 / 100.0));
+
+                                                let permit = semaphore
+                                                    .clone()
+                                                    .acquire_owned()
+                                                    .await
+                                                    .unwrap();
                                                 let img = img_clone.clone();
                                                 let gs = gs_clone.clone();
                                                 let rtx = res_tx.clone();
                                                 let cancel_inner = cancel_clone.clone();
                                                 tokio::task::spawn_blocking(move || {
                                                     let fg = crate::draw::prepare_glyphs(&gs, &a);
-                                                    let result = crate::render_output(a.clone(), &gs, img, &fg, Some(cancel_inner));
+                                                    let result = crate::render_output(
+                                                        a.clone(),
+                                                        &gs,
+                                                        img,
+                                                        &fg,
+                                                        Some(cancel_inner),
+                                                    );
                                                     let _ = rtx.blocking_send((a, result.score));
                                                     drop(permit);
                                                 });
                                             }
-                                            if aborted { break; }
+                                            if aborted {
+                                                break;
+                                            }
                                         }
-                                        if aborted { break; }
+                                        if aborted {
+                                            break;
+                                        }
                                     }
-                                    if aborted { break; }
+                                    if aborted {
+                                        break;
+                                    }
                                 }
-                                if aborted { break; }
+                                if aborted {
+                                    break;
+                                }
                             }
-                            if aborted { break; }
+                            if aborted {
+                                break;
+                            }
                         }
-                        if aborted { break; }
+                        if aborted {
+                            break;
+                        }
                     }
-                    if aborted { break; }
+                    if aborted {
+                        break;
+                    }
                 }
             });
 
@@ -1605,12 +2022,19 @@ impl App {
                 if score < best_score {
                     best_score = score;
                     best_args = a;
-                    let _ = tx.send(OptimizationUpdate::BestResult(best_args.clone())).await;
+                    let _ = tx
+                        .send(OptimizationUpdate::BestResult(best_args.clone()))
+                        .await;
                 }
-                
+
                 if curr % 10 == 0 || curr == args_len {
                     let progress = (curr as f64 / args_len as f64 * 100.0) as u32;
-                    let _ = tx.send(OptimizationUpdate::Progress(format!("{}% -> {}/{} (Best: {:.2})", progress, curr, args_len, best_score))).await;
+                    let _ = tx
+                        .send(OptimizationUpdate::Progress(format!(
+                            "{}% -> {}/{} (Best: {:.2})",
+                            progress, curr, args_len, best_score
+                        )))
+                        .await;
                 }
             }
 
@@ -1625,7 +2049,13 @@ impl App {
             return;
         }
         // Don't render if no image is loaded
-        if self.render_args.image.as_deref().map(|p| p.is_empty()).unwrap_or(true) {
+        if self
+            .render_args
+            .image
+            .as_deref()
+            .map(|p| p.is_empty())
+            .unwrap_or(true)
+        {
             self.args_dirty = false;
             return;
         }
@@ -1728,11 +2158,19 @@ impl App {
         } else {
             self.render_args.trim = None;
         }
-        let pipeline: Vec<crate::pipeline::ImageEffect> = self.pipeline_nodes.iter()
+        let mut pipeline: Vec<crate::pipeline::ImageEffect> = self
+            .pipeline_nodes
+            .iter()
             .filter(|n| !n.disabled)
             .map(|node| node.effect.clone())
             .collect();
-        
+
+        if self.current_tab == 1 && self.pipeline_focus == PipelineFocus::Library {
+            if let Some(preview) = &self.pipeline_preview_effect {
+                pipeline.push(preview.clone());
+            }
+        }
+
         self.render_args.pipeline = pipeline;
 
         // Cancel previous render
@@ -2009,7 +2447,68 @@ fn list_system_fonts() -> Vec<String> {
 
 // ── Custom Widgets ───────────────────────────────────────────────────────────
 
-/// A gauge-style slider bar. Value is rendered inside the filled portion.
+fn quantized_slider_units(value: i32, min: i32, max: i32, cells: usize) -> usize {
+    if cells == 0 || max <= min {
+        return 0;
+    }
+
+    let clamped = value.clamp(min, max) - min;
+    let range = (max - min) as i64;
+    let total_units = (cells * 8) as i64;
+    ((clamped as i64) * total_units / range).clamp(0, total_units) as usize
+}
+
+fn quantized_slider_units_f32(value: f32, min: f32, max: f32, cells: usize) -> usize {
+    if cells == 0 || max <= min {
+        return 0;
+    }
+
+    let clamped = value.clamp(min, max) - min;
+    let range = (max - min).max(f32::EPSILON);
+    let total_units = (cells * 8) as f32;
+    ((clamped * total_units / range).floor() as i32).clamp(0, total_units as i32) as usize
+}
+
+fn render_eighth_block_bar(units: usize, cells: usize) -> String {
+    if cells == 0 {
+        return String::new();
+    }
+
+    let capped_units = units.min(cells * 8);
+    let full_blocks = capped_units / 8;
+    let remainder = capped_units % 8;
+    let used_cells = full_blocks + usize::from(remainder > 0 && full_blocks < cells);
+
+    let mut bar = String::with_capacity(cells);
+    bar.push_str(&"█".repeat(full_blocks.min(cells)));
+    if remainder > 0 && full_blocks < cells {
+        bar.push_str(EIGHTH_BLOCKS[remainder]);
+    }
+    bar.push_str(&" ".repeat(cells.saturating_sub(used_cells)));
+    bar
+}
+
+fn slider_bar_layout(area: Rect, label: &str, display_value: Option<&str>) -> Option<(u16, usize)> {
+    let label_text = format!("  {}", label);
+    let value_text = if let Some(dv) = display_value {
+        format!("{} ", dv)
+    } else {
+        "0 ".to_string()
+    };
+    let label_width = label_text.chars().take(14).count() as u16;
+    let value_width = value_text.chars().count() as u16;
+    let bar_cells = area
+        .width
+        .saturating_sub(label_width + value_width + 5)
+        .min(SLIDER_BAR_CELLS as u16) as usize;
+    if bar_cells == 0 {
+        None
+    } else {
+        Some((area.x + label_width + 3, bar_cells))
+    }
+}
+
+/// A quantized slider bar using left eighth-blocks.
 fn render_bar(
     buf: &mut Buffer,
     area: Rect,
@@ -2024,34 +2523,12 @@ fn render_bar(
         return;
     }
 
-    let range = (max - min).max(1) as f64;
-    let ratio = ((value - min) as f64 / range).clamp(0.0, 1.0);
-    let filled_width = ((area.width as f64) * ratio) as u16;
-
     let bg_style = if selected {
         Style::new().bg(SELECTED_BG)
     } else {
         Style::new().bg(SURFACE)
     };
     buf.set_style(area, bg_style);
-
-    // Draw filled portion
-    let bar_style = Style::new()
-        .bg(if selected { BAR_FG } else { ACCENT_DIM })
-        .fg(Color::White);
-    for y in area.y..area.y + area.height {
-        for x in area.x..area.x + filled_width.min(area.width) {
-            buf.set_string(x, y, " ", bar_style);
-        }
-    }
-
-    // Draw unfilled portion
-    let empty_style = Style::new().bg(BAR_BG).fg(TEXT_DIM);
-    for y in area.y..area.y + area.height {
-        for x in (area.x + filled_width)..area.x + area.width {
-            buf.set_string(x, y, " ", empty_style);
-        }
-    }
 
     // Draw label on the left
     let label_text = if selected {
@@ -2061,7 +2538,7 @@ fn render_bar(
     };
     let lx = area.x + 1;
     let ly = area.y + area.height.saturating_sub(1) / 2;
-    for (i, ch) in label_text.chars().enumerate() {
+    for (i, ch) in label_text.chars().take(14).enumerate() {
         let x = lx + i as u16;
         if x >= area.x + area.width {
             break;
@@ -2096,6 +2573,18 @@ fn render_bar(
             Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
         };
         cell.set_style(style);
+    }
+
+    if let Some((bar_x, bar_cells)) = slider_bar_layout(area, label, display_value) {
+        let units = quantized_slider_units(value, min, max, bar_cells);
+        let bar = render_eighth_block_bar(units, bar_cells);
+        let bar_style = Style::new()
+            .fg(if selected { BAR_FG } else { ACCENT })
+            .bg(Color::Rgb(15, 15, 20))
+            .add_modifier(Modifier::BOLD);
+        if bar_x < vx {
+            buf.set_string(bar_x, ly, bar, bar_style);
+        }
     }
 
     // Border highlight for selected
@@ -2840,29 +3329,99 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            if (app.current_tab == 1) && app.control_areas.len() >= 2 {
-                                let catalog_area = app.control_areas[0];
-                                let active_list_area = app.control_areas[1];
-                                if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
-                                    app.pipeline_scroll = app.pipeline_scroll.saturating_sub(1);
+                            if mouse.column >= app.pipeline_library_area.x
+                                && mouse.column
+                                    < app.pipeline_library_area.x + app.pipeline_library_area.width
+                                && mouse.row >= app.pipeline_library_area.y
+                                && mouse.row
+                                    < app.pipeline_library_area.y + app.pipeline_library_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Library;
+                                app.pipeline_scroll = app.pipeline_scroll.saturating_sub(1);
+                                continue;
+                            } else if mouse.column >= app.pipeline_active_area.x
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.row >= app.pipeline_active_area.y
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Active;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
+                                if inner_y < app.pipeline_nodes.len() {
+                                    app.pipeline_selected = Some(app.pipeline_nodes[inner_y].id);
+                                    app.selected_control = inner_y;
+                                    let node = &mut app.pipeline_nodes[inner_y];
+                                    let delta: f32 =
+                                        if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                                            10.0
+                                        } else {
+                                            1.0
+                                        };
+                                    if let Some(v) = node.effect.param_f32() {
+                                        let (min, max) =
+                                            node.effect.param_range().unwrap_or((-9999.0, 9999.0));
+                                        node.effect.set_param((v + delta).clamp(min, max));
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                                continue;
+                            }
+
+                            if mouse.column >= app.tree_area.x
+                                && mouse.column < app.tree_area.x + app.tree_area.width
+                                && mouse.row >= app.tree_area.y
+                                && mouse.row < app.tree_area.y + app.tree_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 0;
+                                app.tree_state.select_prev();
+                                continue;
+                            }
+                            if mouse.column >= app.glyph_list_area.x
+                                && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
+                                && mouse.row >= app.glyph_list_area.y
+                                && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 1;
+                                let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                app.glyph_list_state.select(Some(curr.saturating_sub(1)));
+                                continue;
+                            }
+
+                            for i in 0..app.control_areas.len() {
+                                let area = app.control_areas[i];
+                                if area.width == 0 {
                                     continue;
-                                } else if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                    if inner_y < app.pipeline_nodes.len() {
-                                        let node = &mut app.pipeline_nodes[inner_y];
-                                        let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { 10.0 } else { 1.0 };
-                                        if let Some(v) = node.effect.param_f32() {
-                                            let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
-                                            node.effect.set_param((v + delta).clamp(min, max));
-                                            app.mark_args_dirty();
+                                }
+                                if mouse.column >= area.x
+                                    && mouse.column < area.x + area.width
+                                    && mouse.row >= area.y
+                                    && mouse.row < area.y + area.height
+                                {
+                                    app.current_tab = 0;
+                                    app.selected_control = i;
+                                    if let Some(ctrl) = GENERAL_CONTROLS.get(i) {
+                                        if let ControlKind::Slider { .. } = ctrl.kind {
+                                            let delta =
+                                                if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                                                    10
+                                                } else {
+                                                    1
+                                                };
+                                            adjust_control(&mut app, delta);
+                                            continue;
                                         }
                                     }
-                                    continue;
                                 }
                             }
 
                             if app.current_tab == 2 {
-                                // Scroll focused pane in Glyphs tab
                                 match app.selected_control {
                                     0 => app.tree_state.select_prev(),
                                     1 => {
@@ -2871,8 +3430,16 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                     _ => {}
                                 }
-                            } else if app.selected_control > 0 {
+                            } else if app.current_tab == 0 && app.selected_control > 0 {
                                 app.selected_control -= 1;
+                            } else if app.current_tab == 1
+                                && app.pipeline_focus == PipelineFocus::Library
+                            {
+                                move_pipeline_library_selection(&mut app, -1);
+                            } else if app.current_tab == 1 && app.selected_control > 0 {
+                                app.selected_control -= 1;
+                                app.pipeline_selected =
+                                    Some(app.pipeline_nodes[app.selected_control].id);
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -2889,29 +3456,99 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            if (app.current_tab == 1) && app.control_areas.len() >= 2 {
-                                let catalog_area = app.control_areas[0];
-                                let active_list_area = app.control_areas[1];
-                                if mouse.column >= catalog_area.x && mouse.column < catalog_area.x + catalog_area.width && mouse.row >= catalog_area.y && mouse.row < catalog_area.y + catalog_area.height {
-                                    app.pipeline_scroll = app.pipeline_scroll.saturating_add(1);
+                            if mouse.column >= app.pipeline_library_area.x
+                                && mouse.column
+                                    < app.pipeline_library_area.x + app.pipeline_library_area.width
+                                && mouse.row >= app.pipeline_library_area.y
+                                && mouse.row
+                                    < app.pipeline_library_area.y + app.pipeline_library_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Library;
+                                app.pipeline_scroll = app.pipeline_scroll.saturating_add(1);
+                                continue;
+                            } else if mouse.column >= app.pipeline_active_area.x
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.row >= app.pipeline_active_area.y
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Active;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
+                                if inner_y < app.pipeline_nodes.len() {
+                                    app.pipeline_selected = Some(app.pipeline_nodes[inner_y].id);
+                                    app.selected_control = inner_y;
+                                    let node = &mut app.pipeline_nodes[inner_y];
+                                    let delta: f32 =
+                                        if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                                            -10.0
+                                        } else {
+                                            -1.0
+                                        };
+                                    if let Some(v) = node.effect.param_f32() {
+                                        let (min, max) =
+                                            node.effect.param_range().unwrap_or((-9999.0, 9999.0));
+                                        node.effect.set_param((v + delta).clamp(min, max));
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                                continue;
+                            }
+
+                            if mouse.column >= app.tree_area.x
+                                && mouse.column < app.tree_area.x + app.tree_area.width
+                                && mouse.row >= app.tree_area.y
+                                && mouse.row < app.tree_area.y + app.tree_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 0;
+                                app.tree_state.select_next();
+                                continue;
+                            }
+                            if mouse.column >= app.glyph_list_area.x
+                                && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
+                                && mouse.row >= app.glyph_list_area.y
+                                && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 1;
+                                let curr = app.glyph_list_state.selected().unwrap_or(0);
+                                app.glyph_list_state.select(Some(curr + 1));
+                                continue;
+                            }
+
+                            for i in 0..app.control_areas.len() {
+                                let area = app.control_areas[i];
+                                if area.width == 0 {
                                     continue;
-                                } else if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                    if inner_y < app.pipeline_nodes.len() {
-                                        let node = &mut app.pipeline_nodes[inner_y];
-                                        let delta: f32 = if mouse.modifiers.contains(KeyModifiers::SHIFT) { -10.0 } else { -1.0 };
-                                        if let Some(v) = node.effect.param_f32() {
-                                            let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
-                                            node.effect.set_param((v + delta).clamp(min, max));
-                                            app.mark_args_dirty();
+                                }
+                                if mouse.column >= area.x
+                                    && mouse.column < area.x + area.width
+                                    && mouse.row >= area.y
+                                    && mouse.row < area.y + area.height
+                                {
+                                    app.current_tab = 0;
+                                    app.selected_control = i;
+                                    if let Some(ctrl) = GENERAL_CONTROLS.get(i) {
+                                        if let ControlKind::Slider { .. } = ctrl.kind {
+                                            let delta =
+                                                if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                                                    -10
+                                                } else {
+                                                    -1
+                                                };
+                                            adjust_control(&mut app, delta);
+                                            continue;
                                         }
                                     }
-                                    continue;
                                 }
                             }
 
                             if app.current_tab == 2 {
-                                // Scroll focused pane in Glyphs tab
                                 match app.selected_control {
                                     0 => app.tree_state.select_next(),
                                     1 => {
@@ -2920,12 +3557,38 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                     _ => {}
                                 }
-                            } else {
-                                app.selected_control += 1;
+                            } else if app.current_tab == 0 {
+                                app.selected_control = (app.selected_control + 1)
+                                    .min(app.control_count().saturating_sub(1));
+                            } else if app.current_tab == 1
+                                && app.pipeline_focus == PipelineFocus::Library
+                            {
+                                move_pipeline_library_selection(&mut app, 1);
+                            } else if app.current_tab == 1 {
+                                let max_idx = app.pipeline_nodes.len().saturating_sub(1);
+                                app.selected_control = (app.selected_control + 1).min(max_idx);
+                                if let Some(node) = app.pipeline_nodes.get(app.selected_control) {
+                                    app.pipeline_selected = Some(node.id);
+                                }
                             }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             app.dragged_control = None;
+                            app.dragging_splitter = None;
+
+                            for splitter in app.splitter_areas.iter().copied() {
+                                if mouse.column >= splitter.area.x
+                                    && mouse.column < splitter.area.x + splitter.area.width
+                                    && mouse.row >= splitter.area.y
+                                    && mouse.row < splitter.area.y + splitter.area.height
+                                {
+                                    app.dragging_splitter = Some(splitter.kind);
+                                    continue;
+                                }
+                            }
+                            if app.dragging_splitter.is_some() {
+                                continue;
+                            }
 
                             // Check if over output area for eyedropper
                             if mouse.column >= app.output_area.x
@@ -3025,32 +3688,32 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            // Check glyph tab special areas
-                            if app.current_tab == 2 {
-                                if mouse.column >= app.tree_area.x
-                                    && mouse.column < app.tree_area.x + app.tree_area.width
-                                    && mouse.row >= app.tree_area.y
-                                    && mouse.row < app.tree_area.y + app.tree_area.height
-                                {
-                                    let row = (mouse.row - app.tree_area.y) as usize;
-                                    let scroll = app.tree_state.scroll as usize;
-                                    let clicked_idx = scroll + row;
-                                    if clicked_idx == app.tree_state.selected_idx {
-                                        // Click on already-selected item: toggle checkbox
-                                        app.toggle_tree_selection();
-                                    } else {
-                                        app.tree_state.selected_idx = clicked_idx;
-                                    }
-                                } else if mouse.column >= app.glyph_list_area.x
-                                    && mouse.column
-                                        < app.glyph_list_area.x + app.glyph_list_area.width
-                                    && mouse.row >= app.glyph_list_area.y
-                                    && mouse.row
-                                        < app.glyph_list_area.y + app.glyph_list_area.height
-                                {
-                                    let row = (mouse.row - app.glyph_list_area.y) as usize;
-                                    app.glyph_list_state.select(Some(row));
+                            if mouse.column >= app.tree_area.x
+                                && mouse.column < app.tree_area.x + app.tree_area.width
+                                && mouse.row >= app.tree_area.y
+                                && mouse.row < app.tree_area.y + app.tree_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 0;
+                                let row = (mouse.row - app.tree_area.y) as usize;
+                                let scroll = app.tree_state.scroll as usize;
+                                let clicked_idx = scroll + row;
+                                if clicked_idx == app.tree_state.selected_idx {
+                                    app.toggle_tree_selection();
+                                } else {
+                                    app.tree_state.selected_idx = clicked_idx;
                                 }
+                                continue;
+                            } else if mouse.column >= app.glyph_list_area.x
+                                && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
+                                && mouse.row >= app.glyph_list_area.y
+                                && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 1;
+                                let row = (mouse.row - app.glyph_list_area.y) as usize;
+                                app.glyph_list_state.select(Some(row));
+                                continue;
                             }
 
                             // Check options pane click
@@ -3085,77 +3748,69 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= area.y
                                     && mouse.row < area.y + area.height
                                 {
-                                    match i {
-                                        0 => app.show_general = !app.show_general,
-                                        1 => app.show_pipeline = !app.show_pipeline,
-                                        2 => app.show_glyphs = !app.show_glyphs,
-                                        _ => {}
-                                    }
-                                    app.current_tab = i;
-                                    app.selected_control = 0;
+                                    app.toggle_tab(i);
                                     break;
                                 }
                             }
-                            // Check Pipeline List & Catalog Clicks
-                            if app.current_tab == 1 && app.control_areas.len() >= 2 {
-                                let catalog_area = app.control_areas[0];
-                                let active_list_area = app.control_areas[1];
-
-                                if mouse.column >= catalog_area.x
-                                    && mouse.column < catalog_area.x + catalog_area.width
-                                    && mouse.row >= catalog_area.y
-                                    && mouse.row < catalog_area.y + catalog_area.height
-                                {
-                                    let inner_y = mouse.row.saturating_sub(catalog_area.y + 1);
-                                    let clicked_idx = (app.pipeline_scroll as usize) + inner_y as usize;
-                                    let catalog = PIPELINE_CATALOG;
-                                    if clicked_idx < catalog.len() {
-                                        if app.render_args.image.as_deref().map(|p| !p.is_empty()).unwrap_or(false) {
-                                            if let Some(effect) = catalog[clicked_idx].effect.clone() {
-                                                let new_id = app.pipeline_next_id;
-                                                app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
-                                                    id: new_id,
-                                                    effect,
-                                                    disabled: false,
-                                                });
-                                                app.pipeline_next_id += 1;
-                                                app.pipeline_selected = Some(new_id);
-                                                app.mark_args_dirty();
-                                            }
-                                        }
+                            if mouse.column >= app.pipeline_library_area.x
+                                && mouse.column
+                                    < app.pipeline_library_area.x + app.pipeline_library_area.width
+                                && mouse.row >= app.pipeline_library_area.y
+                                && mouse.row
+                                    < app.pipeline_library_area.y + app.pipeline_library_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Library;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_library_area.y + 1);
+                                let clicked_idx = app.pipeline_scroll as usize + inner_y as usize;
+                                if clicked_idx < PIPELINE_CATALOG.len() {
+                                    app.pipeline_library_selected = clicked_idx;
+                                    if PIPELINE_CATALOG[clicked_idx].effect.is_some() {
+                                        add_pipeline_effect(&mut app, clicked_idx);
                                     }
-                                    continue;
                                 }
-
-                                if mouse.column >= active_list_area.x
-                                    && mouse.column < active_list_area.x + active_list_area.width
-                                    && mouse.row >= active_list_area.y
-                                    && mouse.row < active_list_area.y + active_list_area.height
-                                {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                    
-                                    if inner_y < app.pipeline_nodes.len() {
-                                        let node_id = app.pipeline_nodes[inner_y].id;
-                                        app.pipeline_selected = Some(node_id);
-                                        
-                                        // Slider is from inner_x = 21 to 53
-                                        let inner_x = mouse.column.saturating_sub(active_list_area.x);
-                                        if inner_x >= 21 && inner_x <= 53 {
-                                            // Handle slider click immediately
-                                            let node = &mut app.pipeline_nodes[inner_y];
-                                            if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
-                                                let ratio = ((inner_x - 21) as f32 / 32.0).clamp(0.0, 1.0);
-                                                node.effect.set_param(min + ratio * (max - min));
-                                                app.mark_args_dirty();
-                                                app.pipeline_dragging = Some((node_id, 1, 0)); // 1 signals slider dragging
-                                            }
-                                        } else {
-                                            app.pipeline_dragging = Some((node_id, 0, 0)); // 0 signals item dragging
-                                        }
-                                    }
-                                    continue;
-                                }
+                                continue;
                             }
+
+                            if mouse.column >= app.pipeline_active_area.x
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.row >= app.pipeline_active_area.y
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                            {
+                                app.current_tab = 1;
+                                app.pipeline_focus = PipelineFocus::Active;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
+
+                                if inner_y < app.pipeline_nodes.len() {
+                                    let node_id = app.pipeline_nodes[inner_y].id;
+                                    app.pipeline_selected = Some(node_id);
+                                    app.selected_control = inner_y;
+
+                                    let inner_x =
+                                        mouse.column.saturating_sub(app.pipeline_active_area.x);
+                                    if inner_x >= 21 && inner_x <= 53 {
+                                        let node = &mut app.pipeline_nodes[inner_y];
+                                        if let (Some(_), Some((min, max))) =
+                                            (node.effect.param_f32(), node.effect.param_range())
+                                        {
+                                            let ratio =
+                                                ((inner_x - 21) as f32 / 32.0).clamp(0.0, 1.0);
+                                            node.effect.set_param(min + ratio * (max - min));
+                                            app.mark_args_dirty();
+                                            app.pipeline_dragging = Some((node_id, 1, 0));
+                                        }
+                                    } else {
+                                        app.pipeline_dragging = Some((node_id, 0, 0));
+                                    }
+                                }
+                                continue;
+                            }
+
                             // Check general control clicks
                             for i in 0..app.control_areas.len() {
                                 let area = app.control_areas[i];
@@ -3167,17 +3822,39 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && mouse.row >= area.y
                                     && mouse.row < area.y + area.height
                                 {
+                                    app.current_tab = 0;
                                     app.dragged_control = Some(i);
-                                    let controls = app.tab_controls(app.current_tab);
+                                    let controls = app.tab_controls(0);
                                     let was_selected = app.selected_control == i;
                                     app.selected_control = i;
-                                    if app.current_tab != 1 {
-                                        if let Some(ctrl) = controls.get(i) {
-                                            match &ctrl.kind {
-                                                ControlKind::Slider { min, max, .. } => {
-                                                    if was_selected {
-                                                        let rel_x = (mouse.column - area.x) as f64;
-                                                        let ratio = (rel_x / area.width as f64)
+                                    if let Some(ctrl) = controls.get(i) {
+                                        match &ctrl.kind {
+                                            ControlKind::Slider { min, max, .. } => {
+                                                if was_selected {
+                                                    let current_value = app.get_control_value(0, i);
+                                                    let display_value =
+                                                        if ctrl.id == ControlId::FontSize {
+                                                            Some(format!(
+                                                                "{:.1}",
+                                                                current_value as f32 / 10.0
+                                                            ))
+                                                        } else {
+                                                            None
+                                                        };
+                                                    if let Some((bar_x, bar_cells)) =
+                                                        slider_bar_layout(
+                                                            area,
+                                                            ctrl.label,
+                                                            display_value.as_deref(),
+                                                        )
+                                                    {
+                                                        let rel_cell = mouse
+                                                            .column
+                                                            .saturating_sub(bar_x)
+                                                            .min(bar_cells.saturating_sub(1) as u16)
+                                                            as f64;
+                                                        let ratio = ((rel_cell + 0.5)
+                                                            / bar_cells as f64)
                                                             .clamp(0.0, 1.0);
                                                         let new_val = *min
                                                             + (((*max - *min) as f64) * ratio)
@@ -3189,22 +3866,20 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         );
                                                     }
                                                 }
-                                                ControlKind::Toggle { .. } => {
-                                                    if was_selected {
-                                                        toggle_control(&mut app)
-                                                    }
+                                            }
+                                            ControlKind::Toggle { .. }
+                                            | ControlKind::Enum { .. } => {
+                                                if was_selected {
+                                                    toggle_control(&mut app)
                                                 }
-                                                ControlKind::Enum { .. } => {
-                                                    if was_selected {
-                                                        toggle_control(&mut app)
-                                                    }
-                                                }
-                                                ControlKind::EyedropperWidget => {}
-                                                ControlKind::FontSelector => {
-                                                    app.selected_control = i;
-                                                }
-                                                ControlKind::Action => {
-                                                    if was_selected { toggle_control(&mut app) }
+                                            }
+                                            ControlKind::EyedropperWidget => {}
+                                            ControlKind::FontSelector => {
+                                                app.selected_control = i;
+                                            }
+                                            ControlKind::Action => {
+                                                if was_selected {
+                                                    toggle_control(&mut app)
                                                 }
                                             }
                                         }
@@ -3214,51 +3889,161 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
-                            if app.current_tab == 1 {
+                            if let Some(splitter) = app.dragging_splitter {
+                                match splitter {
+                                    SplitterKind::General => {
+                                        let max_width = app
+                                            .output_area
+                                            .x
+                                            .saturating_sub(app.general_area.x)
+                                            .saturating_sub(16)
+                                            .max(18);
+                                        app.general_pane_width = mouse
+                                            .column
+                                            .saturating_sub(app.general_area.x)
+                                            .clamp(18, max_width);
+                                    }
+                                    SplitterKind::Pipeline => {
+                                        let max_width = app
+                                            .output_area
+                                            .x
+                                            .saturating_sub(app.pipeline_column_area.x)
+                                            .saturating_sub(16)
+                                            .max(24);
+                                        app.pipeline_pane_width = mouse
+                                            .column
+                                            .saturating_sub(app.pipeline_column_area.x)
+                                            .clamp(24, max_width);
+                                    }
+                                    SplitterKind::PipelineActive => {
+                                        let right_edge = app
+                                            .pipeline_active_area
+                                            .x
+                                            .saturating_add(app.pipeline_active_area.width);
+                                        let max_width = right_edge
+                                            .saturating_sub(app.output_area.x)
+                                            .saturating_sub(20)
+                                            .max(20);
+                                        let new_width = right_edge
+                                            .saturating_sub(mouse.column)
+                                            .saturating_sub(1);
+                                        app.pipeline_active_width = new_width.clamp(20, max_width);
+                                    }
+                                    SplitterKind::Glyphs => {
+                                        let max_width = app
+                                            .output_area
+                                            .x
+                                            .saturating_sub(app.glyphs_area.x)
+                                            .saturating_sub(16)
+                                            .max(22);
+                                        app.glyphs_pane_width = mouse
+                                            .column
+                                            .saturating_sub(app.glyphs_area.x)
+                                            .clamp(22, max_width);
+                                    }
+                                    SplitterKind::GlyphTreeRows => {
+                                        let max_height =
+                                            app.glyphs_area.height.saturating_sub(12).max(5);
+                                        app.glyph_tree_height = mouse
+                                            .row
+                                            .saturating_sub(app.glyphs_area.y)
+                                            .clamp(5, max_height);
+                                    }
+                                    SplitterKind::GlyphListRows => {
+                                        let start = app
+                                            .glyph_list_area
+                                            .y
+                                            .saturating_sub(app.glyphs_area.y);
+                                        let max_height =
+                                            app.glyphs_area.height.saturating_sub(start + 6).max(5);
+                                        app.glyph_list_height = mouse
+                                            .row
+                                            .saturating_sub(app.glyph_list_area.y)
+                                            .clamp(5, max_height);
+                                    }                                }
+                                continue;
+                            } else if app.current_tab == 1 {
                                 if let Some((id, drag_mode, _)) = app.pipeline_dragging {
-                                    if let Some(active_list_area) = app.control_areas.get(1) {
-                                        let active_list_area = *active_list_area;
-                                        if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
-                                            let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                            
-                                            if drag_mode == 1 {
-                                                // Dragging inline slider
-                                                let inner_x = mouse.column.saturating_sub(active_list_area.x);
-                                                if let Some(node) = app.pipeline_nodes.iter_mut().find(|n| n.id == id) {
-                                                    if let (Some(_), Some((min, max))) = (node.effect.param_f32(), node.effect.param_range()) {
-                                                        let ratio = ((inner_x.saturating_sub(21)) as f32 / 32.0).clamp(0.0, 1.0);
-                                                        node.effect.set_param(min + ratio * (max - min));
-                                                        app.mark_args_dirty();
-                                                    }
+                                    let active_list_area = app.pipeline_active_area;
+                                    if mouse.column >= active_list_area.x
+                                        && mouse.column
+                                            < active_list_area.x + active_list_area.width
+                                        && mouse.row >= active_list_area.y
+                                        && mouse.row < active_list_area.y + active_list_area.height
+                                    {
+                                        let inner_y =
+                                            mouse.row.saturating_sub(active_list_area.y + 1)
+                                                as usize;
+
+                                        if drag_mode == 1 {
+                                            let inner_x =
+                                                mouse.column.saturating_sub(active_list_area.x);
+                                            if let Some(node) =
+                                                app.pipeline_nodes.iter_mut().find(|n| n.id == id)
+                                            {
+                                                if let (Some(_), Some((min, max))) = (
+                                                    node.effect.param_f32(),
+                                                    node.effect.param_range(),
+                                                ) {
+                                                    let ratio = ((inner_x.saturating_sub(21))
+                                                        as f32
+                                                        / 32.0)
+                                                        .clamp(0.0, 1.0);
+                                                    node.effect
+                                                        .set_param(min + ratio * (max - min));
+                                                    app.mark_args_dirty();
                                                 }
-                                            } else if drag_mode == 0 {
-                                                // Dragging list item
-                                                if inner_y < app.pipeline_nodes.len() {
-                                                    let current_idx = app.pipeline_nodes.iter().position(|n| n.id == id).unwrap();
-                                                    if current_idx != inner_y {
-                                                        let node = app.pipeline_nodes.remove(current_idx);
-                                                        app.pipeline_nodes.insert(inner_y, node);
-                                                        app.mark_args_dirty();
-                                                    }
-                                                }
+                                            }
+                                        } else if drag_mode == 0
+                                            && inner_y < app.pipeline_nodes.len()
+                                        {
+                                            let current_idx = app
+                                                .pipeline_nodes
+                                                .iter()
+                                                .position(|n| n.id == id)
+                                                .unwrap();
+                                            if current_idx != inner_y {
+                                                let node = app.pipeline_nodes.remove(current_idx);
+                                                app.pipeline_nodes.insert(inner_y, node);
+                                                app.selected_control = inner_y;
+                                                app.mark_args_dirty();
                                             }
                                         }
                                     }
                                 }
                             } else if let Some(visual_idx) = app.dragged_control {
-                                    if let Some(area) = app.control_areas.get(visual_idx) {
-                                        if area.width > 0 {
-                                            let controls = app.tab_controls(app.current_tab);
-                                            if let Some(ctrl) = controls.get(visual_idx) {
-                                                if let ControlKind::Slider { min, max, .. } = &ctrl.kind
-                                                {
-                                                    let rel_x = (mouse.column as i32 - area.x as i32)
-                                                        .max(0)
+                                if let Some(area) = app.control_areas.get(visual_idx) {
+                                    if area.width > 0 {
+                                        let controls = app.tab_controls(0);
+                                        if let Some(ctrl) = controls.get(visual_idx) {
+                                            if let ControlKind::Slider { min, max, .. } = &ctrl.kind
+                                            {
+                                                let current_value =
+                                                    app.get_control_value(0, visual_idx);
+                                                let display_value =
+                                                    if ctrl.id == ControlId::FontSize {
+                                                        Some(format!(
+                                                            "{:.1}",
+                                                            current_value as f32 / 10.0
+                                                        ))
+                                                    } else {
+                                                        None
+                                                    };
+                                                if let Some((bar_x, bar_cells)) = slider_bar_layout(
+                                                    *area,
+                                                    ctrl.label,
+                                                    display_value.as_deref(),
+                                                ) {
+                                                    let rel_cell = mouse
+                                                        .column
+                                                        .saturating_sub(bar_x)
+                                                        .min(bar_cells.saturating_sub(1) as u16)
                                                         as f64;
-                                                    let ratio =
-                                                        (rel_x / area.width as f64).clamp(0.0, 1.0);
-                                                    let new_val =
-                                                        *min + (((*max - *min) as f64) * ratio) as i32;
+                                                    let ratio = ((rel_cell + 0.5)
+                                                        / bar_cells as f64)
+                                                        .clamp(0.0, 1.0);
+                                                    let new_val = *min
+                                                        + (((*max - *min) as f64) * ratio) as i32;
                                                     set_control_value(
                                                         &mut app,
                                                         visual_idx,
@@ -3269,37 +4054,54 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                 }
+                            }
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
                             app.pipeline_dragging = None;
                             app.dragged_control = None;
+                            app.dragging_splitter = None;
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
-                            if (app.current_tab == 1) && app.control_areas.len() >= 2 {
-                                let active_list_area = app.control_areas[1];
-                                if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                    if inner_y < app.pipeline_nodes.len() {
-                                        let node = &mut app.pipeline_nodes[inner_y];
-                                        node.disabled = !node.disabled;
-                                        app.mark_args_dirty();
-                                    }
+                            if mouse.column >= app.pipeline_active_area.x
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.row >= app.pipeline_active_area.y
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                            {
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
+                                if inner_y < app.pipeline_nodes.len() {
+                                    app.current_tab = 1;
+                                    app.pipeline_focus = PipelineFocus::Active;
+                                    app.pipeline_selected = Some(app.pipeline_nodes[inner_y].id);
+                                    app.selected_control = inner_y;
+                                    let node = &mut app.pipeline_nodes[inner_y];
+                                    node.disabled = !node.disabled;
+                                    app.mark_args_dirty();
                                 }
                             }
                         }
                         MouseEventKind::Down(MouseButton::Middle) => {
-                            if (app.current_tab == 1) && app.control_areas.len() >= 2 {
-                                let active_list_area = app.control_areas[1];
-                                if mouse.column >= active_list_area.x && mouse.column < active_list_area.x + active_list_area.width && mouse.row >= active_list_area.y && mouse.row < active_list_area.y + active_list_area.height {
-                                    let inner_y = mouse.row.saturating_sub(active_list_area.y + 1) as usize;
-                                    if inner_y < app.pipeline_nodes.len() {
-                                        let id = app.pipeline_nodes[inner_y].id;
-                                        app.pipeline_nodes.retain(|n| n.id != id);
-                                        if app.pipeline_selected == Some(id) {
-                                            app.pipeline_selected = None;
-                                        }
-                                        app.mark_args_dirty();
+                            if mouse.column >= app.pipeline_active_area.x
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.row >= app.pipeline_active_area.y
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                            {
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
+                                if inner_y < app.pipeline_nodes.len() {
+                                    let id = app.pipeline_nodes[inner_y].id;
+                                    app.pipeline_nodes.retain(|n| n.id != id);
+                                    if app.pipeline_selected == Some(id) {
+                                        app.pipeline_selected = None;
                                     }
+                                    app.ensure_pipeline_selection();
+                                    app.mark_args_dirty();
                                 }
                             }
                         }
@@ -3309,31 +4111,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Tab => {
-                                if app.current_tab == 2 {
-                                    app.selected_control = (app.selected_control + 1) % 3;
-                                }
-                            }
-                            KeyCode::BackTab => {
-                                if app.current_tab == 2 {
-                                    app.selected_control = (app.selected_control + 2) % 3;
-                                }
-                            }
+                            KeyCode::Tab => app.cycle_focus_target(1),
+                            KeyCode::BackTab => app.cycle_focus_target(-1),
                             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
                             }
-                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 1 => {
-                                // Delete the last selected pipeline node (the one being dragged)
+                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace
+                                if app.current_tab == 1 =>
+                            {
                                 if let Some((id, _, _)) = app.pipeline_dragging {
                                     app.pipeline_nodes.retain(|n| n.id != id);
                                     app.pipeline_dragging = None;
+                                    app.ensure_pipeline_selection();
                                     app.mark_args_dirty();
+                                } else if app.pipeline_focus == PipelineFocus::Active {
+                                    if let Some(id) = app.pipeline_selected {
+                                        app.pipeline_nodes.retain(|n| n.id != id);
+                                        app.ensure_pipeline_selection();
+                                        app.mark_args_dirty();
+                                    }
                                 }
                             }
-                            KeyCode::Char('r') | KeyCode::Delete => {
+                            KeyCode::Char('r') | KeyCode::Delete if app.current_tab == 0 => {
                                 reset_control(&mut app);
                             }
-                            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' => {
+                            KeyCode::Char(c)
+                                if app.current_tab == 0 && (c.is_ascii_digit() || c == '-') =>
+                            {
                                 let ctrl_id = app.get_current_control_id();
                                 let def = get_control_def(ctrl_id);
                                 if let ControlKind::Slider { .. } = def.kind {
@@ -3348,23 +4152,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.paste_from_clipboard();
                             }
-                            KeyCode::Char('s') => {
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.open_explorer(ExplorerMode::SaveText);
                             }
-                            KeyCode::Char('p') => {
+                            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.open_explorer(ExplorerMode::SavePng);
                             }
+                            KeyCode::Char('g') => app.toggle_tab(0),
+                            KeyCode::Char('p') => app.toggle_tab(1),
+                            KeyCode::Char('y') => app.toggle_tab(2),
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                app.current_tab = (app.current_tab + 2) % 3;
-                                app.selected_control = 0;
+                                app.focus_next_visible_tab(-1);
                             }
                             KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                app.current_tab = (app.current_tab + 1) % 3;
-                                app.selected_control = 0;
+                                app.focus_next_visible_tab(1);
                             }
                             KeyCode::Esc => {
                                 if app.is_optimizing {
-                                    app.perform_auto_optimize(); // this zeroes everything and aborts
+                                    app.perform_auto_optimize();
                                     continue;
                                 }
 
@@ -3377,15 +4182,28 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                                if (key.modifiers.contains(KeyModifiers::SHIFT)
-                                    || key.code == KeyCode::Char('J'))
-                                    && (app.current_tab == 1)
+                                if app.current_tab == 1
+                                    && app.pipeline_focus == PipelineFocus::Active
+                                    && (key.modifiers.contains(KeyModifiers::SHIFT)
+                                        || key.code == KeyCode::Char('J'))
                                 {
                                     let i = app.selected_control;
                                     if i + 1 < app.pipeline_nodes.len() {
                                         app.pipeline_nodes.swap(i, i + 1);
                                         app.selected_control += 1;
+                                        app.pipeline_selected =
+                                            Some(app.pipeline_nodes[app.selected_control].id);
                                         app.mark_args_dirty();
+                                    }
+                                } else if app.current_tab == 1
+                                    && app.pipeline_focus == PipelineFocus::Library
+                                {
+                                    move_pipeline_library_selection(&mut app, 1);
+                                } else if app.current_tab == 1 {
+                                    if app.selected_control + 1 < app.pipeline_nodes.len() {
+                                        app.selected_control += 1;
+                                        app.pipeline_selected =
+                                            Some(app.pipeline_nodes[app.selected_control].id);
                                     }
                                 } else if app.current_tab == 2 {
                                     match app.selected_control {
@@ -3393,13 +4211,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         1 => {
                                             let curr = app.glyph_list_state.selected().unwrap_or(0);
                                             app.glyph_list_state.select(Some(curr + 1));
-                                        }
-                                        2 => {
-                                            let line_count =
-                                                app.cached_render.lines().count() as u16;
-                                            if line_count > app.output_area.height {
-                                                app.scroll = app.scroll.saturating_add(3);
-                                            }
                                         }
                                         _ => {}
                                     }
@@ -3411,15 +4222,28 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
-                                if (key.modifiers.contains(KeyModifiers::SHIFT)
-                                    || key.code == KeyCode::Char('K'))
-                                    && (app.current_tab == 1)
+                                if app.current_tab == 1
+                                    && app.pipeline_focus == PipelineFocus::Active
+                                    && (key.modifiers.contains(KeyModifiers::SHIFT)
+                                        || key.code == KeyCode::Char('K'))
                                 {
                                     let i = app.selected_control;
                                     if i > 0 {
                                         app.pipeline_nodes.swap(i, i - 1);
                                         app.selected_control -= 1;
+                                        app.pipeline_selected =
+                                            Some(app.pipeline_nodes[app.selected_control].id);
                                         app.mark_args_dirty();
+                                    }
+                                } else if app.current_tab == 1
+                                    && app.pipeline_focus == PipelineFocus::Library
+                                {
+                                    move_pipeline_library_selection(&mut app, -1);
+                                } else if app.current_tab == 1 {
+                                    if app.selected_control > 0 {
+                                        app.selected_control -= 1;
+                                        app.pipeline_selected =
+                                            Some(app.pipeline_nodes[app.selected_control].id);
                                     }
                                 } else if app.current_tab == 2 {
                                     match app.selected_control {
@@ -3428,13 +4252,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             let curr = app.glyph_list_state.selected().unwrap_or(0);
                                             app.glyph_list_state
                                                 .select(Some(curr.saturating_sub(1)));
-                                        }
-                                        2 => {
-                                            let line_count =
-                                                app.cached_render.lines().count() as u16;
-                                            if line_count > app.output_area.height {
-                                                app.scroll = app.scroll.saturating_sub(3);
-                                            }
                                         }
                                         _ => {}
                                     }
@@ -3448,9 +4265,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if app.current_tab == 2 {
-                                    // Switch focus left between tree(0) / glyphs(1)
                                     if app.selected_control > 0 {
                                         app.selected_control -= 1;
+                                    }
+                                } else if app.current_tab == 1 {
+                                    let delta = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        -10.0
+                                    } else {
+                                        -1.0
+                                    };
+                                    if app.pipeline_focus == PipelineFocus::Library {
+                                        let has_param = app.pipeline_preview_effect.as_ref().map(|e| e.param_f32().is_some()).unwrap_or(false);
+                                        if has_param {
+                                            adjust_pipeline_library_preview(&mut app, delta);
+                                        } else {
+                                            app.pipeline_focus = PipelineFocus::Active;
+                                        }
+                                    } else {
+                                        adjust_selected_pipeline_param(&mut app, delta);
                                     }
                                 } else {
                                     let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3482,9 +4314,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
                                 if app.current_tab == 2 {
-                                    // Switch focus right between tree(0) / glyphs(1)
                                     if app.selected_control < 1 {
                                         app.selected_control += 1;
+                                    }
+                                } else if app.current_tab == 1 {
+                                    let delta = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                        10.0
+                                    } else {
+                                        1.0
+                                    };
+                                    if app.pipeline_focus == PipelineFocus::Library {
+                                        let has_param = app.pipeline_preview_effect.as_ref().map(|e| e.param_f32().is_some()).unwrap_or(false);
+                                        if has_param {
+                                            adjust_pipeline_library_preview(&mut app, delta);
+                                        } else {
+                                            app.pipeline_focus = PipelineFocus::Active;
+                                        }
+                                    } else {
+                                        adjust_selected_pipeline_param(&mut app, delta);
                                     }
                                 } else {
                                     let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3519,10 +4366,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if app.selected_control == 0 {
                                         app.toggle_tree_selection();
                                     }
+                                } else if app.current_tab == 1 {
+                                    if app.pipeline_focus == PipelineFocus::Library {
+                                        let selected = app.pipeline_library_selected;
+                                        add_pipeline_effect(&mut app, selected);
+                                    } else if let Some(idx) = app.pipeline_selected_index() {
+                                        let node = &mut app.pipeline_nodes[idx];
+                                        node.disabled = !node.disabled;
+                                        app.mark_args_dirty();
+                                    }
                                 } else {
-                                    // Enter on a slider: start direct numeric input
                                     if key.code == KeyCode::Enter {
-                                        let controls = app.tab_controls(app.current_tab);
+                                        let controls = app.tab_controls(0);
                                         if let Some(ctrl) = controls.get(app.selected_control) {
                                             if let ControlKind::Slider { .. } = &ctrl.kind {
                                                 let current_val = app.get_value(ctrl.id);
@@ -3686,9 +4541,117 @@ fn reset_control(app: &mut App) {
     app.mark_args_dirty();
 }
 
+fn add_pipeline_effect(app: &mut App, catalog_idx: usize) {
+    if app
+        .render_args
+        .image
+        .as_deref()
+        .map(|path| path.is_empty())
+        .unwrap_or(true)
+    {
+        return;
+    }
+
+    let effect = if let Some(preview) = app.pipeline_preview_effect.clone() {
+        preview
+    } else {
+        let Some(effect) = PIPELINE_CATALOG
+            .get(catalog_idx)
+            .and_then(|item| item.effect.clone())
+        else {
+            return;
+        };
+        effect
+    };
+
+    let new_id = app.pipeline_next_id;
+    app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
+        id: new_id,
+        effect,
+        disabled: false,
+    });
+    app.pipeline_next_id += 1;
+    app.pipeline_selected = Some(new_id);
+    app.selected_control = app.pipeline_nodes.len().saturating_sub(1);
+
+    // Refresh preview for next selection
+    app.pipeline_preview_effect = PIPELINE_CATALOG
+        .get(catalog_idx)
+        .and_then(|item| item.effect.clone());
+
+    app.mark_args_dirty();
+}
+
+fn select_pipeline_library(app: &mut App, catalog_idx: usize) {
+    app.pipeline_library_selected = catalog_idx.min(PIPELINE_CATALOG.len().saturating_sub(1));
+    app.pipeline_preview_effect = PIPELINE_CATALOG
+        .get(app.pipeline_library_selected)
+        .and_then(|item| item.effect.clone());
+    app.mark_args_dirty();
+}
+
+fn move_pipeline_library_selection(app: &mut App, direction: i32) {
+    if PIPELINE_CATALOG.is_empty() {
+        app.pipeline_library_selected = 0;
+        return;
+    }
+
+    let mut iter: Box<dyn Iterator<Item = usize>> = if direction < 0 {
+        Box::new((0..app.pipeline_library_selected).rev())
+    } else {
+        Box::new((app.pipeline_library_selected + 1)..PIPELINE_CATALOG.len())
+    };
+
+    if let Some(idx) = iter.find(|idx| PIPELINE_CATALOG[*idx].effect.is_some()) {
+        select_pipeline_library(app, idx);
+    }
+
+    let visible_rows = app.pipeline_library_area.height.saturating_sub(2) as usize;
+    let scroll = app.pipeline_scroll as usize;
+    if visible_rows > 0 {
+        if app.pipeline_library_selected < scroll {
+            app.pipeline_scroll = app.pipeline_library_selected as u16;
+        } else if app.pipeline_library_selected >= scroll + visible_rows {
+            app.pipeline_scroll =
+                app.pipeline_library_selected
+                    .saturating_sub(visible_rows.saturating_sub(1)) as u16;
+        }
+    }
+}
+
+fn adjust_pipeline_library_preview(app: &mut App, delta: f32) {
+    let Some(effect) = app.pipeline_preview_effect.as_mut() else {
+        return;
+    };
+    let Some(value) = effect.param_f32() else {
+        return;
+    };
+    let (min, max) = effect.param_range().unwrap_or((-9999.0, 9999.0));
+    effect.set_param((value + delta).clamp(min, max));
+    app.mark_args_dirty();
+}
+
+fn adjust_selected_pipeline_param(app: &mut App, delta: f32) {
+    let Some(id) = app.pipeline_selected else {
+        return;
+    };
+
+    let Some(node) = app.pipeline_nodes.iter_mut().find(|node| node.id == id) else {
+        return;
+    };
+
+    let Some(value) = node.effect.param_f32() else {
+        return;
+    };
+    let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
+    node.effect.set_param((value + delta).clamp(min, max));
+    app.mark_args_dirty();
+}
+
 // ── UI Rendering ─────────────────────────────────────────────────────────────
 fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let area = f.area();
+    app.ensure_visible_focus();
 
     // Background
     f.render_widget(Block::default().style(Style::new().bg(BG)), area);
@@ -3704,60 +4667,78 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // ── Title bar with tabs ──
     render_title_bar(f, app, root[0]);
 
-    if app.current_tab == 1 {
-        let main = Layout::horizontal([
-            Constraint::Length(22), // Catalog
-            Constraint::Min(0),     // right side
-        ])
-        .split(root[1]);
+    app.control_areas.clear();
+    app.general_area = Rect::default();
+    app.pipeline_column_area = Rect::default();
+    app.pipeline_active_area = Rect::default();
+    app.pipeline_library_area = Rect::default();
+    app.glyphs_area = Rect::default();
+    app.tree_area = Rect::default();
+    app.glyph_list_area = Rect::default();
+    app.preview_area = Rect::default();
+    app.splitter_areas.clear();
 
-        // Has selected node with param? show slider row
-        let has_param_slider = app.pipeline_selected
-            .and_then(|id| app.pipeline_nodes.iter().find(|n| n.id == id))
-            .map(|n| n.effect.has_param())
-            .unwrap_or(false);
+    let splitter_style = Style::new().fg(BORDER).bg(BG);
 
-        let right_split = if has_param_slider {
-            Layout::vertical([
-                Constraint::Length(10), // Pipeline canvas
-                Constraint::Length(3),  // Param slider
-                Constraint::Min(0),     // Output
-            ]).split(main[1])
-        } else {
-            Layout::vertical([
-                Constraint::Length(10), // Pipeline canvas
-                Constraint::Length(0),  // (placeholder — slider hidden)
-                Constraint::Min(0),     // Output
-            ]).split(main[1])
-        };
+    let left_width = match app.current_tab {
+        0 => app.general_pane_width,
+        1 => app.pipeline_pane_width,
+        2 => app.glyphs_pane_width,
+        _ => 30,
+    };
 
-        render_pipeline_catalog_list(f, app, main[0]);
-        render_active_pipeline_list(f, app, right_split[0]);
-        if has_param_slider {
-            render_pipeline_param_slider(f, app, right_split[1]);
+    let panes = Layout::horizontal([
+        Constraint::Length(left_width),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Length(app.pipeline_active_width),
+    ])
+    .split(root[1]);
+
+    app.output_area = panes[2];
+
+    match app.current_tab {
+        0 => {
+            app.general_area = panes[0];
+            render_controls(f, app, panes[0]);
+            f.render_widget(Block::default().style(splitter_style), panes[1]);
+            app.splitter_areas.push(SplitterArea {
+                kind: SplitterKind::General,
+                area: panes[1],
+            });
         }
-        render_output(f, app, right_split[2]);
-        app.output_area = right_split[2];
-
-        // Stash catalog/canvas/slider areas for mouse interaction
-        app.control_areas.clear();
-        app.control_areas.push(main[0]);          // [0] catalog
-        app.control_areas.push(right_split[0]);   // [1] canvas
-        app.control_areas.push(right_split[1]);   // [2] slider (may be zero-height)
-    } else {
-        let main = Layout::horizontal([
-            Constraint::Length(44), // left panel
-            Constraint::Min(0),     // output
-        ])
-        .split(root[1]);
-
-        // ── Left panel: controls ──
-        render_controls(f, app, main[0]);
-
-        // ── Right panel: output ──
-        render_output(f, app, main[1]);
-        app.output_area = main[1];
+        1 => {
+            app.pipeline_column_area = panes[0];
+            render_pipeline_catalog_list(f, app, panes[0]);
+            f.render_widget(Block::default().style(splitter_style), panes[1]);
+            app.splitter_areas.push(SplitterArea {
+                kind: SplitterKind::Pipeline,
+                area: panes[1],
+            });
+        }
+        2 => {
+            app.glyphs_area = panes[0];
+            render_glyphs_tab(f, app, panes[0]);
+            f.render_widget(Block::default().style(splitter_style), panes[1]);
+            app.splitter_areas.push(SplitterArea {
+                kind: SplitterKind::Glyphs,
+                area: panes[1],
+            });
+        }
+        _ => {
+            app.output_area = root[1];
+        }
     }
+
+    render_output(f, app, panes[2]);
+
+    f.render_widget(Block::default().style(splitter_style), panes[3]);
+    app.splitter_areas.push(SplitterArea {
+        kind: SplitterKind::PipelineActive,
+        area: panes[3],
+    });
+    render_active_pipeline_list(f, app, panes[4]);
 
     // ── Status bar ──
     render_status_bar(f, app, root[2]);
@@ -3813,13 +4794,15 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             Constraint::Percentage(20),
             Constraint::Length(26),
             Constraint::Percentage(20),
-        ]).split(area);
+        ])
+        .split(area);
         let horiz = Layout::horizontal([
             Constraint::Percentage(20),
             Constraint::Length(60),
             Constraint::Percentage(20),
-        ]).split(vert[1]);
-        
+        ])
+        .split(vert[1]);
+
         let overlay_area = horiz[1];
         f.render_widget(Clear, overlay_area);
         render_auto_optimize_dialog(f, app, overlay_area);
@@ -3827,7 +4810,10 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         let th = 5;
         let p_area = Rect::new(
             app.output_area.x.saturating_add(4),
-            app.output_area.y.saturating_add(app.output_area.height).saturating_sub(th + 2),
+            app.output_area
+                .y
+                .saturating_add(app.output_area.height)
+                .saturating_sub(th + 2),
             app.output_area.width.saturating_sub(8),
             th,
         );
@@ -3854,7 +4840,7 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
             .borders(Borders::ALL)
             .title(" Auto Optimize (Enter: start, Esc: cancel) ")
             .style(Style::default().fg(Color::Yellow));
-            
+
         let inner_area = block.inner(area);
         f.render_widget(Clear, area);
         f.render_widget(block, area);
@@ -3902,7 +4888,8 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
 fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let layout = Layout::horizontal([
         Constraint::Length(10), // app title
-        Constraint::Min(0),     // tabs + file + spinner
+        Constraint::Length(32), // tabs
+        Constraint::Min(0),     // file + spinner
     ])
     .split(area);
 
@@ -3916,60 +4903,52 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     );
     f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
 
-    // Tabs + filename + spinner
+    // Tabs
     let tab_names = [" General ", " Pipeline ", " Glyphs "];
+    let tabs = Tabs::new(tab_names.iter().cloned().map(Line::from).collect::<Vec<_>>())
+        .select(app.current_tab)
+        .style(Style::default().fg(TEXT_DIM).bg(BG))
+        .highlight_style(
+            Style::default()
+                .fg(Color::White)
+                .bg(TAB_ACTIVE)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider("");
+
+    f.render_widget(tabs, layout[1]);
+
+    // Update tab_areas for mouse clicks
     let mut tab_rects = Vec::new();
-
     let mut x = layout[1].x;
-    let buf = f.buffer_mut();
-    buf.set_style(layout[1], Style::new().bg(BG));
-
-    for (i, name) in tab_names.iter().enumerate() {
-        let is_visible = match i {
-            0 => app.show_general,
-            1 => app.show_pipeline,
-            2 => app.show_glyphs,
-            _ => false,
-        };
-        let is_focused = i == app.current_tab;
-
-        let display_name = if is_visible { format!(" {} ", name.trim()) } else { format!(" {} ", name.trim()) };
-        let w = display_name.len() as u16;
-        let tab_area = Rect::new(x, layout[1].y, w, 1);
-        tab_rects.push(tab_area);
-
-        let (fg, bg_color) = if is_visible {
-            (Color::White, TAB_ACTIVE)
-        } else {
-            (TEXT_DIM, TAB_INACTIVE)
-        };
-
-        let style = Style::new()
-            .fg(fg)
-            .bg(bg_color)
-            .add_modifier(if is_focused { Modifier::BOLD } else { Modifier::empty() });
-        buf.set_style(tab_area, style);
-        buf.set_string(x, tab_area.y, display_name, style);
-
-        x += w + 1;
+    for name in tab_names {
+        let w = name.len() as u16;
+        tab_rects.push(Rect::new(x, layout[1].y, w, 1));
+        x += w;
     }
+    app.tab_areas = tab_rects;
 
     // Show image path after tabs
-    x += 1;
+    let mut x = layout[2].x + 1;
     let path_display = format!("📁 {}", app.image_path);
-    let right_edge = layout[1].x + layout[1].width;
+    let right_edge = area.x + area.width;
     let avail = right_edge.saturating_sub(x) as usize;
     let truncated = if path_display.len() > avail {
-        format!(
-            "…{}",
-            &app.image_path[app.image_path.len().saturating_sub(avail.saturating_sub(3))..]
-        )
+        if avail > 3 {
+            format!(
+                "…{}",
+                &app.image_path[app.image_path.len().saturating_sub(avail.saturating_sub(3))..]
+            )
+        } else {
+            "…".to_string()
+        }
     } else {
         path_display
     };
-    let path_area = Rect::new(x, layout[1].y, truncated.len() as u16, 1);
+    let path_area = Rect::new(x, area.y, truncated.len() as u16, 1);
     app.path_area = path_area;
-    buf.set_string(x, layout[1].y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
+    f.buffer_mut()
+        .set_string(x, area.y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
 
     // Loading spinner in top-right
     let is_rendering = app.is_rendering.load(Ordering::Relaxed);
@@ -3979,9 +4958,9 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let label = format!(" {} Rendering ", spinner_ch);
         let lw = label.len() as u16;
         let sx = right_edge.saturating_sub(lw);
-        buf.set_string(
+        f.buffer_mut().set_string(
             sx,
-            layout[1].y,
+            area.y,
             &label,
             Style::new()
                 .fg(Color::Yellow)
@@ -3989,8 +4968,6 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
     }
-
-    app.tab_areas = tab_rects;
 }
 
 fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
@@ -4013,7 +4990,11 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let max_visible = avail_height / item_height as usize;
 
     // Scrolling offset for controls
-    let selected_ctrl = if app.current_tab == 0 { app.selected_control } else { usize::MAX };
+    let selected_ctrl = if app.current_tab == 0 {
+        app.selected_control
+    } else {
+        usize::MAX
+    };
     let scroll_offset = if selected_ctrl != usize::MAX && selected_ctrl >= max_visible {
         selected_ctrl - max_visible + 1
     } else {
@@ -4121,7 +5102,15 @@ fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Draw scroll indicator if needed
     let total = controls.len();
     if total > max_visible {
-        let indicator = format!(" {}/{} ", if selected_ctrl != usize::MAX { selected_ctrl + 1 } else { 1 }, total);
+        let indicator = format!(
+            " {}/{} ",
+            if selected_ctrl != usize::MAX {
+                selected_ctrl + 1
+            } else {
+                1
+            },
+            total
+        );
         let ix = inner.x + inner.width - indicator.len() as u16 - 1;
         let iy = inner.y + inner.height - 1;
         if iy < area.y + area.height {
@@ -4221,15 +5210,8 @@ fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.output_area = area;
 
-    // 1. Render normal background content (Image or Glyphs tab)
-    if app.current_tab == 2 {
-        // Horizontal layout: narrow glyphs+preview column | wide output
-        let cols = Layout::horizontal([Constraint::Length(30), Constraint::Min(0)]).split(area);
-        render_glyphs_tab(f, app, cols[0]);
-        render_normal_output_content(f, app, cols[1]);
-    } else {
-        render_normal_output_content(f, app, area);
-    }
+    // 1. Render normal background content
+    render_normal_output_content(f, app, area);
 
     // 2. Overlay Explorer if active
     if app.explorer_dialog.is_some() {
@@ -4484,6 +5466,12 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
 }
 
 fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.current_tab != 0 || !app.show_general {
+        app.options_pane_area = Rect::default();
+        app.options_areas.clear();
+        return;
+    }
+
     let id = app.get_current_control_id();
     let ctrl = get_control_def(id);
 
@@ -4547,13 +5535,34 @@ fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    // Vertical layout: Unicode tree blocks on top, glyph list in middle, preview on bottom
-    let chunks =
-        Layout::vertical([
-            Constraint::Percentage(33), 
-            Constraint::Percentage(33), 
-            Constraint::Min(0)
-        ]).split(area);
+    let max_tree = area.height.saturating_sub(12).max(5);
+    app.glyph_tree_height = app.glyph_tree_height.clamp(5, max_tree);
+    let max_list = area
+        .height
+        .saturating_sub(app.glyph_tree_height + 7)
+        .max(5);
+    app.glyph_list_height = app.glyph_list_height.clamp(5, max_list);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(app.glyph_tree_height),
+        Constraint::Length(1),
+        Constraint::Length(app.glyph_list_height),
+        Constraint::Length(1),
+        Constraint::Min(5),
+    ])
+    .split(area);
+
+    let splitter_style = Style::new().fg(BORDER).bg(BG);
+    f.render_widget(Block::default().style(splitter_style), chunks[1]);
+    f.render_widget(Block::default().style(splitter_style), chunks[3]);
+    app.splitter_areas.push(SplitterArea {
+        kind: SplitterKind::GlyphTreeRows,
+        area: chunks[1],
+    });
+    app.splitter_areas.push(SplitterArea {
+        kind: SplitterKind::GlyphListRows,
+        area: chunks[3],
+    });
 
     // Render tree in the first section
     let tree_block = Block::default()
@@ -4565,8 +5574,8 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(tree_block, chunks[0]);
     render_tree(f, app, tree_area);
 
-    app.glyph_list_area = chunks[1];
-    app.preview_area = chunks[2];
+    app.glyph_list_area = chunks[2];
+    app.preview_area = chunks[4];
 
     let is_focused = app.current_tab == 2 && app.selected_control == 1;
     let border_style = if is_focused {
@@ -4610,19 +5619,19 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 .block(glyph_block)
                 .highlight_style(highlight_style)
                 .highlight_symbol("▸ ");
-            f.render_stateful_widget(list, chunks[1], &mut app.glyph_list_state);
+            f.render_stateful_widget(list, chunks[2], &mut app.glyph_list_state);
 
             // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);
             if let Some(&code) = codes.get(idx) {
                 if let Some(ch) = char::from_u32(code) {
-                    render_block_bitmap(f, app, chunks[2], ch);
+                    render_block_bitmap(f, app, chunks[4], ch);
                 }
             }
         } else {
             f.render_widget(
                 Paragraph::new("No known glyphs").block(glyph_block),
-                chunks[1],
+                chunks[2],
             );
         }
     }
@@ -4670,18 +5679,30 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
     }
 }
 
-fn render_pipeline_catalog_list(
-    f: &mut ratatui::Frame,
-    app: &mut App,
-    area: Rect,
-) {
+fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.pipeline_library_area = area;
     let catalog = PIPELINE_CATALOG;
-    let no_image = app.render_args.image.as_deref().map(|p| p.is_empty()).unwrap_or(true);
-    let border_color = if no_image { Color::Rgb(80, 40, 40) } else { BORDER };
+    let no_image = app
+        .render_args
+        .image
+        .as_deref()
+        .map(|p| p.is_empty())
+        .unwrap_or(true);
+    let is_focused = app.current_tab == 1 && app.pipeline_focus == PipelineFocus::Library;
+    let border_color = if no_image {
+        Color::Rgb(80, 40, 40)
+    } else if is_focused {
+        ACCENT
+    } else {
+        BORDER
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(" Library ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            " Library ",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -4696,16 +5717,47 @@ fn render_pipeline_catalog_list(
     }
 
     let scroll = app.pipeline_scroll as usize;
-    let items: Vec<ListItem> = catalog.iter()
+    let items: Vec<ListItem> = catalog
+        .iter()
+        .enumerate()
         .skip(scroll)
-        .map(|e| {
+        .map(|(idx, e)| {
             if e.effect.is_none() {
                 // section header
                 ListItem::new(format!("{}", e.label))
                     .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD))
             } else {
-                ListItem::new(format!("  {}", e.label))
-                    .style(Style::default().fg(TEXT_DIM))
+                let is_selected = idx == app.pipeline_library_selected;
+                let style = if is_selected {
+                    let mut style = Style::default()
+                        .fg(Color::White)
+                        .bg(SELECTED_BG)
+                        .add_modifier(Modifier::BOLD);
+                    if !is_focused {
+                        style = style.remove_modifier(Modifier::BOLD);
+                    }
+                    style
+                } else {
+                    Style::default().fg(TEXT_DIM)
+                };
+
+                let mut spans = vec![
+                    Span::styled(format!("  {}", e.label), style),
+                ];
+
+                if is_selected {
+                    if let Some(effect) = &e.effect {
+                        if let Some(v) = effect.param_f32() {
+                            let (min, max) = effect.param_range().unwrap_or((0.0, 255.0));
+                            let units = quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
+                            let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
+                            spans.push(Span::styled("  ", style));
+                            spans.push(Span::styled(bar, Style::default().fg(ACCENT).bg(Color::Rgb(15, 15, 20))));
+                            spans.push(Span::styled(format!(" {:>4.0}", v), style));
+                        }
+                    }
+                }
+                ListItem::new(Line::from(spans))
             }
         })
         .collect();
@@ -4713,42 +5765,13 @@ fn render_pipeline_catalog_list(
     f.render_widget(List::new(items), inner);
 }
 
-fn render_pipeline_param_slider(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let sel_id = match app.pipeline_selected { Some(id) => id, None => return };
-    let node = match app.pipeline_nodes.iter().find(|n| n.id == sel_id) { Some(n) => n, None => return };
-    let (val, (min, max)) = match (node.effect.param_f32(), node.effect.param_range()) {
-        (Some(v), Some(r)) => (v, r),
-        _ => return,
-    };
-
-    let block = Block::default()
-        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-        .border_style(Style::default().fg(ACCENT))
-        .title(Span::styled(
-            format!(" {} — {:.0} (scroll ±1, Shift ±10) ", node.effect.name(), val),
-            Style::default().fg(ACCENT),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    // Draw slider bar
-    if inner.width > 4 {
-        let ratio = ((val - min) / (max - min)).clamp(0.0, 1.0);
-        let filled = (ratio * inner.width as f32) as u16;
-        let bar_filled = "█".repeat(filled as usize);
-        let bar_empty  = "░".repeat((inner.width - filled) as usize);
-        let bar = Line::from(vec![
-            Span::styled(bar_filled, Style::default().fg(ACCENT)),
-            Span::styled(bar_empty,  Style::default().fg(Color::Rgb(50,50,80))),
-        ]);
-        f.render_widget(Paragraph::new(bar), inner);
-    }
-}
-
 fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.pipeline_active_area = area;
+    app.ensure_pipeline_selection();
+    let is_focused = app.current_tab == 1 && app.pipeline_focus == PipelineFocus::Active;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
+        .border_style(Style::default().fg(if is_focused { ACCENT } else { BORDER }))
         .title(Span::styled(
             " Active Pipeline  [click=sel · space=toggle · Del=rem · Shift+↑/↓=move] ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
@@ -4757,9 +5780,11 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
     f.render_widget(block, area);
 
     if app.pipeline_nodes.is_empty() {
-        let hint = Paragraph::new("← Click an item on the left to add it to the pipeline\n\nItems are applied top-to-bottom")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(TEXT_DIM));
+        let hint = Paragraph::new(
+            "Select an item above to add it to the pipeline\n\nItems are applied top-to-bottom",
+        )
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(TEXT_DIM));
         f.render_widget(hint, inner);
         return;
     }
@@ -4767,43 +5792,47 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
     let mut items = Vec::new();
     for node in &app.pipeline_nodes {
         let is_selected = app.pipeline_selected == Some(node.id);
-        
-        let mut style = if is_selected {
-            Style::default().fg(Color::White).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(TEXT).bg(BG)
-        };
-        if node.disabled {
-            style = style.fg(TEXT_DIM).remove_modifier(Modifier::BOLD);
-        }
 
-        let prefix = if node.disabled { "[ ]" } else { "[x]" };
-        let mut text = format!(" {} {:<14}", prefix, node.effect.name());
+        let line_bg = if is_selected { SELECTED_BG } else { BG };
+        let text_fg = if node.disabled { TEXT_DIM } else { TEXT };
+        
+        let mut spans = vec![
+            Span::styled(
+                " ⬤ ",
+                Style::default()
+                    .fg(if node.disabled { TEXT_DIM } else { TOGGLE_ON })
+                    .bg(line_bg),
+            ),
+            Span::styled(
+                format!(" {:<14} ", node.effect.name()),
+                Style::default().fg(text_fg).bg(line_bg).add_modifier(
+                    if is_selected && !node.disabled {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    },
+                ),
+            ),
+        ];
+
         if let Some(v) = node.effect.param_f32() {
             let (min, max) = node.effect.param_range().unwrap_or((0.0, 255.0));
-            let ratio = ((v - min) / (max - min)).clamp(0.0, 1.0);
-            let total_eighths = (ratio * 256.0).round() as i32;
-            let full_blocks = (total_eighths / 8).max(0) as usize;
-            let remainder = (total_eighths % 8).max(0) as usize;
+            let units = quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
+            let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
             
-            let blocks = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
-            let mut bar = "█".repeat(full_blocks.min(32));
-            if remainder > 0 && full_blocks < 32 {
-                bar.push_str(blocks[remainder]);
-            }
-            let pad = 32usize.saturating_sub(full_blocks + if remainder > 0 { 1 } else { 0 });
-            let empty = " ".repeat(pad);
-            
-            text.push_str(&format!(" │{}{}| {:>4.0}", bar, empty, v));
+            spans.push(Span::styled(bar, Style::default().fg(ACCENT).bg(Color::Rgb(15, 15, 20))));
+            spans.push(Span::styled(
+                format!(" {:>4.0}", v),
+                Style::default().fg(text_fg).bg(line_bg),
+            ));
         }
-        
-        items.push(ListItem::new(text).style(style));
+
+        items.push(ListItem::new(Line::from(spans)));
     }
 
     let list = List::new(items);
     f.render_widget(list, inner);
 }
-
 
 fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
     let keys = [
@@ -4813,6 +5842,7 @@ fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
         ("Space", "Toggle"),
         ("Del", "Reset"),
         ("Shift", "×10"),
+        ("g/p/y", "Panes"),
         ("Ctrl+O", "Open"),
         ("Ctrl+V", "Paste"),
         ("Ctrl+S", "Save"),
