@@ -1144,6 +1144,7 @@ struct App {
     glyph_list_height: u16,
     splitter_areas: Vec<SplitterArea>,
     dragging_splitter: Option<SplitterKind>,
+    terminal_area: Rect,
 }
 
 impl App {
@@ -1169,8 +1170,8 @@ impl App {
             selected_control: 0,
             current_tab: 0,
             show_general: true,
-            show_pipeline: false,
-            show_glyphs: false,
+            show_pipeline: true,
+            show_glyphs: true,
             scroll: 0,
             tx_args,
             current_cancel_flag: initial_flag,
@@ -1348,9 +1349,10 @@ impl App {
             glyphs_pane_width: GLYPHS_PANE_WIDTH,
             pipeline_library_height: 14,
             glyph_tree_height: 10,
-            glyph_list_height: 10,
+            glyph_list_height: 30,
             splitter_areas: Vec::new(),
             dragging_splitter: None,
+            terminal_area: Rect::default(),
         }
     }
 
@@ -3765,9 +3767,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     mouse.row.saturating_sub(app.pipeline_library_area.y + 1);
                                 let clicked_idx = app.pipeline_scroll as usize + inner_y as usize;
                                 if clicked_idx < PIPELINE_CATALOG.len() {
-                                    app.pipeline_library_selected = clicked_idx;
                                     if PIPELINE_CATALOG[clicked_idx].effect.is_some() {
-                                        add_pipeline_effect(&mut app, clicked_idx);
+                                        select_pipeline_library(&mut app, clicked_idx);
                                     }
                                 }
                                 continue;
@@ -3890,55 +3891,86 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if let Some(splitter) = app.dragging_splitter {
+                                let root = Layout::vertical([
+                                    Constraint::Length(1), // title/tabs
+                                    Constraint::Min(0),    // content
+                                    Constraint::Length(1), // status bar
+                                ])
+                                .split(app.terminal_area); // We need terminal area here
+
+                                let left_width = match app.current_tab {
+                                    0 => app.general_pane_width,
+                                    1 => app.pipeline_pane_width,
+                                    2 => app.glyphs_pane_width,
+                                    _ => 30,
+                                };
+
+                                let panes = if app.current_tab == 1 {
+                                    Layout::horizontal([
+                                        Constraint::Length(left_width),
+                                        Constraint::Length(1),
+                                        Constraint::Min(0),
+                                        Constraint::Length(1),
+                                        Constraint::Length(app.pipeline_active_width),
+                                    ])
+                                    .split(root[1])
+                                } else {
+                                    Layout::horizontal([
+                                        Constraint::Length(left_width),
+                                        Constraint::Length(1),
+                                        Constraint::Min(0),
+                                    ])
+                                    .split(root[1])
+                                };
+
                                 match splitter {
                                     SplitterKind::General => {
-                                        let max_width = app
-                                            .output_area
-                                            .x
-                                            .saturating_sub(app.general_area.x)
+                                        let left_edge = panes[0].x;
+                                        let right_boundary = panes[2].x.saturating_add(panes[2].width);
+                                        let max_width = right_boundary
+                                            .saturating_sub(left_edge)
                                             .saturating_sub(16)
                                             .max(18);
                                         app.general_pane_width = mouse
                                             .column
-                                            .saturating_sub(app.general_area.x)
+                                            .saturating_sub(left_edge)
                                             .clamp(18, max_width);
                                     }
                                     SplitterKind::Pipeline => {
-                                        let max_width = app
-                                            .output_area
-                                            .x
-                                            .saturating_sub(app.pipeline_column_area.x)
+                                        let left_edge = panes[0].x;
+                                        let right_boundary = panes[2].x.saturating_add(panes[2].width);
+                                        let max_width = right_boundary
+                                            .saturating_sub(left_edge)
                                             .saturating_sub(16)
                                             .max(24);
                                         app.pipeline_pane_width = mouse
                                             .column
-                                            .saturating_sub(app.pipeline_column_area.x)
+                                            .saturating_sub(left_edge)
                                             .clamp(24, max_width);
                                     }
                                     SplitterKind::PipelineActive => {
-                                        let right_edge = app
-                                            .pipeline_active_area
-                                            .x
-                                            .saturating_add(app.pipeline_active_area.width);
-                                        let max_width = right_edge
-                                            .saturating_sub(app.output_area.x)
-                                            .saturating_sub(20)
-                                            .max(20);
-                                        let new_width = right_edge
-                                            .saturating_sub(mouse.column)
-                                            .saturating_sub(1);
-                                        app.pipeline_active_width = new_width.clamp(20, max_width);
+                                        if app.current_tab == 1 {
+                                            let right_edge = panes[4].x.saturating_add(panes[4].width);
+                                            let max_width = right_edge
+                                                .saturating_sub(panes[2].x)
+                                                .saturating_sub(20)
+                                                .max(20);
+                                            let new_width = right_edge
+                                                .saturating_sub(mouse.column)
+                                                .saturating_sub(1);
+                                            app.pipeline_active_width = new_width.clamp(20, max_width);
+                                        }
                                     }
                                     SplitterKind::Glyphs => {
-                                        let max_width = app
-                                            .output_area
-                                            .x
-                                            .saturating_sub(app.glyphs_area.x)
+                                        let left_edge = panes[0].x;
+                                        let right_boundary = panes[2].x.saturating_add(panes[2].width);
+                                        let max_width = right_boundary
+                                            .saturating_sub(left_edge)
                                             .saturating_sub(16)
                                             .max(22);
                                         app.glyphs_pane_width = mouse
                                             .column
-                                            .saturating_sub(app.glyphs_area.x)
+                                            .saturating_sub(left_edge)
                                             .clamp(22, max_width);
                                     }
                                     SplitterKind::GlyphTreeRows => {
@@ -4651,6 +4683,7 @@ fn adjust_selected_pipeline_param(app: &mut App, delta: f32) {
 // ── UI Rendering ─────────────────────────────────────────────────────────────
 fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let area = f.area();
+    app.terminal_area = area;
     app.ensure_visible_focus();
 
     // Background
@@ -4687,14 +4720,23 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         _ => 30,
     };
 
-    let panes = Layout::horizontal([
-        Constraint::Length(left_width),
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(app.pipeline_active_width),
-    ])
-    .split(root[1]);
+    let panes = if app.current_tab == 1 {
+        Layout::horizontal([
+            Constraint::Length(left_width),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(app.pipeline_active_width),
+        ])
+        .split(root[1])
+    } else {
+        Layout::horizontal([
+            Constraint::Length(left_width),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .split(root[1])
+    };
 
     app.output_area = panes[2];
 
@@ -4733,12 +4775,14 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
     render_output(f, app, panes[2]);
 
-    f.render_widget(Block::default().style(splitter_style), panes[3]);
-    app.splitter_areas.push(SplitterArea {
-        kind: SplitterKind::PipelineActive,
-        area: panes[3],
-    });
-    render_active_pipeline_list(f, app, panes[4]);
+    if app.current_tab == 1 {
+        f.render_widget(Block::default().style(splitter_style), panes[3]);
+        app.splitter_areas.push(SplitterArea {
+            kind: SplitterKind::PipelineActive,
+            area: panes[3],
+        });
+        render_active_pipeline_list(f, app, panes[4]);
+    }
 
     // ── Status bar ──
     render_status_bar(f, app, root[2]);
