@@ -35,8 +35,9 @@ clap = { version = "4.2.0", features = ["cargo", "derive"] }
 url = "2.3.1"
 atty = "0.2.14"
 once_cell = "1.21.3"
-fontconfig = "0.10"
-freetype-rs = "0.31"
+fontdb = "0.16"
+ab_glyph = "0.2"
+libz-sys = { version = "1", features = ["static"] }
 toml = "0.8"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
@@ -57,7 +58,7 @@ ratatui-explorer = { path = "./ratatui-explorer" }
 simplelog = "0.12.2"
 log = "0.4.29"
 imageproc = "0.26.0"
-mlua = { version = "0.11", features = ["luajit", "serialize", "send"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "serialize", "send"] }
 ratatui-image = { path = "./ratatui-image", default-features = false, features = ["crossterm"] }
 pollster = "0.4.0"
 

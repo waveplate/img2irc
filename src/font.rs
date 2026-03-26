@@ -1,4 +1,4 @@
-use freetype::{face::LoadFlag, Library};
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use toml::Value;
+use fontdb::{Database, Query, Family, Source};
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
 
@@ -37,9 +38,8 @@ struct CachedBlock {
 }
 
 struct FontContext {
-    library: Library,
-    user_faces: HashMap<String, freetype::Face>,
-    fallback_faces: HashMap<String, freetype::Face>,
+    user_faces: HashMap<String, FontVec>,
+    fallback_faces: HashMap<String, FontVec>,
     font_paths: Vec<String>,
     missing_chars: HashSet<char>,
     font_size: f32,
@@ -47,7 +47,6 @@ struct FontContext {
 
 impl FontContext {
     fn new(font_names: &[String], font_size: f32) -> Self {
-        let library = Library::init().expect("Failed to initialise FreeType");
         let mut font_paths = Vec::new();
         let mut user_faces = HashMap::new();
 
@@ -62,9 +61,10 @@ impl FontContext {
             if let Some(path) = find_font_path(font_name) {
                 log::info!("Loaded font: {}", path);
                 font_paths.push(path.clone());
-                if let Ok(face) = library.new_face(Path::new(&path), 0) {
-                    let _ = face.set_char_size((font_size * 64.0).round() as isize, 0, 72, 72);
-                    user_faces.insert(path, face);
+                if let Ok(data) = fs::read(&path) {
+                    if let Ok(font) = FontVec::try_from_vec(data) {
+                        user_faces.insert(path, font);
+                    }
                 }
             } else {
                 log::info!("Warning: Font '{}' not found.", font_name);
@@ -76,7 +76,6 @@ impl FontContext {
         }
 
         FontContext {
-            library,
             user_faces,
             fallback_faces: HashMap::new(),
             font_paths,
@@ -85,12 +84,12 @@ impl FontContext {
         }
     }
 
-    fn get_main_face(&self) -> &freetype::Face {
+    fn get_main_font(&self) -> &FontVec {
         // Return the first successfully loaded user face
         // We iterate font_paths to preserve priority order
         for path in &self.font_paths {
-            if let Some(face) = self.user_faces.get(path) {
-                return face;
+            if let Some(font) = self.user_faces.get(path) {
+                return font;
             }
         }
         // Should be unreachable due to check in new()
@@ -98,16 +97,26 @@ impl FontContext {
     }
 }
 
-static FC: Lazy<Mutex<Option<fontconfig::Fontconfig>>> =
-    Lazy::new(|| Mutex::new(fontconfig::Fontconfig::new()));
+static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
+    let mut db = Database::new();
+    db.load_system_fonts();
+    Mutex::new(db)
+});
 
 fn find_font_path(font_name: &str) -> Option<String> {
-    if let Some(fc) = FC.lock().unwrap().as_mut() {
-        fc.find(font_name, None)
-            .map(|f| f.path.display().to_string())
-    } else {
-        None
-    }
+    let db = DB.lock().unwrap();
+    let query = Query {
+        families: &[Family::Name(font_name)],
+        ..Default::default()
+    };
+    db.query(&query).and_then(|id| {
+        let (src, _) = db.face_source(id)?;
+        if let Source::File(path) = src {
+            Some(path.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Option<String>>>> =
@@ -283,43 +292,30 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     (resolved_groups, all_chars)
 }
 
-fn render_glyph_from_face(
-    face: &mut freetype::Face,
+fn render_glyph_from_font(
+    font: &FontVec,
     ch: char,
+    font_size: f32,
     cell_width: usize,
     cell_height: usize,
     global_ascender: i32,
 ) -> GlyphBitmap {
-    face.load_char(ch as usize, LoadFlag::RENDER | LoadFlag::TARGET_MONO)
-        .unwrap_or_else(|_| panic!("Failed to load glyph {}", ch));
-
-    let glyph = face.glyph();
-    let bitmap = glyph.bitmap();
-    let rows = bitmap.rows() as usize;
-    let width = bitmap.width() as usize;
-    let pitch = bitmap.pitch().unsigned_abs() as usize;
-
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
-    let glyph_ascender = glyph.bitmap_top();
-    let left = glyph.bitmap_left();
-
-    for row in 0..rows {
-        let start = row * pitch;
-        let end = start + pitch;
-        let row_data = &bitmap.buffer()[start..end];
-
-        for bit_idx in 0..width {
-            let byte_index = bit_idx / 8;
-            let bit = 7 - (bit_idx % 8);
-            if row_data[byte_index] & (1 << bit) != 0 {
-                let x = left + bit_idx as i32;
-                let y = global_ascender - glyph_ascender + row as i32;
-
-                if x >= 0 && x < cell_width as i32 && y >= 0 && y < cell_height as i32 {
-                    cell[y as usize][x as usize] = 1;
+    
+    let scale = PxScale::from(font_size);
+    let glyph = font.glyph_id(ch).with_scale_and_position(scale, ab_glyph::point(0.0, global_ascender as f32));
+    
+    if let Some(outlined) = font.outline_glyph(glyph) {
+        let bounds = outlined.px_bounds();
+        outlined.draw(|x, y, coverage| {
+            if coverage > 0.5 {
+                let px = bounds.min.x as i32 + x as i32;
+                let py = bounds.min.y as i32 + y as i32;
+                if px >= 0 && px < cell_width as i32 && py >= 0 && py < cell_height as i32 {
+                    cell[py as usize][px as usize] = 1;
                 }
             }
-        }
+        });
     }
     cell
 }
@@ -344,7 +340,7 @@ fn cache_dir() -> PathBuf {
 
 fn hash_context(font_paths: &[String], font_size: f32) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v3".hash(&mut hasher); // Invalidate old cache
+    "v4".hash(&mut hasher); // Invalidate old cache (v4 for ab_glyph)
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -364,67 +360,34 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
         }
     }
 
-    let main_face = ctx.get_main_face();
-    let metrics = main_face.size_metrics().expect("No size metrics available");
+    let main_font = ctx.get_main_font();
+    let scale = PxScale::from(ctx.font_size);
+    let scaled_font = main_font.as_scaled(scale);
 
-    // max_advance is often bloated by wide characters (like ligatures or CJK).
-    // Measure a standard character like 'X' or '0' to get the true monospace cell width.
-    let mut standard_advance = metrics.max_advance;
-    if main_face
-        .load_char('X' as usize, freetype::face::LoadFlag::DEFAULT)
-        .is_ok()
-    {
-        standard_advance = main_face.glyph().metrics().horiAdvance;
-    } else if main_face
-        .load_char('0' as usize, freetype::face::LoadFlag::DEFAULT)
-        .is_ok()
-    {
-        standard_advance = main_face.glyph().metrics().horiAdvance;
+    let ascender = scaled_font.ascent().round() as i32;
+    let descender = scaled_font.descent().round() as i32;
+    let line_gap = scaled_font.line_gap().round() as i32;
+    
+    let cell_height = (ascender - descender + line_gap).max(1) as usize;
+    
+    // Measure 'X' or '0' for monospace width
+    let glyph_id = main_font.glyph_id('X');
+    let mut advance = scaled_font.h_advance(glyph_id);
+    if advance == 0.0 {
+        let glyph_id = main_font.glyph_id('0');
+        advance = scaled_font.h_advance(glyph_id);
+    }
+    if advance == 0.0 {
+        advance = ctx.font_size * 0.6; // Fallback
     }
 
-    // Convert FreeType 26.6 fixed-point to integer with proper rounding (not truncation).
-    // Truncation can produce cell dimensions 1px too small at fractional font sizes,
-    // causing glyph bitmap clipping and visual artifacts.
-    let cell_width = (((standard_advance + 32) >> 6) as i32).max(1) as usize;
-    let ascender = ((metrics.ascender + 32) >> 6) as i32;
-    let descender = ((metrics.descender + 32) >> 6) as i32;
-    let cell_height = (((metrics.height + 32) >> 6) as i32).max(1) as usize;
+    let cell_width = advance.round().max(1.0) as usize;
 
-    /*
-    // Calibrate against Full Block (U+2588) to ensure gapless rendering
-    let full_block_char = '█';
-    for path in &ctx.font_paths {
-        if let Some(face) = ctx.user_faces.get(path) {
-            if face.get_char_index(full_block_char as usize) != 0 {
-                if face
-                    .load_char(
-                        full_block_char as usize,
-                        LoadFlag::RENDER | LoadFlag::TARGET_MONO,
-                    )
-                    .is_ok()
-                {
-                    let glyph = face.glyph();
-                    let bitmap = glyph.bitmap();
-                    if bitmap.rows() > 0 {
-                        let new_h = bitmap.rows() as usize;
-                        if new_h != cell_height {
-                            log::info!("Adjusting cell height from {} to {} (based on Full Block U+2588) to prevent vertical gaps.", cell_height, new_h);
-                        }
-                        cell_height = new_h;
-                        ascender = glyph.bitmap_top();
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    */
-
-    let float_width = standard_advance as f32 / 64.0;
-    let float_height = metrics.height as f32 / 64.0;
+    let float_width = advance;
+    let float_height = (ascender - descender + line_gap) as f32;
 
     log::info!(
-        "Metrics: Ascender={}, Descender={}, Height={}, Width={}, FloatW={}, FloatH={}",
+        "Metrics (ab_glyph): Ascender={}, Descender={}, Height={}, Width={}, FloatW={}, FloatH={}",
         ascender,
         descender,
         cell_height,
@@ -483,11 +446,12 @@ fn get_block_glyphs(
 
         // 1. User fonts
         for path in &ctx.font_paths {
-            if let Some(face) = ctx.user_faces.get_mut(path) {
-                if face.get_char_index(ch as usize) != 0 {
-                    let bitmap = render_glyph_from_face(
-                        face,
+            if let Some(font) = ctx.user_faces.get(path) {
+                if font.glyph_id(ch).0 != 0 {
+                    let bitmap = render_glyph_from_font(
+                        font,
                         ch,
+                        ctx.font_size,
                         metrics.cell_width,
                         metrics.cell_height,
                         metrics.ascender,
@@ -505,16 +469,18 @@ fn get_block_glyphs(
         // 2. Fallback
         if let Some(path) = get_fallback_font_path(ch) {
             if !ctx.fallback_faces.contains_key(&path) {
-                if let Ok(face) = ctx.library.new_face(Path::new(&path), 0) {
-                    let _ = face.set_char_size((ctx.font_size * 64.0).round() as isize, 0, 72, 72);
-                    ctx.fallback_faces.insert(path.clone(), face);
+                if let Ok(data) = fs::read(&path) {
+                    if let Ok(font) = FontVec::try_from_vec(data) {
+                        ctx.fallback_faces.insert(path.clone(), font);
+                    }
                 }
             }
-            if let Some(face) = ctx.fallback_faces.get_mut(&path) {
-                if face.get_char_index(ch as usize) != 0 {
-                    let bitmap = render_glyph_from_face(
-                        face,
+            if let Some(font) = ctx.fallback_faces.get(&path) {
+                if font.glyph_id(ch).0 != 0 {
+                    let bitmap = render_glyph_from_font(
+                        font,
                         ch,
+                        ctx.font_size,
                         metrics.cell_width,
                         metrics.cell_height,
                         metrics.ascender,
