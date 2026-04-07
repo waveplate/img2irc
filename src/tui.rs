@@ -2496,18 +2496,12 @@ fn render_eighth_block_bar(units: usize, cells: usize) -> String {
     bar
 }
 
-fn slider_bar_layout(area: Rect, label: &str, display_value: Option<&str>) -> Option<(u16, usize)> {
+fn slider_bar_layout(area: Rect, label: &str, _display_value: Option<&str>) -> Option<(u16, usize)> {
     let label_text = format!("  {}", label);
-    let value_text = if let Some(dv) = display_value {
-        format!("{} ", dv)
-    } else {
-        "0 ".to_string()
-    };
     let label_width = label_text.chars().take(14).count() as u16;
-    let value_width = value_text.chars().count() as u16;
     let bar_cells = area
         .width
-        .saturating_sub(label_width + value_width + 5)
+        .saturating_sub(label_width + 4)
         .min(SLIDER_BAR_CELLS as u16) as usize;
     if bar_cells == 0 {
         None
@@ -2561,37 +2555,43 @@ fn render_bar(
         cell.set_style(style);
     }
 
-    // Draw value on the right
-    let value_text = if let Some(dv) = display_value {
-        format!("{} ", dv)
-    } else {
-        format!("{} ", value)
-    };
-    let vx = area.x + area.width - value_text.len() as u16;
-    for (i, ch) in value_text.chars().enumerate() {
-        let x = vx + i as u16;
-        if x < area.x || x >= area.x + area.width {
-            continue;
-        }
-        let cell = &mut buf[(x, ly)];
-        cell.set_char(ch);
-        let style = if value != 0 {
-            Style::new().fg(TEXT).add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().fg(ACCENT).add_modifier(Modifier::BOLD)
-        };
-        cell.set_style(style);
-    }
-
     if let Some((bar_x, bar_cells)) = slider_bar_layout(area, label, display_value) {
         let units = quantized_slider_units(value, min, max, bar_cells);
-        let bar = render_eighth_block_bar(units, bar_cells);
-        let bar_style = Style::new()
-            .fg(if selected { BAR_FG } else { ACCENT })
-            .bg(Color::Rgb(15, 15, 20))
-            .add_modifier(Modifier::BOLD);
-        if bar_x < vx {
-            buf.set_string(bar_x, ly, bar, bar_style);
+        let bar_str = render_eighth_block_bar(units, bar_cells);
+        let bg_color = Color::Rgb(15, 15, 20);
+        let fg_color = if selected { BAR_FG } else { ACCENT };
+
+        for (i, ch) in bar_str.chars().enumerate() {
+            let x = bar_x + i as u16;
+            if x >= area.x + area.width {
+                continue;
+            }
+            let cell = &mut buf[(x, ly)];
+            cell.set_char(ch);
+            cell.set_style(Style::new().fg(fg_color).bg(bg_color));
+        }
+
+        let display_str = if let Some(dv) = display_value {
+            format!("{}", dv)
+        } else {
+            format!("{}", value)
+        };
+        let text_len = display_str.chars().count();
+        let center_idx = bar_cells.saturating_sub(text_len) / 2;
+        let is_filled = (units / 8) >= center_idx + text_len / 2;
+
+        for (i, ch) in display_str.chars().enumerate() {
+            let x = bar_x + center_idx as u16 + i as u16;
+            if x >= area.x + area.width {
+                continue;
+            }
+            let cell = &mut buf[(x, ly)];
+            cell.set_char(ch);
+            if is_filled {
+                cell.set_style(Style::new().fg(bg_color).bg(fg_color).add_modifier(Modifier::BOLD));
+            } else {
+                cell.set_style(Style::new().fg(fg_color).bg(bg_color).add_modifier(Modifier::BOLD));
+            }
         }
     }
 
@@ -5804,7 +5804,13 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             (active_f32, active_range)
         };
 
-        let text_fg = if is_disabled || is_add_node { TEXT_DIM } else { TEXT };
+        let text_fg = if is_disabled {
+            TEXT_DIM
+        } else if is_add_node {
+            if is_selected { Color::White } else { TEXT_DIM }
+        } else {
+            TEXT
+        };
         let icon_str = if is_add_node { "  " } else { "● " };
         let icon_fg = if is_disabled { TEXT_DIM } else { TOGGLE_ON };
 
@@ -5828,21 +5834,27 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
 
         if let Some(v) = display_f32 {
             let (min, max) = display_range.unwrap_or((0.0, 255.0));
-            let bar_cells = 16; 
+            let bar_cells = SLIDER_BAR_CELLS; 
             let units = quantized_slider_units_f32(v, min, max, bar_cells);
             let bar = render_eighth_block_bar(units, bar_cells);
 
-            spans.push(Span::styled(
-                bar,
-                Style::default()
-                    .fg(if is_selected || is_expanded { BAR_FG } else { ACCENT })
-                    .bg(Color::Rgb(15, 15, 20))
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                format!(" {:>4.0}", v),
-                Style::default().fg(text_fg),
-            ));
+            let display_str = format!("{}", v);
+            let text_len = display_str.chars().count();
+            let center_idx = bar_cells.saturating_sub(text_len) / 2;
+            let is_filled = (units / 8) >= center_idx + text_len / 2;
+
+            let fg_color = if is_selected || is_expanded { BAR_FG } else { ACCENT };
+            let bg_color = Color::Rgb(15, 15, 20);
+
+            let left_part: String = bar.chars().take(center_idx).collect();
+            let right_part: String = bar.chars().skip(center_idx + text_len).collect();
+
+            let text_bg = if is_filled { fg_color } else { bg_color };
+            let text_fg = if is_filled { bg_color } else { fg_color };
+
+            spans.push(Span::styled(left_part, Style::default().fg(fg_color).bg(bg_color)));
+            spans.push(Span::styled(display_str, Style::default().fg(text_fg).bg(text_bg).add_modifier(Modifier::BOLD)));
+            spans.push(Span::styled(right_part, Style::default().fg(fg_color).bg(bg_color)));
         }
 
         items.push(ListItem::new(Line::from(spans)).style(Style::default().bg(line_bg)));
