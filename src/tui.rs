@@ -5760,6 +5760,8 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if is_focused { ACCENT } else { BORDER }))
+        .border_set(ratatui::symbols::border::ROUNDED)
+        .style(Style::new().bg(SURFACE))
         .title(Span::styled(
             " Active Pipeline ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
@@ -5782,7 +5784,7 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             target_visual_index = current_visual_index;
         }
 
-        let line_bg = if is_selected || is_expanded { SELECTED_BG } else { BG };
+        let line_bg = if is_selected || is_expanded { SELECTED_BG } else { SURFACE };
         
         let (label, is_disabled, active_f32, active_range) = if is_add_node {
             ("＋ Add Effect...", false, None, None)
@@ -5810,12 +5812,11 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
         let padding = " ".repeat(remaining_len);
 
         let mut spans = vec![
-            Span::styled(icon_str, Style::default().fg(icon_fg).bg(line_bg)),
+            Span::styled(icon_str, Style::default().fg(icon_fg)),
             Span::styled(
                 format!("{}{}", label, padding),
                 Style::default()
                     .fg(text_fg)
-                    .bg(line_bg)
                     .add_modifier(if (is_selected || is_expanded) && !is_disabled && !is_add_node {
                         Modifier::BOLD
                     } else {
@@ -5826,22 +5827,24 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
 
         if let Some(v) = display_f32 {
             let (min, max) = display_range.unwrap_or((0.0, 255.0));
-            let units = quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
-            let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
+            let bar_cells = 16; 
+            let units = quantized_slider_units_f32(v, min, max, bar_cells);
+            let bar = render_eighth_block_bar(units, bar_cells);
 
             spans.push(Span::styled(
                 bar,
                 Style::default()
-                    .fg(if is_expanded { TEXT_DIM } else { ACCENT })
-                    .bg(Color::Rgb(15, 15, 20)),
+                    .fg(if is_selected || is_expanded { BAR_FG } else { ACCENT })
+                    .bg(Color::Rgb(15, 15, 20))
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 format!(" {:>4.0}", v),
-                Style::default().fg(text_fg).bg(line_bg),
+                Style::default().fg(text_fg),
             ));
         }
 
-        items.push(ListItem::new(Line::from(spans)));
+        items.push(ListItem::new(Line::from(spans)).style(Style::default().bg(line_bg)));
         current_visual_index += 1;
 
         if is_expanded {
@@ -5862,13 +5865,14 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
                 }
 
                 if e.effect.is_none() {
+                    let clean_label = e.label.replace("── ", "").replace(" ──", "");
                     items.push(
-                        ListItem::new(format!("   {}", e.label))
-                            .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
+                        ListItem::new(format!("   {}", clean_label))
+                            .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD).bg(SURFACE)),
                     );
                 } else {
-                    let lib_spans = vec![Span::styled(format!("    └ {}", e.label), lib_style)];
-                    items.push(ListItem::new(Line::from(lib_spans)));
+                    let lib_spans = vec![Span::styled(format!("      {}", e.label), lib_style)];
+                    items.push(ListItem::new(Line::from(lib_spans)).style(Style::default().bg(if lib_selected { SELECTED_BG } else { SURFACE })));
                 }
                 current_visual_index += 1;
             }
