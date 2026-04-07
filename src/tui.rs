@@ -59,7 +59,7 @@ const TAB_ACTIVE: Color = Color::Rgb(130, 140, 255);
 const STATUS_BG: Color = Color::Rgb(35, 35, 50);
 const OPTIMIZE_BG: Color = Color::Rgb(40, 60, 40);
 const GENERAL_PANE_WIDTH: u16 = 40;
-const PIPELINE_PANE_WIDTH: u16 = 40;
+const PIPELINE_PANE_WIDTH: u16 = 60;
 const GLYPHS_PANE_WIDTH: u16 = 40;
 const ACTIVE_PANE_WIDTH: u16 = 60;
 const SLIDER_BAR_CELLS: usize = 32;
@@ -995,6 +995,7 @@ struct App {
     value_edit_buffer: String,
 
     pipeline_nodes: Vec<crate::pipeline::ImageEffectNode>,
+    pub pipeline_list_state: ratatui::widgets::ListState,
     pipeline_next_id: usize,
     pipeline_dragging: Option<(usize, i16, i16)>,
     pipeline_scroll: u16,
@@ -1302,6 +1303,7 @@ impl App {
             edge_detection: render_args.edge_detection,
 
             pipeline_nodes: Vec::new(),
+            pipeline_list_state: ratatui::widgets::ListState::default(),
             pipeline_next_id: 1,
             pipeline_dragging: None,
             pipeline_scroll: 0,
@@ -1563,6 +1565,26 @@ impl App {
     fn pipeline_selected_index(&self) -> Option<usize> {
         self.pipeline_selected
             .and_then(|id| self.pipeline_nodes.iter().position(|node| node.id == id))
+    }
+
+    pub fn get_pipeline_clicked_layer(&self, inner_y: usize) -> (Option<usize>, Option<usize>) {
+        let visual_y = inner_y + self.pipeline_list_state.offset();
+        let mut current_y = 0;
+        let total_nodes = self.pipeline_nodes.len();
+        for i in 0..=total_nodes {
+            if visual_y == current_y {
+                return (Some(i), None);
+            }
+            current_y += 1;
+            if self.pipeline_expanded == Some(i) {
+                let catalog_len = crate::tui::PIPELINE_CATALOG.len();
+                if visual_y >= current_y && visual_y < current_y + catalog_len {
+                    return (Some(i), Some(visual_y - current_y));
+                }
+                current_y += catalog_len;
+            }
+        }
+        (None, None)
     }
 
     fn ensure_pipeline_selection(&mut self) {
@@ -3670,62 +3692,63 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let inner_y =
                                     mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
                                         as usize;
-
-                                let mut current_y = 0;
+                                
                                 let total_nodes = app.pipeline_nodes.len();
-                                for i in 0..=total_nodes {
-                                    if inner_y == current_y {
+                                match app.get_pipeline_clicked_layer(inner_y) {
+                                    (Some(i), None) => {
                                         if i < total_nodes {
                                             app.pipeline_selected = Some(app.pipeline_nodes[i].id);
                                         }
-                                        if app.selected_control == i
-                                            && app.pipeline_expanded.is_none()
-                                        {
+                                        if app.selected_control == i && app.pipeline_expanded.is_none() {
                                             app.pipeline_expanded = Some(i);
                                         } else if app.selected_control != i {
                                             app.selected_control = i;
                                             app.pipeline_expanded = None;
                                         }
 
-                                        if i < total_nodes {
-                                            let node_id = app.pipeline_nodes[i].id;
-                                            let inner_x = mouse
-                                                .column
-                                                .saturating_sub(app.pipeline_active_area.x);
-                                            if inner_x >= 21 && inner_x <= 53 {
-                                                let node = &mut app.pipeline_nodes[i];
-                                                if let (Some(_), Some((min, max))) = (
-                                                    node.effect.param_f32(),
-                                                    node.effect.param_range(),
-                                                ) {
-                                                    let ratio = ((inner_x as f32 - 21.0) / 32.0)
-                                                        .clamp(0.0, 1.0);
-                                                    node.effect
-                                                        .set_param(min + ratio * (max - min));
-                                                    app.mark_args_dirty();
-                                                    app.pipeline_dragging = Some((node_id, 1, 0));
+                                        let inner_x = mouse.column.saturating_sub(app.pipeline_active_area.x);
+                                        if inner_x >= 22 && inner_x <= 54 {
+                                            let is_expanded = app.pipeline_expanded == Some(i);
+                                            let mut used_range: Option<(f32, f32)> = None;
+                                            let mut active_param: Option<f32> = None;
+                                            
+                                            if is_expanded {
+                                                if let Some(preview) = &app.pipeline_preview_effect {
+                                                    used_range = preview.param_range();
+                                                    active_param = preview.param_f32();
                                                 }
-                                            } else {
-                                                app.pipeline_dragging = Some((node_id, 0, 0));
+                                            } else if i < total_nodes {
+                                                used_range = app.pipeline_nodes[i].effect.param_range();
+                                                active_param = app.pipeline_nodes[i].effect.param_f32();
                                             }
-                                        }
-                                        break;
-                                    }
-                                    current_y += 1;
 
-                                    if app.pipeline_expanded == Some(i) {
-                                        let scroll = app.pipeline_scroll as usize;
-                                        let count =
-                                            PIPELINE_CATALOG.iter().skip(scroll).take(12).count();
-                                        if inner_y >= current_y && inner_y < current_y + count {
-                                            let actual_lib_idx = scroll + (inner_y - current_y);
-                                            if PIPELINE_CATALOG[actual_lib_idx].effect.is_some() {
-                                                select_pipeline_library(&mut app, actual_lib_idx);
+                                            if let (Some(_), Some((min, max))) = (active_param, used_range) {
+                                                let ratio = ((inner_x as f32 - 22.0) / 32.0).clamp(0.0, 1.0);
+                                                let new_val = min + ratio * (max - min);
+                                                if is_expanded {
+                                                    if let Some(preview) = &mut app.pipeline_preview_effect {
+                                                        preview.set_param(new_val);
+                                                    }
+                                                    app.pipeline_dragging = Some((0, 2, i as i16));
+                                                } else {
+                                                    let node = &mut app.pipeline_nodes[i];
+                                                    node.effect.set_param(new_val);
+                                                    app.pipeline_dragging = Some((node.id, 1, 0));
+                                                }
+                                                app.mark_args_dirty();
+                                            } else if i < total_nodes {
+                                                app.pipeline_dragging = Some((app.pipeline_nodes[i].id, 0, 0));
                                             }
-                                            break;
+                                        } else if i < total_nodes {
+                                            app.pipeline_dragging = Some((app.pipeline_nodes[i].id, 0, 0));
                                         }
-                                        current_y += count;
                                     }
+                                    (Some(_), Some(lib_idx)) => {
+                                        if PIPELINE_CATALOG[lib_idx].effect.is_some() {
+                                            select_pipeline_library(&mut app, lib_idx);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                                 continue;
                             }
@@ -3992,44 +4015,40 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if mouse.column >= app.pipeline_active_area.x
-                                && mouse.column
-                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.column < app.pipeline_active_area.x + app.pipeline_active_area.width
                                 && mouse.row >= app.pipeline_active_area.y
-                                && mouse.row
-                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                                && mouse.row < app.pipeline_active_area.y + app.pipeline_active_area.height
                             {
-                                let inner_y =
-                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
-                                        as usize;
-                                if inner_y < app.pipeline_nodes.len() {
-                                    app.current_tab = 1;
-                                    app.pipeline_selected = Some(app.pipeline_nodes[inner_y].id);
-                                    app.selected_control = inner_y;
-                                    let node = &mut app.pipeline_nodes[inner_y];
-                                    node.disabled = !node.disabled;
-                                    app.mark_args_dirty();
+                                let inner_y = mouse.row.saturating_sub(app.pipeline_active_area.y + 1) as usize;
+                                if let (Some(idx), None) = app.get_pipeline_clicked_layer(inner_y) {
+                                    if idx < app.pipeline_nodes.len() {
+                                        app.current_tab = 1;
+                                        app.pipeline_selected = Some(app.pipeline_nodes[idx].id);
+                                        app.selected_control = idx;
+                                        let node = &mut app.pipeline_nodes[idx];
+                                        node.disabled = !node.disabled;
+                                        app.mark_args_dirty();
+                                    }
                                 }
                             }
                         }
                         MouseEventKind::Down(MouseButton::Middle) => {
                             if mouse.column >= app.pipeline_active_area.x
-                                && mouse.column
-                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.column < app.pipeline_active_area.x + app.pipeline_active_area.width
                                 && mouse.row >= app.pipeline_active_area.y
-                                && mouse.row
-                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
+                                && mouse.row < app.pipeline_active_area.y + app.pipeline_active_area.height
                             {
-                                let inner_y =
-                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
-                                        as usize;
-                                if inner_y < app.pipeline_nodes.len() {
-                                    let id = app.pipeline_nodes[inner_y].id;
-                                    app.pipeline_nodes.retain(|n| n.id != id);
-                                    if app.pipeline_selected == Some(id) {
-                                        app.pipeline_selected = None;
+                                let inner_y = mouse.row.saturating_sub(app.pipeline_active_area.y + 1) as usize;
+                                if let (Some(idx), None) = app.get_pipeline_clicked_layer(inner_y) {
+                                    if idx < app.pipeline_nodes.len() {
+                                        let id = app.pipeline_nodes[idx].id;
+                                        app.pipeline_nodes.retain(|n| n.id != id);
+                                        if app.pipeline_selected == Some(id) {
+                                            app.pipeline_selected = None;
+                                        }
+                                        app.ensure_pipeline_selection();
+                                        app.mark_args_dirty();
                                     }
-                                    app.ensure_pipeline_selection();
-                                    app.mark_args_dirty();
                                 }
                             }
                         }
@@ -4126,10 +4145,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 } else if app.current_tab == 1 && app.pipeline_expanded.is_some() {
                                     move_pipeline_library_selection(&mut app, 1);
                                 } else if app.current_tab == 1 {
-                                    if app.selected_control + 1 < app.pipeline_nodes.len() {
+                                    if app.selected_control < app.pipeline_nodes.len() {
                                         app.selected_control += 1;
-                                        app.pipeline_selected =
-                                            Some(app.pipeline_nodes[app.selected_control].id);
+                                        if let Some(node) = app.pipeline_nodes.get(app.selected_control) {
+                                            app.pipeline_selected = Some(node.id);
+                                        } else {
+                                            app.pipeline_selected = None;
+                                        }
                                     }
                                 } else if app.current_tab == 2 {
                                     match app.selected_control {
@@ -4166,8 +4188,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 } else if app.current_tab == 1 {
                                     if app.selected_control > 0 {
                                         app.selected_control -= 1;
-                                        app.pipeline_selected =
-                                            Some(app.pipeline_nodes[app.selected_control].id);
+                                        if let Some(node) = app.pipeline_nodes.get(app.selected_control) {
+                                            app.pipeline_selected = Some(node.id);
+                                        } else {
+                                            app.pipeline_selected = None;
+                                        }
                                     }
                                 } else if app.current_tab == 2 {
                                     match app.selected_control {
@@ -5736,7 +5761,7 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if is_focused { ACCENT } else { BORDER }))
         .title(Span::styled(
-            " Active Pipeline  [click=sel · enter=edit · Del=rem · Shift+↑/↓=move] ",
+            " Active Pipeline ",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
     let inner = block.inner(area);
@@ -5745,54 +5770,62 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
     let mut items = Vec::new();
     let total_nodes = app.pipeline_nodes.len();
 
-    // Iterate up to total_nodes to include an "Add Effect..." option at the end
+    let mut target_visual_index = 0;
+    let mut current_visual_index = 0;
+
     for i in 0..=total_nodes {
         let is_add_node = i == total_nodes;
         let is_selected = app.selected_control == i && app.pipeline_expanded.is_none();
         let is_expanded = app.pipeline_expanded == Some(i);
 
-        let line_bg = if is_selected || is_expanded {
-            SELECTED_BG
-        } else {
-            BG
-        };
+        if is_selected {
+            target_visual_index = current_visual_index;
+        }
 
-        let (label, is_disabled, param_f32, param_range) = if is_add_node {
-            (" ＋ Add Effect...", false, None, None)
+        let line_bg = if is_selected || is_expanded { SELECTED_BG } else { BG };
+        
+        let (label, is_disabled, active_f32, active_range) = if is_add_node {
+            ("＋ Add Effect...", false, None, None)
         } else {
             let node = &app.pipeline_nodes[i];
-            (
-                node.effect.name(),
-                node.disabled,
-                node.effect.param_f32(),
-                node.effect.param_range(),
-            )
+            (node.effect.name(), node.disabled, node.effect.param_f32(), node.effect.param_range())
         };
 
-        let text_fg = if is_disabled || is_add_node {
-            TEXT_DIM
+        let (display_f32, display_range) = if is_expanded {
+            if let Some(preview) = &app.pipeline_preview_effect {
+                (preview.param_f32(), preview.param_range())
+            } else {
+                (None, None)
+            }
         } else {
-            TEXT
+            (active_f32, active_range)
         };
-        let icon_str = if is_add_node { "   " } else { " ⬤ " };
+
+        let text_fg = if is_disabled || is_add_node { TEXT_DIM } else { TEXT };
+        let icon_str = if is_add_node { "  " } else { "● " };
         let icon_fg = if is_disabled { TEXT_DIM } else { TOGGLE_ON };
+
+        // 2 chars for icon_str. We want 22 total chars before slider. Pad label to 20.
+        let remaining_len = 20_usize.saturating_sub(label.chars().count());
+        let padding = " ".repeat(remaining_len);
 
         let mut spans = vec![
             Span::styled(icon_str, Style::default().fg(icon_fg).bg(line_bg)),
             Span::styled(
-                format!(" {:<14} ", label),
-                Style::default().fg(text_fg).bg(line_bg).add_modifier(
-                    if (is_selected || is_expanded) && !is_disabled && !is_add_node {
+                format!("{}{}", label, padding),
+                Style::default()
+                    .fg(text_fg)
+                    .bg(line_bg)
+                    .add_modifier(if (is_selected || is_expanded) && !is_disabled && !is_add_node {
                         Modifier::BOLD
                     } else {
                         Modifier::empty()
-                    },
-                ),
+                    }),
             ),
         ];
 
-        if let Some(v) = param_f32 {
-            let (min, max) = param_range.unwrap_or((0.0, 255.0));
+        if let Some(v) = display_f32 {
+            let (min, max) = display_range.unwrap_or((0.0, 255.0));
             let units = quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
             let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
 
@@ -5809,13 +5842,11 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
         }
 
         items.push(ListItem::new(Line::from(spans)));
+        current_visual_index += 1;
 
-        // If expanded, drop down the inline library list
         if is_expanded {
-            let scroll = app.pipeline_scroll as usize;
-            let catalog = PIPELINE_CATALOG;
-            // Iterate library skipping `scroll`, taking max 12 items
-            for (lib_idx, e) in catalog.iter().enumerate().skip(scroll).take(12) {
+            let catalog = crate::tui::PIPELINE_CATALOG;
+            for (lib_idx, e) in catalog.iter().enumerate() {
                 let lib_selected = lib_idx == app.pipeline_library_selected;
                 let lib_style = if lib_selected {
                     Style::default()
@@ -5826,40 +5857,31 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
                     Style::default().fg(TEXT_DIM)
                 };
 
+                if lib_selected {
+                    target_visual_index = current_visual_index;
+                }
+
                 if e.effect.is_none() {
-                    // Category header
                     items.push(
-                        ListItem::new(format!("     {}", e.label))
+                        ListItem::new(format!("   {}", e.label))
                             .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD)),
                     );
                 } else {
-                    let mut lib_spans =
-                        vec![Span::styled(format!("      └ {}", e.label), lib_style)];
-
-                    if lib_selected {
-                        if let Some(effect) = app.pipeline_preview_effect.as_ref() {
-                            if let Some(v) = effect.param_f32() {
-                                let (min, max) = effect.param_range().unwrap_or((0.0, 255.0));
-                                let units =
-                                    quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
-                                let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
-                                lib_spans.push(Span::styled("  ", lib_style));
-                                lib_spans.push(Span::styled(
-                                    bar,
-                                    Style::default().fg(ACCENT).bg(Color::Rgb(15, 15, 20)),
-                                ));
-                                lib_spans.push(Span::styled(format!(" {:>4.0}", v), lib_style));
-                            }
-                        }
-                    }
+                    let lib_spans = vec![Span::styled(format!("    └ {}", e.label), lib_style)];
                     items.push(ListItem::new(Line::from(lib_spans)));
                 }
+                current_visual_index += 1;
             }
         }
     }
 
+    if app.pipeline_list_state.selected() != Some(target_visual_index) {
+        app.pipeline_list_state.select(Some(target_visual_index));
+    }
+    
+    // We pass list to stateful widget
     let list = List::new(items);
-    f.render_widget(list, inner);
+    f.render_stateful_widget(list, inner, &mut app.pipeline_list_state);
 }
 
 fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
