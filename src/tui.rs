@@ -1588,14 +1588,13 @@ impl App {
     }
 
     fn ensure_pipeline_selection(&mut self) {
-        match self.pipeline_selected_index() {
-            Some(idx) => self.selected_control = idx,
-            None if !self.pipeline_nodes.is_empty() => {
-                self.selected_control = self.selected_control.min(self.pipeline_nodes.len() - 1);
+        if let Some(idx) = self.pipeline_selected_index() {
+            self.selected_control = idx;
+        } else {
+            self.selected_control = self.selected_control.min(self.pipeline_nodes.len());
+            if self.selected_control < self.pipeline_nodes.len() {
                 self.pipeline_selected = Some(self.pipeline_nodes[self.selected_control].id);
-            }
-            None => {
-                self.selected_control = 0;
+            } else {
                 self.pipeline_selected = None;
             }
         }
