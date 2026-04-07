@@ -3697,6 +3697,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     (Some(i), None) => {
                                         if i < total_nodes {
                                             app.pipeline_selected = Some(app.pipeline_nodes[i].id);
+                                        } else {
+                                            app.pipeline_selected = None;
                                         }
                                         if app.selected_control == i && app.pipeline_expanded.is_none() {
                                             app.pipeline_expanded = Some(i);
