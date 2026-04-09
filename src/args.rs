@@ -94,6 +94,8 @@ pub struct TextOverlay {
     pub text: String,
     pub x: i32,
     pub y: i32,
+    pub w: i32,
+    pub h: i32,
     pub fg: Option<ColorSpec>,
     pub bg: Option<ColorSpec>,
 }

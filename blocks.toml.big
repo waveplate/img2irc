@@ -1,0 +1,703 @@
+[ascii.space]
+glyphs = [0x20]
+
+[ascii.alpha]
+ranges = [[0x61, 0x7A]]
+
+[blocks.full]
+glyphs = [0x2588]
+
+[blocks.half]
+glyphs = [0x2580]
+
+[blocks.quarter]
+ranges = [[0x2596, 0x259F]]
+
+[blocks.eighth]
+ranges = [
+    [0x2581, 0x2587],
+    [0x2589, 0x258F]
+]
+
+[vb]
+ranges = [
+    [0x2581, 0x2587]
+]
+
+[hb]
+ranges = [
+    [0x2589, 0x258F]
+]
+
+[p]
+ranges = [[0x1FB3C, 0x1FB6F]]
+
+[p2]
+ranges = [[0x1FB3C, 0x1FB6F]]
+exclude = [0x1FB69, 0x1FB6B, 0x1FB6D, 0x1FB6F]
+
+[legacy.base.polygons]
+ranges = [[0x1FB3C, 0x1FB6F]]
+
+[legacy.base.sextants]
+ranges = [[0x1FB00, 0x1FB3B]]
+
+[legacy.supp]
+ranges = [[0x1CC00, 0x1CEBF]]
+
+[box]
+ranges = [[0x2500, 0x257F]]
+
+[braille]
+ranges = [[0x2800, 0x28FF]]
+
+[geo]
+ranges = [[0x25A0, 0x25FF]]
+
+[geo2]
+ranges = [[0x1F780, 0x1F7FF]]
+
+[arrows]
+ranges = [[0x2190, 0x21FF]]
+
+[ascii2]
+ranges = [[0x0000, 0x007F]]
+
+[latin_1]
+ranges = [[0x0080, 0x00FF]]
+
+[latin_ext_a]
+ranges = [[0x0100, 0x017F]]
+
+[latin_ext_b]
+ranges = [[0x0180, 0x024F]]
+
+[ipa]
+ranges = [[0x0250, 0x02AF]]
+
+[spacing_modifiers]
+ranges = [[0x02B0, 0x02FF]]
+
+[diacritics]
+ranges = [[0x0300, 0x036F]]
+
+[greek]
+ranges = [[0x0370, 0x03FF]]
+
+[cyrillic]
+ranges = [[0x0400, 0x04FF]]
+
+[cyrillic_sup]
+ranges = [[0x0500, 0x052F]]
+
+[armenian]
+ranges = [[0x0530, 0x058F]]
+
+[hebrew]
+ranges = [[0x0590, 0x05FF]]
+
+[arabic]
+ranges = [[0x0600, 0x06FF]]
+
+[syriac]
+ranges = [[0x0700, 0x074F]]
+
+[arabic_sup]
+ranges = [[0x0750, 0x077F]]
+
+[thaana]
+ranges = [[0x0780, 0x07BF]]
+
+[nko]
+ranges = [[0x07C0, 0x07FF]]
+
+[samaritan]
+ranges = [[0x0800, 0x083F]]
+
+[devanagari]
+ranges = [[0x0900, 0x097F]]
+
+[bengali]
+ranges = [[0x0980, 0x09FF]]
+
+[gurmukhi]
+ranges = [[0x0A00, 0x0A7F]]
+
+[gujarati]
+ranges = [[0x0A80, 0x0AFF]]
+
+[oriya]
+ranges = [[0x0B00, 0x0B7F]]
+
+[tamil]
+ranges = [[0x0B80, 0x0BFF]]
+
+[telugu]
+ranges = [[0x0C00, 0x0C7F]]
+
+[kannada]
+ranges = [[0x0C80, 0x0CFF]]
+
+[malayalam]
+ranges = [[0x0D00, 0x0D7F]]
+
+[sinhala]
+ranges = [[0x0D80, 0x0DFF]]
+
+[thai]
+ranges = [[0x0E00, 0x0E7F]]
+
+[lao]
+ranges = [[0x0E80, 0x0EFF]]
+
+[tibetan]
+ranges = [[0x0F00, 0x0FFF]]
+
+[myanmar]
+ranges = [[0x1000, 0x109F]]
+
+[georgian]
+ranges = [[0x10A0, 0x10FF]]
+
+[hangul_jamo]
+ranges = [[0x1100, 0x11FF]]
+
+[ethiopic]
+ranges = [[0x1200, 0x137F]]
+
+[cherokee]
+ranges = [[0x13A0, 0x13FF]]
+
+[canadian_aboriginal]
+ranges = [[0x1400, 0x167F]]
+
+[ogham]
+ranges = [[0x1680, 0x169F]]
+
+[runic]
+ranges = [[0x16A0, 0x16FF]]
+
+[tagalog]
+ranges = [[0x1700, 0x171F]]
+
+[hanunoo]
+ranges = [[0x1720, 0x173F]]
+
+[buhid]
+ranges = [[0x1740, 0x175F]]
+
+[tagbanwa]
+ranges = [[0x1760, 0x177F]]
+
+[khmer]
+ranges = [[0x1780, 0x17FF]]
+
+[mongolian]
+ranges = [[0x1800, 0x18AF]]
+
+[phonetic_ext]
+ranges = [[0x1D00, 0x1D7F]]
+
+[latin_ext_add]
+ranges = [[0x1E00, 0x1EFF]]
+
+[greek_ext]
+ranges = [[0x1F00, 0x1FFF]]
+
+[punctuation]
+ranges = [[0x2000, 0x206F]]
+
+[super_sub]
+ranges = [[0x2070, 0x209F]]
+
+[currency]
+ranges = [[0x20A0, 0x20CF]]
+
+[diacritics_sym]
+ranges = [[0x20D0, 0x20FF]]
+
+[letterlike]
+ranges = [[0x2100, 0x214F]]
+
+[numbers]
+ranges = [[0x2150, 0x218F]]
+
+[arrows2]
+ranges = [[0x2190, 0x21FF]]
+
+[math]
+ranges = [[0x2200, 0x22FF]]
+
+[tech]
+ranges = [[0x2300, 0x23FF]]
+
+[control_pics]
+ranges = [[0x2400, 0x243F]]
+
+[ocr]
+ranges = [[0x2440, 0x245F]]
+
+[enclosed_alpha]
+ranges = [[0x2460, 0x24FF]]
+
+[block]
+ranges = [[0x2580, 0x259F]]
+
+[geometric]
+ranges = [[0x25A0, 0x25FF]]
+
+[arrows_sup_a]
+ranges = [[0x27F0, 0x27FF]]
+
+[arrows_sup_b]
+ranges = [[0x2900, 0x297F]]
+
+[math_sym_b]
+ranges = [[0x2980, 0x29FF]]
+
+[math_sup]
+ranges = [[0x2A00, 0x2AFF]]
+
+[misc_arrows]
+ranges = [[0x2B00, 0x2BFF]]
+
+[glagolitic]
+ranges = [[0x2C00, 0x2C5F]]
+
+[latin_ext_c]
+ranges = [[0x2C60, 0x2C7F]]
+
+[coptic]
+ranges = [[0x2C80, 0x2CFF]]
+
+[georgian_sup]
+ranges = [[0x2D00, 0x2D2F]]
+
+[tifinagh]
+ranges = [[0x2D30, 0x2D7F]]
+
+[ethiopic_ext]
+ranges = [[0x2D80, 0x2DDF]]
+
+[cyrillic_ext_a]
+ranges = [[0x2DE0, 0x2DFF]]
+
+[punctuation_sup]
+ranges = [[0x2E00, 0x2E7F]]
+
+[cjk_radicals]
+ranges = [[0x2E80, 0x2EFF]]
+
+[kangxi]
+ranges = [[0x2F00, 0x2FDF]]
+
+[ideographic_desc]
+ranges = [[0x2FF0, 0x2FFF]]
+
+[cjk_symbols]
+ranges = [[0x3000, 0x303F]]
+
+[hiragana]
+ranges = [[0x3040, 0x309F]]
+
+[katakana]
+ranges = [[0x30A0, 0x30FF]]
+
+[bopomofo]
+ranges = [[0x3100, 0x312F]]
+
+[hangul_compat_jamo]
+ranges = [[0x3130, 0x318F]]
+
+[kanbun]
+ranges = [[0x3190, 0x319F]]
+
+[bopomofo_ext]
+ranges = [[0x31A0, 0x31BF]]
+
+[cjk_strokes]
+ranges = [[0x31C0, 0x31EF]]
+
+[katakana_ext]
+ranges = [[0x31F0, 0x31FF]]
+
+[cjk_enclosed]
+ranges = [[0x3200, 0x32FF]]
+
+[cjk_compat]
+ranges = [[0x3300, 0x33FF]]
+
+[cjk_ext_a]
+ranges = [[0x3400, 0x4DBF]]
+
+[yijing]
+ranges = [[0x4DC0, 0x4DFF]]
+
+[cjk]
+ranges = [[0x4E00, 0x9FFF]]
+
+[yi_syllables]
+ranges = [[0xA000, 0xA48F]]
+
+[yi_radicals]
+ranges = [[0xA490, 0xA4CF]]
+
+[lisu]
+ranges = [[0xA4D0, 0xA4FF]]
+
+[vai]
+ranges = [[0xA500, 0xA62F]]
+
+[cyrillic_ext_b]
+ranges = [[0xA640, 0xA69F]]
+
+[bamum]
+ranges = [[0xA6A0, 0xA6FF]]
+
+[tone_modifiers]
+ranges = [[0xA700, 0xA71F]]
+
+[latin_ext_d]
+ranges = [[0xA720, 0xA7FF]]
+
+[syloti_nagri]
+ranges = [[0xA800, 0xA82F]]
+
+[phags_pa]
+ranges = [[0xA840, 0xA87F]]
+
+[saurashtra]
+ranges = [[0xA880, 0xA8DF]]
+
+[devanagari_ext]
+ranges = [[0xA8E0, 0xA8FF]]
+
+[kayah_li]
+ranges = [[0xA900, 0xA92F]]
+
+[rejang]
+ranges = [[0xA930, 0xA95F]]
+
+[javanese]
+ranges = [[0xA980, 0xA9DF]]
+
+[cham]
+ranges = [[0xAA00, 0xAA5F]]
+
+[myanmar_ext_a]
+ranges = [[0xAA60, 0xAA7F]]
+
+[tai_viet]
+ranges = [[0xAA80, 0xAADF]]
+
+[meetei_mayek]
+ranges = [[0xABC0, 0xABFF]]
+
+[hangul_syllables]
+ranges = [[0xAC00, 0xD7AF]]
+
+[hangul_jamo_ext]
+ranges = [[0xD7B0, 0xD7FF]]
+
+[cjk_compat_ideo]
+ranges = [[0xF900, 0xFAFF]]
+
+[alpha_forms]
+ranges = [[0xFB00, 0xFB4F]]
+
+[arabic_forms_a]
+ranges = [[0xFB50, 0xFDFF]]
+
+[variation_selectors]
+ranges = [[0xFE00, 0xFE0F]]
+
+[vertical_forms]
+ranges = [[0xFE10, 0xFE1F]]
+
+[half_marks]
+ranges = [[0xFE20, 0xFE2F]]
+
+[cjk_compat_forms]
+ranges = [[0xFE30, 0xFE4F]]
+
+[small_forms]
+ranges = [[0xFE50, 0xFE6F]]
+
+[arabic_forms_b]
+ranges = [[0xFE70, 0xFEFF]]
+
+[specials]
+ranges = [[0xFFF0, 0xFFFF]]
+
+[linear_b_syllables]
+ranges = [[0x10000, 0x1007F]]
+
+[linear_b_ideograms]
+ranges = [[0x10080, 0x100FF]]
+
+[aegean_numbers]
+ranges = [[0x10100, 0x1013F]]
+
+[greek_numbers]
+ranges = [[0x10140, 0x1018F]]
+
+[old_italic]
+ranges = [[0x10300, 0x1032F]]
+
+[gothic]
+ranges = [[0x10330, 0x1034F]]
+
+[deseret]
+ranges = [[0x10400, 0x1044F]]
+
+[byzantine_music]
+ranges = [[0x1D000, 0x1D0FF]]
+
+[music]
+ranges = [[0x1D100, 0x1D1FF]]
+
+[greek_music]
+ranges = [[0x1D200, 0x1D24F]]
+
+[tai_xuan_jing]
+ranges = [[0x1D300, 0x1D35F]]
+
+[math_alpha]
+ranges = [[0x1D400, 0x1D7FF]]
+
+[mahjong]
+ranges = [[0x1F000, 0x1F02F]]
+
+[domino]
+ranges = [[0x1F030, 0x1F09F]]
+
+[cards]
+ranges = [[0x1F0A0, 0x1F0FF]]
+
+[cjk_ext_b]
+ranges = [[0x20000, 0x2A6DF]]
+
+[cjk_ext_c]
+ranges = [[0x2A700, 0x2B73F]]
+
+[cjk_ext_d]
+ranges = [[0x2B740, 0x2B81F]]
+
+[tags]
+ranges = [[0xE0000, 0xE007F]]
+
+[default]
+include = [
+    "p2",
+    "vb",
+    "hb",
+    "ascii.space",
+    "blocks.half",
+    "blocks.ufll",
+]
+
+[all]
+include = [
+    "ascii2",
+	"latin_1",
+	"latin_ext_a",
+	"latin_ext_b",
+	"ipa",
+	"spacing_modifiers",
+	"diacritics",
+	"greek",
+	"cyrillic",
+	"cyrillic_sup",
+	"armenian",
+	"hebrew",
+	"arabic",
+	"syriac",
+	"arabic_sup",
+	"thaana",
+	"nko",
+	"samaritan",
+	"devanagari",
+	"bengali",
+	"gurmukhi",
+	"gujarati",
+	"oriya",
+	"tamil",
+	"telugu",
+	"kannada",
+	"malayalam",
+	"sinhala",
+	"thai",
+	"lao",
+	"tibetan",
+	"myanmar",
+	"georgian",
+	"hangul_jamo",
+	"ethiopic",
+	"cherokee",
+	"canadian_aboriginal",
+	"ogham",
+	"runic",
+	"tagalog",
+	"hanunoo",
+	"buhid",
+	"tagbanwa",
+	"khmer",
+	"mongolian",
+	"phonetic_ext",
+	"latin_ext_add",
+	"greek_ext",
+	"punctuation",
+	"super_sub",
+	"currency",
+	"diacritics_sym",
+	"letterlike",
+	"numbers",
+	"arrows2",
+	"math",
+	"tech",
+	"control_pics",
+	"ocr",
+	"enclosed_alpha",
+	"box",
+	"block",
+	"geometric",
+	"arrows_sup_a",
+	"braille",
+	"arrows_sup_b",
+	"math_sym_b",
+	"math_sup",
+	"misc_arrows",
+	"glagolitic",
+	"latin_ext_c",
+	"coptic",
+	"georgian_sup",
+	"tifinagh",
+	"ethiopic_ext",
+	"cyrillic_ext_a",
+	"punctuation_sup",
+	"cjk_radicals",
+	"kangxi",
+	"ideographic_desc",
+	"cjk_symbols",
+	"hiragana",
+	"katakana",
+	"bopomofo",
+	"hangul_compat_jamo",
+	"kanbun",
+	"bopomofo_ext",
+	"cjk_strokes",
+	"katakana_ext",
+	"cjk_enclosed",
+	"cjk_compat",
+	"cjk_ext_a",
+	"yijing",
+	"cjk",
+	"yi_syllables",
+	"yi_radicals",
+	"lisu",
+	"vai",
+	"cyrillic_ext_b",
+	"bamum",
+	"tone_modifiers",
+	"latin_ext_d",
+	"syloti_nagri",
+	"phags_pa",
+	"saurashtra",
+	"devanagari_ext",
+	"kayah_li",
+	"rejang",
+	"javanese",
+	"cham",
+	"myanmar_ext_a",
+	"tai_viet",
+	"meetei_mayek",
+	"hangul_syllables",
+	"hangul_jamo_ext",
+	"cjk_compat_ideo",
+	"alpha_forms",
+	"arabic_forms_a",
+	"variation_selectors",
+	"vertical_forms",
+	"half_marks",
+	"cjk_compat_forms",
+	"small_forms",
+	"arabic_forms_b",
+	"specials",
+	"linear_b_syllables",
+	"linear_b_ideograms",
+	"aegean_numbers",
+	"greek_numbers",
+	"old_italic",
+	"gothic",
+	"deseret",
+	"byzantine_music",
+	"music",
+	"greek_music",
+	"tai_xuan_jing",
+	"math_alpha",
+	"mahjong",
+	"domino",
+	"cards",
+	"cjk_ext_b",
+	"cjk_ext_c",
+	"cjk_ext_d",
+	"tags"
+]
+
+[a]
+include = [
+    "ascii2",
+	"latin_1",
+	"latin_ext_a",
+	"latin_ext_b",
+	"ipa",
+	"spacing_modifiers",
+	"diacritics",
+	"greek",
+	"cyrillic",
+	"cyrillic_sup",
+	"armenian",
+	"hebrew",
+	"arabic"
+]
+
+[b]
+include = [
+	"syriac",
+	"arabic_sup",
+	"thaana",
+	"nko",
+	"samaritan",
+	"devanagari",
+	"bengali",
+	"gurmukhi",
+	"gujarati",
+	"oriya",
+	"tamil",
+	"telugu",
+	"kannada",
+	"malayalam",
+	"sinhala",
+	"thai"
+]
+
+[c]
+include = [
+	"glagolitic",
+	"latin_ext_c",
+	"coptic",
+	"georgian_sup",
+	"tifinagh",
+	"ethiopic_ext",
+	"cyrillic_ext_a",
+	"punctuation_sup",
+	"cjk_radicals",
+	"kangxi",
+	"ideographic_desc",
+	"cjk_symbols",
+	"hiragana",
+	"katakana",
+	"bopomofo",
+	"hangul_compat_jamo",
+	"kanbun"
+]
