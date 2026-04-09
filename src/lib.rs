@@ -3,11 +3,12 @@ pub mod config;
 pub mod draw;
 pub mod effects;
 pub mod font;
-pub mod pipeline;
 pub mod gpu;
 pub mod palette;
+pub mod pipeline;
 
 pub mod tui;
+pub mod colorpicker;
 
 use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
@@ -136,6 +137,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
 
         score: args.score,
         pipeline: Vec::new(),
+        overlays: Vec::new(),
     }
 }
 

@@ -60,7 +60,8 @@ const STATUS_BG: Color = Color::Rgb(35, 35, 50);
 const OPTIMIZE_BG: Color = Color::Rgb(40, 60, 40);
 const GENERAL_PANE_WIDTH: u16 = 40;
 const PIPELINE_PANE_WIDTH: u16 = 60;
-const GLYPHS_PANE_WIDTH: u16 = 40;
+const GLYPHS_PANE_WIDTH: u16 = 30;
+const TEXT_PANE_WIDTH: u16 = 40;
 const ACTIVE_PANE_WIDTH: u16 = 60;
 const SLIDER_BAR_CELLS: usize = 32;
 const EIGHTH_BLOCKS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
@@ -716,6 +717,7 @@ enum FocusTarget {
     Pipeline,
     GlyphTree,
     GlyphList,
+    Text,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -726,6 +728,7 @@ enum SplitterKind {
     Glyphs,
     GlyphTreeRows,
     GlyphListRows,
+    Text,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1137,6 +1140,12 @@ struct App {
     splitter_areas: Vec<SplitterArea>,
     dragging_splitter: Option<SplitterKind>,
     terminal_area: Rect,
+
+    text_pane_width: u16,
+    text_area: Rect,
+    text_list_state: ListState,
+    text_selected: Option<usize>,
+    color_picker_state: Option<crate::colorpicker::ColorPickerState>,
 }
 
 impl App {
@@ -1343,6 +1352,12 @@ impl App {
             splitter_areas: Vec::new(),
             dragging_splitter: None,
             terminal_area: Rect::default(),
+            
+            text_pane_width: TEXT_PANE_WIDTH,
+            text_area: Rect::default(),
+            text_list_state: ratatui::widgets::ListState::default(),
+            text_selected: None,
+            color_picker_state: None,
         }
     }
 
@@ -1469,7 +1484,7 @@ impl App {
     }
 
     fn visible_tabs(&self) -> Vec<usize> {
-        vec![0, 1, 2]
+        vec![0, 1, 2, 3]
     }
 
     fn visible_focus_targets(&self) -> Vec<FocusTarget> {
@@ -1477,6 +1492,7 @@ impl App {
             0 => vec![FocusTarget::General],
             1 => vec![FocusTarget::Pipeline],
             2 => vec![FocusTarget::GlyphTree, FocusTarget::GlyphList],
+            3 => vec![FocusTarget::Text],
             _ => vec![FocusTarget::General],
         }
     }
@@ -1489,6 +1505,7 @@ impl App {
                 0 => FocusTarget::GlyphTree,
                 _ => FocusTarget::GlyphList,
             }),
+            3 => Some(FocusTarget::Text),
             _ => None,
         }
     }
@@ -1509,6 +1526,9 @@ impl App {
             FocusTarget::GlyphList => {
                 self.current_tab = 2;
                 self.selected_control = 1;
+            }
+            FocusTarget::Text => {
+                self.current_tab = 3;
             }
         }
     }
@@ -3320,6 +3340,96 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue;
             }
 
+            // --- Color Picker Modal ---
+            if app.color_picker_state.is_some() {
+                if let Event::Mouse(mouse) = event {
+                    let mut handled = false;
+                    let terminal_area = app.terminal_area;
+                    let cp_width = 56;
+                    let cp_height = 17;
+                    let area_x = (terminal_area.width.saturating_sub(cp_width)) / 2;
+                    let area_y = (terminal_area.height.saturating_sub(cp_height)) / 2;
+                    let cp_rect = Rect::new(area_x, area_y, cp_width, cp_height);
+
+                    if let Some(cp_state) = &mut app.color_picker_state {
+                        if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
+                            handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect);
+                        } else if mouse.kind == crossterm::event::MouseEventKind::Drag(MouseButton::Left) {
+                            handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
+                        } else if mouse.kind == crossterm::event::MouseEventKind::Up(MouseButton::Left) {
+                            cp_state.is_dragging_main = false;
+                            cp_state.is_dragging_hue = false;
+                            handled = true;
+                        }
+
+                        if !cp_state.is_open {
+                            if cp_state.ok_trigger {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        let ov = &mut app.render_args.overlays[sel - 1];
+                                        if let Some(fg_idx) = cp_state.fg_idx {
+                                            ov.fg = crate::args::ColorSpec::Index(fg_idx as u8);
+                                        } else {
+                                            ov.fg = crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]);
+                                        }
+                                        if let Some(bg_rgb) = cp_state.bg_rgb {
+                                            if let Some(bg_idx) = cp_state.bg_idx {
+                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                            } else {
+                                                ov.bg = Some(crate::args::ColorSpec::Rgb([bg_rgb.0, bg_rgb.1, bg_rgb.2]));
+                                            }
+                                        } else {
+                                            ov.bg = None;
+                                        }
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                            }
+                            // Important: need to delay setting to None to avoid borrow checker conflicts
+                        }
+                    }
+                    if app.color_picker_state.as_ref().map(|s| !s.is_open).unwrap_or(false) {
+                        app.color_picker_state = None;
+                    }
+                    if handled { continue; }
+                } else if let Event::Key(key) = event {
+                    if key.code == KeyCode::Esc {
+                        app.color_picker_state = None;
+                    } else if key.code == KeyCode::Enter {
+                        if let Some(cp_state) = &mut app.color_picker_state {
+                            cp_state.ok_trigger = true;
+                            cp_state.is_open = false;
+                        }
+                        if let Some(cp_state) = &app.color_picker_state {
+                            if cp_state.ok_trigger {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        let ov = &mut app.render_args.overlays[sel - 1];
+                                        if let Some(fg_idx) = cp_state.fg_idx {
+                                            ov.fg = crate::args::ColorSpec::Index(fg_idx as u8);
+                                        } else {
+                                            ov.fg = crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]);
+                                        }
+                                        if let Some(bg_rgb) = cp_state.bg_rgb {
+                                            if let Some(bg_idx) = cp_state.bg_idx {
+                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                            } else {
+                                                ov.bg = Some(crate::args::ColorSpec::Rgb([bg_rgb.0, bg_rgb.1, bg_rgb.2]));
+                                            }
+                                        } else {
+                                            ov.bg = None;
+                                        }
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                            }
+                        }
+                        app.color_picker_state = None;
+                    }
+                    continue;
+                }
+            }
+
             match event {
                 Event::Mouse(mouse) => {
                     match mouse.kind {
@@ -3844,6 +3954,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     0 => app.general_pane_width,
                                     1 => app.pipeline_pane_width,
                                     2 => app.glyphs_pane_width,
+                                    3 => app.text_pane_width,
                                     _ => 30,
                                 };
 
@@ -3855,6 +3966,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 .split(root[1]);
 
                                 match splitter {
+                                    SplitterKind::Text => {
+                                        let left_edge = panes[0].x;
+                                        let right_boundary =
+                                            panes[2].x.saturating_add(panes[2].width);
+                                        let max_width = right_boundary
+                                            .saturating_sub(left_edge)
+                                            .saturating_sub(16)
+                                            .max(18);
+                                        app.text_pane_width = mouse
+                                            .column
+                                            .saturating_sub(left_edge)
+                                            .clamp(18, max_width);
+                                    }
                                     SplitterKind::General => {
                                         let left_edge = panes[0].x;
                                         let right_boundary =
@@ -4080,8 +4204,35 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
-                            KeyCode::Char('r') | KeyCode::Delete if app.current_tab == 0 => {
+                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 0 => {
                                 reset_control(&mut app);
+                            }
+                            KeyCode::Delete | KeyCode::Backspace if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 => {
+                                let sel = app.text_selected.unwrap();
+                                app.render_args.overlays.remove(sel - 1);
+                                app.text_selected = Some(0);
+                                app.text_list_state.select(Some(0));
+                                app.mark_args_dirty();
+                            }
+                            KeyCode::Char(c)
+                                if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 && (c == 'e' || c == 'E') =>
+                            {
+                                let sel = app.text_selected.unwrap();
+                                app.value_edit_buffer = app.render_args.overlays[sel - 1].text.clone();
+                                app.input_mode = InputMode::ValueEdit;
+                            }
+                            KeyCode::Char(c)
+                                if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 && (c == 'c' || c == 'C') =>
+                            {
+                                // Start Color Picker
+                                let is_irc = app.render_mode_idx == 1; // Wait, 1 is ANSI. IRC in index? Let's check `get_render_mode_idx()`
+                                // Wait, the easiest is to just use modes.
+                                let mode = match app.render_mode_idx {
+                                    1 => crate::colorpicker::PaletteMode::Ansi,
+                                    0 | 2 => crate::colorpicker::PaletteMode::Ansi24,
+                                    _ => crate::colorpicker::PaletteMode::Irc,
+                                };
+                                app.color_picker_state = Some(crate::colorpicker::ColorPickerState::new(mode, true));
                             }
                             KeyCode::Char(c)
                                 if app.current_tab == 0 && (c.is_ascii_digit() || c == '-') =>
@@ -4163,6 +4314,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                         _ => {}
                                     }
+                                } else if app.current_tab == 3 {
+                                    let items_len = app.render_args.overlays.len() + 1; // +1 for Add New
+                                    let curr = app.text_selected.unwrap_or(0);
+                                    let next = (curr + 1).min(items_len - 1);
+                                    app.text_selected = Some(next);
+                                    app.text_list_state.select(Some(next));
                                 } else {
                                     let count = app.control_count();
                                     if count > 0 {
@@ -4205,6 +4362,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                         _ => {}
                                     }
+                                } else if app.current_tab == 3 {
+                                    let curr = app.text_selected.unwrap_or(0);
+                                    let next = curr.saturating_sub(1);
+                                    app.text_selected = Some(next);
+                                    app.text_list_state.select(Some(next));
                                 } else {
                                     let count = app.control_count();
                                     if count > 0 {
@@ -4214,7 +4376,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].x = app.render_args.overlays[sel - 1].x.saturating_sub(1);
+                                            app.mark_args_dirty();
+                                        }
+                                    }
+                                } else if app.current_tab == 2 {
                                     if app.selected_control > 0 {
                                         app.selected_control -= 1;
                                     }
@@ -4266,7 +4435,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].x = app.render_args.overlays[sel - 1].x.saturating_add(1);
+                                            app.mark_args_dirty();
+                                        }
+                                    }
+                                } else if app.current_tab == 2 {
                                     if app.selected_control < 1 {
                                         app.selected_control += 1;
                                     }
@@ -4336,7 +4512,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Enter => {
-                                if app.current_tab == 2 {
+                                if app.current_tab == 3 {
+                                    if app.text_selected == Some(0) {
+                                        app.render_args.overlays.push(crate::args::TextOverlay {
+                                            text: "Text".to_string(),
+                                            x: 0,
+                                            y: 0,
+                                            fg: crate::args::ColorSpec::Rgb([255, 255, 255]),
+                                            bg: None,
+                                        });
+                                        app.text_selected = Some(app.render_args.overlays.len());
+                                        app.text_list_state.select(app.text_selected);
+                                        app.mark_args_dirty();
+                                    } else {
+                                        let sel = app.text_selected.unwrap();
+                                        app.value_edit_buffer = app.render_args.overlays[sel - 1].text.clone();
+                                        app.input_mode = InputMode::ValueEdit;
+                                    }
+                                } else if app.current_tab == 2 {
                                     if app.selected_control == 0 {
                                         app.toggle_tree_selection();
                                     }
@@ -4679,6 +4872,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         0 => app.general_pane_width,
         1 => app.pipeline_pane_width,
         2 => app.glyphs_pane_width,
+        3 => app.text_pane_width,
         _ => 30,
     };
 
@@ -4716,6 +4910,15 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             f.render_widget(Block::default().style(splitter_style), panes[1]);
             app.splitter_areas.push(SplitterArea {
                 kind: SplitterKind::Glyphs,
+                area: panes[1],
+            });
+        }
+        3 => {
+            app.text_area = panes[0];
+            render_text_tab(f, app, panes[0]);
+            f.render_widget(Block::default().style(splitter_style), panes[1]);
+            app.splitter_areas.push(SplitterArea {
+                kind: SplitterKind::Text,
                 area: panes[1],
             });
         }
@@ -4874,7 +5077,7 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
 fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let layout = Layout::horizontal([
         Constraint::Length(10), // app title
-        Constraint::Length(32), // tabs
+        Constraint::Length(40), // tabs
         Constraint::Min(0),     // file + spinner
     ])
     .split(area);
@@ -4890,7 +5093,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(title)), layout[0]);
 
     // Tabs
-    let tab_names = [" General ", " Pipeline ", " Glyphs "];
+    let tab_names = [" General ", " Pipeline ", " Glyphs ", " Text "];
     let tabs = Tabs::new(
         tab_names
             .iter()
@@ -4921,7 +5124,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.tab_areas = tab_rects;
 
     // Show image path after tabs
-    let mut x = layout[2].x + 1;
+    let x = layout[2].x + 1;
     let path_display = format!("📁 {}", app.image_path);
     let right_edge = area.x + area.width;
     let avail = right_edge.saturating_sub(x) as usize;
@@ -5664,6 +5867,56 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
                 Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
                     .alignment(Alignment::Center);
             f.render_widget(p, inner);
+        }
+    }
+}
+
+fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Text Overlays ")
+        .style(Style::default().fg(TEXT_DIM));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(5),
+        Constraint::Length(10), // Params section
+    ]).split(inner);
+
+    let mut items = vec![ListItem::new(Line::from(vec![
+        Span::styled(" + Add New Text Overlay", Style::default().fg(Color::Green))
+    ]))];
+
+    for (i, ov) in app.render_args.overlays.iter().enumerate() {
+        let is_selected = app.text_selected == Some(i + 1);
+        let prefix = if is_selected { "▶ " } else { "  " };
+        let text_trunc = if ov.text.len() > 15 { format!("{}...", &ov.text[0..15]) } else { ov.text.clone() };
+        let mut ts = ratatui::text::Text::from(format!("{}'{}' @ {},{}", prefix, text_trunc, ov.x, ov.y));
+        if is_selected {
+            ts = ts.patch_style(Style::default().fg(TAB_ACTIVE).add_modifier(Modifier::BOLD));
+        }
+        items.push(ListItem::new(ts));
+    }
+
+    let list = List::new(items)
+        .highlight_style(Style::default().bg(Color::DarkGray));
+    f.render_stateful_widget(list, chunks[0], &mut app.text_list_state);
+
+    if let Some(sel) = app.text_selected {
+        if sel > 0 && sel <= app.render_args.overlays.len() {
+            let ov = &app.render_args.overlays[sel - 1];
+            let param_block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Edit Overlay ");
+            let param_inner = param_block.inner(chunks[1]);
+            f.render_widget(param_block, chunks[1]);
+            
+            f.render_widget(
+                Paragraph::new(format!("Text: {}\nX: {}  Y: {}\nFG: {:?}\nBG: {:?}\n\n[e]dit  [c]olorpicker  [Ctrl+D]elete", ov.text, ov.x, ov.y, ov.fg, ov.bg)),
+                param_inner
+            );
         }
     }
 }
