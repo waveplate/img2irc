@@ -3368,9 +3368,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         let ov = &mut app.render_args.overlays[sel - 1];
                                         if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg = crate::args::ColorSpec::Index(fg_idx as u8);
+                                            ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
                                         } else {
-                                            ov.fg = crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]);
+                                            ov.fg = Some(crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]));
                                         }
                                         if let Some(bg_rgb) = cp_state.bg_rgb {
                                             if let Some(bg_idx) = cp_state.bg_idx {
@@ -3406,9 +3406,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         let ov = &mut app.render_args.overlays[sel - 1];
                                         if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg = crate::args::ColorSpec::Index(fg_idx as u8);
+                                            ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
                                         } else {
-                                            ov.fg = crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]);
+                                            ov.fg = Some(crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]));
                                         }
                                         if let Some(bg_rgb) = cp_state.bg_rgb {
                                             if let Some(bg_idx) = cp_state.bg_idx {
@@ -3633,7 +3633,61 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 && mouse.row >= app.output_area.y
                                 && mouse.row < app.output_area.y + app.output_area.height
                             {
-                                if app.get_current_control_id() == ControlId::Eyedropper {
+                                if app.current_tab == 3 {
+                                    let inner_height = app.output_area.height.saturating_sub(2);
+                                    let line_count = app.cached_render.lines().count() as u16;
+                                    let pad_y = if line_count < inner_height {
+                                        inner_height.saturating_sub(line_count).saturating_div(2)
+                                    } else {
+                                        0
+                                    };
+                                    if mouse.row >= app.output_area.y + 1 + pad_y {
+                                        let content_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as usize + app.scroll as usize;
+                                        if let Some(res) = &app.cached_result {
+                                            if content_y < res.grid.len() {
+                                                let row = &res.grid[content_y];
+                                                let inner_width = app.output_area.width.saturating_sub(2);
+                                                let row_len = row.len() as u16;
+                                                let pad_x = if inner_width > row_len {
+                                                    (inner_width - row_len) / 2
+                                                } else {
+                                                    0
+                                                };
+                                                let start_x = app.output_area.x + 1 + pad_x;
+                                                if mouse.column >= start_x && mouse.column < start_x + row_len {
+                                                    let content_x = (mouse.column - start_x) as usize;
+                                                    let cell_x = content_x as i32;
+                                                    let cell_y = content_y as i32;
+                                                    
+                                                    let mut found = None;
+                                                    for (idx, ov) in app.render_args.overlays.iter().enumerate() {
+                                                        if ov.y == cell_y && cell_x >= ov.x && cell_x < ov.x + ov.text.chars().count() as i32 {
+                                                            found = Some(idx);
+                                                            break;
+                                                        }
+                                                    }
+                                                    
+                                                    if let Some(idx) = found {
+                                                        app.text_selected = Some(idx + 1);
+                                                        app.text_list_state.select(Some(idx + 1));
+                                                    } else {
+                                                        app.render_args.overlays.push(crate::args::TextOverlay {
+                                                            text: "Text".to_string(),
+                                                            x: cell_x,
+                                                            y: cell_y,
+                                                            fg: None,
+                                                            bg: None,
+                                                        });
+                                                        app.text_selected = Some(app.render_args.overlays.len());
+                                                        app.text_list_state.select(app.text_selected);
+                                                        app.mark_args_dirty();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                } else if app.get_current_control_id() == ControlId::Eyedropper {
                                     if let Some(res) = &app.cached_result {
                                         let inner_height = app.output_area.height.saturating_sub(2);
                                         let line_count = app.cached_render.lines().count() as u16;
@@ -4518,14 +4572,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             text: "Text".to_string(),
                                             x: 0,
                                             y: 0,
-                                            fg: crate::args::ColorSpec::Rgb([255, 255, 255]),
+                                            fg: Some(crate::args::ColorSpec::Rgb([255, 255, 255])),
                                             bg: None,
                                         });
                                         app.text_selected = Some(app.render_args.overlays.len());
                                         app.text_list_state.select(app.text_selected);
                                         app.mark_args_dirty();
-                                    } else {
-                                        let sel = app.text_selected.unwrap();
+                                    } else if let Some(sel) = app.text_selected {
                                         app.value_edit_buffer = app.render_args.overlays[sel - 1].text.clone();
                                         app.input_mode = InputMode::ValueEdit;
                                     }

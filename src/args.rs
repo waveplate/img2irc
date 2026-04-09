@@ -83,6 +83,21 @@ impl fmt::Display for Param {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ColorSpec {
+    Index(u8),
+    Rgb([u8; 3]),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TextOverlay {
+    pub text: String,
+    pub x: i32,
+    pub y: i32,
+    pub fg: Option<ColorSpec>,
+    pub bg: Option<ColorSpec>,
+}
+
 // Struct used for actual rendering (all values resolved to f32)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RenderArgs {
@@ -170,6 +185,8 @@ pub struct RenderArgs {
     pub score: bool,
     pub save: Option<String>,
     pub pipeline: Vec<crate::pipeline::ImageEffect>,
+    #[serde(default)]
+    pub overlays: Vec<TextOverlay>,
 }
 
 #[derive(Parser, Clone, Debug)]

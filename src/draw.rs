@@ -1433,7 +1433,7 @@ pub fn render_blocks_smooth(
 
         // Precompute rendered FG/BG colors for each cell
         let cell_colors: Vec<([u8; 3], [u8; 3])> = grid_data.iter().map(|d| (d.fg, d.bg)).collect();
-        
+
         let img_w = grid_w * gw;
         let img_h = grid_h * gh;
         let mut img = vec![[0u8; 3]; img_w * img_h];
@@ -1448,7 +1448,11 @@ pub fn render_blocks_smooth(
                 for i in 0..gh {
                     for j in 0..gw {
                         let bit = glyph.bitmap[i * gw + j];
-                        let color = if (bit ^ (inv as u8)) == 1 { my_fg } else { my_bg };
+                        let color = if (bit ^ (inv as u8)) == 1 {
+                            my_fg
+                        } else {
+                            my_bg
+                        };
                         img[(cy * gh + i) * img_w + (cx * gw + j)] = color;
                     }
                 }
@@ -1470,36 +1474,88 @@ pub fn render_blocks_smooth(
 
                 if tl == tr && tl == bl && tl != br {
                     total_corners += 1;
-                    let c1 = tl; let c2 = br;
+                    let c1 = tl;
+                    let c2 = br;
                     let mut lh = 0;
-                    while x + lh < img_w && img[(y - 1) * img_w + x + lh] == c1 && img[y * img_w + x + lh] == c2 { lh += 1; }
+                    while x + lh < img_w
+                        && img[(y - 1) * img_w + x + lh] == c1
+                        && img[y * img_w + x + lh] == c2
+                    {
+                        lh += 1;
+                    }
                     let mut lv = 0;
-                    while y + lv < img_h && img[(y + lv) * img_w + x - 1] == c1 && img[(y + lv) * img_w + x] == c2 { lv += 1; }
-                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                    while y + lv < img_h
+                        && img[(y + lv) * img_w + x - 1] == c1
+                        && img[(y + lv) * img_w + x] == c2
+                    {
+                        lv += 1;
+                    }
+                    if lh >= 2 || lv >= 2 {
+                        is_disc = true;
+                    }
                 } else if tr == tl && tr == br && tr != bl {
                     total_corners += 1;
-                    let c1 = tr; let c2 = bl;
+                    let c1 = tr;
+                    let c2 = bl;
                     let mut lh = 0;
-                    while x > lh && img[(y - 1) * img_w + x - 1 - lh] == c1 && img[y * img_w + x - 1 - lh] == c2 { lh += 1; }
+                    while x > lh
+                        && img[(y - 1) * img_w + x - 1 - lh] == c1
+                        && img[y * img_w + x - 1 - lh] == c2
+                    {
+                        lh += 1;
+                    }
                     let mut lv = 0;
-                    while y + lv < img_h && img[(y + lv) * img_w + x] == c1 && img[(y + lv) * img_w + x - 1] == c2 { lv += 1; }
-                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                    while y + lv < img_h
+                        && img[(y + lv) * img_w + x] == c1
+                        && img[(y + lv) * img_w + x - 1] == c2
+                    {
+                        lv += 1;
+                    }
+                    if lh >= 2 || lv >= 2 {
+                        is_disc = true;
+                    }
                 } else if bl == tl && bl == br && bl != tr {
                     total_corners += 1;
-                    let c1 = bl; let c2 = tr;
+                    let c1 = bl;
+                    let c2 = tr;
                     let mut lh = 0;
-                    while x + lh < img_w && img[y * img_w + x + lh] == c1 && img[(y - 1) * img_w + x + lh] == c2 { lh += 1; }
+                    while x + lh < img_w
+                        && img[y * img_w + x + lh] == c1
+                        && img[(y - 1) * img_w + x + lh] == c2
+                    {
+                        lh += 1;
+                    }
                     let mut lv = 0;
-                    while y > lv && img[(y - 1 - lv) * img_w + x - 1] == c1 && img[(y - 1 - lv) * img_w + x] == c2 { lv += 1; }
-                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                    while y > lv
+                        && img[(y - 1 - lv) * img_w + x - 1] == c1
+                        && img[(y - 1 - lv) * img_w + x] == c2
+                    {
+                        lv += 1;
+                    }
+                    if lh >= 2 || lv >= 2 {
+                        is_disc = true;
+                    }
                 } else if br == tr && br == bl && br != tl {
                     total_corners += 1;
-                    let c1 = br; let c2 = tl;
+                    let c1 = br;
+                    let c2 = tl;
                     let mut lh = 0;
-                    while x > lh && img[y * img_w + x - 1 - lh] == c1 && img[(y - 1) * img_w + x - 1 - lh] == c2 { lh += 1; }
+                    while x > lh
+                        && img[y * img_w + x - 1 - lh] == c1
+                        && img[(y - 1) * img_w + x - 1 - lh] == c2
+                    {
+                        lh += 1;
+                    }
                     let mut lv = 0;
-                    while y > lv && img[(y - 1 - lv) * img_w + x] == c1 && img[(y - 1 - lv) * img_w + x - 1] == c2 { lv += 1; }
-                    if lh >= 2 || lv >= 2 { is_disc = true; }
+                    while y > lv
+                        && img[(y - 1 - lv) * img_w + x] == c1
+                        && img[(y - 1 - lv) * img_w + x - 1] == c2
+                    {
+                        lv += 1;
+                    }
+                    if lh >= 2 || lv >= 2 {
+                        is_disc = true;
+                    }
                 } else if tl == br && tr == bl && tl != tr {
                     total_corners += 2;
                     // Checkerboard patches (1x1 steps) are smooth
@@ -1591,7 +1647,20 @@ pub fn render_blocks_smooth(
             let data = &grid_data[idx];
             let (gi, inv) = grid_state[idx];
             let glyph = &glyphs[gi];
-            let ch = glyph.ch;
+            let mut ch = glyph.ch;
+
+            let mut text_overlay: Option<&crate::args::TextOverlay> = None;
+            let mut overlay_char = None;
+            for ov in &args.overlays {
+                if y as i32 == ov.y && (x as i32) >= ov.x {
+                    let dx = (x as i32 - ov.x) as usize;
+                    if let Some(c) = ov.text.chars().nth(dx) {
+                        text_overlay = Some(ov);
+                        overlay_char = Some(c);
+                        break;
+                    }
+                }
+            }
 
             // Check for discontinuity overlay on this cell
             let overlay = if !disc_overlay.is_empty() {
@@ -1679,7 +1748,7 @@ pub fn render_blocks_smooth(
             };
 
             let mut final_char = ch;
-            if overlay.is_none() {
+            if overlay.is_none() && text_overlay.is_none() {
                 if let Some(uniform_ch) = cheapest_uniform_glyph {
                     if let Some(bg_c) = &draw_bg {
                         if &draw_fg == bg_c {
@@ -1689,6 +1758,25 @@ pub fn render_blocks_smooth(
                 }
             }
 
+            let mut final_draw_fg = draw_fg.clone();
+            let mut final_draw_bg = draw_bg.clone();
+
+            if let Some(ov) = text_overlay {
+                if let Some(fg_param) = &ov.fg {
+                    final_draw_fg = match fg_param {
+                        crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                        crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                    };
+                }
+                if let Some(bg_param) = &ov.bg {
+                    final_draw_bg = Some(match bg_param {
+                        crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                        crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                    });
+                }
+                final_char = overlay_char.unwrap();
+            }
+
             row_vec.push(RenderedCell {
                 char: final_char,
                 fg: draw_fg_raw,
@@ -1696,7 +1784,7 @@ pub fn render_blocks_smooth(
                 inverted: inv,
             });
 
-            row_cells.push((draw_fg.clone(), draw_bg.clone(), final_char));
+            row_cells.push((final_draw_fg.clone(), final_draw_bg.clone(), final_char));
 
             if render == Render::Preview {
                 let (alt_fg, alt_bg) = if overlay.is_some() {
@@ -1715,7 +1803,7 @@ pub fn render_blocks_smooth(
                 // Compute uniform-glyph replacement for the IRC alt output
                 // using the IRC99 colors, not the ANSI256-based final_char.
                 let mut alt_final_char = ch;
-                if overlay.is_none() {
+                if overlay.is_none() && text_overlay.is_none() {
                     if let Some(uniform_ch) = cheapest_uniform_glyph {
                         if let Some(bg_c) = &alt_bg {
                             if &alt_fg == bg_c {
@@ -1724,7 +1812,26 @@ pub fn render_blocks_smooth(
                         }
                     }
                 }
-                alt_row_cells.push((alt_fg, alt_bg, alt_final_char));
+                
+                let mut final_alt_fg = alt_fg;
+                let mut final_alt_bg = alt_bg;
+                if let Some(ov) = text_overlay {
+                    if let Some(fg_param) = &ov.fg {
+                        final_alt_fg = match fg_param {
+                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                        };
+                    }
+                    if let Some(bg_param) = &ov.bg {
+                        final_alt_bg = Some(match bg_param {
+                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                        });
+                    }
+                    alt_final_char = overlay_char.unwrap();
+                }
+
+                alt_row_cells.push((final_alt_fg, final_alt_bg, alt_final_char));
             }
         }
 
@@ -1879,7 +1986,7 @@ pub fn render_braille(
                     }
                 }
             }
-            let fg = counts
+            let mut final_fg = counts
                 .into_iter()
                 .max_by_key(|&(_, count)| count)
                 .map(|(c, _)| c)
@@ -1887,12 +1994,38 @@ pub fn render_braille(
                     Render::Ansi | Render::Irc => Colour::Index(0),
                     Render::Ansi24 | Render::Preview => Colour::RGB([0, 0, 0]),
                 });
+            
+            let mut final_bg = None;
+            let mut final_ch = std::char::from_u32(braille).unwrap_or(' ');
+            
+            for ov in &args.overlays {
+                if (y / 4) as i32 == ov.y && ((x / 2) as i32) >= ov.x {
+                    let dx = ((x / 2) as i32 - ov.x) as usize;
+                    if let Some(c) = ov.text.chars().nth(dx) {
+                        if let Some(fg_param) = &ov.fg {
+                            final_fg = match fg_param {
+                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                            };
+                        }
+                        if let Some(bg_param) = &ov.bg {
+                            final_bg = Some(match bg_param {
+                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                            });
+                        }
+                        final_ch = c;
+                        break;
+                    }
+                }
+            }
+
             emit_colourized(
                 &mut out,
                 render,
-                fg,
-                None,
-                std::char::from_u32(braille).unwrap_or(' '),
+                final_fg,
+                final_bg.clone(),
+                final_ch,
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
@@ -1900,17 +2033,43 @@ pub fn render_braille(
             );
 
             if render == Render::Preview {
-                let alt_fg = alt_counts
+                let mut alt_fg = alt_counts
                     .into_iter()
                     .max_by_key(|&(_, count)| count)
                     .map(|(c, _)| c)
                     .unwrap_or(Colour::Index(0));
+                
+                let mut alt_bg = None;
+                let mut alt_ch = std::char::from_u32(braille).unwrap_or(' ');
+
+                for ov in &args.overlays {
+                    if (y / 4) as i32 == ov.y && ((x / 2) as i32) >= ov.x {
+                        let dx = ((x / 2) as i32 - ov.x) as usize;
+                        if let Some(c) = ov.text.chars().nth(dx) {
+                            if let Some(fg_param) = &ov.fg {
+                                alt_fg = match fg_param {
+                                    crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                    crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                                };
+                            }
+                            if let Some(bg_param) = &ov.bg {
+                                alt_bg = Some(match bg_param {
+                                    crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                    crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                                });
+                            }
+                            alt_ch = c;
+                            break;
+                        }
+                    }
+                }
+
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
                     alt_fg,
-                    None,
-                    std::char::from_u32(braille).unwrap_or(' '),
+                    alt_bg,
+                    alt_ch,
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,

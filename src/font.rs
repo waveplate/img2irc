@@ -1,4 +1,5 @@
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
+use fontdb::{Database, Family, Query, Source};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 use toml::Value;
-use fontdb::{Database, Query, Family, Source};
+use unicode_width::UnicodeWidthChar;
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
 
@@ -301,10 +302,12 @@ fn render_glyph_from_font(
     global_ascender: i32,
 ) -> GlyphBitmap {
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
-    
+
     let scale = PxScale::from(font_size);
-    let glyph = font.glyph_id(ch).with_scale_and_position(scale, ab_glyph::point(0.0, global_ascender as f32));
-    
+    let glyph = font
+        .glyph_id(ch)
+        .with_scale_and_position(scale, ab_glyph::point(0.0, global_ascender as f32));
+
     if let Some(outlined) = font.outline_glyph(glyph) {
         let bounds = outlined.px_bounds();
         outlined.draw(|x, y, coverage| {
@@ -340,7 +343,7 @@ fn cache_dir() -> PathBuf {
 
 fn hash_context(font_paths: &[String], font_size: f32) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v4".hash(&mut hasher); // Invalidate old cache (v4 for ab_glyph)
+    "v5".hash(&mut hasher); // Invalidate old cache (v5 for control/fullwidth filter)
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -367,9 +370,9 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
     let ascender = scaled_font.ascent().round() as i32;
     let descender = scaled_font.descent().round() as i32;
     let line_gap = scaled_font.line_gap().round() as i32;
-    
+
     let cell_height = (ascender - descender + line_gap).max(1) as usize;
-    
+
     // Measure 'X' or '0' for monospace width
     let glyph_id = main_font.glyph_id('X');
     let mut advance = scaled_font.h_advance(glyph_id);
@@ -441,8 +444,37 @@ fn get_block_glyphs(
 
         // 0. Check if we already know this character is missing from the system
         if ctx.missing_chars.contains(&ch) {
+            log::info!("Skipping missing char: {}", ch);
             continue;
         }
+
+        // Filter out control characters, zero-width, and fullwidth characters
+        if ch.is_control() {
+            log::info!("Skipping conttrol char: {}", ch);
+            continue;
+        }
+
+        match ch.width() {
+            Some(w) if w == 0 || w > 1 => {
+                log::info!("Skipping char because width={}: {}", w, ch);
+                continue;
+            }
+            None => {
+                log::info!("Skipping char because width=None: {}", ch);
+                continue;
+            }
+            _ => {}
+        }
+
+        //       let ch_w_cjk = ch.width_cjk();
+
+        //        if ch_w_cjk.is_some() {
+        //            if ch_w_cjk != Some(1) {
+        //                log::info!("Skipping char because width_cjk!=1 : {} | char: {}", ch_w_cjk.unwrap(), ch);
+        //               continue;
+        //           }
+        //
+        //        }
 
         // 1. User fonts
         for path in &ctx.font_paths {
