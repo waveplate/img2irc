@@ -82,7 +82,6 @@ enum ControlId {
     Gpu,
     HighlightDisc,
     FixDisc,
-    FixStrength,
     TrimTop,
     TrimRight,
     TrimBottom,
@@ -195,15 +194,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::FixDisc,
         label: "Fix Disc",
         kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::FixStrength,
-        label: "Fix Strength",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100,
-            default: 0,
-        },
     },
     // ControlDef {
     //     id: ControlId::Misc3,
@@ -1044,7 +1034,6 @@ struct App {
     gpu: bool,
     show_discontinuities: bool,
     fix_disc: bool,
-    fix_strength: u32,
 
     misc3: i32,
     misc4: i32,
@@ -1162,7 +1151,7 @@ struct App {
     text_selected: Option<usize>,
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
-    text_btn_areas: Vec<Rect>,  // clickable button areas: [fg, bg, delete]
+    text_btn_areas: Vec<Rect>,   // clickable button areas: [fg, bg, delete]
     color_picker_state: Option<crate::colorpicker::ColorPickerState>,
 }
 
@@ -1232,7 +1221,6 @@ impl App {
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
-            fix_strength: render_args.fix_strength,
             misc3: render_args.misc3,
             misc4: render_args.misc4,
             misc5: render_args.misc5,
@@ -1370,7 +1358,7 @@ impl App {
             splitter_areas: Vec::new(),
             dragging_splitter: None,
             terminal_area: Rect::default(),
-            
+
             text_pane_width: TEXT_PANE_WIDTH,
             text_area: Rect::default(),
             text_list_state: ratatui::widgets::ListState::default(),
@@ -1396,7 +1384,6 @@ impl App {
         self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
         self.fix_disc = render_args.fix_disc;
-        self.fix_strength = render_args.fix_strength;
         self.misc3 = render_args.misc3;
         self.misc4 = render_args.misc4;
         self.misc5 = render_args.misc5;
@@ -1675,7 +1662,6 @@ impl App {
             ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::FixDisc => self.fix_disc as i32,
-            ControlId::FixStrength => self.fix_strength as i32,
 
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
@@ -1739,7 +1725,6 @@ impl App {
             ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::FixDisc => self.fix_disc = val != 0,
-            ControlId::FixStrength => self.fix_strength = val as u32,
 
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
@@ -2116,7 +2101,6 @@ impl App {
         self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
-        self.render_args.fix_strength = self.fix_strength;
         self.render_args.misc3 = self.misc3;
         self.render_args.misc4 = self.misc4;
         self.render_args.misc5 = self.misc5;
@@ -2538,7 +2522,11 @@ fn render_eighth_block_bar(units: usize, cells: usize) -> String {
     bar
 }
 
-fn slider_bar_layout(area: Rect, label: &str, _display_value: Option<&str>) -> Option<(u16, usize)> {
+fn slider_bar_layout(
+    area: Rect,
+    label: &str,
+    _display_value: Option<&str>,
+) -> Option<(u16, usize)> {
     let label_text = format!("  {}", label);
     let label_width = label_text.chars().take(14).count() as u16;
     let bar_cells = area
@@ -2630,9 +2618,19 @@ fn render_bar(
             let cell = &mut buf[(x, ly)];
             cell.set_char(ch);
             if is_filled {
-                cell.set_style(Style::new().fg(bg_color).bg(fg_color).add_modifier(Modifier::BOLD));
+                cell.set_style(
+                    Style::new()
+                        .fg(bg_color)
+                        .bg(fg_color)
+                        .add_modifier(Modifier::BOLD),
+                );
             } else {
-                cell.set_style(Style::new().fg(fg_color).bg(bg_color).add_modifier(Modifier::BOLD));
+                cell.set_style(
+                    Style::new()
+                        .fg(fg_color)
+                        .bg(bg_color)
+                        .add_modifier(Modifier::BOLD),
+                );
             }
         }
     }
@@ -3300,7 +3298,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Enter | KeyCode::Esc => {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].text = app.value_edit_buffer.clone();
+                                        app.render_args.overlays[sel - 1].text =
+                                            app.value_edit_buffer.clone();
                                         app.mark_args_dirty();
                                     }
                                 }
@@ -3311,7 +3310,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.value_edit_buffer.pop();
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].text = app.value_edit_buffer.clone();
+                                        app.render_args.overlays[sel - 1].text =
+                                            app.value_edit_buffer.clone();
                                         app.mark_args_dirty();
                                     }
                                 }
@@ -3320,7 +3320,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.value_edit_buffer.push(c);
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].text = app.value_edit_buffer.clone();
+                                        app.render_args.overlays[sel - 1].text =
+                                            app.value_edit_buffer.clone();
                                         app.mark_args_dirty();
                                     }
                                 }
@@ -3416,9 +3417,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     if let Some(cp_state) = &mut app.color_picker_state {
                         if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
                             handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect);
-                        } else if mouse.kind == crossterm::event::MouseEventKind::Drag(MouseButton::Left) {
+                        } else if mouse.kind
+                            == crossterm::event::MouseEventKind::Drag(MouseButton::Left)
+                        {
                             handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
-                        } else if mouse.kind == crossterm::event::MouseEventKind::Up(MouseButton::Left) {
+                        } else if mouse.kind
+                            == crossterm::event::MouseEventKind::Up(MouseButton::Left)
+                        {
                             cp_state.is_dragging_main = false;
                             cp_state.is_dragging_hue = false;
                             handled = true;
@@ -3430,15 +3435,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         let ov = &mut app.render_args.overlays[sel - 1];
                                         if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
+                                            ov.fg =
+                                                Some(crate::args::ColorSpec::Index(fg_idx as u8));
                                         } else {
-                                            ov.fg = Some(crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]));
+                                            ov.fg = Some(crate::args::ColorSpec::Rgb([
+                                                cp_state.fg_rgb.0,
+                                                cp_state.fg_rgb.1,
+                                                cp_state.fg_rgb.2,
+                                            ]));
                                         }
                                         if let Some(bg_rgb) = cp_state.bg_rgb {
                                             if let Some(bg_idx) = cp_state.bg_idx {
-                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                                ov.bg = Some(crate::args::ColorSpec::Index(
+                                                    bg_idx as u8,
+                                                ));
                                             } else {
-                                                ov.bg = Some(crate::args::ColorSpec::Rgb([bg_rgb.0, bg_rgb.1, bg_rgb.2]));
+                                                ov.bg = Some(crate::args::ColorSpec::Rgb([
+                                                    bg_rgb.0, bg_rgb.1, bg_rgb.2,
+                                                ]));
                                             }
                                         } else {
                                             ov.bg = None;
@@ -3450,10 +3464,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             // Important: need to delay setting to None to avoid borrow checker conflicts
                         }
                     }
-                    if app.color_picker_state.as_ref().map(|s| !s.is_open).unwrap_or(false) {
+                    if app
+                        .color_picker_state
+                        .as_ref()
+                        .map(|s| !s.is_open)
+                        .unwrap_or(false)
+                    {
                         app.color_picker_state = None;
                     }
-                    if handled { continue; }
+                    if handled {
+                        continue;
+                    }
                 } else if let Event::Key(key) = event {
                     if key.code == KeyCode::Esc {
                         app.color_picker_state = None;
@@ -3468,15 +3489,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         let ov = &mut app.render_args.overlays[sel - 1];
                                         if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
+                                            ov.fg =
+                                                Some(crate::args::ColorSpec::Index(fg_idx as u8));
                                         } else {
-                                            ov.fg = Some(crate::args::ColorSpec::Rgb([cp_state.fg_rgb.0, cp_state.fg_rgb.1, cp_state.fg_rgb.2]));
+                                            ov.fg = Some(crate::args::ColorSpec::Rgb([
+                                                cp_state.fg_rgb.0,
+                                                cp_state.fg_rgb.1,
+                                                cp_state.fg_rgb.2,
+                                            ]));
                                         }
                                         if let Some(bg_rgb) = cp_state.bg_rgb {
                                             if let Some(bg_idx) = cp_state.bg_idx {
-                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                                ov.bg = Some(crate::args::ColorSpec::Index(
+                                                    bg_idx as u8,
+                                                ));
                                             } else {
-                                                ov.bg = Some(crate::args::ColorSpec::Rgb([bg_rgb.0, bg_rgb.1, bg_rgb.2]));
+                                                ov.bg = Some(crate::args::ColorSpec::Rgb([
+                                                    bg_rgb.0, bg_rgb.1, bg_rgb.2,
+                                                ]));
                                             }
                                         } else {
                                             ov.bg = None;
@@ -3704,11 +3734,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         0
                                     };
                                     if mouse.row >= app.output_area.y + 1 + pad_y {
-                                        let content_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as usize + app.scroll as usize;
+                                        let content_y =
+                                            (mouse.row - (app.output_area.y + 1 + pad_y)) as usize
+                                                + app.scroll as usize;
                                         if let Some(res) = &app.cached_result {
                                             if content_y < res.grid.len() {
                                                 let row = &res.grid[content_y];
-                                                let inner_width = app.output_area.width.saturating_sub(2);
+                                                let inner_width =
+                                                    app.output_area.width.saturating_sub(2);
                                                 let row_len = row.len() as u16;
                                                 let pad_x = if inner_width > row_len {
                                                     (inner_width - row_len) / 2
@@ -3716,34 +3749,48 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     0
                                                 };
                                                 let start_x = app.output_area.x + 1 + pad_x;
-                                                if mouse.column >= start_x && mouse.column < start_x + row_len {
-                                                    let content_x = (mouse.column - start_x) as usize;
+                                                if mouse.column >= start_x
+                                                    && mouse.column < start_x + row_len
+                                                {
+                                                    let content_x =
+                                                        (mouse.column - start_x) as usize;
                                                     let cell_x = content_x as i32;
                                                     let cell_y = content_y as i32;
-                                                    
+
                                                     let mut found = None;
-                                                    for (idx, ov) in app.render_args.overlays.iter().enumerate() {
-                                                        if ov.y == cell_y && cell_x >= ov.x && cell_x < ov.x + ov.text.chars().count() as i32 {
+                                                    for (idx, ov) in
+                                                        app.render_args.overlays.iter().enumerate()
+                                                    {
+                                                        if ov.y == cell_y
+                                                            && cell_x >= ov.x
+                                                            && cell_x
+                                                                < ov.x
+                                                                    + ov.text.chars().count() as i32
+                                                        {
                                                             found = Some(idx);
                                                             break;
                                                         }
                                                     }
-                                                    
+
                                                     if let Some(idx) = found {
                                                         app.text_selected = Some(idx + 1);
                                                         app.text_list_state.select(Some(idx + 1));
                                                     } else {
-                                                        app.render_args.overlays.push(crate::args::TextOverlay {
-                                                            text: "Text".to_string(),
-                                                            x: cell_x,
-                                                            y: cell_y,
-                                                            w: 0,
-                                                            h: 0,
-                                                            fg: None,
-                                                            bg: None,
-                                                        });
-                                                        app.text_selected = Some(app.render_args.overlays.len());
-                                                        app.text_list_state.select(app.text_selected);
+                                                        app.render_args.overlays.push(
+                                                            crate::args::TextOverlay {
+                                                                text: "Text".to_string(),
+                                                                x: cell_x,
+                                                                y: cell_y,
+                                                                w: 0,
+                                                                h: 0,
+                                                                fg: None,
+                                                                bg: None,
+                                                            },
+                                                        );
+                                                        app.text_selected =
+                                                            Some(app.render_args.overlays.len());
+                                                        app.text_list_state
+                                                            .select(app.text_selected);
                                                         app.mark_args_dirty();
                                                     }
                                                 }
@@ -3919,7 +3966,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let inner_y =
                                     mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
                                         as usize;
-                                
+
                                 let total_nodes = app.pipeline_nodes.len();
                                 match app.get_pipeline_clicked_layer(inner_y) {
                                     (Some(i), None) => {
@@ -3928,34 +3975,45 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         } else {
                                             app.pipeline_selected = None;
                                         }
-                                        if app.selected_control == i && app.pipeline_expanded.is_none() {
+                                        if app.selected_control == i
+                                            && app.pipeline_expanded.is_none()
+                                        {
                                             app.pipeline_expanded = Some(i);
                                         } else if app.selected_control != i {
                                             app.selected_control = i;
                                             app.pipeline_expanded = None;
                                         }
 
-                                        let inner_x = mouse.column.saturating_sub(app.pipeline_active_area.x);
+                                        let inner_x =
+                                            mouse.column.saturating_sub(app.pipeline_active_area.x);
                                         if inner_x >= 22 && inner_x <= 54 {
                                             let is_expanded = app.pipeline_expanded == Some(i);
                                             let mut used_range: Option<(f32, f32)> = None;
                                             let mut active_param: Option<f32> = None;
-                                            
+
                                             if is_expanded {
-                                                if let Some(preview) = &app.pipeline_preview_effect {
+                                                if let Some(preview) = &app.pipeline_preview_effect
+                                                {
                                                     used_range = preview.param_range();
                                                     active_param = preview.param_f32();
                                                 }
                                             } else if i < total_nodes {
-                                                used_range = app.pipeline_nodes[i].effect.param_range();
-                                                active_param = app.pipeline_nodes[i].effect.param_f32();
+                                                used_range =
+                                                    app.pipeline_nodes[i].effect.param_range();
+                                                active_param =
+                                                    app.pipeline_nodes[i].effect.param_f32();
                                             }
 
-                                            if let (Some(_), Some((min, max))) = (active_param, used_range) {
-                                                let ratio = ((inner_x as f32 - 22.0) / 32.0).clamp(0.0, 1.0);
+                                            if let (Some(_), Some((min, max))) =
+                                                (active_param, used_range)
+                                            {
+                                                let ratio = ((inner_x as f32 - 22.0) / 32.0)
+                                                    .clamp(0.0, 1.0);
                                                 let new_val = min + ratio * (max - min);
                                                 if is_expanded {
-                                                    if let Some(preview) = &mut app.pipeline_preview_effect {
+                                                    if let Some(preview) =
+                                                        &mut app.pipeline_preview_effect
+                                                    {
                                                         preview.set_param(new_val);
                                                     }
                                                     app.pipeline_dragging = Some((0, 2, i as i16));
@@ -3966,10 +4024,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 }
                                                 app.mark_args_dirty();
                                             } else if i < total_nodes {
-                                                app.pipeline_dragging = Some((app.pipeline_nodes[i].id, 0, 0));
+                                                app.pipeline_dragging =
+                                                    Some((app.pipeline_nodes[i].id, 0, 0));
                                             }
                                         } else if i < total_nodes {
-                                            app.pipeline_dragging = Some((app.pipeline_nodes[i].id, 0, 0));
+                                            app.pipeline_dragging =
+                                                Some((app.pipeline_nodes[i].id, 0, 0));
                                         }
                                     }
                                     (Some(_), Some(lib_idx)) => {
@@ -4058,7 +4118,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     break;
                                 }
                             }
-                            
+
                             if mouse.column >= app.text_list_area.x
                                 && mouse.column < app.text_list_area.x + app.text_list_area.width
                                 && mouse.row >= app.text_list_area.y
@@ -4068,15 +4128,20 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let row = mouse.row.saturating_sub(app.text_list_area.y) as usize;
                                 let text_offset = app.text_list_state.offset();
                                 let selected_idx = text_offset + row;
-                                
+
                                 let total_len = app.render_args.overlays.len();
                                 if selected_idx <= total_len {
-                                    if app.text_selected == Some(selected_idx) && selected_idx == 0 {
+                                    if app.text_selected == Some(selected_idx) && selected_idx == 0
+                                    {
                                         // Double-click "Add New" - create overlay
                                         app.render_args.overlays.push(crate::args::TextOverlay {
                                             text: "Text".to_string(),
-                                            x: 0, y: 0, w: 0, h: 0,
-                                            fg: None, bg: None,
+                                            x: 0,
+                                            y: 0,
+                                            w: 0,
+                                            h: 0,
+                                            fg: None,
+                                            bg: None,
                                         });
                                         app.text_selected = Some(app.render_args.overlays.len());
                                         app.text_list_state.select(app.text_selected);
@@ -4091,7 +4156,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
 
                             // Mouse clicks on text editor buttons/fields
-                            let pos = ratatui::layout::Position { x: mouse.column, y: mouse.row };
+                            let pos = ratatui::layout::Position {
+                                x: mouse.column,
+                                y: mouse.row,
+                            };
                             // Check btn areas: [0]=fg, [1]=bg, [2]=delete
                             if app.text_btn_areas.len() >= 3 {
                                 if app.text_btn_areas[2].contains(pos) {
@@ -4121,14 +4189,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         2 => crate::colorpicker::PaletteMode::Ansi24,
                                         _ => crate::colorpicker::PaletteMode::Irc,
                                     };
-                                    let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
+                                    let mut cp =
+                                        crate::colorpicker::ColorPickerState::new(mode, true);
                                     cp.editing_fg = true;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            if let Some(ref fg) = app.render_args.overlays[sel - 1].fg {
+                                            if let Some(ref fg) =
+                                                app.render_args.overlays[sel - 1].fg
+                                            {
                                                 match fg {
-                                                    crate::args::ColorSpec::Rgb(rgb) => cp.set_rgb(rgb[0], rgb[1], rgb[2]),
-                                                    crate::args::ColorSpec::Index(i) => cp.set_grid_idx(*i as usize),
+                                                    crate::args::ColorSpec::Rgb(rgb) => {
+                                                        cp.set_rgb(rgb[0], rgb[1], rgb[2])
+                                                    }
+                                                    crate::args::ColorSpec::Index(i) => {
+                                                        cp.set_grid_idx(*i as usize)
+                                                    }
                                                 }
                                             }
                                         }
@@ -4139,16 +4214,23 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.current_tab = 3;
                                     app.text_field_focus = TextFieldFocus::BgButton;
                                     if let Some(sel) = app.text_selected {
-                                        if sel > 0 && sel <= app.render_args.overlays.len() && app.render_args.overlays[sel - 1].fg.is_some() {
+                                        if sel > 0
+                                            && sel <= app.render_args.overlays.len()
+                                            && app.render_args.overlays[sel - 1].fg.is_some()
+                                        {
                                             let mode = match app.render_mode_idx {
                                                 0 => crate::colorpicker::PaletteMode::Ansi24,
                                                 1 => crate::colorpicker::PaletteMode::Ansi,
                                                 2 => crate::colorpicker::PaletteMode::Ansi24,
                                                 _ => crate::colorpicker::PaletteMode::Irc,
                                             };
-                                            let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
+                                            let mut cp = crate::colorpicker::ColorPickerState::new(
+                                                mode, true,
+                                            );
                                             cp.editing_fg = false;
-                                            if let Some(ref bg) = app.render_args.overlays[sel - 1].bg {
+                                            if let Some(ref bg) =
+                                                app.render_args.overlays[sel - 1].bg
+                                            {
                                                 match bg {
                                                     crate::args::ColorSpec::Rgb(rgb) => {
                                                         cp.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
@@ -4174,7 +4256,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Start editing text immediately on click
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.value_edit_buffer = app.render_args.overlays[sel - 1].text.clone();
+                                            app.value_edit_buffer =
+                                                app.render_args.overlays[sel - 1].text.clone();
                                             app.input_mode = InputMode::TextEdit;
                                         }
                                     }
@@ -4398,11 +4481,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if mouse.column >= app.pipeline_active_area.x
-                                && mouse.column < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
                                 && mouse.row >= app.pipeline_active_area.y
-                                && mouse.row < app.pipeline_active_area.y + app.pipeline_active_area.height
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
                             {
-                                let inner_y = mouse.row.saturating_sub(app.pipeline_active_area.y + 1) as usize;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
                                 if let (Some(idx), None) = app.get_pipeline_clicked_layer(inner_y) {
                                     if idx < app.pipeline_nodes.len() {
                                         app.current_tab = 1;
@@ -4417,11 +4504,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Down(MouseButton::Middle) => {
                             if mouse.column >= app.pipeline_active_area.x
-                                && mouse.column < app.pipeline_active_area.x + app.pipeline_active_area.width
+                                && mouse.column
+                                    < app.pipeline_active_area.x + app.pipeline_active_area.width
                                 && mouse.row >= app.pipeline_active_area.y
-                                && mouse.row < app.pipeline_active_area.y + app.pipeline_active_area.height
+                                && mouse.row
+                                    < app.pipeline_active_area.y + app.pipeline_active_area.height
                             {
-                                let inner_y = mouse.row.saturating_sub(app.pipeline_active_area.y + 1) as usize;
+                                let inner_y =
+                                    mouse.row.saturating_sub(app.pipeline_active_area.y + 1)
+                                        as usize;
                                 if let (Some(idx), None) = app.get_pipeline_clicked_layer(inner_y) {
                                     if idx < app.pipeline_nodes.len() {
                                         let id = app.pipeline_nodes[idx].id;
@@ -4462,10 +4553,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
-                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace if app.current_tab == 0 => {
+                            KeyCode::Char('r') | KeyCode::Delete | KeyCode::Backspace
+                                if app.current_tab == 0 =>
+                            {
                                 reset_control(&mut app);
                             }
-                            KeyCode::Delete | KeyCode::Backspace if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 => {
+                            KeyCode::Delete | KeyCode::Backspace
+                                if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 =>
+                            {
                                 let sel = app.text_selected.unwrap();
                                 app.render_args.overlays.remove(sel - 1);
                                 let new_len = app.render_args.overlays.len();
@@ -4479,7 +4574,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.mark_args_dirty();
                             }
                             KeyCode::Char(c)
-                                if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 && (c == 'c' || c == 'C') =>
+                                if app.current_tab == 3
+                                    && app.text_selected.unwrap_or(0) > 0
+                                    && (c == 'c' || c == 'C') =>
                             {
                                 // Start Color Picker
                                 let mode = match app.render_mode_idx {
@@ -4531,7 +4628,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     continue;
                                 }
 
-                                if app.current_tab == 3 && app.text_field_focus != TextFieldFocus::List {
+                                if app.current_tab == 3
+                                    && app.text_field_focus != TextFieldFocus::List
+                                {
                                     app.text_field_focus = TextFieldFocus::List;
                                 } else if app.current_tab == 2 {
                                     if app.selected_control > 0 {
@@ -4560,7 +4659,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 } else if app.current_tab == 1 {
                                     if app.selected_control < app.pipeline_nodes.len() {
                                         app.selected_control += 1;
-                                        if let Some(node) = app.pipeline_nodes.get(app.selected_control) {
+                                        if let Some(node) =
+                                            app.pipeline_nodes.get(app.selected_control)
+                                        {
                                             app.pipeline_selected = Some(node.id);
                                         } else {
                                             app.pipeline_selected = None;
@@ -4576,7 +4677,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         _ => {}
                                     }
                                 } else if app.current_tab == 3 {
-                                    let has_sel = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
+                                    let has_sel = app.text_selected.map_or(false, |s| {
+                                        s > 0 && s <= app.render_args.overlays.len()
+                                    });
                                     if app.text_field_focus == TextFieldFocus::List || !has_sel {
                                         // Navigate list
                                         let items_len = app.render_args.overlays.len() + 1;
@@ -4593,7 +4696,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             TextFieldFocus::W => TextFieldFocus::H,
                                             TextFieldFocus::H => TextFieldFocus::FgButton,
                                             TextFieldFocus::FgButton => TextFieldFocus::BgButton,
-                                            TextFieldFocus::BgButton => TextFieldFocus::DeleteButton,
+                                            TextFieldFocus::BgButton => {
+                                                TextFieldFocus::DeleteButton
+                                            }
                                             TextFieldFocus::DeleteButton => TextFieldFocus::List,
                                             _ => TextFieldFocus::TextInput,
                                         };
@@ -4624,7 +4729,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 } else if app.current_tab == 1 {
                                     if app.selected_control > 0 {
                                         app.selected_control -= 1;
-                                        if let Some(node) = app.pipeline_nodes.get(app.selected_control) {
+                                        if let Some(node) =
+                                            app.pipeline_nodes.get(app.selected_control)
+                                        {
                                             app.pipeline_selected = Some(node.id);
                                         } else {
                                             app.pipeline_selected = None;
@@ -4641,7 +4748,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         _ => {}
                                     }
                                 } else if app.current_tab == 3 {
-                                    let has_sel = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
+                                    let has_sel = app.text_selected.map_or(false, |s| {
+                                        s > 0 && s <= app.render_args.overlays.len()
+                                    });
                                     if app.text_field_focus == TextFieldFocus::List || !has_sel {
                                         let curr = app.text_selected.unwrap_or(0);
                                         let next = curr.saturating_sub(1);
@@ -4649,7 +4758,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.text_list_state.select(Some(next));
                                     } else {
                                         app.text_field_focus = match app.text_field_focus {
-                                            TextFieldFocus::DeleteButton => TextFieldFocus::BgButton,
+                                            TextFieldFocus::DeleteButton => {
+                                                TextFieldFocus::BgButton
+                                            }
                                             TextFieldFocus::BgButton => TextFieldFocus::FgButton,
                                             TextFieldFocus::FgButton => TextFieldFocus::H,
                                             TextFieldFocus::H => TextFieldFocus::W,
@@ -4673,10 +4784,26 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             match app.text_field_focus {
-                                                TextFieldFocus::X => { app.render_args.overlays[sel - 1].x -= 1; app.mark_args_dirty(); }
-                                                TextFieldFocus::Y => { app.render_args.overlays[sel - 1].y -= 1; app.mark_args_dirty(); }
-                                                TextFieldFocus::W => { app.render_args.overlays[sel - 1].w = (app.render_args.overlays[sel - 1].w - 1).max(0); app.mark_args_dirty(); }
-                                                TextFieldFocus::H => { app.render_args.overlays[sel - 1].h = (app.render_args.overlays[sel - 1].h - 1).max(0); app.mark_args_dirty(); }
+                                                TextFieldFocus::X => {
+                                                    app.render_args.overlays[sel - 1].x -= 1;
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::Y => {
+                                                    app.render_args.overlays[sel - 1].y -= 1;
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::W => {
+                                                    app.render_args.overlays[sel - 1].w =
+                                                        (app.render_args.overlays[sel - 1].w - 1)
+                                                            .max(0);
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::H => {
+                                                    app.render_args.overlays[sel - 1].h =
+                                                        (app.render_args.overlays[sel - 1].h - 1)
+                                                            .max(0);
+                                                    app.mark_args_dirty();
+                                                }
                                                 _ => {}
                                             }
                                         }
@@ -4737,10 +4864,22 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             match app.text_field_focus {
-                                                TextFieldFocus::X => { app.render_args.overlays[sel - 1].x += 1; app.mark_args_dirty(); }
-                                                TextFieldFocus::Y => { app.render_args.overlays[sel - 1].y += 1; app.mark_args_dirty(); }
-                                                TextFieldFocus::W => { app.render_args.overlays[sel - 1].w += 1; app.mark_args_dirty(); }
-                                                TextFieldFocus::H => { app.render_args.overlays[sel - 1].h += 1; app.mark_args_dirty(); }
+                                                TextFieldFocus::X => {
+                                                    app.render_args.overlays[sel - 1].x += 1;
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::Y => {
+                                                    app.render_args.overlays[sel - 1].y += 1;
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::W => {
+                                                    app.render_args.overlays[sel - 1].w += 1;
+                                                    app.mark_args_dirty();
+                                                }
+                                                TextFieldFocus::H => {
+                                                    app.render_args.overlays[sel - 1].h += 1;
+                                                    app.mark_args_dirty();
+                                                }
                                                 _ => {}
                                             }
                                         }
@@ -4819,16 +4958,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if app.text_field_focus == TextFieldFocus::List {
                                         if app.text_selected == Some(0) {
                                             // Add new overlay
-                                            app.render_args.overlays.push(crate::args::TextOverlay {
-                                                text: "Text".to_string(),
-                                                x: 0,
-                                                y: 0,
-                                                w: 0,
-                                                h: 0,
-                                                fg: None,
-                                                bg: None,
-                                            });
-                                            app.text_selected = Some(app.render_args.overlays.len());
+                                            app.render_args.overlays.push(
+                                                crate::args::TextOverlay {
+                                                    text: "Text".to_string(),
+                                                    x: 0,
+                                                    y: 0,
+                                                    w: 0,
+                                                    h: 0,
+                                                    fg: None,
+                                                    bg: None,
+                                                },
+                                            );
+                                            app.text_selected =
+                                                Some(app.render_args.overlays.len());
                                             app.text_list_state.select(app.text_selected);
                                             app.text_field_focus = TextFieldFocus::TextInput;
                                             app.mark_args_dirty();
@@ -4841,7 +4983,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.text_field_focus == TextFieldFocus::TextInput {
                                         if let Some(sel) = app.text_selected {
                                             if sel > 0 && sel <= app.render_args.overlays.len() {
-                                                app.value_edit_buffer = app.render_args.overlays[sel - 1].text.clone();
+                                                app.value_edit_buffer =
+                                                    app.render_args.overlays[sel - 1].text.clone();
                                                 app.input_mode = InputMode::TextEdit;
                                             }
                                         }
@@ -4853,15 +4996,22 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             2 => crate::colorpicker::PaletteMode::Ansi24,
                                             _ => crate::colorpicker::PaletteMode::Irc,
                                         };
-                                        let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
+                                        let mut cp =
+                                            crate::colorpicker::ColorPickerState::new(mode, true);
                                         cp.editing_fg = true;
                                         // Pre-load current fg if set
                                         if let Some(sel) = app.text_selected {
                                             if sel > 0 && sel <= app.render_args.overlays.len() {
-                                                if let Some(ref fg) = app.render_args.overlays[sel - 1].fg {
+                                                if let Some(ref fg) =
+                                                    app.render_args.overlays[sel - 1].fg
+                                                {
                                                     match fg {
-                                                        crate::args::ColorSpec::Rgb(rgb) => cp.set_rgb(rgb[0], rgb[1], rgb[2]),
-                                                        crate::args::ColorSpec::Index(i) => cp.set_grid_idx(*i as usize),
+                                                        crate::args::ColorSpec::Rgb(rgb) => {
+                                                            cp.set_rgb(rgb[0], rgb[1], rgb[2])
+                                                        }
+                                                        crate::args::ColorSpec::Index(i) => {
+                                                            cp.set_grid_idx(*i as usize)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -4870,19 +5020,28 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.text_field_focus == TextFieldFocus::BgButton {
                                         // Open color picker for BG (only if FG is set)
                                         if let Some(sel) = app.text_selected {
-                                            if sel > 0 && sel <= app.render_args.overlays.len() && app.render_args.overlays[sel - 1].fg.is_some() {
+                                            if sel > 0
+                                                && sel <= app.render_args.overlays.len()
+                                                && app.render_args.overlays[sel - 1].fg.is_some()
+                                            {
                                                 let mode = match app.render_mode_idx {
                                                     0 => crate::colorpicker::PaletteMode::Ansi24,
                                                     1 => crate::colorpicker::PaletteMode::Ansi,
                                                     2 => crate::colorpicker::PaletteMode::Ansi24,
                                                     _ => crate::colorpicker::PaletteMode::Irc,
                                                 };
-                                                let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
+                                                let mut cp =
+                                                    crate::colorpicker::ColorPickerState::new(
+                                                        mode, true,
+                                                    );
                                                 cp.editing_fg = false;
-                                                if let Some(ref bg) = app.render_args.overlays[sel - 1].bg {
+                                                if let Some(ref bg) =
+                                                    app.render_args.overlays[sel - 1].bg
+                                                {
                                                     match bg {
                                                         crate::args::ColorSpec::Rgb(rgb) => {
-                                                            cp.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
+                                                            cp.bg_rgb =
+                                                                Some((rgb[0], rgb[1], rgb[2]));
                                                             cp.set_rgb(rgb[0], rgb[1], rgb[2]);
                                                         }
                                                         crate::args::ColorSpec::Index(i) => {
@@ -6253,14 +6412,14 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
 }
 
 fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let has_selection = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
+    let has_selection = app
+        .text_selected
+        .map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
 
     // Split: top = list, bottom = editor (only shown when selected)
     let editor_height = if has_selection { 10 } else { 0 };
-    let chunks = Layout::vertical([
-        Constraint::Min(4),
-        Constraint::Length(editor_height),
-    ]).split(area);
+    let chunks =
+        Layout::vertical([Constraint::Min(4), Constraint::Length(editor_height)]).split(area);
 
     // ── List pane ──
     let list_focused = app.current_tab == 3 && app.text_field_focus == TextFieldFocus::List;
@@ -6269,7 +6428,10 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(list_border))
         .border_set(ratatui::symbols::border::ROUNDED)
-        .title(Span::styled(" Text Overlays ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            " Text Overlays ",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ))
         .style(Style::default().bg(SURFACE));
     let list_inner = list_block.inner(chunks[0]);
     f.render_widget(list_block, chunks[0]);
@@ -6279,7 +6441,10 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // "Add New" row
     let add_selected = app.text_selected == Some(0);
     let add_style = if add_selected {
-        Style::default().fg(Color::Green).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Green)
+            .bg(SELECTED_BG)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Green)
     };
@@ -6294,15 +6459,17 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         };
         let label = format!("  \"{}\" ({},{})", text_trunc, ov.x, ov.y);
         let style = if is_selected {
-            Style::default().fg(TAB_ACTIVE).bg(SELECTED_BG).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(TAB_ACTIVE)
+                .bg(SELECTED_BG)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(TEXT)
         };
         items.push(ListItem::new(Span::styled(label, style)));
     }
 
-    let list = List::new(items)
-        .highlight_style(Style::default().bg(SELECTED_BG));
+    let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
     f.render_stateful_widget(list, list_inner, &mut app.text_list_state);
     app.text_list_area = list_inner;
 
@@ -6320,7 +6487,10 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
         .border_set(ratatui::symbols::border::ROUNDED)
-        .title(Span::styled(" Edit Overlay ", Style::default().fg(TEXT).add_modifier(Modifier::BOLD)))
+        .title(Span::styled(
+            " Edit Overlay ",
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+        ))
         .style(Style::default().bg(SURFACE));
     let ed_inner = ed_block.inner(chunks[1]);
     f.render_widget(ed_block, chunks[1]);
@@ -6336,20 +6506,37 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let row0 = Rect::new(ed_inner.x, ed_inner.y, ed_inner.width, 1);
     app.text_field_areas.push(row0);
     let field_focused = app.text_field_focus == TextFieldFocus::TextInput && app.current_tab == 3;
-    let text_val = if is_editing_text { &app.value_edit_buffer } else { &ov.text };
+    let text_val = if is_editing_text {
+        &app.value_edit_buffer
+    } else {
+        &ov.text
+    };
     let text_style = if field_focused || is_editing_text {
         Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
     } else {
         Style::default().fg(TEXT)
     };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled("Text: ", label_style),
-        Span::styled(format!("{:<w$}", text_val, w = (ed_inner.width as usize).saturating_sub(6)), text_style),
-    ])), row0);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Text: ", label_style),
+            Span::styled(
+                format!(
+                    "{:<w$}",
+                    text_val,
+                    w = (ed_inner.width as usize).saturating_sub(6)
+                ),
+                text_style,
+            ),
+        ])),
+        row0,
+    );
     if is_editing_text {
         let cursor_x = row0.x + 6 + text_val.chars().count() as u16;
         if cursor_x < row0.x + row0.width {
-            f.render_widget(Paragraph::new("▏").style(Style::default().fg(ACCENT)), Rect::new(cursor_x, row0.y, 1, 1));
+            f.render_widget(
+                Paragraph::new("▏").style(Style::default().fg(ACCENT)),
+                Rect::new(cursor_x, row0.y, 1, 1),
+            );
         }
     }
 
@@ -6358,68 +6545,116 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.text_field_areas.push(row1);
     let x_focused = app.text_field_focus == TextFieldFocus::X && app.current_tab == 3;
     let y_focused = app.text_field_focus == TextFieldFocus::Y && app.current_tab == 3;
-    let x_style = if x_focused { Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72)) } else { Style::default().fg(TEXT) };
-    let y_style = if y_focused { Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72)) } else { Style::default().fg(TEXT) };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled("X: ", label_style),
-        Span::styled(format!("{:<5}", ov.x), x_style),
-        Span::styled("  Y: ", label_style),
-        Span::styled(format!("{:<5}", ov.y), y_style),
-    ])), row1);
+    let x_style = if x_focused {
+        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
+    } else {
+        Style::default().fg(TEXT)
+    };
+    let y_style = if y_focused {
+        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
+    } else {
+        Style::default().fg(TEXT)
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("X: ", label_style),
+            Span::styled(format!("{:<5}", ov.x), x_style),
+            Span::styled("  Y: ", label_style),
+            Span::styled(format!("{:<5}", ov.y), y_style),
+        ])),
+        row1,
+    );
 
     // Row 2: W, H
     let row2 = Rect::new(ed_inner.x, ed_inner.y + 2, ed_inner.width, 1);
     app.text_field_areas.push(row2);
     let w_focused = app.text_field_focus == TextFieldFocus::W && app.current_tab == 3;
     let h_focused = app.text_field_focus == TextFieldFocus::H && app.current_tab == 3;
-    let w_style = if w_focused { Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72)) } else { Style::default().fg(TEXT) };
-    let h_style = if h_focused { Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72)) } else { Style::default().fg(TEXT) };
-    let w_label = if ov.w == 0 { "auto".to_string() } else { ov.w.to_string() };
-    let h_label = if ov.h == 0 { "auto".to_string() } else { ov.h.to_string() };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled("W: ", label_style),
-        Span::styled(format!("{:<5}", w_label), w_style),
-        Span::styled("  H: ", label_style),
-        Span::styled(format!("{:<5}", h_label), h_style),
-    ])), row2);
+    let w_style = if w_focused {
+        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
+    } else {
+        Style::default().fg(TEXT)
+    };
+    let h_style = if h_focused {
+        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
+    } else {
+        Style::default().fg(TEXT)
+    };
+    let w_label = if ov.w == 0 {
+        "auto".to_string()
+    } else {
+        ov.w.to_string()
+    };
+    let h_label = if ov.h == 0 {
+        "auto".to_string()
+    } else {
+        ov.h.to_string()
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("W: ", label_style),
+            Span::styled(format!("{:<5}", w_label), w_style),
+            Span::styled("  H: ", label_style),
+            Span::styled(format!("{:<5}", h_label), h_style),
+        ])),
+        row2,
+    );
 
     // Row 4: FG color button
     let row4 = Rect::new(ed_inner.x, ed_inner.y + 4, ed_inner.width.min(30), 1);
     app.text_field_areas.push(row4);
     let fg_focused = app.text_field_focus == TextFieldFocus::FgButton && app.current_tab == 3;
     let fg_btn_style = if fg_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(60, 60, 100))
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(60, 60, 100))
     } else {
         Style::default().fg(TEXT)
     };
     let fg_label = match &ov.fg {
-        Some(crate::args::ColorSpec::Rgb(rgb)) => format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]),
+        Some(crate::args::ColorSpec::Rgb(rgb)) => {
+            format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
+        }
         Some(crate::args::ColorSpec::Index(i)) => format!("idx:{}", i),
         None => "[inherit]".to_string(),
     };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled(" FG: ", fg_btn_style),
-    ])), row4);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(" FG: ", fg_btn_style)])),
+        row4,
+    );
     if let Some(fg_spec) = &ov.fg {
         let color = match fg_spec {
             crate::args::ColorSpec::Rgb(rgb) => Color::Rgb(rgb[0], rgb[1], rgb[2]),
             crate::args::ColorSpec::Index(i) => {
                 let v = *crate::palette::ANSI256.get(*i as usize).unwrap_or(&0);
-                Color::Rgb(((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8)
+                Color::Rgb(
+                    ((v >> 16) & 0xFF) as u8,
+                    ((v >> 8) & 0xFF) as u8,
+                    (v & 0xFF) as u8,
+                )
             }
         };
         let sx = row4.x + 5;
         if sx + 2 < row4.x + row4.width {
-            f.render_widget(Paragraph::new("██").style(Style::default().fg(color)), Rect::new(sx, row4.y, 2, 1));
+            f.render_widget(
+                Paragraph::new("██").style(Style::default().fg(color)),
+                Rect::new(sx, row4.y, 2, 1),
+            );
         }
         let lx = row4.x + 8;
         if lx < row4.x + row4.width {
-            f.render_widget(Paragraph::new(fg_label.as_str()).style(fg_btn_style), Rect::new(lx, row4.y, row4.width.saturating_sub(8), 1));
+            f.render_widget(
+                Paragraph::new(fg_label.as_str()).style(fg_btn_style),
+                Rect::new(lx, row4.y, row4.width.saturating_sub(8), 1),
+            );
         }
     } else {
         let lx = row4.x + 5;
         if lx < row4.x + row4.width {
-            f.render_widget(Paragraph::new(fg_label.as_str()).style(fg_btn_style), Rect::new(lx, row4.y, row4.width.saturating_sub(5), 1));
+            f.render_widget(
+                Paragraph::new(fg_label.as_str()).style(fg_btn_style),
+                Rect::new(lx, row4.y, row4.width.saturating_sub(5), 1),
+            );
         }
     }
     app.text_btn_areas.push(row4); // btn[0] = fg
@@ -6430,7 +6665,9 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let bg_focused = app.text_field_focus == TextFieldFocus::BgButton && app.current_tab == 3;
     let can_set_bg = ov.fg.is_some();
     let bg_btn_style = if bg_focused && can_set_bg {
-        Style::default().fg(Color::White).bg(Color::Rgb(60, 60, 100))
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(60, 60, 100))
     } else if can_set_bg {
         Style::default().fg(TEXT)
     } else {
@@ -6440,41 +6677,60 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         "[set FG first]".to_string()
     } else {
         match &ov.bg {
-            Some(crate::args::ColorSpec::Rgb(rgb)) => format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]),
+            Some(crate::args::ColorSpec::Rgb(rgb)) => {
+                format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
+            }
             Some(crate::args::ColorSpec::Index(i)) => format!("idx:{}", i),
             None => "[none]".to_string(),
         }
     };
-    f.render_widget(Paragraph::new(Line::from(vec![
-        Span::styled(" BG: ", bg_btn_style),
-    ])), row5);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(" BG: ", bg_btn_style)])),
+        row5,
+    );
     if can_set_bg {
         if let Some(bg_spec) = &ov.bg {
             let color = match bg_spec {
                 crate::args::ColorSpec::Rgb(rgb) => Color::Rgb(rgb[0], rgb[1], rgb[2]),
                 crate::args::ColorSpec::Index(i) => {
                     let v = *crate::palette::ANSI256.get(*i as usize).unwrap_or(&0);
-                    Color::Rgb(((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8)
+                    Color::Rgb(
+                        ((v >> 16) & 0xFF) as u8,
+                        ((v >> 8) & 0xFF) as u8,
+                        (v & 0xFF) as u8,
+                    )
                 }
             };
             let sx = row5.x + 5;
             if sx + 2 < row5.x + row5.width {
-                f.render_widget(Paragraph::new("██").style(Style::default().fg(color)), Rect::new(sx, row5.y, 2, 1));
+                f.render_widget(
+                    Paragraph::new("██").style(Style::default().fg(color)),
+                    Rect::new(sx, row5.y, 2, 1),
+                );
             }
             let lx = row5.x + 8;
             if lx < row5.x + row5.width {
-                f.render_widget(Paragraph::new(bg_label.as_str()).style(bg_btn_style), Rect::new(lx, row5.y, row5.width.saturating_sub(8), 1));
+                f.render_widget(
+                    Paragraph::new(bg_label.as_str()).style(bg_btn_style),
+                    Rect::new(lx, row5.y, row5.width.saturating_sub(8), 1),
+                );
             }
         } else {
             let lx = row5.x + 5;
             if lx < row5.x + row5.width {
-                f.render_widget(Paragraph::new(bg_label.as_str()).style(bg_btn_style), Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1));
+                f.render_widget(
+                    Paragraph::new(bg_label.as_str()).style(bg_btn_style),
+                    Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1),
+                );
             }
         }
     } else {
         let lx = row5.x + 5;
         if lx < row5.x + row5.width {
-            f.render_widget(Paragraph::new(bg_label.as_str()).style(bg_btn_style), Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1));
+            f.render_widget(
+                Paragraph::new(bg_label.as_str()).style(bg_btn_style),
+                Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1),
+            );
         }
     }
     app.text_btn_areas.push(row5); // btn[1] = bg
@@ -6484,7 +6740,9 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.text_field_areas.push(row7);
     let del_focused = app.text_field_focus == TextFieldFocus::DeleteButton && app.current_tab == 3;
     let del_style = if del_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(180, 60, 60))
+        Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(180, 60, 60))
     } else {
         Style::default().fg(Color::Rgb(220, 80, 80))
     };
@@ -6609,13 +6867,22 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             target_visual_index = current_visual_index;
         }
 
-        let line_bg = if is_selected || is_expanded { SELECTED_BG } else { SURFACE };
-        
+        let line_bg = if is_selected || is_expanded {
+            SELECTED_BG
+        } else {
+            SURFACE
+        };
+
         let (label, is_disabled, active_f32, active_range) = if is_add_node {
             ("＋ Add Effect...", false, None, None)
         } else {
             let node = &app.pipeline_nodes[i];
-            (node.effect.name(), node.disabled, node.effect.param_f32(), node.effect.param_range())
+            (
+                node.effect.name(),
+                node.disabled,
+                node.effect.param_f32(),
+                node.effect.param_range(),
+            )
         };
 
         let (display_f32, display_range) = if is_expanded {
@@ -6631,7 +6898,11 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
         let text_fg = if is_disabled {
             TEXT_DIM
         } else if is_add_node {
-            if is_selected { Color::White } else { TEXT_DIM }
+            if is_selected {
+                Color::White
+            } else {
+                TEXT_DIM
+            }
         } else {
             TEXT
         };
@@ -6646,19 +6917,19 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             Span::styled(icon_str, Style::default().fg(icon_fg)),
             Span::styled(
                 format!("{}{}", label, padding),
-                Style::default()
-                    .fg(text_fg)
-                    .add_modifier(if (is_selected || is_expanded) && !is_disabled && !is_add_node {
+                Style::default().fg(text_fg).add_modifier(
+                    if (is_selected || is_expanded) && !is_disabled && !is_add_node {
                         Modifier::BOLD
                     } else {
                         Modifier::empty()
-                    }),
+                    },
+                ),
             ),
         ];
 
         if let Some(v) = display_f32 {
             let (min, max) = display_range.unwrap_or((0.0, 255.0));
-            let bar_cells = SLIDER_BAR_CELLS; 
+            let bar_cells = SLIDER_BAR_CELLS;
             let units = quantized_slider_units_f32(v, min, max, bar_cells);
             let bar = render_eighth_block_bar(units, bar_cells);
 
@@ -6667,7 +6938,11 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             let center_idx = bar_cells.saturating_sub(text_len) / 2;
             let is_filled = (units / 8) >= center_idx + text_len / 2;
 
-            let fg_color = if is_selected || is_expanded { BAR_FG } else { ACCENT };
+            let fg_color = if is_selected || is_expanded {
+                BAR_FG
+            } else {
+                ACCENT
+            };
             let bg_color = Color::Rgb(15, 15, 20);
 
             let left_part: String = bar.chars().take(center_idx).collect();
@@ -6676,9 +6951,21 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
             let text_bg = if is_filled { fg_color } else { bg_color };
             let text_fg = if is_filled { bg_color } else { fg_color };
 
-            spans.push(Span::styled(left_part, Style::default().fg(fg_color).bg(bg_color)));
-            spans.push(Span::styled(display_str, Style::default().fg(text_fg).bg(text_bg).add_modifier(Modifier::BOLD)));
-            spans.push(Span::styled(right_part, Style::default().fg(fg_color).bg(bg_color)));
+            spans.push(Span::styled(
+                left_part,
+                Style::default().fg(fg_color).bg(bg_color),
+            ));
+            spans.push(Span::styled(
+                display_str,
+                Style::default()
+                    .fg(text_fg)
+                    .bg(text_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                right_part,
+                Style::default().fg(fg_color).bg(bg_color),
+            ));
         }
 
         items.push(ListItem::new(Line::from(spans)).style(Style::default().bg(line_bg)));
@@ -6704,12 +6991,18 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
                 if e.effect.is_none() {
                     let clean_label = e.label.replace("── ", "").replace(" ──", "");
                     items.push(
-                        ListItem::new(format!("   {}", clean_label))
-                            .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD).bg(SURFACE)),
+                        ListItem::new(format!("   {}", clean_label)).style(
+                            Style::default()
+                                .fg(ACCENT_DIM)
+                                .add_modifier(Modifier::BOLD)
+                                .bg(SURFACE),
+                        ),
                     );
                 } else {
                     let lib_spans = vec![Span::styled(format!("      {}", e.label), lib_style)];
-                    items.push(ListItem::new(Line::from(lib_spans)).style(Style::default().bg(if lib_selected { SELECTED_BG } else { SURFACE })));
+                    items.push(ListItem::new(Line::from(lib_spans)).style(
+                        Style::default().bg(if lib_selected { SELECTED_BG } else { SURFACE }),
+                    ));
                 }
                 current_visual_index += 1;
             }
@@ -6719,7 +7012,7 @@ fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect
     if app.pipeline_list_state.selected() != Some(target_visual_index) {
         app.pipeline_list_state.select(Some(target_visual_index));
     }
-    
+
     // We pass list to stateful widget
     let list = List::new(items);
     f.render_stateful_widget(list, inner, &mut app.pipeline_list_state);

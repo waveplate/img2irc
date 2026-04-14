@@ -1,11 +1,15 @@
 use crate::args::{Render, RenderArgs};
 use crate::font::GlyphStore;
 use crate::palette::{ANSI256, IRC99};
+use image::{Rgb, RgbImage};
 use once_cell::sync::Lazy;
 use photon_rs::PhotonImage;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::f32::consts::PI;
 use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[derive(Clone)]
@@ -14,6 +18,8 @@ pub struct FastGlyph {
     pub bitmap: Vec<u8>,
     pub ones: Vec<usize>,
     pub zeros: Vec<usize>,
+    pub vertical_cuts: Vec<u8>,
+    pub horizontal_cuts: Vec<u8>,
     pub top: Vec<u8>,
     pub bottom: Vec<u8>,
     pub left: Vec<u8>,
@@ -96,6 +102,25 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
             let ones = ones_indices.len();
             let coverage = ones as f32 / bp as f32;
 
+            let mut vertical_cuts = Vec::with_capacity(gh.saturating_mul(gw.saturating_sub(1)));
+            if gw > 1 {
+                for y in 0..gh {
+                    for x in 0..(gw - 1) {
+                        vertical_cuts.push((bitmap[y * gw + x] != bitmap[y * gw + x + 1]) as u8);
+                    }
+                }
+            }
+
+            let mut horizontal_cuts = Vec::with_capacity(gw.saturating_mul(gh.saturating_sub(1)));
+            if gh > 1 {
+                for y in 0..(gh - 1) {
+                    for x in 0..gw {
+                        horizontal_cuts
+                            .push((bitmap[y * gw + x] != bitmap[(y + 1) * gw + x]) as u8);
+                    }
+                }
+            }
+
             // Compute exit positions: average position of FG pixels along each edge
             // -1.0 means uniform edge (all FG or all BG, so no boundary to track)
             let compute_exit = |edge: &[u8], target: u8| -> f32 {
@@ -129,6 +154,8 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 bitmap,
                 ones: ones_indices,
                 zeros: zeros_indices,
+                vertical_cuts,
+                horizontal_cuts,
                 top,
                 bottom,
                 left,
@@ -571,6 +598,969 @@ impl From<&str> for RenderResult {
     }
 }
 
+#[derive(Clone)]
+struct BlockData {
+    fg: [u8; 3],
+    bg: [u8; 3],
+    fg_col: Option<Colour>,
+    bg_col: Option<Colour>,
+    alt_fg_col: Option<Colour>,
+    alt_bg_col: Option<Colour>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Complex32 {
+    re: f32,
+    im: f32,
+}
+
+const MAX_RGB_DISTANCE_SQUARED: f32 = (255 * 255 * 3) as f32;
+const NEIGHBORHOOD_RADIUS: usize = 1;
+
+#[derive(Clone)]
+struct QuantizedCellReference {
+    mask: Vec<u8>,
+}
+
+#[inline(always)]
+fn normalized_rgb_distance(a: [u8; 3], b: [u8; 3]) -> f32 {
+    let dr = a[0] as f32 - b[0] as f32;
+    let dg = a[1] as f32 - b[1] as f32;
+    let db = a[2] as f32 - b[2] as f32;
+    ((dr * dr + dg * dg + db * db) / MAX_RGB_DISTANCE_SQUARED).sqrt()
+}
+
+#[inline(always)]
+fn complex_mul(a: Complex32, b: Complex32) -> Complex32 {
+    Complex32 {
+        re: a.re * b.re - a.im * b.im,
+        im: a.re * b.im + a.im * b.re,
+    }
+}
+
+fn fft_in_place(values: &mut [Complex32]) {
+    let n = values.len();
+    if n <= 1 {
+        return;
+    }
+    debug_assert!(n.is_power_of_two());
+
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            values.swap(i, j);
+        }
+    }
+
+    let mut len = 2usize;
+    while len <= n {
+        let angle = -2.0 * PI / len as f32;
+        let wlen = Complex32 {
+            re: angle.cos(),
+            im: angle.sin(),
+        };
+
+        for start in (0..n).step_by(len) {
+            let mut w = Complex32 { re: 1.0, im: 0.0 };
+            for i in 0..(len / 2) {
+                let even = values[start + i];
+                let odd = complex_mul(values[start + i + len / 2], w);
+                values[start + i] = Complex32 {
+                    re: even.re + odd.re,
+                    im: even.im + odd.im,
+                };
+                values[start + i + len / 2] = Complex32 {
+                    re: even.re - odd.re,
+                    im: even.im - odd.im,
+                };
+                w = complex_mul(w, wlen);
+            }
+        }
+
+        len <<= 1;
+    }
+}
+
+#[inline(always)]
+fn hann_weight(i: usize, len: usize) -> f32 {
+    if len <= 1 {
+        1.0
+    } else {
+        0.5 - 0.5 * ((2.0 * PI * i as f32) / (len - 1) as f32).cos()
+    }
+}
+
+fn spectral_high_frequency_score(raster: &[[u8; 3]], width: usize, height: usize) -> f32 {
+    if width == 0 || height == 0 {
+        return 0.0;
+    }
+
+    let fft_w = width.next_power_of_two().max(1);
+    let fft_h = height.next_power_of_two().max(1);
+    let half_w = (fft_w / 2).max(1) as f32;
+    let half_h = (fft_h / 2).max(1) as f32;
+    let mut total_energy = 0.0f64;
+    let mut high_energy = 0.0f64;
+
+    for channel in 0..3 {
+        let mean =
+            raster.iter().map(|px| px[channel] as f32).sum::<f32>() / (width * height) as f32;
+        let mut spectrum = vec![Complex32::default(); fft_w * fft_h];
+
+        for y in 0..height {
+            let wy = hann_weight(y, height);
+            for x in 0..width {
+                let wx = hann_weight(x, width);
+                let sample = (raster[y * width + x][channel] as f32 - mean) / 255.0;
+                spectrum[y * fft_w + x].re = sample * wx * wy;
+            }
+        }
+
+        for row in 0..fft_h {
+            let start = row * fft_w;
+            fft_in_place(&mut spectrum[start..start + fft_w]);
+        }
+
+        let mut column = vec![Complex32::default(); fft_h];
+        for x in 0..fft_w {
+            for y in 0..fft_h {
+                column[y] = spectrum[y * fft_w + x];
+            }
+            fft_in_place(&mut column);
+            for y in 0..fft_h {
+                spectrum[y * fft_w + x] = column[y];
+            }
+        }
+
+        for y in 0..fft_h {
+            let fy = y.min(fft_h - y) as f32 / half_h;
+            for x in 0..fft_w {
+                if x == 0 && y == 0 {
+                    continue;
+                }
+                let fx = x.min(fft_w - x) as f32 / half_w;
+                let radius = ((fx * fx + fy * fy).sqrt() / 2f32.sqrt()).min(1.0);
+                let weight = radius * radius;
+                let v = spectrum[y * fft_w + x];
+                let energy = (v.re * v.re + v.im * v.im) as f64;
+                total_energy += energy;
+                high_energy += energy * weight as f64;
+            }
+        }
+    }
+
+    if total_energy <= 1e-9 {
+        0.0
+    } else {
+        (100.0 * (high_energy / total_energy) as f32).min(100.0)
+    }
+}
+
+#[derive(Clone)]
+struct LocalPatch {
+    pixels: Vec<[u8; 3]>,
+    width: usize,
+    height: usize,
+    cell_offset_x: usize,
+    cell_offset_y: usize,
+}
+
+fn extract_local_patch(
+    raster: &[[u8; 3]],
+    cell_x: usize,
+    cell_y: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> LocalPatch {
+    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+    let width = patch_cells * gw;
+    let height = patch_cells * gh;
+    let raster_width = grid_w * gw;
+    let mut pixels = vec![[0u8; 3]; width * height];
+
+    for patch_cell_y in 0..patch_cells {
+        let src_cell_y = cell_y
+            .saturating_add(patch_cell_y)
+            .saturating_sub(NEIGHBORHOOD_RADIUS)
+            .min(grid_h - 1);
+
+        for local_y in 0..gh {
+            let dst_row = (patch_cell_y * gh + local_y) * width;
+            let src_row = (src_cell_y * gh + local_y) * raster_width;
+
+            for patch_cell_x in 0..patch_cells {
+                let src_cell_x = cell_x
+                    .saturating_add(patch_cell_x)
+                    .saturating_sub(NEIGHBORHOOD_RADIUS)
+                    .min(grid_w - 1);
+                let dst_idx = dst_row + patch_cell_x * gw;
+                let src_idx = src_row + src_cell_x * gw;
+                pixels[dst_idx..dst_idx + gw].copy_from_slice(&raster[src_idx..src_idx + gw]);
+            }
+        }
+    }
+
+    LocalPatch {
+        pixels,
+        width,
+        height,
+        cell_offset_x: NEIGHBORHOOD_RADIUS * gw,
+        cell_offset_y: NEIGHBORHOOD_RADIUS * gh,
+    }
+}
+
+fn extract_center_cell_pixels(
+    raster: &[[u8; 3]],
+    cell_x: usize,
+    cell_y: usize,
+    grid_w: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<[u8; 3]> {
+    let raster_width = grid_w * gw;
+    let mut pixels = vec![[0u8; 3]; gw * gh];
+
+    for py in 0..gh {
+        let src_y = cell_y * gh + py;
+        let src_x = cell_x * gw;
+        let src_idx = src_y * raster_width + src_x;
+        let dst_idx = py * gw;
+        pixels[dst_idx..dst_idx + gw].copy_from_slice(&raster[src_idx..src_idx + gw]);
+    }
+
+    pixels
+}
+
+fn paint_cell_pixels(
+    pixels: &mut [[u8; 3]],
+    width: usize,
+    offset_x: usize,
+    offset_y: usize,
+    data: &BlockData,
+    glyph: &FastGlyph,
+    inv: bool,
+    gw: usize,
+    gh: usize,
+) {
+    let inv_u8 = inv as u8;
+    for py in 0..gh {
+        for px in 0..gw {
+            let bit = glyph.bitmap[py * gw + px];
+            pixels[(offset_y + py) * width + offset_x + px] = if (bit ^ inv_u8) == 1 {
+                data.fg
+            } else {
+                data.bg
+            }
+        }
+    }
+}
+
+fn local_patch_frequency_score(patch_pixels: &[[u8; 3]], width: usize, height: usize) -> f32 {
+    spectral_high_frequency_score(patch_pixels, width, height)
+}
+
+fn save_rgb_pixels_as_png(
+    path: &Path,
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> std::io::Result<()> {
+    let mut image = RgbImage::new(width as u32, height as u32);
+    for y in 0..height {
+        for x in 0..width {
+            image.put_pixel(x as u32, y as u32, Rgb(pixels[y * width + x]));
+        }
+    }
+    image.save(path).map_err(std::io::Error::other)
+}
+
+fn with_grid_overlay(
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<[u8; 3]> {
+    let mut out = pixels.to_vec();
+    let grid_color = [255, 0, 255];
+
+    if gw > 0 {
+        for x in (0..width).step_by(gw) {
+            for y in 0..height {
+                out[y * width + x] = grid_color;
+            }
+        }
+    }
+
+    if gh > 0 {
+        for y in (0..height).step_by(gh) {
+            let row = y * width;
+            for x in 0..width {
+                out[row + x] = grid_color;
+            }
+        }
+    }
+
+    out
+}
+
+fn with_center_outline(patch: &LocalPatch, gw: usize, gh: usize) -> Vec<[u8; 3]> {
+    let mut out = patch.pixels.clone();
+    if out.is_empty() || patch.width == 0 || patch.height == 0 || gw == 0 || gh == 0 {
+        return out;
+    }
+
+    let outline = [0, 255, 255];
+    let x0 = patch.cell_offset_x.min(patch.width - 1);
+    let y0 = patch.cell_offset_y.min(patch.height - 1);
+    let x1 = (patch.cell_offset_x + gw)
+        .saturating_sub(1)
+        .min(patch.width - 1);
+    let y1 = (patch.cell_offset_y + gh)
+        .saturating_sub(1)
+        .min(patch.height - 1);
+
+    for x in x0..=x1 {
+        out[y0 * patch.width + x] = outline;
+        out[y1 * patch.width + x] = outline;
+    }
+
+    for y in y0..=y1 {
+        out[y * patch.width + x0] = outline;
+        out[y * patch.width + x1] = outline;
+    }
+
+    out
+}
+
+fn ensure_fft_debug_dir(path: &str) -> Option<PathBuf> {
+    let root = PathBuf::from(path);
+    match fs::create_dir_all(&root) {
+        Ok(_) => Some(root),
+        Err(err) => {
+            log::warn!(
+                "failed to create FFT debug dir '{}': {}",
+                root.display(),
+                err
+            );
+            None
+        }
+    }
+}
+
+fn dump_fft_stage_inputs(
+    root: &Path,
+    stage: &str,
+    raster: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> std::io::Result<()> {
+    let stage_dir = root.join(stage);
+    let cells_dir = stage_dir.join("center_cells_raw");
+    let raw_dir = stage_dir.join("patches_raw");
+    let marked_dir = stage_dir.join("patches_marked");
+    fs::create_dir_all(&cells_dir)?;
+    fs::create_dir_all(&raw_dir)?;
+    fs::create_dir_all(&marked_dir)?;
+
+    let raster_width = grid_w * gw;
+    let raster_height = grid_h * gh;
+    save_rgb_pixels_as_png(
+        &stage_dir.join("rendered_raster.png"),
+        raster,
+        raster_width,
+        raster_height,
+    )?;
+    let overlaid = with_grid_overlay(raster, raster_width, raster_height, gw, gh);
+    save_rgb_pixels_as_png(
+        &stage_dir.join("rendered_raster_grid.png"),
+        &overlaid,
+        raster_width,
+        raster_height,
+    )?;
+
+    let mut manifest = String::from(
+        "cell_x,cell_y,score,patch_width,patch_height,center_offset_x,center_offset_y,center_cell_file,raw_file,marked_file\n",
+    );
+    for cell_y in 0..grid_h {
+        for cell_x in 0..grid_w {
+            let patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+            let score = local_patch_frequency_score(&patch.pixels, patch.width, patch.height);
+            let name = format!("y{:04}_x{:04}.png", cell_y, cell_x);
+            let center_pixels = extract_center_cell_pixels(raster, cell_x, cell_y, grid_w, gw, gh);
+            save_rgb_pixels_as_png(&cells_dir.join(&name), &center_pixels, gw, gh)?;
+            save_rgb_pixels_as_png(
+                &raw_dir.join(&name),
+                &patch.pixels,
+                patch.width,
+                patch.height,
+            )?;
+            let marked = with_center_outline(&patch, gw, gh);
+            save_rgb_pixels_as_png(&marked_dir.join(&name), &marked, patch.width, patch.height)?;
+            writeln!(
+                manifest,
+                "{},{},{:.4},{},{},{},{},center_cells_raw/{},patches_raw/{},patches_marked/{}",
+                cell_x,
+                cell_y,
+                score,
+                patch.width,
+                patch.height,
+                patch.cell_offset_x,
+                patch.cell_offset_y,
+                name,
+                name,
+                name
+            )
+            .map_err(std::io::Error::other)?;
+        }
+    }
+
+    fs::write(stage_dir.join("manifest.csv"), manifest)?;
+    Ok(())
+}
+
+fn dump_fft_fix_change(
+    root: &Path,
+    pass: usize,
+    cell_x: usize,
+    cell_y: usize,
+    before_patch: &LocalPatch,
+    after_patch: &LocalPatch,
+    gw: usize,
+    gh: usize,
+) -> std::io::Result<(String, String, String, String)> {
+    let pass_dir = root.join("changes").join(format!("pass_{:02}", pass));
+    let raw_dir = pass_dir.join("raw");
+    let marked_dir = pass_dir.join("marked");
+    fs::create_dir_all(&raw_dir)?;
+    fs::create_dir_all(&marked_dir)?;
+
+    let before_name = format!("y{:04}_x{:04}_before.png", cell_y, cell_x);
+    let after_name = format!("y{:04}_x{:04}_after.png", cell_y, cell_x);
+
+    save_rgb_pixels_as_png(
+        &raw_dir.join(&before_name),
+        &before_patch.pixels,
+        before_patch.width,
+        before_patch.height,
+    )?;
+    save_rgb_pixels_as_png(
+        &raw_dir.join(&after_name),
+        &after_patch.pixels,
+        after_patch.width,
+        after_patch.height,
+    )?;
+
+    let before_marked = with_center_outline(before_patch, gw, gh);
+    let after_marked = with_center_outline(after_patch, gw, gh);
+    save_rgb_pixels_as_png(
+        &marked_dir.join(&before_name),
+        &before_marked,
+        before_patch.width,
+        before_patch.height,
+    )?;
+    save_rgb_pixels_as_png(
+        &marked_dir.join(&after_name),
+        &after_marked,
+        after_patch.width,
+        after_patch.height,
+    )?;
+
+    Ok((
+        format!("changes/pass_{:02}/raw/{}", pass, before_name),
+        format!("changes/pass_{:02}/raw/{}", pass, after_name),
+        format!("changes/pass_{:02}/marked/{}", pass, before_name),
+        format!("changes/pass_{:02}/marked/{}", pass, after_name),
+    ))
+}
+
+fn build_rendered_raster(
+    grid_data: &[BlockData],
+    grid_state: &[(usize, bool)],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<[u8; 3]> {
+    let width = grid_w * gw;
+    let height = grid_h * gh;
+    let mut raster = vec![[0u8; 3]; width * height];
+
+    for cy in 0..grid_h {
+        for cx in 0..grid_w {
+            let idx = cy * grid_w + cx;
+            let (gi, inv) = grid_state[idx];
+            paint_cell_pixels(
+                &mut raster,
+                width,
+                cx * gw,
+                cy * gh,
+                &grid_data[idx],
+                &glyphs[gi],
+                inv,
+                gw,
+                gh,
+            );
+        }
+    }
+
+    raster
+}
+
+fn best_candidate_pool(
+    costs: &[u64],
+    current_choice: (usize, bool),
+    pool_size: usize,
+) -> Vec<(usize, bool, u64)> {
+    if pool_size >= costs.len() {
+        let mut pool: Vec<(usize, bool, u64)> = costs
+            .iter()
+            .enumerate()
+            .map(|(idx, &cost)| (idx / 2, idx % 2 == 1, cost))
+            .collect();
+        pool.sort_by_key(|&(_, _, cost)| cost);
+        return pool;
+    }
+
+    let mut pool = Vec::with_capacity(pool_size + 1);
+
+    for (idx, &cost) in costs.iter().enumerate() {
+        let candidate = (idx / 2, idx % 2 == 1, cost);
+        let insert_at = pool
+            .iter()
+            .position(|&(_, _, existing)| cost < existing)
+            .unwrap_or(pool.len());
+
+        if insert_at < pool_size {
+            pool.insert(insert_at, candidate);
+            if pool.len() > pool_size {
+                pool.pop();
+            }
+        } else if pool.len() < pool_size {
+            pool.push(candidate);
+        }
+    }
+
+    if !pool.iter().any(|&(gi, inv, _)| (gi, inv) == current_choice) {
+        let current_idx = current_choice.0 * 2 + current_choice.1 as usize;
+        if let Some(&cost) = costs.get(current_idx) {
+            pool.push((current_choice.0, current_choice.1, cost));
+        }
+    }
+
+    pool
+}
+
+fn current_cell_frequency_score(
+    raster: &[[u8; 3]],
+    cell_x: usize,
+    cell_y: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> f32 {
+    let patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+    local_patch_frequency_score(&patch.pixels, patch.width, patch.height)
+}
+
+fn candidate_cell_frequency_score(
+    raster: &[[u8; 3]],
+    cell_x: usize,
+    cell_y: usize,
+    data: &BlockData,
+    glyph: &FastGlyph,
+    inv: bool,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> f32 {
+    let mut patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+    paint_cell_pixels(
+        &mut patch.pixels,
+        patch.width,
+        patch.cell_offset_x,
+        patch.cell_offset_y,
+        data,
+        glyph,
+        inv,
+        gw,
+        gh,
+    );
+    local_patch_frequency_score(&patch.pixels, patch.width, patch.height)
+}
+
+fn apply_choice_to_raster(
+    raster: &mut [[u8; 3]],
+    grid_data: &[BlockData],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    gw: usize,
+    gh: usize,
+    cell_idx: usize,
+    choice: (usize, bool),
+) {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    paint_cell_pixels(
+        raster,
+        grid_w * gw,
+        cell_x * gw,
+        cell_y * gh,
+        &grid_data[cell_idx],
+        &glyphs[choice.0],
+        choice.1,
+        gw,
+        gh,
+    );
+}
+
+fn build_quantized_cell_references(
+    image: &AnsiImage,
+    grid_data: &[BlockData],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<QuantizedCellReference> {
+    (0..grid_w * grid_h)
+        .into_par_iter()
+        .map(|idx| {
+            let cell_x = idx % grid_w;
+            let cell_y = idx / grid_w;
+            let blk = &image.block[cell_y][cell_x];
+            let data = &grid_data[idx];
+
+            if data.fg == data.bg {
+                return QuantizedCellReference {
+                    mask: vec![0u8; gw * gh],
+                };
+            }
+
+            let fg_r = data.fg[0] as i64;
+            let fg_g = data.fg[1] as i64;
+            let fg_b = data.fg[2] as i64;
+            let bg_r = data.bg[0] as i64;
+            let bg_g = data.bg[1] as i64;
+            let bg_b = data.bg[2] as i64;
+
+            let mut mask = Vec::with_capacity(gw * gh);
+            for y in 0..gh {
+                for x in 0..gw {
+                    let rgb = unpack_rgb(blk.pixels[y][x].orig);
+                    let r = rgb[0] as i64;
+                    let g = rgb[1] as i64;
+                    let b = rgb[2] as i64;
+                    let fg_cost = (r - fg_r).pow(2) as u64
+                        + (g - fg_g).pow(2) as u64
+                        + (b - fg_b).pow(2) as u64;
+                    let bg_cost = (r - bg_r).pow(2) as u64
+                        + (g - bg_g).pow(2) as u64
+                        + (b - bg_b).pow(2) as u64;
+                    mask.push((fg_cost <= bg_cost) as u8);
+                }
+            }
+
+            QuantizedCellReference { mask }
+        })
+        .collect()
+}
+
+#[inline(always)]
+fn shifted_mask_sample(
+    mask: &[u8],
+    gw: usize,
+    gh: usize,
+    x: usize,
+    y: usize,
+    dx: isize,
+    dy: isize,
+) -> u8 {
+    let src_x = (x as isize - dx).clamp(0, gw.saturating_sub(1) as isize) as usize;
+    let src_y = (y as isize - dy).clamp(0, gh.saturating_sub(1) as isize) as usize;
+    mask[src_y * gw + src_x]
+}
+
+fn shifted_reference_match_cost(
+    mask: &[u8],
+    glyph: &FastGlyph,
+    inv: bool,
+    gw: usize,
+    gh: usize,
+    dx: isize,
+    dy: isize,
+) -> u32 {
+    let inv_u8 = inv as u8;
+    let mut cost = 0u32;
+    for y in 0..gh {
+        for x in 0..gw {
+            let reference = shifted_mask_sample(mask, gw, gh, x, y, dx, dy);
+            let candidate = glyph.bitmap[y * gw + x] ^ inv_u8;
+            cost += (candidate != reference) as u32;
+        }
+    }
+    cost
+}
+
+fn best_shifted_reference_match_with_radius(
+    mask: &[u8],
+    glyph: &FastGlyph,
+    inv: bool,
+    gw: usize,
+    gh: usize,
+    shift_radius: isize,
+) -> (u32, i8, i8) {
+    let mut best_cost = u32::MAX;
+    let mut best_dx = 0i8;
+    let mut best_dy = 0i8;
+
+    for dy in -shift_radius..=shift_radius {
+        for dx in -shift_radius..=shift_radius {
+            let cost = shifted_reference_match_cost(mask, glyph, inv, gw, gh, dx, dy);
+            if cost < best_cost {
+                best_cost = cost;
+                best_dx = dx as i8;
+                best_dy = dy as i8;
+            }
+        }
+    }
+
+    (best_cost, best_dx, best_dy)
+}
+
+#[inline(always)]
+fn allowed_reference_cost(base_cost: u32, tolerance_ratio: f32, tolerance_pixels: u32) -> u32 {
+    ((base_cost as f32 * (1.0 + tolerance_ratio)).ceil() as u32) + tolerance_pixels
+}
+
+fn cell_frequency_scores(
+    raster: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<f32> {
+    (0..grid_w * grid_h)
+        .into_par_iter()
+        .map(|idx| {
+            let cell_x = idx % grid_w;
+            let cell_y = idx / grid_w;
+            current_cell_frequency_score(raster, cell_x, cell_y, grid_w, grid_h, gw, gh)
+        })
+        .collect()
+}
+
+#[inline(always)]
+fn glyph_edge_color(bit: u8, inv: u8, data: &BlockData) -> [u8; 3] {
+    if (bit ^ inv) == 1 {
+        data.fg
+    } else {
+        data.bg
+    }
+}
+
+fn continuity_hint_score(
+    curr_idx: usize,
+    candidate: (usize, bool),
+    grid_data: &[BlockData],
+    grid_state: &[(usize, bool)],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> u32 {
+    let cx = curr_idx % grid_w;
+    let cy = curr_idx / grid_w;
+    let (gi, inv) = candidate;
+    let glyph = &glyphs[gi];
+    let data = &grid_data[curr_idx];
+    let inv_u8 = inv as u8;
+    let mut score = 0u32;
+
+    if cx > 0 {
+        let n_idx = curr_idx - 1;
+        let (n_gi, n_inv) = grid_state[n_idx];
+        let neighbor = &glyphs[n_gi];
+        let neighbor_data = &grid_data[n_idx];
+        let neighbor_inv = n_inv as u8;
+        for i in 0..gh {
+            let left = glyph_edge_color(neighbor.right[i], neighbor_inv, neighbor_data);
+            let right = glyph_edge_color(glyph.left[i], inv_u8, data);
+            score += (normalized_rgb_distance(left, right) < 0.01) as u32;
+        }
+    }
+
+    if cx + 1 < grid_w {
+        let n_idx = curr_idx + 1;
+        let (n_gi, n_inv) = grid_state[n_idx];
+        let neighbor = &glyphs[n_gi];
+        let neighbor_data = &grid_data[n_idx];
+        let neighbor_inv = n_inv as u8;
+        for i in 0..gh {
+            let left = glyph_edge_color(glyph.right[i], inv_u8, data);
+            let right = glyph_edge_color(neighbor.left[i], neighbor_inv, neighbor_data);
+            score += (normalized_rgb_distance(left, right) < 0.01) as u32;
+        }
+    }
+
+    if cy > 0 {
+        let n_idx = curr_idx - grid_w;
+        let (n_gi, n_inv) = grid_state[n_idx];
+        let neighbor = &glyphs[n_gi];
+        let neighbor_data = &grid_data[n_idx];
+        let neighbor_inv = n_inv as u8;
+        for i in 0..gw {
+            let top = glyph_edge_color(neighbor.bottom[i], neighbor_inv, neighbor_data);
+            let bottom = glyph_edge_color(glyph.top[i], inv_u8, data);
+            score += (normalized_rgb_distance(top, bottom) < 0.01) as u32;
+        }
+    }
+
+    if cy + 1 < grid_h {
+        let n_idx = curr_idx + grid_w;
+        let (n_gi, n_inv) = grid_state[n_idx];
+        let neighbor = &glyphs[n_gi];
+        let neighbor_data = &grid_data[n_idx];
+        let neighbor_inv = n_inv as u8;
+        for i in 0..gw {
+            let top = glyph_edge_color(glyph.bottom[i], inv_u8, data);
+            let bottom = glyph_edge_color(neighbor.top[i], neighbor_inv, neighbor_data);
+            score += (normalized_rgb_distance(top, bottom) < 0.01) as u32;
+        }
+    }
+
+    score
+}
+
+fn max_continuity_samples(
+    curr_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> u32 {
+    let cx = curr_idx % grid_w;
+    let cy = curr_idx / grid_w;
+    let mut total = 0u32;
+    if cx > 0 {
+        total += gh as u32;
+    }
+    if cx + 1 < grid_w {
+        total += gh as u32;
+    }
+    if cy > 0 {
+        total += gw as u32;
+    }
+    if cy + 1 < grid_h {
+        total += gw as u32;
+    }
+    total
+}
+
+fn cell_discontinuity_score(
+    curr_idx: usize,
+    grid_data: &[BlockData],
+    grid_state: &[(usize, bool)],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> f32 {
+    let data = &grid_data[curr_idx];
+    if data.fg == data.bg {
+        return 0.0;
+    }
+
+    let current_choice = grid_state[curr_idx];
+    let continuity = continuity_hint_score(
+        curr_idx,
+        current_choice,
+        grid_data,
+        grid_state,
+        glyphs,
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+    );
+    let max_samples = max_continuity_samples(curr_idx, grid_w, grid_h, gw, gh);
+    if max_samples == 0 {
+        0.0
+    } else {
+        100.0 * (1.0 - continuity as f32 / max_samples as f32)
+    }
+}
+
+fn all_cell_discontinuity_scores(
+    grid_data: &[BlockData],
+    grid_state: &[(usize, bool)],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<f32> {
+    (0..grid_w * grid_h)
+        .into_par_iter()
+        .map(|idx| {
+            cell_discontinuity_score(idx, grid_data, grid_state, glyphs, grid_w, grid_h, gw, gh)
+        })
+        .collect()
+}
+
+fn has_flat_uniform_neighbor_context(
+    curr_idx: usize,
+    grid_data: &[BlockData],
+    grid_w: usize,
+    grid_h: usize,
+) -> bool {
+    let cx = curr_idx % grid_w;
+    let cy = curr_idx / grid_w;
+    let mut uniform_color: Option<[u8; 3]> = None;
+    let mut found_neighbor = false;
+
+    let y0 = cy.saturating_sub(1);
+    let y1 = (cy + 1).min(grid_h - 1);
+    let x0 = cx.saturating_sub(1);
+    let x1 = (cx + 1).min(grid_w - 1);
+
+    for ny in y0..=y1 {
+        for nx in x0..=x1 {
+            if nx == cx && ny == cy {
+                continue;
+            }
+            found_neighbor = true;
+            let neighbor = &grid_data[ny * grid_w + nx];
+            if neighbor.fg != neighbor.bg {
+                return false;
+            }
+            if let Some(color) = uniform_color {
+                if neighbor.fg != color {
+                    return false;
+                }
+            } else {
+                uniform_color = Some(neighbor.fg);
+            }
+        }
+    }
+
+    found_neighbor && uniform_color.is_some()
+}
+
 pub fn render_blocks(
     image: &AnsiImage,
     args: &RenderArgs,
@@ -609,15 +1599,8 @@ pub fn render_blocks_smooth(
         return "".into();
     }
 
-    // --- Phase 1: Pre-calculate Block Data (Colors & Pixels) ---
-    struct BlockData {
-        fg: [u8; 3],            // High Color
-        bg: [u8; 3],            // Low Color
-        fg_col: Option<Colour>, // Cached Colour enum
-        bg_col: Option<Colour>,
-        alt_fg_col: Option<Colour>, // For Preview mode: IRC version
-        alt_bg_col: Option<Colour>,
-    }
+    let needs_frequency_metric =
+        args.show_discontinuities || args.fix_disc || args.score || args.fft_debug_dir.is_some();
 
     let scales = vec![(1.0, 1.0)];
 
@@ -1137,6 +2120,34 @@ pub fn render_blocks_smooth(
         return "Cancelled".into();
     }
 
+    let fft_debug_root = args.fft_debug_dir.as_deref().and_then(ensure_fft_debug_dir);
+
+    let mut rendered_raster = if needs_frequency_metric {
+        Some(build_rendered_raster(
+            &grid_data,
+            &grid_state,
+            glyphs,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        ))
+    } else {
+        None
+    };
+
+    if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
+        if let Err(err) = dump_fft_stage_inputs(root, "initial", raster, grid_w, grid_h, gw, gh) {
+            log::warn!("failed to dump initial FFT inputs: {}", err);
+        }
+    }
+
+    let quantized_references = if args.fix_disc {
+        build_quantized_cell_references(image, &grid_data, grid_w, grid_h, gw, gh)
+    } else {
+        Vec::new()
+    };
+
     let block_glyph_costs: Vec<Vec<u64>> = if args.fix_disc {
         grid_data
             .par_iter()
@@ -1214,27 +2225,20 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    // --- Phase 5: Boundary Continuity Resolution ---
-    //
-    // Constraint-satisfaction approach: no weights, no knobs.
-    //
-    // For each cell with fixable discontinuities (same detection as show_disc):
-    //   1. Build edge constraints from neighbors. For each boundary pixel,
-    //      the neighbor renders a definite color. If that color is in our
-    //      palette (FG or BG), we know the exact effective bitmap value
-    //      (0=BG, 1=FG) needed to match. That's a hard constraint.
-    //   2. Score each candidate glyph by how many constraints it satisfies
-    //      ("continuity score"). No weights — just count matches.
-    //   3. Pick the glyph with the highest continuity score. Break ties
-    //      by internal fidelity (fewer misclassified source pixels).
-    //   4. Iterate until convergence (max 10 passes).
-    //
-    // Only parameter: fix_strength (same threshold show_disc uses).
     if args.fix_disc {
+        let raster = rendered_raster
+            .as_mut()
+            .expect("rendered raster should exist when fix_disc is enabled");
         let t_fix = std::time::Instant::now();
-        let disc_threshold = args.fix_strength as usize;
+        let candidate_pool_size = args.fix_disc_pool_size.max(1) as usize;
+        let shift_radius = args.fix_disc_shift_radius as isize;
+        let reference_tolerance_ratio = args.fix_disc_ref_tolerance_ratio.max(0.0);
+        let reference_tolerance_pixels = args.fix_disc_ref_tolerance_pixels;
+        let mut change_manifest = String::from(
+            "pass,cell_x,cell_y,before_ref_cost,after_ref_cost,before_continuity,after_continuity,before_shift_x,before_shift_y,after_shift_x,after_shift_y,before_char,before_inv,after_char,after_inv,before_raw,after_raw,before_marked,after_marked\n",
+        );
 
-        for pass in 0..10 {
+        for pass in 0..args.fix_disc_passes as usize {
             if let Some(flag) = &abort_flag {
                 if flag.load(std::sync::atomic::Ordering::Relaxed) {
                     return "Cancelled".into();
@@ -1253,167 +2257,174 @@ pub fn render_blocks_smooth(
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
                 let (cur_gi, cur_inv) = grid_state[curr_idx];
-                let my_fg = grid_data[curr_idx].fg;
-                let my_bg = grid_data[curr_idx].bg;
+                let data = &grid_data[curr_idx];
 
-                // Skip uniform cells (FG == BG: glyph is invisible)
-                if my_fg == my_bg {
+                if data.fg == data.bg {
+                    continue;
+                }
+                if has_flat_uniform_neighbor_context(curr_idx, &grid_data, grid_w, grid_h) {
                     continue;
                 }
 
-                // Build edge constraints and count fixable mismatches.
-                //
-                // For each boundary pixel, if the neighbor renders a color
-                // that's in our palette, we set a constraint:
-                //   want=1 means "effective FG here" (bitmap ^ inv == 1)
-                //   want=0 means "effective BG here" (bitmap ^ inv == 0)
-                // 255 = unconstrained (neighbor's color not in our palette)
-                const UNCONSTRAINED: u8 = 255;
-                let mut top_want = [UNCONSTRAINED; 256];
-                let mut bottom_want = [UNCONSTRAINED; 256];
-                let mut left_want = [UNCONSTRAINED; 256];
-                let mut right_want = [UNCONSTRAINED; 256];
-                let mut fixable_count = 0usize;
-
-                macro_rules! build_edge {
-                    ($cond:expr, $n_idx:expr, $len:expr, $wants:expr,
-                     $my_edge_fn:expr, $n_edge_fn:expr) => {
-                        if $cond {
-                            let n_idx = $n_idx;
-                            let (ni, niv) = grid_state[n_idx];
-                            let n_fg = grid_data[n_idx].fg;
-                            let n_bg = grid_data[n_idx].bg;
-                            for i in 0..$len {
-                                // What the neighbor renders at this boundary pixel
-                                let n_col = if (($n_edge_fn)(ni, i) ^ (niv as u8)) == 1 {
-                                    n_fg
-                                } else {
-                                    n_bg
-                                };
-                                // What we currently render
-                                let my_bmp = ($my_edge_fn)(cur_gi, i);
-                                let my_col = if (my_bmp ^ (cur_inv as u8)) == 1 {
-                                    my_fg
-                                } else {
-                                    my_bg
-                                };
-                                // Count fixable mismatch (same logic as show_disc)
-                                if my_col != n_col {
-                                    let my_in_n = my_col == n_fg || my_col == n_bg;
-                                    let n_in_me = n_col == my_fg || n_col == my_bg;
-                                    if my_in_n || n_in_me {
-                                        fixable_count += 1;
-                                    }
-                                }
-                                // Set constraint: what effective value do we need
-                                // to render the neighbor's color?
-                                if n_col == my_fg {
-                                    $wants[i] = 1; // need FG
-                                } else if n_col == my_bg {
-                                    $wants[i] = 0; // need BG
-                                }
-                                // else: neighbor's color isn't in our palette → unconstrained
-                            }
-                        }
-                    };
-                }
-
-                build_edge!(
-                    cy > 0,
-                    curr_idx - grid_w,
+                let current_choice = (cur_gi, cur_inv);
+                let current_continuity = continuity_hint_score(
+                    curr_idx,
+                    current_choice,
+                    &grid_data,
+                    &grid_state,
+                    glyphs,
+                    grid_w,
+                    grid_h,
                     gw,
-                    top_want,
-                    |gi: usize, i: usize| glyphs[gi].top[i],
-                    |ni: usize, i: usize| glyphs[ni].bottom[i]
-                );
-                build_edge!(
-                    cy < grid_h - 1,
-                    curr_idx + grid_w,
-                    gw,
-                    bottom_want,
-                    |gi: usize, i: usize| glyphs[gi].bottom[i],
-                    |ni: usize, i: usize| glyphs[ni].top[i]
-                );
-                build_edge!(
-                    cx > 0,
-                    curr_idx - 1,
                     gh,
-                    left_want,
-                    |gi: usize, i: usize| glyphs[gi].left[i],
-                    |ni: usize, i: usize| glyphs[ni].right[i]
                 );
-                build_edge!(
-                    cx < grid_w - 1,
-                    curr_idx + 1,
-                    gh,
-                    right_want,
-                    |gi: usize, i: usize| glyphs[gi].right[i],
-                    |ni: usize, i: usize| glyphs[ni].left[i]
-                );
+                let current_reference = quantized_references
+                    .get(curr_idx)
+                    .expect("quantized references should exist when fix_disc is enabled");
+                let (current_ref_cost, current_dx, current_dy) =
+                    best_shifted_reference_match_with_radius(
+                        &current_reference.mask,
+                        &glyphs[cur_gi],
+                        cur_inv,
+                        gw,
+                        gh,
+                        shift_radius,
+                    );
 
-                // Only repair cells that show_disc would highlight
-                if fixable_count <= disc_threshold {
-                    continue;
-                }
+                let mut best_ref_cost = current_ref_cost;
+                let mut best_internal = block_glyph_costs
+                    .get(curr_idx)
+                    .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
+                    .unwrap_or(u64::MAX);
+                let mut best_continuity = current_continuity;
+                let mut best_choice = current_choice;
+                let mut best_shift = (current_dx, current_dy);
 
-                // Score each candidate glyph by constraint satisfaction.
-                // No weights, no cost functions — just count matching edge pixels.
-                let mut best_continuity = 0u32;
-                let mut best_internal = u64::MAX;
-                let mut best_choice = (cur_gi, cur_inv);
+                let pool = block_glyph_costs
+                    .get(curr_idx)
+                    .map(|costs| best_candidate_pool(costs, current_choice, candidate_pool_size))
+                    .unwrap_or_else(|| vec![(cur_gi, cur_inv, best_internal)]);
 
-                for (gi, glyph) in glyphs.iter().enumerate() {
-                    let max_inv = 2;
-                    for inv_idx in 0..max_inv {
-                        let inv_u8 = inv_idx as u8;
+                for (gi, candidate_inv, internal) in pool {
+                    if (gi, candidate_inv) == current_choice {
+                        continue;
+                    }
 
-                        // Count how many constraints this glyph satisfies
-                        let mut continuity = 0u32;
+                    let (ref_cost, shift_x, shift_y) = best_shifted_reference_match_with_radius(
+                        &current_reference.mask,
+                        &glyphs[gi],
+                        candidate_inv,
+                        gw,
+                        gh,
+                        shift_radius,
+                    );
+                    let continuity = continuity_hint_score(
+                        curr_idx,
+                        (gi, candidate_inv),
+                        &grid_data,
+                        &grid_state,
+                        glyphs,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                    );
+                    let allowed_ref_cost = allowed_reference_cost(
+                        current_ref_cost,
+                        reference_tolerance_ratio,
+                        reference_tolerance_pixels,
+                    );
 
-                        for i in 0..gw {
-                            if top_want[i] != UNCONSTRAINED
-                                && (glyph.top[i] ^ inv_u8) == top_want[i]
-                            {
-                                continuity += 1;
-                            }
-                            if bottom_want[i] != UNCONSTRAINED
-                                && (glyph.bottom[i] ^ inv_u8) == bottom_want[i]
-                            {
-                                continuity += 1;
-                            }
-                        }
-                        for i in 0..gh {
-                            if left_want[i] != UNCONSTRAINED
-                                && (glyph.left[i] ^ inv_u8) == left_want[i]
-                            {
-                                continuity += 1;
-                            }
-                            if right_want[i] != UNCONSTRAINED
-                                && (glyph.right[i] ^ inv_u8) == right_want[i]
-                            {
-                                continuity += 1;
-                            }
-                        }
-
-                        // Tiebreaker: internal fidelity (fewer misclassified pixels)
-                        let internal = block_glyph_costs
-                            .get(curr_idx)
-                            .and_then(|v| v.get(gi * 2 + inv_idx).copied())
-                            .unwrap_or(u64::MAX);
-
-                        // Primary: max continuity. Secondary: min internal cost.
-                        if continuity > best_continuity
-                            || (continuity == best_continuity && internal < best_internal)
-                        {
-                            best_continuity = continuity;
-                            best_internal = internal;
-                            best_choice = (gi, inv_idx == 1);
-                        }
+                    if (continuity > best_continuity && ref_cost <= allowed_ref_cost)
+                        || (continuity == best_continuity && ref_cost < best_ref_cost)
+                        || (continuity == best_continuity
+                            && ref_cost == best_ref_cost
+                            && internal < best_internal)
+                    {
+                        best_ref_cost = ref_cost;
+                        best_internal = internal;
+                        best_continuity = continuity;
+                        best_choice = (gi, candidate_inv);
+                        best_shift = (shift_x, shift_y);
                     }
                 }
 
-                if best_choice != (cur_gi, cur_inv) {
+                if best_choice != current_choice
+                    && ((best_continuity > current_continuity
+                        && best_ref_cost
+                            <= allowed_reference_cost(
+                                current_ref_cost,
+                                reference_tolerance_ratio,
+                                reference_tolerance_pixels,
+                            ))
+                        || (best_continuity == current_continuity
+                            && best_ref_cost < current_ref_cost))
+                {
+                    let before_patch = fft_debug_root.as_ref().map(|_| {
+                        extract_local_patch(raster.as_slice(), cx, cy, grid_w, grid_h, gw, gh)
+                    });
                     grid_state[curr_idx] = best_choice;
+                    apply_choice_to_raster(
+                        raster.as_mut_slice(),
+                        &grid_data,
+                        glyphs,
+                        grid_w,
+                        gw,
+                        gh,
+                        curr_idx,
+                        best_choice,
+                    );
+                    if let (Some(root), Some(before_patch)) =
+                        (fft_debug_root.as_ref(), before_patch.as_ref())
+                    {
+                        let after_patch =
+                            extract_local_patch(raster.as_slice(), cx, cy, grid_w, grid_h, gw, gh);
+                        match dump_fft_fix_change(
+                            root,
+                            pass,
+                            cx,
+                            cy,
+                            before_patch,
+                            &after_patch,
+                            gw,
+                            gh,
+                        ) {
+                            Ok((before_raw, after_raw, before_marked, after_marked)) => {
+                                writeln!(
+                                    change_manifest,
+                                    "{},{},{},{},{},{},{},{},{},{},{},{:?},{},{:?},{},{},{},{},{}",
+                                    pass,
+                                    cx,
+                                    cy,
+                                    current_ref_cost,
+                                    best_ref_cost,
+                                    current_continuity,
+                                    best_continuity,
+                                    current_dx,
+                                    current_dy,
+                                    best_shift.0,
+                                    best_shift.1,
+                                    glyphs[cur_gi].ch,
+                                    cur_inv,
+                                    glyphs[best_choice.0].ch,
+                                    best_choice.1,
+                                    before_raw,
+                                    after_raw,
+                                    before_marked,
+                                    after_marked
+                                )
+                                .ok();
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "failed to dump FFT fix change for cell ({}, {}): {}",
+                                    cx,
+                                    cy,
+                                    err
+                                );
+                            }
+                        }
+                    }
                     changes += 1;
                 }
             }
@@ -1423,185 +2434,52 @@ pub fn render_blocks_smooth(
                 break;
             }
         }
+        if let Some(root) = fft_debug_root.as_ref() {
+            if let Err(err) = fs::write(root.join("changes.csv"), change_manifest) {
+                log::warn!("failed to write FFT change manifest: {}", err);
+            }
+        }
         log::info!("fix_disc completed in {:?}", t_fix.elapsed());
     }
 
-    let mut relative_disc_score = 0.0;
+    let cell_disc_scores =
+        all_cell_discontinuity_scores(&grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh);
+    let relative_disc_score = if cell_disc_scores.is_empty() {
+        0.0
+    } else {
+        cell_disc_scores.iter().copied().sum::<f32>() as f64 / cell_disc_scores.len() as f64
+    };
 
-    let full_disc_data: Vec<(usize, Option<([u8; 3], [u8; 3])>)> = if args.show_discontinuities {
-        let disc_threshold = args.fix_strength as usize;
-
-        // Precompute rendered FG/BG colors for each cell
-        let cell_colors: Vec<([u8; 3], [u8; 3])> = grid_data.iter().map(|d| (d.fg, d.bg)).collect();
-
-        let img_w = grid_w * gw;
-        let img_h = grid_h * gh;
-        let mut img = vec![[0u8; 3]; img_w * img_h];
-
-        for cy in 0..grid_h {
-            for cx in 0..grid_w {
-                let curr_idx = cy * grid_w + cx;
-                let (gi, inv) = grid_state[curr_idx];
-                let glyph = &glyphs[gi];
-                let (my_fg, my_bg) = cell_colors[curr_idx];
-
-                for i in 0..gh {
-                    for j in 0..gw {
-                        let bit = glyph.bitmap[i * gw + j];
-                        let color = if (bit ^ (inv as u8)) == 1 {
-                            my_fg
-                        } else {
-                            my_bg
-                        };
-                        img[(cy * gh + i) * img_w + (cx * gw + j)] = color;
-                    }
-                }
-            }
+    if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
+        if let Err(err) = dump_fft_stage_inputs(root, "final", raster, grid_w, grid_h, gw, gh) {
+            log::warn!("failed to dump final FFT inputs: {}", err);
         }
+    }
 
-        let mut cell_disc_counts = vec![0usize; grid_h * grid_w];
-        let mut total_corners = 0;
-        let mut disc_corners = 0;
-
-        for y in 1..img_h {
-            for x in 1..img_w {
-                let tl = img[(y - 1) * img_w + (x - 1)];
-                let tr = img[(y - 1) * img_w + x];
-                let bl = img[y * img_w + (x - 1)];
-                let br = img[y * img_w + x];
-
-                let mut is_disc = false;
-
-                if tl == tr && tl == bl && tl != br {
-                    total_corners += 1;
-                    let c1 = tl;
-                    let c2 = br;
-                    let mut lh = 0;
-                    while x + lh < img_w
-                        && img[(y - 1) * img_w + x + lh] == c1
-                        && img[y * img_w + x + lh] == c2
-                    {
-                        lh += 1;
-                    }
-                    let mut lv = 0;
-                    while y + lv < img_h
-                        && img[(y + lv) * img_w + x - 1] == c1
-                        && img[(y + lv) * img_w + x] == c2
-                    {
-                        lv += 1;
-                    }
-                    if lh >= 2 || lv >= 2 {
-                        is_disc = true;
-                    }
-                } else if tr == tl && tr == br && tr != bl {
-                    total_corners += 1;
-                    let c1 = tr;
-                    let c2 = bl;
-                    let mut lh = 0;
-                    while x > lh
-                        && img[(y - 1) * img_w + x - 1 - lh] == c1
-                        && img[y * img_w + x - 1 - lh] == c2
-                    {
-                        lh += 1;
-                    }
-                    let mut lv = 0;
-                    while y + lv < img_h
-                        && img[(y + lv) * img_w + x] == c1
-                        && img[(y + lv) * img_w + x - 1] == c2
-                    {
-                        lv += 1;
-                    }
-                    if lh >= 2 || lv >= 2 {
-                        is_disc = true;
-                    }
-                } else if bl == tl && bl == br && bl != tr {
-                    total_corners += 1;
-                    let c1 = bl;
-                    let c2 = tr;
-                    let mut lh = 0;
-                    while x + lh < img_w
-                        && img[y * img_w + x + lh] == c1
-                        && img[(y - 1) * img_w + x + lh] == c2
-                    {
-                        lh += 1;
-                    }
-                    let mut lv = 0;
-                    while y > lv
-                        && img[(y - 1 - lv) * img_w + x - 1] == c1
-                        && img[(y - 1 - lv) * img_w + x] == c2
-                    {
-                        lv += 1;
-                    }
-                    if lh >= 2 || lv >= 2 {
-                        is_disc = true;
-                    }
-                } else if br == tr && br == bl && br != tl {
-                    total_corners += 1;
-                    let c1 = br;
-                    let c2 = tl;
-                    let mut lh = 0;
-                    while x > lh
-                        && img[y * img_w + x - 1 - lh] == c1
-                        && img[(y - 1) * img_w + x - 1 - lh] == c2
-                    {
-                        lh += 1;
-                    }
-                    let mut lv = 0;
-                    while y > lv
-                        && img[(y - 1 - lv) * img_w + x] == c1
-                        && img[(y - 1 - lv) * img_w + x - 1] == c2
-                    {
-                        lv += 1;
-                    }
-                    if lh >= 2 || lv >= 2 {
-                        is_disc = true;
-                    }
-                } else if tl == br && tr == bl && tl != tr {
-                    total_corners += 2;
-                    // Checkerboard patches (1x1 steps) are smooth
-                }
-
-                if is_disc {
-                    disc_corners += 1;
-                    let cx = x / gw;
-                    let cy = y / gh;
-                    if cx < grid_w && cy < grid_h {
-                        cell_disc_counts[cy * grid_w + cx] += 1;
-                    }
-                }
-            }
-        }
-
-        if total_corners > 0 {
-            // Divide by the square root of total area (sqrt(corners)) to normalize
-            // against linear scaling. This makes the error metric size-independent,
-            // so larger outputs don't automatically score better.
-            relative_disc_score = (disc_corners as f64) / (total_corners as f64).sqrt();
-        } else {
-            relative_disc_score = 0.0;
-        }
-
-        (0..grid_h * grid_w)
-            .map(|curr_idx| {
-                let count = cell_disc_counts[curr_idx];
-                if count > disc_threshold {
-                    let severity = (count as f32 / 4.0).min(1.0);
+    let disc_overlay: Vec<Option<([u8; 3], [u8; 3])>> = if args.show_discontinuities {
+        let max_score = cell_disc_scores
+            .iter()
+            .copied()
+            .fold(0.0f32, f32::max)
+            .max(1.0);
+        cell_disc_scores
+            .into_iter()
+            .map(|score| {
+                if score > 0.5 {
+                    let severity = (score / max_score).min(1.0);
                     let red = (80.0 + 175.0 * severity).min(255.0) as u8;
                     let bg_int = (red / 2).max(30);
-                    (count, Some(([red, 20, 20], [bg_int, 10, 10])))
+                    Some(([red, 20, 20], [bg_int, 10, 10]))
                 } else {
-                    (count, None)
+                    None
                 }
             })
-            .collect::<Vec<(usize, Option<([u8; 3], [u8; 3])>)>>()
+            .collect()
     } else {
         Vec::new()
     };
 
-    let disc_overlay: Vec<Option<([u8; 3], [u8; 3])>> =
-        full_disc_data.into_iter().map(|(_, ovr)| ovr).collect();
-
-    if args.show_discontinuities {
+    if args.show_discontinuities || args.score {
         log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
     }
 
@@ -1647,7 +2525,7 @@ pub fn render_blocks_smooth(
             let data = &grid_data[idx];
             let (gi, inv) = grid_state[idx];
             let glyph = &glyphs[gi];
-            let mut ch = glyph.ch;
+            let ch = glyph.ch;
 
             let mut text_overlay: Option<&crate::args::TextOverlay> = None;
             let mut overlay_char = None;
@@ -1812,7 +2690,7 @@ pub fn render_blocks_smooth(
                         }
                     }
                 }
-                
+
                 let mut final_alt_fg = alt_fg;
                 let mut final_alt_bg = alt_bg;
                 if let Some(ov) = text_overlay {
@@ -1994,10 +2872,10 @@ pub fn render_braille(
                     Render::Ansi | Render::Irc => Colour::Index(0),
                     Render::Ansi24 | Render::Preview => Colour::RGB([0, 0, 0]),
                 });
-            
+
             let mut final_bg = None;
             let mut final_ch = std::char::from_u32(braille).unwrap_or(' ');
-            
+
             for ov in &args.overlays {
                 if (y / 4) as i32 == ov.y && ((x / 2) as i32) >= ov.x {
                     let dx = ((x / 2) as i32 - ov.x) as usize;
@@ -2038,7 +2916,7 @@ pub fn render_braille(
                     .max_by_key(|&(_, count)| count)
                     .map(|(c, _)| c)
                     .unwrap_or(Colour::Index(0));
-                
+
                 let mut alt_bg = None;
                 let mut alt_ch = std::char::from_u32(braille).unwrap_or(' ');
 
@@ -2244,5 +3122,296 @@ fn get_transformed_block_pixels_into(
                 sq: r * r + g * g + b * b,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_glyph(ch: char, bitmap: &[u8], gw: usize, gh: usize) -> FastGlyph {
+        let top = bitmap[0..gw].to_vec();
+        let bottom = bitmap[(gh - 1) * gw..gh * gw].to_vec();
+        let mut left = Vec::with_capacity(gh);
+        let mut right = Vec::with_capacity(gh);
+        for y in 0..gh {
+            left.push(bitmap[y * gw]);
+            right.push(bitmap[y * gw + (gw - 1)]);
+        }
+
+        let mut ones = Vec::new();
+        let mut zeros = Vec::new();
+        for (idx, &bit) in bitmap.iter().enumerate() {
+            if bit == 1 {
+                ones.push(idx);
+            } else {
+                zeros.push(idx);
+            }
+        }
+
+        let mut vertical_cuts = Vec::new();
+        if gw > 1 {
+            for y in 0..gh {
+                for x in 0..(gw - 1) {
+                    vertical_cuts.push((bitmap[y * gw + x] != bitmap[y * gw + x + 1]) as u8);
+                }
+            }
+        }
+
+        let mut horizontal_cuts = Vec::new();
+        if gh > 1 {
+            for y in 0..(gh - 1) {
+                for x in 0..gw {
+                    horizontal_cuts.push((bitmap[y * gw + x] != bitmap[(y + 1) * gw + x]) as u8);
+                }
+            }
+        }
+
+        FastGlyph {
+            ch,
+            bitmap: bitmap.to_vec(),
+            ones,
+            zeros,
+            vertical_cuts,
+            horizontal_cuts,
+            top,
+            bottom,
+            left,
+            right,
+            coverage: bitmap.iter().filter(|&&bit| bit == 1).count() as f32 / bitmap.len() as f32,
+            exit_top: -1.0,
+            exit_bottom: -1.0,
+            exit_left: -1.0,
+            exit_right: -1.0,
+            exit_top_inv: -1.0,
+            exit_bottom_inv: -1.0,
+            exit_left_inv: -1.0,
+            exit_right_inv: -1.0,
+        }
+    }
+
+    fn raster_from_bitmap(
+        bitmap: &[u8],
+        gw: usize,
+        gh: usize,
+        fg: [u8; 3],
+        bg: [u8; 3],
+    ) -> Vec<[u8; 3]> {
+        let mut raster = Vec::with_capacity(bitmap.len());
+        for y in 0..gh {
+            for x in 0..gw {
+                raster.push(if bitmap[y * gw + x] == 1 { fg } else { bg });
+            }
+        }
+        raster
+    }
+
+    #[test]
+    fn spectral_score_penalizes_checkerboard_more_than_single_edge() {
+        let width = 8;
+        let height = 8;
+        let mut smooth = vec![0u8; width * height];
+        let mut checker = vec![0u8; width * height];
+
+        for y in 0..height {
+            for x in 0..width {
+                smooth[y * width + x] = (x < width / 2) as u8;
+                checker[y * width + x] = ((x + y) % 2 == 0) as u8;
+            }
+        }
+
+        let fg = [255, 255, 255];
+        let bg = [0, 0, 0];
+        let smooth_raster = raster_from_bitmap(&smooth, width, height, fg, bg);
+        let checker_raster = raster_from_bitmap(&checker, width, height, fg, bg);
+
+        let smooth_score = local_patch_frequency_score(&smooth_raster, width, height);
+        let checker_score = local_patch_frequency_score(&checker_raster, width, height);
+
+        assert!(
+            checker_score > smooth_score,
+            "checker_score={} smooth_score={}",
+            checker_score,
+            smooth_score
+        );
+    }
+
+    #[test]
+    fn candidate_frequency_score_prefers_smoother_center_glyph() {
+        let gw = 4;
+        let gh = 4;
+        let checker_bitmap = [1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1];
+        let smooth_bitmap = [1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0];
+
+        let glyphs = vec![
+            make_test_glyph('c', &checker_bitmap, gw, gh),
+            make_test_glyph('s', &smooth_bitmap, gw, gh),
+        ];
+
+        let fg = [255, 255, 255];
+        let bg = [0, 0, 0];
+        let grid_data = vec![BlockData {
+            fg,
+            bg,
+            fg_col: None,
+            bg_col: None,
+            alt_fg_col: None,
+            alt_bg_col: None,
+        }];
+        let grid_state = vec![(0, false)];
+        let raster = build_rendered_raster(&grid_data, &grid_state, &glyphs, 1, 1, gw, gh);
+
+        let current_score = current_cell_frequency_score(&raster, 0, 0, 1, 1, gw, gh);
+        let smoother_score = candidate_cell_frequency_score(
+            &raster,
+            0,
+            0,
+            &grid_data[0],
+            &glyphs[1],
+            false,
+            1,
+            1,
+            gw,
+            gh,
+        );
+
+        assert!(
+            smoother_score < current_score,
+            "smoother_score={} current_score={}",
+            smoother_score,
+            current_score
+        );
+    }
+
+    #[test]
+    fn extract_local_patch_is_fixed_size_and_centered_at_edges() {
+        let gw = 2;
+        let gh = 3;
+        let grid_w = 4;
+        let grid_h = 4;
+        let raster_w = grid_w * gw;
+        let raster_h = grid_h * gh;
+        let mut raster = vec![[0u8; 3]; raster_w * raster_h];
+
+        for cell_y in 0..grid_h {
+            for cell_x in 0..grid_w {
+                let color = [cell_x as u8 * 40, cell_y as u8 * 50, 0];
+                for py in 0..gh {
+                    for px in 0..gw {
+                        let x = cell_x * gw + px;
+                        let y = cell_y * gh + py;
+                        raster[y * raster_w + x] = color;
+                    }
+                }
+            }
+        }
+
+        let patch = extract_local_patch(&raster, 0, 0, grid_w, grid_h, gw, gh);
+        assert_eq!(patch.width, gw * 3);
+        assert_eq!(patch.height, gh * 3);
+        assert_eq!(patch.cell_offset_x, gw);
+        assert_eq!(patch.cell_offset_y, gh);
+
+        for py in 0..gh {
+            for px in 0..gw {
+                let left = patch.pixels[py * patch.width + px];
+                let center = patch.pixels[py * patch.width + gw + px];
+                assert_eq!(left, center);
+            }
+        }
+    }
+
+    #[test]
+    fn extract_center_cell_pixels_returns_single_cell_only() {
+        let gw = 2;
+        let gh = 2;
+        let grid_w = 2;
+        let grid_h = 2;
+        let raster = vec![
+            [1, 0, 0],
+            [1, 0, 0],
+            [2, 0, 0],
+            [2, 0, 0],
+            [1, 0, 0],
+            [1, 0, 0],
+            [2, 0, 0],
+            [2, 0, 0],
+            [3, 0, 0],
+            [3, 0, 0],
+            [4, 0, 0],
+            [4, 0, 0],
+            [3, 0, 0],
+            [3, 0, 0],
+            [4, 0, 0],
+            [4, 0, 0],
+        ];
+
+        let cell = extract_center_cell_pixels(&raster, 1, 1, grid_w, gw, gh);
+        assert_eq!(cell.len(), gw * gh);
+        assert!(cell.iter().all(|px| *px == [4, 0, 0]));
+        let _ = grid_h;
+    }
+
+    #[test]
+    fn discontinuity_score_penalizes_broken_seam_more_than_smooth_join() {
+        let gw = 4;
+        let gh = 4;
+        let left_bitmap = [
+            0, 0, 1, 1, //
+            0, 0, 1, 1, //
+            0, 0, 1, 1, //
+            0, 0, 1, 1,
+        ];
+        let smooth_right_bitmap = [
+            1, 1, 0, 0, //
+            1, 1, 0, 0, //
+            1, 1, 0, 0, //
+            1, 1, 0, 0,
+        ];
+        let broken_right_bitmap = [
+            1, 1, 1, 1, //
+            1, 1, 1, 1, //
+            0, 0, 0, 0, //
+            0, 0, 0, 0,
+        ];
+
+        let glyphs = vec![
+            make_test_glyph('l', &left_bitmap, gw, gh),
+            make_test_glyph('s', &smooth_right_bitmap, gw, gh),
+            make_test_glyph('b', &broken_right_bitmap, gw, gh),
+        ];
+        let grid_data = vec![
+            BlockData {
+                fg: [255, 255, 255],
+                bg: [0, 0, 0],
+                fg_col: None,
+                bg_col: None,
+                alt_fg_col: None,
+                alt_bg_col: None,
+            },
+            BlockData {
+                fg: [255, 255, 255],
+                bg: [0, 0, 0],
+                fg_col: None,
+                bg_col: None,
+                alt_fg_col: None,
+                alt_bg_col: None,
+            },
+        ];
+
+        let smooth_state = vec![(0, false), (1, false)];
+        let broken_state = vec![(0, false), (2, false)];
+
+        let smooth_score =
+            cell_discontinuity_score(0, &grid_data, &smooth_state, &glyphs, 2, 1, gw, gh);
+        let broken_score =
+            cell_discontinuity_score(0, &grid_data, &broken_state, &glyphs, 2, 1, gw, gh);
+
+        assert!(
+            broken_score > smooth_score,
+            "broken_score={} smooth_score={}",
+            broken_score,
+            smooth_score
+        );
     }
 }

@@ -29,6 +29,12 @@ ranges = [
     [0x2589, 0x258F]
 ]
 
+[legacy.all]
+ranges = [[0x1FB00, 0x1FBFF]]
+
+[test]
+glyphs = [0x1FBE9, 0x1FBEB]
+
 [p]
 ranges = [[0x1FB3C, 0x1FB6F]]
 

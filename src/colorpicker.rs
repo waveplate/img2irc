@@ -1,9 +1,9 @@
 #![allow(deprecated)]
 
+use crate::palette;
+use ratatui::layout::Rect;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
-use ratatui::layout::Rect;
-use crate::palette;
 use std::f64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,12 +77,12 @@ pub fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
 pub struct ColorPickerState {
     pub mode: PaletteMode,
     pub focus: Focus,
-    
+
     pub grid_idx: usize,
-    
-    pub hue: f64, // 0-360
+
+    pub hue: f64,        // 0-360
     pub saturation: f64, // 0-1
-    pub value: f64, // 0-1
+    pub value: f64,      // 0-1
 
     pub rgb: (u8, u8, u8),
     pub hex: String,
@@ -140,7 +140,7 @@ impl ColorPickerState {
         self.hex = format!("{:02X}{:02X}{:02X}", r, g, b);
         self.update_current();
     }
-    
+
     pub fn update_from_hsv(&mut self, h: f64, s: f64, v: f64) {
         self.hue = h;
         self.saturation = s;
@@ -180,22 +180,31 @@ impl ColorPickerState {
             }
         }
     }
-    
+
     pub fn rgb_from_idx(&self, idx: usize) -> (u8, u8, u8) {
         let val = if self.mode == PaletteMode::Irc {
             *palette::IRC99.get(idx).unwrap_or(&0)
         } else {
             *palette::ANSI256.get(idx).unwrap_or(&0)
         };
-        (((val >> 16) & 0xFF) as u8, ((val >> 8) & 0xFF) as u8, (val & 0xFF) as u8)
+        (
+            ((val >> 16) & 0xFF) as u8,
+            ((val >> 8) & 0xFF) as u8,
+            (val & 0xFF) as u8,
+        )
     }
 
     pub fn handle_mouse_down(&mut self, x: u16, y: u16, area: Rect) -> bool {
         if !area.contains(ratatui::layout::Position { x, y }) {
             return false;
         }
-        let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
-        
+        let inner = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+
         let main_width = 32;
         let main_height = 16;
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
@@ -208,7 +217,8 @@ impl ColorPickerState {
             return true;
         }
 
-        if self.mode == PaletteMode::Ansi24 && hue_rect.contains(ratatui::layout::Position { x, y }) {
+        if self.mode == PaletteMode::Ansi24 && hue_rect.contains(ratatui::layout::Position { x, y })
+        {
             self.focus = Focus::HueSlider;
             self.is_dragging_hue = true;
             self.apply_hue_click(y, hue_rect);
@@ -237,7 +247,10 @@ impl ColorPickerState {
         }
 
         let bg_none_btn = Rect::new(inner.x + 40, inner.y + 7, 10, 1);
-        if self.is_dual && !self.editing_fg && bg_none_btn.contains(ratatui::layout::Position { x, y }) {
+        if self.is_dual
+            && !self.editing_fg
+            && bg_none_btn.contains(ratatui::layout::Position { x, y })
+        {
             self.bg_rgb = None;
             self.bg_idx = None;
             return true;
@@ -261,7 +274,12 @@ impl ColorPickerState {
     }
 
     pub fn handle_mouse_drag(&mut self, x: u16, y: u16, area: Rect) -> bool {
-        let inner = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(2));
+        let inner = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, 32, 16);
         let hue_rect = Rect::new(inner.x + 35, inner.y + 1, 3, 16);
 
@@ -279,7 +297,7 @@ impl ColorPickerState {
     fn apply_main_area_click(&mut self, x: u16, y: u16, rect: Rect) {
         let cx = x.clamp(rect.x, rect.x + rect.width.saturating_sub(1));
         let cy = y.clamp(rect.y, rect.y + rect.height.saturating_sub(1));
-        
+
         let dx = cx - rect.x;
         let dy = cy - rect.y;
 
@@ -323,7 +341,10 @@ impl<'a> Widget for ColorPickerWidget<'a> {
         let main_block = Block::default()
             .borders(Borders::ALL)
             .border_set(ratatui::symbols::border::THICK)
-            .title(Span::styled(" Color Picker ", Style::default().add_modifier(Modifier::BOLD)))
+            .title(Span::styled(
+                " Color Picker ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
             .style(Style::default().bg(Color::Rgb(30, 30, 35)).fg(Color::Gray));
         let inner = main_block.inner(area);
         main_block.render(area, buf);
@@ -333,15 +354,26 @@ impl<'a> Widget for ColorPickerWidget<'a> {
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
         let hue_rect = Rect::new(inner.x + 35, inner.y + 1, 3, main_height);
 
-        Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)).render(
-            Rect::new(main_rect.x - 1, main_rect.y - 1, main_rect.width + 2, main_rect.height + 2), buf
-        );
+        Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::DarkGray))
+            .render(
+                Rect::new(
+                    main_rect.x - 1,
+                    main_rect.y - 1,
+                    main_rect.width + 2,
+                    main_rect.height + 2,
+                ),
+                buf,
+            );
 
         if self.state.mode == PaletteMode::Irc {
             for row in 0..10 {
                 for col in 0..10 {
                     let idx = row * 10 + col;
-                    if idx >= 99 { continue; }
+                    if idx >= 99 {
+                        continue;
+                    }
                     let (r, g, b) = self.state.rgb_from_idx(idx as usize);
                     let color = Color::Rgb(r, g, b);
                     let x = main_rect.x + (col * 3);
@@ -350,7 +382,13 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                         buf.get_mut(x + dx, y).set_char(' ').set_bg(color);
                     }
                     if idx as usize == self.state.grid_idx {
-                        buf.get_mut(x + 1, y).set_char('●').set_fg(if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White });
+                        buf.get_mut(x + 1, y).set_char('●').set_fg(
+                            if (r as u32 + g as u32 + b as u32) > 380 {
+                                Color::Black
+                            } else {
+                                Color::White
+                            },
+                        );
                     }
                 }
             }
@@ -366,8 +404,20 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                         buf.get_mut(x + dx, y).set_char(' ').set_bg(color);
                     }
                     if idx as usize == self.state.grid_idx {
-                        buf.get_mut(x, y).set_char('▸').set_fg(if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White });
-                        buf.get_mut(x + 1, y).set_char('◂').set_fg(if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White });
+                        buf.get_mut(x, y).set_char('▸').set_fg(
+                            if (r as u32 + g as u32 + b as u32) > 380 {
+                                Color::Black
+                            } else {
+                                Color::White
+                            },
+                        );
+                        buf.get_mut(x + 1, y).set_char('◂').set_fg(
+                            if (r as u32 + g as u32 + b as u32) > 380 {
+                                Color::Black
+                            } else {
+                                Color::White
+                            },
+                        );
                     }
                 }
             }
@@ -378,66 +428,158 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                 for col in 0..32 {
                     let s = col as f64 / 31.0;
                     let (r, g, b) = hsv_to_rgb(h, s, v);
-                    buf.get_mut(main_rect.x + col, main_rect.y + row).set_char('█').set_fg(Color::Rgb(r, g, b));
+                    buf.get_mut(main_rect.x + col, main_rect.y + row)
+                        .set_char('█')
+                        .set_fg(Color::Rgb(r, g, b));
                 }
             }
             let sel_x = main_rect.x + (self.state.saturation * 31.0).round() as u16;
             let sel_y = main_rect.y + (15.0 - self.state.value * 15.0).round() as u16;
-            buf.get_mut(sel_x, sel_y).set_char('◯').set_fg(Color::White).set_bg(Color::Rgb(self.state.rgb.0, self.state.rgb.1, self.state.rgb.2));
-            
-            Block::default().borders(Borders::ALL).style(Style::default().fg(Color::DarkGray)).render(
-                Rect::new(hue_rect.x - 1, hue_rect.y - 1, hue_rect.width + 2, hue_rect.height + 2), buf
-            );
+            buf.get_mut(sel_x, sel_y)
+                .set_char('◯')
+                .set_fg(Color::White)
+                .set_bg(Color::Rgb(
+                    self.state.rgb.0,
+                    self.state.rgb.1,
+                    self.state.rgb.2,
+                ));
+
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::DarkGray))
+                .render(
+                    Rect::new(
+                        hue_rect.x - 1,
+                        hue_rect.y - 1,
+                        hue_rect.width + 2,
+                        hue_rect.height + 2,
+                    ),
+                    buf,
+                );
             for row in 0..16 {
                 let node_h = 360.0 * (1.0 - (row as f64 / 15.0));
                 let (r, g, b) = hsv_to_rgb(node_h, 1.0, 1.0);
                 for col in 0..3 {
-                    buf.get_mut(hue_rect.x + col, hue_rect.y + row).set_char('█').set_fg(Color::Rgb(r, g, b));
+                    buf.get_mut(hue_rect.x + col, hue_rect.y + row)
+                        .set_char('█')
+                        .set_fg(Color::Rgb(r, g, b));
                 }
             }
-            let h_y = hue_rect.y + (15.0 - (self.state.hue / 360.0) * 15.0).clamp(0.0, 15.0).round() as u16;
-            buf.get_mut(hue_rect.x, h_y).set_char('▶').set_fg(Color::White);
-            buf.get_mut(hue_rect.x + 2, h_y).set_char('◀').set_fg(Color::White);
+            let h_y = hue_rect.y
+                + (15.0 - (self.state.hue / 360.0) * 15.0)
+                    .clamp(0.0, 15.0)
+                    .round() as u16;
+            buf.get_mut(hue_rect.x, h_y)
+                .set_char('▶')
+                .set_fg(Color::White);
+            buf.get_mut(hue_rect.x + 2, h_y)
+                .set_char('◀')
+                .set_fg(Color::White);
         }
 
         let swatch_rect = Rect::new(inner.x + 40, inner.y + 1, 14, 6);
-        Block::default().borders(Borders::ALL).title(" Color ").style(Style::default().fg(Color::DarkGray)).render(swatch_rect, buf);
-        let swatch_inner = Rect::new(swatch_rect.x + 1, swatch_rect.y + 1, swatch_rect.width.saturating_sub(2), swatch_rect.height.saturating_sub(2));
-        
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Color ")
+            .style(Style::default().fg(Color::DarkGray))
+            .render(swatch_rect, buf);
+        let swatch_inner = Rect::new(
+            swatch_rect.x + 1,
+            swatch_rect.y + 1,
+            swatch_rect.width.saturating_sub(2),
+            swatch_rect.height.saturating_sub(2),
+        );
+
         let mut render_swatch = |y: u16, title: &str, rgb: Option<(u8, u8, u8)>, editing: bool| {
             buf.set_string(swatch_inner.x, y, title, Style::default().fg(Color::Gray));
             if let Some(rgb) = rgb {
                 let color = Color::Rgb(rgb.0, rgb.1, rgb.2);
                 for x in 0..6 {
-                    buf.get_mut(swatch_inner.x + 3 + x, y).set_char(' ').set_bg(color);
+                    buf.get_mut(swatch_inner.x + 3 + x, y)
+                        .set_char(' ')
+                        .set_bg(color);
                 }
             } else {
-                buf.set_string(swatch_inner.x + 4, y, "[None]", Style::default().fg(Color::DarkGray));
+                buf.set_string(
+                    swatch_inner.x + 4,
+                    y,
+                    "[None]",
+                    Style::default().fg(Color::DarkGray),
+                );
             }
             if editing {
-                buf.set_string(swatch_inner.x - 1, y, "▶", Style::default().fg(Color::White));
+                buf.set_string(
+                    swatch_inner.x - 1,
+                    y,
+                    "▶",
+                    Style::default().fg(Color::White),
+                );
             }
         };
 
-        render_swatch(swatch_inner.y + 1, "Fg", Some(self.state.fg_rgb), self.state.editing_fg);
+        render_swatch(
+            swatch_inner.y + 1,
+            "Fg",
+            Some(self.state.fg_rgb),
+            self.state.editing_fg,
+        );
         if self.state.is_dual {
-            render_swatch(swatch_inner.y + 3, "Bg", self.state.bg_rgb, !self.state.editing_fg);
-            
+            render_swatch(
+                swatch_inner.y + 3,
+                "Bg",
+                self.state.bg_rgb,
+                !self.state.editing_fg,
+            );
+
             let bg_none_btn = Rect::new(swatch_inner.x, swatch_inner.y + 5, 12, 1);
             let hover = !self.state.editing_fg;
-            buf.set_string(bg_none_btn.x, bg_none_btn.y, " [Clear Bg] ", Style::default().fg(if hover { Color::White } else { Color::DarkGray }));
+            buf.set_string(
+                bg_none_btn.x,
+                bg_none_btn.y,
+                " [Clear Bg] ",
+                Style::default().fg(if hover { Color::White } else { Color::DarkGray }),
+            );
         }
 
         let val_y = inner.y + 9;
         let val_x = inner.x + 40;
-        buf.set_string(val_x, val_y, format!("R: {:>3}", self.state.rgb.0), Style::default().fg(Color::Gray));
-        buf.set_string(val_x, val_y + 1, format!("G: {:>3}", self.state.rgb.1), Style::default().fg(Color::Gray));
-        buf.set_string(val_x, val_y + 2, format!("B: {:>3}", self.state.rgb.2), Style::default().fg(Color::Gray));
-        buf.set_string(val_x, val_y + 4, format!("#{}", self.state.hex), Style::default().fg(Color::White));
+        buf.set_string(
+            val_x,
+            val_y,
+            format!("R: {:>3}", self.state.rgb.0),
+            Style::default().fg(Color::Gray),
+        );
+        buf.set_string(
+            val_x,
+            val_y + 1,
+            format!("G: {:>3}", self.state.rgb.1),
+            Style::default().fg(Color::Gray),
+        );
+        buf.set_string(
+            val_x,
+            val_y + 2,
+            format!("B: {:>3}", self.state.rgb.2),
+            Style::default().fg(Color::Gray),
+        );
+        buf.set_string(
+            val_x,
+            val_y + 4,
+            format!("#{}", self.state.hex),
+            Style::default().fg(Color::White),
+        );
 
         if self.state.mode != PaletteMode::Ansi24 {
-            let label = if self.state.mode == PaletteMode::Irc { "IRC" } else { "ANSI" };
-            buf.set_string(val_x, val_y + 6, format!("{}: {}", label, self.state.grid_idx), Style::default().fg(Color::Yellow));
+            let label = if self.state.mode == PaletteMode::Irc {
+                "IRC"
+            } else {
+                "ANSI"
+            };
+            buf.set_string(
+                val_x,
+                val_y + 6,
+                format!("{}: {}", label, self.state.grid_idx),
+                Style::default().fg(Color::Yellow),
+            );
         }
 
         let btn_x = inner.x + 55;

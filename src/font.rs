@@ -31,6 +31,10 @@ struct CachedMetrics {
     descender: i32,
     float_width: f32,
     float_height: f32,
+    bounds_min_x: f32,
+    bounds_max_x: f32,
+    bounds_min_y: f32,
+    bounds_max_y: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -293,27 +297,33 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     (resolved_groups, all_chars)
 }
 
-fn render_glyph_from_font(
-    font: &FontVec,
-    ch: char,
-    font_size: f32,
-    cell_width: usize,
-    cell_height: usize,
-    global_ascender: i32,
-) -> GlyphBitmap {
+fn render_glyph_from_font(font: &FontVec, ch: char, metrics: &CachedMetrics) -> GlyphBitmap {
+    let cell_width = metrics.cell_width.max(1);
+    let cell_height = metrics.cell_height.max(1);
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
 
-    let scale = PxScale::from(font_size);
+    let height_unscaled = font.height_unscaled().max(1.0);
+    let glyph_box_width = (metrics.bounds_max_x - metrics.bounds_min_x).max(1.0);
+    let glyph_box_height = (metrics.bounds_max_y - metrics.bounds_min_y).max(1.0);
+    let scale = PxScale {
+        x: cell_width as f32 * height_unscaled / glyph_box_width,
+        y: cell_height as f32 * height_unscaled / glyph_box_height,
+    };
+    let scaled_font = font.as_scaled(scale);
+    let x_offset = -metrics.bounds_min_x * scaled_font.h_scale_factor();
+    let y_offset = metrics.bounds_max_y * scaled_font.v_scale_factor();
     let glyph = font
         .glyph_id(ch)
-        .with_scale_and_position(scale, ab_glyph::point(0.0, global_ascender as f32));
+        .with_scale_and_position(scale, ab_glyph::point(x_offset, y_offset));
 
     if let Some(outlined) = font.outline_glyph(glyph) {
         let bounds = outlined.px_bounds();
+        let base_x = bounds.min.x.floor() as i32;
+        let base_y = bounds.min.y.floor() as i32;
         outlined.draw(|x, y, coverage| {
             if coverage > 0.5 {
-                let px = bounds.min.x as i32 + x as i32;
-                let py = bounds.min.y as i32 + y as i32;
+                let px = base_x + x as i32;
+                let py = base_y + y as i32;
                 if px >= 0 && px < cell_width as i32 && py >= 0 && py < cell_height as i32 {
                     cell[py as usize][px as usize] = 1;
                 }
@@ -341,18 +351,95 @@ fn cache_dir() -> PathBuf {
     }
 }
 
-fn hash_context(font_paths: &[String], font_size: f32) -> String {
+fn measure_reference_advance_unscaled(font: &FontVec) -> f32 {
+    let glyph_id = font.glyph_id('X');
+    let mut advance = font.h_advance_unscaled(glyph_id);
+    if advance == 0.0 {
+        let glyph_id = font.glyph_id('0');
+        advance = font.h_advance_unscaled(glyph_id);
+    }
+    if advance == 0.0 {
+        advance = font.height_unscaled() * 0.6;
+    }
+    advance.max(1.0)
+}
+
+fn is_renderable_char(ch: char) -> bool {
+    if ch.is_control() {
+        return false;
+    }
+    matches!(ch.width(), Some(1))
+}
+
+fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a FontVec> {
+    if ctx.missing_chars.contains(&ch) {
+        return None;
+    }
+
+    for path in &ctx.font_paths {
+        if let Some(font) = ctx.user_faces.get(path) {
+            if font.glyph_id(ch).0 != 0 {
+                return Some(font);
+            }
+        }
+    }
+
+    let path = get_fallback_font_path(ch)?;
+    if !ctx.fallback_faces.contains_key(&path) {
+        if let Ok(data) = fs::read(&path) {
+            if let Ok(font) = FontVec::try_from_vec(data) {
+                ctx.fallback_faces.insert(path.clone(), font);
+            }
+        }
+    }
+
+    if let Some(font) = ctx.fallback_faces.get(&path) {
+        if font.glyph_id(ch).0 != 0 {
+            return Some(font);
+        }
+    }
+
+    ctx.missing_chars.insert(ch);
+    None
+}
+
+fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v5".hash(&mut hasher); // Invalidate old cache (v5 for control/fullwidth filter)
+    "v7".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
     font_size.to_bits().hash(&mut hasher);
+    for ch in chars {
+        (*ch as u32).hash(&mut hasher);
+    }
     format!("{:x}", hasher.finish())
 }
 
-fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
-    let hash = hash_context(&ctx.font_paths, ctx.font_size);
+fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMetrics) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    "v7".hash(&mut hasher);
+    for p in font_paths {
+        p.hash(&mut hasher);
+    }
+    font_size.to_bits().hash(&mut hasher);
+    metrics.cell_width.hash(&mut hasher);
+    metrics.cell_height.hash(&mut hasher);
+    metrics.ascender.hash(&mut hasher);
+    metrics.descender.hash(&mut hasher);
+    metrics.bounds_min_x.to_bits().hash(&mut hasher);
+    metrics.bounds_max_x.to_bits().hash(&mut hasher);
+    metrics.bounds_min_y.to_bits().hash(&mut hasher);
+    metrics.bounds_max_y.to_bits().hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
+    let mut metric_chars = chars.to_vec();
+    metric_chars.sort_unstable();
+    metric_chars.dedup();
+
+    let hash = metrics_hash_context(&ctx.font_paths, ctx.font_size, &metric_chars);
     let path = cache_dir().join(format!("metrics_{}.bin", hash));
 
     if path.exists() {
@@ -363,40 +450,64 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
         }
     }
 
-    let main_font = ctx.get_main_font();
-    let scale = PxScale::from(ctx.font_size);
-    let scaled_font = main_font.as_scaled(scale);
+    let (
+        cell_width,
+        cell_height,
+        mut bounds_min_x,
+        mut bounds_max_x,
+        mut bounds_min_y,
+        mut bounds_max_y,
+    ) = {
+        let main_font = ctx.get_main_font();
+        let scale = PxScale::from(ctx.font_size);
+        let scaled_font = main_font.as_scaled(scale);
+        let line_height = (scaled_font.height() + scaled_font.line_gap()).max(1.0);
+        let cell_height = line_height.ceil() as usize;
+        let advance_unscaled = measure_reference_advance_unscaled(main_font);
+        let advance = (ctx.font_size * advance_unscaled / main_font.height_unscaled()).max(1.0);
+        let cell_width = advance.round().max(1.0) as usize;
 
-    let ascender = scaled_font.ascent().round() as i32;
-    let descender = scaled_font.descent().round() as i32;
-    let line_gap = scaled_font.line_gap().round() as i32;
+        (
+            cell_width,
+            cell_height,
+            0.0f32,
+            advance_unscaled,
+            main_font.descent_unscaled(),
+            main_font.ascent_unscaled(),
+        )
+    };
 
-    let cell_height = (ascender - descender + line_gap).max(1) as usize;
-
-    // Measure 'X' or '0' for monospace width
-    let glyph_id = main_font.glyph_id('X');
-    let mut advance = scaled_font.h_advance(glyph_id);
-    if advance == 0.0 {
-        let glyph_id = main_font.glyph_id('0');
-        advance = scaled_font.h_advance(glyph_id);
+    for &ch in &metric_chars {
+        if !is_renderable_char(ch) {
+            continue;
+        }
+        if let Some(font) = resolve_font_for_char(ctx, ch) {
+            if let Some(outline) = font.outline(font.glyph_id(ch)) {
+                let glyph_min_x = outline.bounds.min.x.min(outline.bounds.max.x);
+                let glyph_max_x = outline.bounds.min.x.max(outline.bounds.max.x);
+                let glyph_min_y = outline.bounds.min.y.min(outline.bounds.max.y);
+                let glyph_max_y = outline.bounds.min.y.max(outline.bounds.max.y);
+                bounds_min_x = bounds_min_x.min(glyph_min_x);
+                bounds_max_x = bounds_max_x.max(glyph_max_x);
+                bounds_min_y = bounds_min_y.min(glyph_min_y);
+                bounds_max_y = bounds_max_y.max(glyph_max_y);
+            }
+        }
     }
-    if advance == 0.0 {
-        advance = ctx.font_size * 0.6; // Fallback
-    }
 
-    let cell_width = advance.round().max(1.0) as usize;
-
-    let float_width = advance;
-    let float_height = (ascender - descender + line_gap) as f32;
+    let bounds_width = (bounds_max_x - bounds_min_x).max(1.0);
+    let bounds_height = (bounds_max_y - bounds_min_y).max(1.0);
+    let ascender = bounds_max_y.ceil() as i32;
+    let descender = bounds_min_y.floor() as i32;
 
     log::info!(
-        "Metrics (ab_glyph): Ascender={}, Descender={}, Height={}, Width={}, FloatW={}, FloatH={}",
+        "Metrics (glyph box): Ascender={}, Descender={}, Height={}, Width={}, BoundsW={:.2}, BoundsH={:.2}",
         ascender,
         descender,
         cell_height,
         cell_width,
-        float_width,
-        float_height
+        bounds_width,
+        bounds_height
     );
 
     let metrics = CachedMetrics {
@@ -404,8 +515,12 @@ fn get_metrics(ctx: &mut FontContext) -> CachedMetrics {
         cell_height,
         ascender,
         descender,
-        float_width,
-        float_height,
+        float_width: cell_width as f32,
+        float_height: cell_height as f32,
+        bounds_min_x,
+        bounds_max_x,
+        bounds_min_y,
+        bounds_max_y,
     };
 
     if let Some(parent) = path.parent() {
@@ -424,7 +539,7 @@ fn get_block_glyphs(
     chars: &[char],
     metrics: &CachedMetrics,
 ) -> Vec<(char, GlyphBitmap)> {
-    let hash = hash_context(&ctx.font_paths, ctx.font_size);
+    let hash = block_hash_context(&ctx.font_paths, ctx.font_size, metrics);
     let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
 
     if path.exists() {
@@ -448,22 +563,9 @@ fn get_block_glyphs(
             continue;
         }
 
-        // Filter out control characters, zero-width, and fullwidth characters
-        if ch.is_control() {
-            log::info!("Skipping conttrol char: {}", ch);
+        if !is_renderable_char(ch) {
+            log::info!("Skipping non-renderable char: {}", ch);
             continue;
-        }
-
-        match ch.width() {
-            Some(w) if w == 0 || w > 1 => {
-                log::info!("Skipping char because width={}: {}", w, ch);
-                continue;
-            }
-            None => {
-                log::info!("Skipping char because width=None: {}", ch);
-                continue;
-            }
-            _ => {}
         }
 
         //       let ch_w_cjk = ch.width_cjk();
@@ -480,14 +582,7 @@ fn get_block_glyphs(
         for path in &ctx.font_paths {
             if let Some(font) = ctx.user_faces.get(path) {
                 if font.glyph_id(ch).0 != 0 {
-                    let bitmap = render_glyph_from_font(
-                        font,
-                        ch,
-                        ctx.font_size,
-                        metrics.cell_width,
-                        metrics.cell_height,
-                        metrics.ascender,
-                    );
+                    let bitmap = render_glyph_from_font(font, ch, metrics);
                     glyphs.push((ch, bitmap));
                     found = true;
                     break;
@@ -509,14 +604,7 @@ fn get_block_glyphs(
             }
             if let Some(font) = ctx.fallback_faces.get(&path) {
                 if font.glyph_id(ch).0 != 0 {
-                    let bitmap = render_glyph_from_font(
-                        font,
-                        ch,
-                        ctx.font_size,
-                        metrics.cell_width,
-                        metrics.cell_height,
-                        metrics.ascender,
-                    );
+                    let bitmap = render_glyph_from_font(font, ch, metrics);
                     glyphs.push((ch, bitmap));
                     found = true;
                 }
@@ -564,14 +652,7 @@ pub fn glyph_store(
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> GlyphStore {
     let mut ctx = FontContext::new(fonts, font_size);
-    let metrics = get_metrics(&mut ctx);
     let (config_groups, _) = load_blocks_config();
-
-    let target_cell_width = metrics.cell_width.max(1);
-    let target_cell_height = metrics.cell_height.max(1);
-
-    let mut all_glyphs = BTreeMap::new();
-    let mut selected_chars = HashSet::new();
 
     // Determine which blocks to load
     let mut blocks_to_load = HashSet::new();
@@ -609,6 +690,45 @@ pub fn glyph_store(
     let mut sorted_blocks: Vec<_> = blocks_to_load.iter().collect();
     sorted_blocks.sort();
 
+    let mut explicit_chars = Vec::new();
+    if let Some(inc_str) = include_chars {
+        for ch in inc_str.chars() {
+            explicit_chars.push(ch);
+        }
+    }
+    for range_str in include_ranges {
+        if let Some(range) = parse_hex_range(range_str) {
+            for code in range {
+                if let Some(ch) = char::from_u32(code) {
+                    explicit_chars.push(ch);
+                }
+            }
+        } else {
+            log::info!(
+                "Warning: Invalid include range format '{}'. Expected hex range like '2600-26FF'.",
+                range_str
+            );
+        }
+    }
+
+    let mut metric_chars = Vec::new();
+    for block_name in &sorted_blocks {
+        if let Some(codes) = config_groups.get(*block_name) {
+            for &code in codes {
+                if let Some(ch) = char::from_u32(code) {
+                    metric_chars.push(ch);
+                }
+            }
+        }
+    }
+    metric_chars.extend(explicit_chars.iter().copied());
+
+    let metrics = get_metrics(&mut ctx, &metric_chars);
+    let target_cell_width = metrics.cell_width.max(1);
+    let target_cell_height = metrics.cell_height.max(1);
+
+    let mut all_glyphs = BTreeMap::new();
+    let mut selected_chars = HashSet::new();
     let mut groups_out = HashMap::new();
 
     // Load requested blocks
@@ -647,28 +767,6 @@ pub fn glyph_store(
             }
         } else {
             log::info!("Warning: Block '{}' not defined in blocks.toml", block_name);
-        }
-    }
-
-    // Process explicit inclusions (treat as a virtual "included" block)
-    let mut explicit_chars = Vec::new();
-    if let Some(inc_str) = include_chars {
-        for ch in inc_str.chars() {
-            explicit_chars.push(ch);
-        }
-    }
-    for range_str in include_ranges {
-        if let Some(range) = parse_hex_range(range_str) {
-            for code in range {
-                if let Some(ch) = char::from_u32(code) {
-                    explicit_chars.push(ch);
-                }
-            }
-        } else {
-            log::info!(
-                "Warning: Invalid include range format '{}'. Expected hex range like '2600-26FF'.",
-                range_str
-            );
         }
     }
 

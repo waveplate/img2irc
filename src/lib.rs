@@ -7,8 +7,8 @@ pub mod gpu;
 pub mod palette;
 pub mod pipeline;
 
-pub mod tui;
 pub mod colorpicker;
+pub mod tui;
 
 use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
@@ -125,7 +125,11 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         show_discontinuities: args.show_discontinuities,
         fix_disc: args.fix_disc,
-        fix_strength: args.fix_strength,
+        fix_disc_passes: args.fix_disc_passes,
+        fix_disc_shift_radius: args.fix_disc_shift_radius,
+        fix_disc_ref_tolerance_ratio: args.fix_disc_ref_tolerance_ratio,
+        fix_disc_ref_tolerance_pixels: args.fix_disc_ref_tolerance_pixels,
+        fix_disc_pool_size: args.fix_disc_pool_size,
         misc3: args.misc3,
         misc4: args.misc4,
         misc5: args.misc5,
@@ -134,6 +138,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         misc8: args.misc8,
         gpu: args.gpu,
         save: args.save.clone(),
+        fft_debug_dir: args.fft_debug_dir.clone(),
 
         score: args.score,
         pipeline: Vec::new(),

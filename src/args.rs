@@ -176,7 +176,11 @@ pub struct RenderArgs {
     pub edge_detection: bool,
     pub show_discontinuities: bool,
     pub fix_disc: bool,
-    pub fix_strength: u32,
+    pub fix_disc_passes: u32,
+    pub fix_disc_shift_radius: u32,
+    pub fix_disc_ref_tolerance_ratio: f32,
+    pub fix_disc_ref_tolerance_pixels: u32,
+    pub fix_disc_pool_size: u32,
     pub misc3: i32,
     pub misc4: i32,
     pub misc5: i32,
@@ -186,6 +190,7 @@ pub struct RenderArgs {
     pub gpu: bool,
     pub score: bool,
     pub save: Option<String>,
+    pub fft_debug_dir: Option<String>,
     pub pipeline: Vec<crate::pipeline::ImageEffect>,
     #[serde(default)]
     pub overlays: Vec<TextOverlay>,
@@ -525,16 +530,56 @@ pub struct Args {
     pub edge_detection: bool,
 
     /// highlight cells with discontinuities in red
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long = "disc",
+        visible_alias = "show-discontinuities",
+        default_value_t = false
+    )]
     pub show_discontinuities: bool,
 
     /// fix discontinuities by trying alternative glyphs
-    #[arg(long, default_value_t = false)]
+    #[arg(long = "fix", visible_alias = "fix-disc", default_value_t = false)]
     pub fix_disc: bool,
 
-    /// strength of the fix
-    #[arg(long, default_value = "4")]
-    pub fix_strength: u32,
+    /// number of fix-disc passes to run
+    #[arg(
+        long = "passes",
+        visible_alias = "fix-disc-passes",
+        default_value = "10"
+    )]
+    pub fix_disc_passes: u32,
+
+    /// max pixel shift in x/y when matching the quantized reference
+    #[arg(
+        long = "radius",
+        visible_alias = "fix-disc-shift-radius",
+        default_value = "2"
+    )]
+    pub fix_disc_shift_radius: u32,
+
+    /// allowed fractional increase in reference mismatch when continuity improves
+    #[arg(
+        long = "tol-ratio",
+        visible_alias = "fix-disc-ref-tolerance-ratio",
+        default_value = "0.20"
+    )]
+    pub fix_disc_ref_tolerance_ratio: f32,
+
+    /// allowed absolute increase in reference mismatch pixels when continuity improves
+    #[arg(
+        long = "tol-pixels",
+        visible_alias = "fix-disc-ref-tolerance-pixels",
+        default_value = "2"
+    )]
+    pub fix_disc_ref_tolerance_pixels: u32,
+
+    /// number of cheap glyph candidates to consider during fix-disc
+    #[arg(
+        long = "pool",
+        visible_alias = "fix-disc-pool-size",
+        default_value = "12"
+    )]
+    pub fix_disc_pool_size: u32,
 
     #[arg(long, default_value = "0", hide = true)]
     pub misc3: i32,
@@ -561,6 +606,10 @@ pub struct Args {
     /// save output as PNG (path or directory)
     #[arg(long)]
     pub save: Option<String>,
+
+    /// write exact FFT input windows and fix artifacts into this directory
+    #[arg(long = "debug-dir", visible_alias = "fft-debug-dir")]
+    pub fft_debug_dir: Option<String>,
 }
 
 pub fn parse_args() -> Args {
