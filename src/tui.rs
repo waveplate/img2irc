@@ -3834,16 +3834,16 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     let mut picked_color = cell.fg;
                                                     if let Some(bg) = cell.bg {
                                                         if let Some(g) = &app.arc_glyphs {
-                                                            if let Some((_, bitmap)) = g
+                                                            if let Some((_, bitmap, _)) = g
                                                                 .glyphs
                                                                 .iter()
-                                                                .find(|(c, _)| *c == cell.char)
+                                                                .find(|(c, _, _)| *c == cell.char)
                                                             {
                                                                 let total_pixels =
                                                                     g.metrics.0 * g.metrics.1;
                                                                 let set_bits: usize = bitmap
                                                                     .iter()
-                                                                    .map(|row| {
+                                                                    .map(|row: &Vec<u8>| {
                                                                         row.iter()
                                                                             .filter(|&&b| b > 0)
                                                                             .count()
@@ -6370,44 +6370,50 @@ fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: char) {
-    let font_name = if app.font_idx < app.fonts.len() {
-        &app.fonts[app.font_idx]
+    let mut font_name = if app.font_idx < app.fonts.len() {
+        app.fonts[app.font_idx].clone()
     } else {
-        "Default"
+        "Default".to_string()
     };
+
+    // Use current store to find bitmap and ACTUAL font name
+    let mut found_bitmap = None;
+    if let Some(g) = &app.arc_glyphs {
+        if let Some((_, bitmap, actual_font)) = g.glyphs.iter().find(|(c, _, _)| *c == ch) {
+            found_bitmap = Some(bitmap);
+            font_name = actual_font.clone();
+        }
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Preview: {} ({}) ", ch, font_name));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Use current store to find bitmap
-    if let Some(g) = &app.arc_glyphs {
-        if let Some(bitmap) = g.glyphs.iter().find(|(c, _)| *c == ch).map(|(_, b)| b) {
-            let mut text = ratatui::text::Text::default();
-            for row in bitmap {
-                let mut line = Line::from(vec![]);
-                for &pixel in row {
-                    if pixel > 0 {
-                        line.spans
-                            .push(Span::styled("██", Style::new().fg(Color::Cyan)));
-                    } else {
-                        // eye friendly distinct background color
-                        line.spans
-                            .push(Span::styled("░░", Style::new().fg(Color::Rgb(60, 60, 80))));
-                    }
+    if let Some(bitmap) = found_bitmap {
+        let mut text = ratatui::text::Text::default();
+        for row in bitmap {
+            let mut line = Line::from(vec![]);
+            for &pixel in row {
+                if pixel > 0 {
+                    line.spans
+                        .push(Span::styled("██", Style::new().fg(Color::Cyan)));
+                } else {
+                    // eye friendly distinct background color
+                    line.spans
+                        .push(Span::styled("░░", Style::new().fg(Color::Rgb(60, 60, 80))));
                 }
-                text.lines.push(line);
             }
-            let p = Paragraph::new(text);
-            f.render_widget(p, inner);
-        } else {
-            // Not in current store, maybe need to reload or it's just missing
-            let p =
-                Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
-                    .alignment(Alignment::Center);
-            f.render_widget(p, inner);
+            text.lines.push(line);
         }
+        let p = Paragraph::new(text);
+        f.render_widget(p, inner);
+    } else {
+        // Not in current store, maybe need to reload or it's just missing
+        let p = Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
+            .alignment(Alignment::Center);
+        f.render_widget(p, inner);
     }
 }
 

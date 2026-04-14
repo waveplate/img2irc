@@ -61,7 +61,7 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
         glyphs
             .glyphs
             .iter()
-            .filter(|(ch, _)| glyphs.selected.contains(ch))
+            .filter(|(ch, _, _)| glyphs.selected.contains(ch))
             .collect()
     } else {
         // If not filtering, include everything
@@ -75,7 +75,7 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
 
     filtered_glyphs
         .into_iter()
-        .map(|(ch, bmp)| {
+        .map(|(ch, bmp, _font)| {
             let mut bitmap = Vec::with_capacity(bp);
             for row in bmp {
                 bitmap.extend_from_slice(row);
@@ -3026,8 +3026,8 @@ pub fn save_as_png(
             if let Some(bmp) = glyphs
                 .glyphs
                 .iter()
-                .find(|(ch, _)| *ch == cell.char)
-                .map(|(_, b)| b)
+                .find(|(ch, _, _)| *ch == cell.char)
+                .map(|(_, b, _)| b)
             {
                 for y in 0..gh {
                     for x in 0..gw {

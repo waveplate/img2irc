@@ -13,10 +13,9 @@ use toml::Value;
 use unicode_width::UnicodeWidthChar;
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlyphStore {
-    pub glyphs: Vec<(char, GlyphBitmap)>,
+    pub glyphs: Vec<(char, GlyphBitmap, String)>,
     pub groups: HashMap<String, Vec<char>>,
     pub selected: HashSet<char>,
     pub metrics: (usize, usize),
@@ -39,7 +38,7 @@ struct CachedMetrics {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CachedBlock {
-    glyphs: Vec<(char, GlyphBitmap)>,
+    glyphs: Vec<(char, GlyphBitmap, String)>,
 }
 
 struct FontContext {
@@ -571,14 +570,13 @@ fn get_block_glyphs(
     block_name: &str,
     chars: &[char],
     metrics: &CachedMetrics,
-) -> Vec<(char, GlyphBitmap)> {
+) -> Vec<(char, GlyphBitmap, String)> {
     let hash = block_hash_context(&ctx.font_paths, ctx.font_size, metrics);
     let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
 
     if path.exists() {
         if let Ok(data) = fs::read(&path) {
             if let Ok(block) = bincode::deserialize::<CachedBlock>(&data) {
-                // log::info!("Loaded block '{}' from cache", block_name);
                 return block.glyphs;
             }
         }
@@ -590,7 +588,6 @@ fn get_block_glyphs(
     for &ch in chars {
         let mut found = false;
 
-        // 0. Check if we already know this character is missing from the system
         if ctx.missing_chars.contains(&ch) {
             log::info!("Skipping missing char: {}", ch);
             continue;
@@ -601,22 +598,16 @@ fn get_block_glyphs(
             continue;
         }
 
-        //       let ch_w_cjk = ch.width_cjk();
-
-        //        if ch_w_cjk.is_some() {
-        //            if ch_w_cjk != Some(1) {
-        //                log::info!("Skipping char because width_cjk!=1 : {} | char: {}", ch_w_cjk.unwrap(), ch);
-        //               continue;
-        //           }
-        //
-        //        }
-
         // 1. User fonts
-        for path in &ctx.font_paths {
-            if let Some(font) = ctx.user_faces.get(path) {
+        for font_path in &ctx.font_paths {
+            if let Some(font) = ctx.user_faces.get(font_path) {
                 if font.glyph_id(ch).0 != 0 {
                     let bitmap = render_glyph_from_font(font, ch, metrics);
-                    glyphs.push((ch, bitmap));
+                    let font_name = Path::new(font_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| font_path.clone());
+                    glyphs.push((ch, bitmap, font_name));
                     found = true;
                     break;
                 }
@@ -631,20 +622,29 @@ fn get_block_glyphs(
             if !ctx.fallback_faces.contains_key(&path) {
                 if let Ok(data) = fs::read(&path) {
                     if let Ok(font) = FontVec::try_from_vec(data) {
-                        ctx.fallback_faces.insert(path.clone(), font);
+                        if is_monospace_font(&font) {
+                            ctx.fallback_faces.insert(path.clone(), font);
+                        } else {
+                            log::info!("Warning: Fallback font for '{}' ({}) is not monospace, skipping.", ch, path);
+                            ctx.missing_chars.insert(ch);
+                            continue;
+                        }
                     }
                 }
             }
             if let Some(font) = ctx.fallback_faces.get(&path) {
                 if font.glyph_id(ch).0 != 0 {
                     let bitmap = render_glyph_from_font(font, ch, metrics);
-                    glyphs.push((ch, bitmap));
+                    let font_name = Path::new(&path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    glyphs.push((ch, bitmap, font_name));
                     found = true;
                 }
             }
         }
 
-        // If not found in any font, it is skipped and marked as missing
         if !found {
             ctx.missing_chars.insert(ch);
         }
@@ -791,8 +791,8 @@ pub fn glyph_store(
 
                 let is_selected = blocks_to_select.contains(block_name);
 
-                for (ch, bitmap) in glyphs {
-                    all_glyphs.insert(ch, bitmap);
+                for (ch, bitmap, font_name) in glyphs {
+                    all_glyphs.insert(ch, (bitmap, font_name));
                     if is_selected {
                         selected_chars.insert(ch);
                     }
@@ -806,8 +806,8 @@ pub fn glyph_store(
     if !explicit_chars.is_empty() {
         let glyphs = get_block_glyphs(&mut ctx, "explicit_includes", &explicit_chars, &metrics);
         groups_out.insert("explicit_includes".to_string(), explicit_chars.clone());
-        for (ch, bitmap) in glyphs {
-            all_glyphs.insert(ch, bitmap);
+        for (ch, bitmap, font_name) in glyphs {
+            all_glyphs.insert(ch, (bitmap, font_name));
             selected_chars.insert(ch);
         }
     }
@@ -827,31 +827,11 @@ pub fn glyph_store(
         selected_chars.remove(&ch);
     }
 
-    // Ensure space is present and selected
-    // if !all_glyphs.contains_key(&' ') {
-    //     let glyphs = get_block_glyphs(&mut ctx, "space", &[' '], &metrics);
-    //     if let Some((ch, bitmap)) = glyphs.first() {
-    //         let resized = if target_cell_width == metrics.cell_width
-    //             && target_cell_height == metrics.cell_height
-    //         {
-    //             bitmap.clone()
-    //         } else {
-    //             resize_bitmap(
-    //                 bitmap,
-    //                 metrics.cell_width,
-    //                 metrics.cell_height,
-    //                 target_cell_width,
-    //                 target_cell_height,
-    //             )
-    //         };
-    //         all_glyphs.insert(*ch, resized);
-    //         selected_chars.insert(*ch);
-    //     }
-    // } else {
-    //     selected_chars.insert(' ');
-    // }
     GlyphStore {
-        glyphs: all_glyphs.into_iter().collect(),
+        glyphs: all_glyphs
+            .into_iter()
+            .map(|(ch, (bitmap, font_name))| (ch, bitmap, font_name))
+            .collect(),
         groups: groups_out,
         selected: selected_chars,
         metrics: (target_cell_width, target_cell_height),
@@ -913,8 +893,8 @@ pub fn print_blocks_config() -> String {
 }
 
 pub fn print_block_bitmaps(store: &GlyphStore) -> String {
-    let glyph_map: HashMap<char, &GlyphBitmap> =
-        store.glyphs.iter().map(|(c, b)| (*c, b)).collect();
+    let glyph_map: HashMap<char, (&GlyphBitmap, &String)> =
+        store.glyphs.iter().map(|(c, b, f)| (*c, (b, f))).collect();
     let mut sorted_groups: Vec<_> = store.groups.keys().collect();
     sorted_groups.sort();
 
@@ -933,8 +913,13 @@ pub fn print_block_bitmaps(store: &GlyphStore) -> String {
 
         out.push_str(&format!("Block: {}\n", name));
         for &ch in &selected_chars {
-            if let Some(bitmap) = glyph_map.get(&ch) {
-                out.push_str(&format!("Character: {} ({})\n", ch, ch.escape_unicode()));
+            if let Some((bitmap, font_name)) = glyph_map.get(&ch) {
+                out.push_str(&format!(
+                    "Character: {} ({}) [Font: {}]\n",
+                    ch,
+                    ch.escape_unicode(),
+                    font_name
+                ));
                 if let Some(first_row) = bitmap.first() {
                     let width = first_row.len();
                     out.push('┌');
