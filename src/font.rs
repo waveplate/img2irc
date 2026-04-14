@@ -64,11 +64,15 @@ impl FontContext {
 
         for font_name in &fonts_to_load {
             if let Some(path) = find_font_path(font_name) {
-                log::info!("Loaded font: {}", path);
-                font_paths.push(path.clone());
                 if let Ok(data) = fs::read(&path) {
                     if let Ok(font) = FontVec::try_from_vec(data) {
-                        user_faces.insert(path, font);
+                        if is_monospace_font(&font) {
+                            log::info!("Loaded font: {}", path);
+                            font_paths.push(path.clone());
+                            user_faces.insert(path, font);
+                        } else {
+                            log::info!("Warning: Font '{}' is not monospace, skipping.", font_name);
+                        }
                     }
                 }
             } else {
@@ -135,7 +139,7 @@ fn get_fallback_font_path(ch: char) -> Option<String> {
     let output = Command::new("fc-match")
         .arg("-f")
         .arg("%{file}")
-        .arg(format!(":charset={:x}", ch as u32))
+        .arg(format!("monospace:charset={:x}", ch as u32))
         .output()
         .ok();
 
@@ -364,6 +368,29 @@ fn measure_reference_advance_unscaled(font: &FontVec) -> f32 {
     advance.max(1.0)
 }
 
+pub fn is_monospace_font(font: &FontVec) -> bool {
+    let scale = PxScale::from(24.0); // Use a fixed scale for checking
+    let scaled = font.as_scaled(scale);
+
+    let chars_to_check = ['X', 'i', 'W', 'M', '.', '|'];
+    let mut advances: Vec<f32> = Vec::new();
+    for ch in &chars_to_check {
+        let gid = font.glyph_id(*ch);
+        if gid.0 != 0 {
+            let adv = scaled.h_advance(gid);
+            if adv > 0.0 {
+                advances.push(adv);
+            }
+        }
+    }
+    if advances.len() < 2 {
+        return false; // can't tell; skip
+    }
+    // All advances should be the same for monospace
+    let first = advances[0];
+    advances.iter().all(|a| (a - first).abs() < 0.1) // Using a tighter threshold than glyphmatch
+}
+
 fn is_renderable_char(ch: char) -> bool {
     if ch.is_control() {
         return false;
@@ -388,7 +415,13 @@ fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a F
     if !ctx.fallback_faces.contains_key(&path) {
         if let Ok(data) = fs::read(&path) {
             if let Ok(font) = FontVec::try_from_vec(data) {
-                ctx.fallback_faces.insert(path.clone(), font);
+                if is_monospace_font(&font) {
+                    ctx.fallback_faces.insert(path.clone(), font);
+                } else {
+                    log::info!("Warning: Fallback font for '{}' ({}) is not monospace, skipping.", ch, path);
+                    ctx.missing_chars.insert(ch);
+                    return None;
+                }
             }
         }
     }
