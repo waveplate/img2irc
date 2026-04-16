@@ -1392,9 +1392,9 @@ impl App {
         self.misc8 = render_args.misc8;
         self.invert = render_args.invert;
         self.grayscale = render_args.grayscale;
-        self.brightness = 0;
-        self.contrast = 0;
-        self.saturation = 0;
+        self.brightness = render_args.brightness as i32;
+        self.contrast = render_args.contrast as i32;
+        self.saturation = render_args.saturation as i32;
         self.gamma = render_args.gamma as i32;
         self.hue = render_args.hue as i32;
         self.trim_top = render_args.trim.map(|t| t.0 as i32).unwrap_or(0);
@@ -1850,6 +1850,8 @@ impl App {
             return;
         }
 
+        self.flush_render_args();
+
         let state = self.auto_optimize_state.take().unwrap();
 
         fn parse_range_i32(s: &str, current: i32) -> Vec<i32> {
@@ -1874,43 +1876,15 @@ impl App {
             }
         }
 
-        fn parse_range_f32(s: &str, current: f32) -> Vec<f32> {
-            if s.trim().is_empty() {
-                return vec![current];
-            }
-            let parts: Vec<&str> = s
-                .split('-')
-                .map(|x| x.trim())
-                .filter(|x| !x.is_empty())
-                .collect();
-            if parts.len() == 2 {
-                let p0 = parts[0].parse().unwrap_or(current);
-                let p1 = parts[1].parse().unwrap_or(current);
-                let min = p0.min(p1);
-                let max = p0.max(p1);
-                let mut v = Vec::new();
-                let mut c = min;
-                while c <= max {
-                    v.push(c);
-                    c += 0.5;
-                }
-                if v.is_empty() {
-                    v.push(current);
-                }
-                v
-            } else if parts.len() == 1 {
-                vec![parts[0].parse().unwrap_or(current)]
-            } else {
-                vec![current]
-            }
-        }
-
         let ws = parse_range_i32(state.inputs[0].lines()[0].as_str(), self.width);
         let ct = parse_range_i32(state.inputs[1].lines()[0].as_str(), self.trim_top);
         let cr = parse_range_i32(state.inputs[2].lines()[0].as_str(), self.trim_right);
         let cb = parse_range_i32(state.inputs[3].lines()[0].as_str(), self.trim_bottom);
         let cl = parse_range_i32(state.inputs[4].lines()[0].as_str(), self.trim_left);
-        let fs = parse_range_f32(state.inputs[5].lines()[0].as_str(), self.font_size);
+        let fs: Vec<f32> = parse_range_i32(state.inputs[5].lines()[0].as_str(), self.font_size.round() as i32)
+            .into_iter()
+            .map(|x| x as f32)
+            .collect();
         let sx = parse_range_i32(state.inputs[6].lines()[0].as_str(), self.scalex);
         let sy = parse_range_i32(state.inputs[7].lines()[0].as_str(), self.scaley);
 
@@ -1969,6 +1943,34 @@ impl App {
 
             tokio::spawn(async move {
                 let mut aborted = false;
+                let mut gs_map = std::collections::HashMap::new();
+                for &f in &fs {
+                    if tx_clone.is_closed() || cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                        aborted = true;
+                        break;
+                    }
+                    if (f - args.font_size).abs() < std::f32::EPSILON {
+                        gs_map.insert(f.to_bits(), gs_clone.clone());
+                    } else {
+                        let new_store = crate::font::glyph_store(
+                            &args.blocks,
+                            &args.exclude_range,
+                            &args.exclude,
+                            &args.include_range,
+                            args.include.as_ref(),
+                            &args.font,
+                            f,
+                            false,
+                            Some(cancel_clone.clone()),
+                        );
+                        gs_map.insert(f.to_bits(), std::sync::Arc::new(new_store));
+                    }
+                }
+
+                if aborted {
+                    return;
+                }
+
                 for &w in &ws {
                     if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) {
                         break;
@@ -2000,7 +2002,7 @@ impl App {
                                                     .await
                                                     .unwrap();
                                                 let img = img_clone.clone();
-                                                let gs = gs_clone.clone();
+                                                let gs = gs_map.get(&f.to_bits()).unwrap().clone();
                                                 let rtx = res_tx.clone();
                                                 let cancel_inner = cancel_clone.clone();
                                                 tokio::task::spawn_blocking(move || {
