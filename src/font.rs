@@ -729,6 +729,12 @@ pub fn glyph_store(
             explicit_chars.push(ch);
         }
     }
+    // Always include standard printable ASCII for text overlays
+    for ch in 32..=126 {
+        if let Some(c) = char::from_u32(ch) {
+            explicit_chars.push(c);
+        }
+    }
     for range_str in include_ranges {
         if let Some(range) = parse_hex_range(range_str) {
             for code in range {

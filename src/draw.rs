@@ -1567,6 +1567,46 @@ fn has_flat_uniform_neighbor_context(
     found_neighbor && uniform_color.is_some()
 }
 
+fn get_overlay_at(
+    ov: &crate::args::TextOverlay,
+    cx: i32,
+    cy: i32,
+) -> Option<Option<char>> {
+    if ov.w > 0 && ov.h > 0 {
+        if cx < ov.x || cx >= ov.x + ov.w || cy < ov.y || cy >= ov.y + ov.h {
+            return None; // Outside the box
+        }
+        
+        let dx = cx - ov.x;
+        let dy = cy - ov.y;
+        
+        if ov.wrap {
+            let idx = (dy * ov.w + dx) as usize;
+            if idx < ov.text.chars().count() {
+                return Some(Some(ov.text.chars().nth(idx).unwrap()));
+            }
+        } else {
+            if dy == 0 {
+                let idx = dx as usize;
+                if idx < ov.text.chars().count() {
+                    return Some(Some(ov.text.chars().nth(idx).unwrap()));
+                }
+            }
+        }
+        return Some(None); // Inside box, but no char
+    } else {
+        if cy != ov.y || cx < ov.x {
+            return None;
+        }
+        let dx = cx - ov.x;
+        let idx = dx as usize;
+        if idx < ov.text.chars().count() {
+            return Some(Some(ov.text.chars().nth(idx).unwrap()));
+        }
+        return None;
+    }
+}
+
 pub fn render_blocks(
     image: &AnsiImage,
     args: &RenderArgs,
@@ -2606,13 +2646,10 @@ pub fn render_blocks_smooth(
             let mut text_overlay: Option<&crate::args::TextOverlay> = None;
             let mut overlay_char = None;
             for ov in &args.overlays {
-                if y as i32 == ov.y && (x as i32) >= ov.x {
-                    let dx = (x as i32 - ov.x) as usize;
-                    if let Some(c) = ov.text.chars().nth(dx) {
-                        text_overlay = Some(ov);
-                        overlay_char = Some(c);
-                        break;
-                    }
+                if let Some(opt_c) = get_overlay_at(ov, x as i32, y as i32) {
+                    text_overlay = Some(ov);
+                    overlay_char = opt_c;
+                    break;
                 }
             }
 
@@ -2725,8 +2762,9 @@ pub fn render_blocks_smooth(
                     };
                     final_draw_fg_raw = match fg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let idx = (*i as usize).min(if render == Render::Irc { 98 } else { 255 });
-                            if render == Render::Irc {
+                            let is_irc = render == Render::Irc || render == Render::Preview;
+                            let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
+                            if is_irc {
                                 unpack_rgb(IRC99[idx])
                             } else {
                                 unpack_rgb(ANSI256[idx])
@@ -2742,8 +2780,9 @@ pub fn render_blocks_smooth(
                     });
                     final_draw_bg_raw = Some(match bg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let idx = (*i as usize).min(if render == Render::Irc { 98 } else { 255 });
-                            if render == Render::Irc {
+                            let is_irc = render == Render::Irc || render == Render::Preview;
+                            let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
+                            if is_irc {
                                 unpack_rgb(IRC99[idx])
                             } else {
                                 unpack_rgb(ANSI256[idx])
@@ -2752,7 +2791,11 @@ pub fn render_blocks_smooth(
                         crate::args::ColorSpec::Rgb(rgb) => *rgb,
                     });
                 }
-                final_char = overlay_char.unwrap();
+                if let Some(c) = overlay_char {
+                    final_char = c;
+                } else {
+                    final_char = ' ';
+                }
             }
 
             row_vec.push(RenderedCell {
@@ -2987,24 +3030,25 @@ pub fn render_braille(
             let mut final_ch = std::char::from_u32(braille).unwrap_or(' ');
 
             for ov in &args.overlays {
-                if (y / 4) as i32 == ov.y && ((x / 2) as i32) >= ov.x {
-                    let dx = ((x / 2) as i32 - ov.x) as usize;
-                    if let Some(c) = ov.text.chars().nth(dx) {
-                        if let Some(fg_param) = &ov.fg {
-                            final_fg = match fg_param {
-                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                            };
-                        }
-                        if let Some(bg_param) = &ov.bg {
-                            final_bg = Some(match bg_param {
-                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                            });
-                        }
-                        final_ch = c;
-                        break;
+                if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
+                    if let Some(fg_param) = &ov.fg {
+                        final_fg = match fg_param {
+                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                        };
                     }
+                    if let Some(bg_param) = &ov.bg {
+                        final_bg = Some(match bg_param {
+                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                        });
+                    }
+                    if let Some(c) = opt_c {
+                        final_ch = c;
+                    } else {
+                        final_ch = ' ';
+                    }
+                    break;
                 }
             }
 
@@ -3031,24 +3075,25 @@ pub fn render_braille(
                 let mut alt_ch = std::char::from_u32(braille).unwrap_or(' ');
 
                 for ov in &args.overlays {
-                    if (y / 4) as i32 == ov.y && ((x / 2) as i32) >= ov.x {
-                        let dx = ((x / 2) as i32 - ov.x) as usize;
-                        if let Some(c) = ov.text.chars().nth(dx) {
-                            if let Some(fg_param) = &ov.fg {
-                                alt_fg = match fg_param {
-                                    crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                    crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                                };
-                            }
-                            if let Some(bg_param) = &ov.bg {
-                                alt_bg = Some(match bg_param {
-                                    crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                    crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                                });
-                            }
-                            alt_ch = c;
-                            break;
+                    if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
+                        if let Some(fg_param) = &ov.fg {
+                            alt_fg = match fg_param {
+                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                            };
                         }
+                        if let Some(bg_param) = &ov.bg {
+                            alt_bg = Some(match bg_param {
+                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
+                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                            });
+                        }
+                        if let Some(c) = opt_c {
+                            alt_ch = c;
+                        } else {
+                            alt_ch = ' ';
+                        }
+                        break;
                     }
                 }
 

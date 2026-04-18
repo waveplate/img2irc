@@ -98,6 +98,8 @@ pub struct TextOverlay {
     pub h: i32,
     pub fg: Option<ColorSpec>,
     pub bg: Option<ColorSpec>,
+    #[serde(default)]
+    pub wrap: bool,
 }
 
 // Struct used for actual rendering (all values resolved to f32)

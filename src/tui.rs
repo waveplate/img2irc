@@ -1152,6 +1152,8 @@ struct App {
     text_list_state: ListState,
     text_list_area: Rect,
     text_selected: Option<usize>,
+    text_drag_mode: TextDragMode,
+    text_drag_start: Option<(i32, i32)>,
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
     text_btn_areas: Vec<Rect>,   // clickable button areas: [fg, bg, delete]
@@ -1368,6 +1370,8 @@ impl App {
             text_list_state: ratatui::widgets::ListState::default(),
             text_list_area: Rect::default(),
             text_selected: None,
+            text_drag_mode: TextDragMode::None,
+            text_drag_start: None,
             text_field_focus: TextFieldFocus::List,
             text_field_areas: Vec::new(),
             text_btn_areas: Vec::new(),
@@ -3487,127 +3491,53 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue;
             }
 
-            // --- Color Picker Modal ---
-            if app.color_picker_state.is_some() {
-                if let Event::Mouse(mouse) = event {
-                    let mut handled = false;
-                    let terminal_area = app.terminal_area;
-                    let cp_width = 56;
-                    let cp_height = 17;
-                    let area_x = (terminal_area.width.saturating_sub(cp_width)) / 2;
-                    let area_y = (terminal_area.height.saturating_sub(cp_height)) / 2;
-                    let cp_rect = Rect::new(area_x, area_y, cp_width, cp_height);
 
-                    if let Some(cp_state) = &mut app.color_picker_state {
-                        if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
-                            handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect);
-                        } else if mouse.kind
-                            == crossterm::event::MouseEventKind::Drag(MouseButton::Left)
-                        {
-                            handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
-                        } else if mouse.kind
-                            == crossterm::event::MouseEventKind::Up(MouseButton::Left)
-                        {
-                            cp_state.is_dragging_main = false;
-                            cp_state.is_dragging_hue = false;
-                            handled = true;
-                        }
-
-                        if !cp_state.is_open {
-                            if cp_state.ok_trigger {
-                                if let Some(sel) = app.text_selected {
-                                    if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        let ov = &mut app.render_args.overlays[sel - 1];
-                                        if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg =
-                                                Some(crate::args::ColorSpec::Index(fg_idx as u8));
-                                        } else {
-                                            ov.fg = Some(crate::args::ColorSpec::Rgb([
-                                                cp_state.fg_rgb.0,
-                                                cp_state.fg_rgb.1,
-                                                cp_state.fg_rgb.2,
-                                            ]));
-                                        }
-                                        if let Some(bg_rgb) = cp_state.bg_rgb {
-                                            if let Some(bg_idx) = cp_state.bg_idx {
-                                                ov.bg = Some(crate::args::ColorSpec::Index(
-                                                    bg_idx as u8,
-                                                ));
-                                            } else {
-                                                ov.bg = Some(crate::args::ColorSpec::Rgb([
-                                                    bg_rgb.0, bg_rgb.1, bg_rgb.2,
-                                                ]));
-                                            }
-                                        } else {
-                                            ov.bg = None;
-                                        }
-                                        app.mark_args_dirty();
-                                    }
-                                }
-                            }
-                            // Important: need to delay setting to None to avoid borrow checker conflicts
-                        }
-                    }
-                    if app
-                        .color_picker_state
-                        .as_ref()
-                        .map(|s| !s.is_open)
-                        .unwrap_or(false)
-                    {
-                        app.color_picker_state = None;
-                    }
-                    if handled {
-                        continue;
-                    }
-                } else if let Event::Key(key) = event {
-                    if key.code == KeyCode::Esc {
-                        app.color_picker_state = None;
-                    } else if key.code == KeyCode::Enter {
-                        if let Some(cp_state) = &mut app.color_picker_state {
-                            cp_state.ok_trigger = true;
-                            cp_state.is_open = false;
-                        }
-                        if let Some(cp_state) = &app.color_picker_state {
-                            if cp_state.ok_trigger {
-                                if let Some(sel) = app.text_selected {
-                                    if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        let ov = &mut app.render_args.overlays[sel - 1];
-                                        if let Some(fg_idx) = cp_state.fg_idx {
-                                            ov.fg =
-                                                Some(crate::args::ColorSpec::Index(fg_idx as u8));
-                                        } else {
-                                            ov.fg = Some(crate::args::ColorSpec::Rgb([
-                                                cp_state.fg_rgb.0,
-                                                cp_state.fg_rgb.1,
-                                                cp_state.fg_rgb.2,
-                                            ]));
-                                        }
-                                        if let Some(bg_rgb) = cp_state.bg_rgb {
-                                            if let Some(bg_idx) = cp_state.bg_idx {
-                                                ov.bg = Some(crate::args::ColorSpec::Index(
-                                                    bg_idx as u8,
-                                                ));
-                                            } else {
-                                                ov.bg = Some(crate::args::ColorSpec::Rgb([
-                                                    bg_rgb.0, bg_rgb.1, bg_rgb.2,
-                                                ]));
-                                            }
-                                        } else {
-                                            ov.bg = None;
-                                        }
-                                        app.mark_args_dirty();
-                                    }
-                                }
-                            }
-                        }
-                        app.color_picker_state = None;
-                    }
-                    continue;
-                }
-            }
 
             match event {
                 Event::Mouse(mouse) => {
+                    if app.current_tab == 3 {
+                        let cp_rect = app.text_list_area; // We saved the CP rect here
+                        let mut handled = false;
+                        
+                        if let Some(cp_state) = &mut app.color_picker_state {
+                            if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
+                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect);
+                            } else if mouse.kind == crossterm::event::MouseEventKind::Drag(MouseButton::Left) {
+                                handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
+                            } else if mouse.kind == crossterm::event::MouseEventKind::Up(MouseButton::Left) {
+                                cp_state.is_dragging_main = false;
+                                cp_state.is_dragging_hue = false;
+                                handled = true;
+                            }
+                            
+                            if handled {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        let ov = &mut app.render_args.overlays[sel - 1];
+                                        if cp_state.editing_fg {
+                                            if let Some(fg_idx) = cp_state.fg_idx {
+                                                ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
+                                            } else {
+                                                let rgb = cp_state.fg_rgb;
+                                                ov.fg = Some(crate::args::ColorSpec::Rgb([rgb.0, rgb.1, rgb.2]));
+                                            }
+                                        } else {
+                                            if let Some(bg_idx) = cp_state.bg_idx {
+                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                            } else {
+                                                if let Some(rgb) = cp_state.bg_rgb {
+                                                    ov.bg = Some(crate::args::ColorSpec::Rgb([rgb.0, rgb.1, rgb.2]));
+                                                }
+                                            }
+                                        }
+                                        app.mark_args_dirty();
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             // Check if over output area
@@ -3842,15 +3772,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     let cell_y = content_y as i32;
 
                                                     let mut found = None;
-                                                    for (idx, ov) in
-                                                        app.render_args.overlays.iter().enumerate()
-                                                    {
-                                                        if ov.y == cell_y
-                                                            && cell_x >= ov.x
-                                                            && cell_x
-                                                                < ov.x
-                                                                    + ov.text.chars().count() as i32
-                                                        {
+                                                    for (idx, ov) in app.render_args.overlays.iter().enumerate().rev() {
+                                                        if (ov.w > 0 && ov.h > 0 && cell_x >= ov.x && cell_x < ov.x + ov.w && cell_y >= ov.y && cell_y < ov.y + ov.h)
+                                                        || ((ov.w == 0 || ov.h == 0) && ov.y == cell_y && cell_x >= ov.x && cell_x < ov.x + ov.text.chars().count() as i32) {
                                                             found = Some(idx);
                                                             break;
                                                         }
@@ -3858,23 +3782,22 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
                                                     if let Some(idx) = found {
                                                         app.text_selected = Some(idx + 1);
-                                                        app.text_list_state.select(Some(idx + 1));
+                                                        app.text_drag_mode = TextDragMode::Moving;
+                                                        app.text_drag_start = Some((cell_x - app.render_args.overlays[idx].x, cell_y - app.render_args.overlays[idx].y));
                                                     } else {
-                                                        app.render_args.overlays.push(
-                                                            crate::args::TextOverlay {
-                                                                text: "Text".to_string(),
-                                                                x: cell_x,
-                                                                y: cell_y,
-                                                                w: 0,
-                                                                h: 0,
-                                                                fg: None,
-                                                                bg: None,
-                                                            },
-                                                        );
-                                                        app.text_selected =
-                                                            Some(app.render_args.overlays.len());
-                                                        app.text_list_state
-                                                            .select(app.text_selected);
+                                                        app.render_args.overlays.push(crate::args::TextOverlay {
+                                                            text: "".to_string(),
+                                                            x: cell_x,
+                                                            y: cell_y,
+                                                            w: 0,
+                                                            h: 0,
+                                                            fg: None,
+                                                            bg: None,
+                                                            wrap: false,
+                                                        });
+                                                        app.text_selected = Some(app.render_args.overlays.len());
+                                                        app.text_drag_mode = TextDragMode::Sizing;
+                                                        app.text_drag_start = Some((cell_x, cell_y));
                                                         app.mark_args_dirty();
                                                     }
                                                 }
@@ -4224,6 +4147,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             h: 0,
                                             fg: None,
                                             bg: None,
+                                            wrap: false,
                                         });
                                         app.text_selected = Some(app.render_args.overlays.len());
                                         app.text_list_state.select(app.text_selected);
@@ -4355,7 +4279,39 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
-                            if let Some(splitter) = app.dragging_splitter {
+                            if app.current_tab == 3 && app.text_drag_mode != TextDragMode::None {
+                                if let Some(res) = &app.cached_result {
+                                    let inner_height = app.output_area.height.saturating_sub(2);
+                                    let line_count = app.cached_render.lines().count() as u16;
+                                    let pad_y = if line_count < inner_height { inner_height.saturating_sub(line_count) / 2 } else { 0 };
+                                    if mouse.row >= app.output_area.y + 1 + pad_y {
+                                        let c_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as i32 + app.scroll as i32;
+                                        let c_x = mouse.column.saturating_sub(app.output_area.x + 1) as i32;
+                                        if let Some(sel) = app.text_selected {
+                                            if sel > 0 && sel <= app.render_args.overlays.len() {
+                                                let cell_x = if app.render_args.render == crate::args::Render::Irc || app.render_args.render == crate::args::Render::Preview { c_x / 2 } else { c_x };
+                                                let cell_y = c_y;
+                                                
+                                                let ov = &mut app.render_args.overlays[sel - 1];
+                                                if app.text_drag_mode == TextDragMode::Moving {
+                                                    // Move
+                                                    if let Some((sx, sy)) = app.text_drag_start {
+                                                        ov.x = cell_x - sx;
+                                                        ov.y = cell_y - sy;
+                                                    }
+                                                } else if app.text_drag_mode == TextDragMode::Sizing {
+                                                    // Resize
+                                                    if let Some((sx, sy)) = app.text_drag_start {
+                                                        ov.w = (cell_x - sx).max(0);
+                                                        ov.h = (cell_y - sy).max(0);
+                                                    }
+                                                }
+                                                app.mark_args_dirty();
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if let Some(splitter) = app.dragging_splitter {
                                 let root = Layout::vertical([
                                     Constraint::Length(1), // title/tabs
                                     Constraint::Min(0),    // content
@@ -4550,6 +4506,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             app.pipeline_dragging = None;
                             app.dragged_control = None;
                             app.dragging_splitter = None;
+                            app.text_drag_mode = TextDragMode::None;
+                            app.text_drag_start = None;
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if mouse.column >= app.pipeline_active_area.x
@@ -4603,6 +4561,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 }
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
+                        if app.current_tab == 3 {
+                            if let Some(sel) = app.text_selected {
+                                if sel > 0 && sel <= app.render_args.overlays.len() {
+                                    let mut handled = true;
+                                    let ov = &mut app.render_args.overlays[sel - 1];
+                                    match key.code {
+                                        KeyCode::Backspace => {
+                                            ov.text.pop();
+                                            app.mark_args_dirty();
+                                        }
+                                        KeyCode::Char(c) => {
+                                            ov.text.push(c);
+                                            app.mark_args_dirty();
+                                        }
+                                        KeyCode::Esc => {
+                                            app.text_selected = None;
+                                        }
+                                        _ => {
+                                            handled = false;
+                                        }
+                                    }
+                                    if handled {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         match key.code {
                             KeyCode::Tab => app.cycle_focus_target(1),
                             KeyCode::BackTab => app.cycle_focus_target(-1),
@@ -5034,6 +5019,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     h: 0,
                                                     fg: None,
                                                     bg: None,
+                                                    wrap: false,
                                                 },
                                             );
                                             app.text_selected =
@@ -5619,17 +5605,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         f.render_widget(content, p_area);
     }
 
-    if let Some(cp_state) = &mut app.color_picker_state {
-        if cp_state.is_open {
-            let cp_width = 56;
-            let cp_height = 17;
-            let area_x = (app.terminal_area.width.saturating_sub(cp_width)) / 2;
-            let area_y = (app.terminal_area.height.saturating_sub(cp_height)) / 2;
-            let cp_rect = Rect::new(area_x, area_y, cp_width, cp_height);
-            f.render_widget(Clear, cp_rect);
-            f.render_widget(crate::colorpicker::ColorPickerWidget { state: cp_state }, cp_rect);
-        }
-    }
+
 }
 
 fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
@@ -6544,343 +6520,115 @@ fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: ch
     }
 }
 
+#[derive(PartialEq, Eq)]
+enum TextDragMode {
+    None,
+    Moving,
+    Sizing,
+}
+
 fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let has_selection = app
-        .text_selected
-        .map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
-
-    // Split: top = list, bottom = editor (only shown when selected)
-    let editor_height = if has_selection { 10 } else { 0 };
-    let chunks =
-        Layout::vertical([Constraint::Min(4), Constraint::Length(editor_height)]).split(area);
-
-    // ── List pane ──
-    let list_focused = app.current_tab == 3 && app.text_field_focus == TextFieldFocus::List;
-    let list_border = if list_focused { ACCENT } else { BORDER };
-    let list_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(list_border))
-        .border_set(ratatui::symbols::border::ROUNDED)
-        .title(Span::styled(
-            " Text Overlays ",
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(SURFACE));
-    let list_inner = list_block.inner(chunks[0]);
-    f.render_widget(list_block, chunks[0]);
-
-    let mut items: Vec<ListItem> = Vec::new();
-
-    // "Add New" row
-    let add_selected = app.text_selected == Some(0);
-    let add_style = if add_selected {
-        Style::default()
-            .fg(Color::Green)
-            .bg(SELECTED_BG)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::Green)
-    };
-    items.push(ListItem::new(Span::styled("  + Add New", add_style)));
-
-    for (i, ov) in app.render_args.overlays.iter().enumerate() {
-        let is_selected = app.text_selected == Some(i + 1);
-        let text_trunc: String = if ov.text.chars().count() > 20 {
-            format!("{}…", ov.text.chars().take(20).collect::<String>())
-        } else {
-            ov.text.clone()
-        };
-        let label = format!("  \"{}\" ({},{})", text_trunc, ov.x, ov.y);
-        let style = if is_selected {
-            Style::default()
-                .fg(TAB_ACTIVE)
-                .bg(SELECTED_BG)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(TEXT)
-        };
-        items.push(ListItem::new(Span::styled(label, style)));
-    }
-
-    let list = List::new(items).highlight_style(Style::default().bg(SELECTED_BG));
-    f.render_stateful_widget(list, list_inner, &mut app.text_list_state);
-    app.text_list_area = list_inner;
-
-    // ── Editor pane ──
-    if !has_selection {
-        app.text_field_areas.clear();
-        app.text_btn_areas.clear();
-        return;
-    }
-
-    let sel = app.text_selected.unwrap();
-    let ov = &app.render_args.overlays[sel - 1];
-
-    let ed_block = Block::default()
+    let main_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(BORDER))
         .border_set(ratatui::symbols::border::ROUNDED)
         .title(Span::styled(
-            " Edit Overlay ",
+            " Text Settings ",
             Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(SURFACE));
-    let ed_inner = ed_block.inner(chunks[1]);
-    f.render_widget(ed_block, chunks[1]);
+    let inner = main_block.inner(area);
+    f.render_widget(main_block, area);
 
-    app.text_field_areas.clear();
-    app.text_btn_areas.clear();
+    let chunks = Layout::vertical([
+        Constraint::Length(19), // Color picker
+        Constraint::Length(3),  // Options (Wrap toggle / Delete button)
+        Constraint::Min(0),     // Instructions
+    ])
+    .split(inner);
 
-    let is_editing_text = app.input_mode == InputMode::TextEdit;
-
-    let label_style = Style::default().fg(TEXT_DIM);
-
-    // Row 0: Text input
-    let row0 = Rect::new(ed_inner.x, ed_inner.y, ed_inner.width, 1);
-    app.text_field_areas.push(row0);
-    let field_focused = app.text_field_focus == TextFieldFocus::TextInput && app.current_tab == 3;
-    let text_val = if is_editing_text {
-        &app.value_edit_buffer
+    // Color Picker always visible
+    let cp_rect = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 18);
+    
+    // Ensure CP is instantiated with correct mode
+    let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
+    if app.color_picker_state.is_none() {
+        app.color_picker_state = Some(crate::colorpicker::ColorPickerState::new(mode, true));
     } else {
-        &ov.text
-    };
-    let text_style = if field_focused || is_editing_text {
-        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("Text: ", label_style),
-            Span::styled(
-                format!(
-                    "{:<w$}",
-                    text_val,
-                    w = (ed_inner.width as usize).saturating_sub(6)
-                ),
-                text_style,
-            ),
-        ])),
-        row0,
-    );
-    if is_editing_text {
-        let cursor_x = row0.x + 6 + text_val.chars().count() as u16;
-        if cursor_x < row0.x + row0.width {
-            f.render_widget(
-                Paragraph::new("▏").style(Style::default().fg(ACCENT)),
-                Rect::new(cursor_x, row0.y, 1, 1),
-            );
-        }
+        let cp = app.color_picker_state.as_mut().unwrap();
+        cp.mode = mode;
+        cp.is_open = true; // Force open
     }
-
-    // Row 1: X, Y
-    let row1 = Rect::new(ed_inner.x, ed_inner.y + 1, ed_inner.width, 1);
-    app.text_field_areas.push(row1);
-    let x_focused = app.text_field_focus == TextFieldFocus::X && app.current_tab == 3;
-    let y_focused = app.text_field_focus == TextFieldFocus::Y && app.current_tab == 3;
-    let x_style = if x_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    let y_style = if y_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("X: ", label_style),
-            Span::styled(format!("{:<5}", ov.x), x_style),
-            Span::styled("  Y: ", label_style),
-            Span::styled(format!("{:<5}", ov.y), y_style),
-        ])),
-        row1,
-    );
-
-    // Row 2: W, H
-    let row2 = Rect::new(ed_inner.x, ed_inner.y + 2, ed_inner.width, 1);
-    app.text_field_areas.push(row2);
-    let w_focused = app.text_field_focus == TextFieldFocus::W && app.current_tab == 3;
-    let h_focused = app.text_field_focus == TextFieldFocus::H && app.current_tab == 3;
-    let w_style = if w_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    let h_style = if h_focused {
-        Style::default().fg(Color::White).bg(Color::Rgb(50, 50, 72))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    let w_label = if ov.w == 0 {
-        "auto".to_string()
-    } else {
-        ov.w.to_string()
-    };
-    let h_label = if ov.h == 0 {
-        "auto".to_string()
-    } else {
-        ov.h.to_string()
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("W: ", label_style),
-            Span::styled(format!("{:<5}", w_label), w_style),
-            Span::styled("  H: ", label_style),
-            Span::styled(format!("{:<5}", h_label), h_style),
-        ])),
-        row2,
-    );
-
-    // Row 4: FG color button
-    let row4 = Rect::new(ed_inner.x, ed_inner.y + 4, ed_inner.width.min(30), 1);
-    app.text_field_areas.push(row4);
-    let fg_focused = app.text_field_focus == TextFieldFocus::FgButton && app.current_tab == 3;
-    let fg_btn_style = if fg_focused {
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(60, 60, 100))
-    } else {
-        Style::default().fg(TEXT)
-    };
-    let fg_label = match &ov.fg {
-        Some(crate::args::ColorSpec::Rgb(rgb)) => {
-            format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
-        }
-        Some(crate::args::ColorSpec::Index(i)) => format!("idx:{}", i),
-        None => "[inherit]".to_string(),
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(" FG: ", fg_btn_style)])),
-        row4,
-    );
-    if let Some(fg_spec) = &ov.fg {
-        let color = match fg_spec {
-            crate::args::ColorSpec::Rgb(rgb) => Color::Rgb(rgb[0], rgb[1], rgb[2]),
-            crate::args::ColorSpec::Index(i) => {
-                let v = *crate::palette::ANSI256.get(*i as usize).unwrap_or(&0);
-                Color::Rgb(
-                    ((v >> 16) & 0xFF) as u8,
-                    ((v >> 8) & 0xFF) as u8,
-                    (v & 0xFF) as u8,
-                )
-            }
-        };
-        let sx = row4.x + 5;
-        if sx + 2 < row4.x + row4.width {
-            f.render_widget(
-                Paragraph::new("██").style(Style::default().fg(color)),
-                Rect::new(sx, row4.y, 2, 1),
-            );
-        }
-        let lx = row4.x + 8;
-        if lx < row4.x + row4.width {
-            f.render_widget(
-                Paragraph::new(fg_label.as_str()).style(fg_btn_style),
-                Rect::new(lx, row4.y, row4.width.saturating_sub(8), 1),
-            );
-        }
-    } else {
-        let lx = row4.x + 5;
-        if lx < row4.x + row4.width {
-            f.render_widget(
-                Paragraph::new(fg_label.as_str()).style(fg_btn_style),
-                Rect::new(lx, row4.y, row4.width.saturating_sub(5), 1),
-            );
-        }
-    }
-    app.text_btn_areas.push(row4); // btn[0] = fg
-
-    // Row 5: BG color button
-    let row5 = Rect::new(ed_inner.x, ed_inner.y + 5, ed_inner.width.min(30), 1);
-    app.text_field_areas.push(row5);
-    let bg_focused = app.text_field_focus == TextFieldFocus::BgButton && app.current_tab == 3;
-    let can_set_bg = ov.fg.is_some();
-    let bg_btn_style = if bg_focused && can_set_bg {
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(60, 60, 100))
-    } else if can_set_bg {
-        Style::default().fg(TEXT)
-    } else {
-        Style::default().fg(Color::Rgb(80, 80, 100))
-    };
-    let bg_label = if !can_set_bg {
-        "[set FG first]".to_string()
-    } else {
-        match &ov.bg {
-            Some(crate::args::ColorSpec::Rgb(rgb)) => {
-                format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
-            }
-            Some(crate::args::ColorSpec::Index(i)) => format!("idx:{}", i),
-            None => "[none]".to_string(),
-        }
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(" BG: ", bg_btn_style)])),
-        row5,
-    );
-    if can_set_bg {
-        if let Some(bg_spec) = &ov.bg {
-            let color = match bg_spec {
-                crate::args::ColorSpec::Rgb(rgb) => Color::Rgb(rgb[0], rgb[1], rgb[2]),
-                crate::args::ColorSpec::Index(i) => {
-                    let v = *crate::palette::ANSI256.get(*i as usize).unwrap_or(&0);
-                    Color::Rgb(
-                        ((v >> 16) & 0xFF) as u8,
-                        ((v >> 8) & 0xFF) as u8,
-                        (v & 0xFF) as u8,
-                    )
+    
+    // Sync CP with selection
+    if let Some(cp_state) = &mut app.color_picker_state {
+        if let Some(sel) = app.text_selected {
+            if sel > 0 && sel <= app.render_args.overlays.len() {
+                let ov = &app.render_args.overlays[sel - 1];
+                if cp_state.editing_fg {
+                    if let Some(fg) = &ov.fg {
+                        match fg {
+                            crate::args::ColorSpec::Rgb(rgb) => cp_state.set_rgb(rgb[0], rgb[1], rgb[2]),
+                            crate::args::ColorSpec::Index(i) => cp_state.set_grid_idx(*i as usize),
+                        }
+                    } else {
+                        cp_state.fg_idx = None;
+                    }
+                } else {
+                    if let Some(bg) = &ov.bg {
+                        match bg {
+                            crate::args::ColorSpec::Rgb(rgb) => {
+                                cp_state.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
+                                cp_state.set_rgb(rgb[0], rgb[1], rgb[2]);
+                            },
+                            crate::args::ColorSpec::Index(i) => {
+                                cp_state.bg_idx = Some(*i as usize);
+                                cp_state.set_grid_idx(*i as usize);
+                            }
+                        }
+                    } else {
+                        cp_state.bg_idx = None;
+                        cp_state.bg_rgb = None;
+                    }
                 }
-            };
-            let sx = row5.x + 5;
-            if sx + 2 < row5.x + row5.width {
-                f.render_widget(
-                    Paragraph::new("██").style(Style::default().fg(color)),
-                    Rect::new(sx, row5.y, 2, 1),
-                );
-            }
-            let lx = row5.x + 8;
-            if lx < row5.x + row5.width {
-                f.render_widget(
-                    Paragraph::new(bg_label.as_str()).style(bg_btn_style),
-                    Rect::new(lx, row5.y, row5.width.saturating_sub(8), 1),
-                );
-            }
-        } else {
-            let lx = row5.x + 5;
-            if lx < row5.x + row5.width {
-                f.render_widget(
-                    Paragraph::new(bg_label.as_str()).style(bg_btn_style),
-                    Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1),
-                );
             }
         }
-    } else {
-        let lx = row5.x + 5;
-        if lx < row5.x + row5.width {
-            f.render_widget(
-                Paragraph::new(bg_label.as_str()).style(bg_btn_style),
-                Rect::new(lx, row5.y, row5.width.saturating_sub(5), 1),
-            );
-        }
+        f.render_widget(crate::colorpicker::ColorPickerWidget { state: cp_state }, cp_rect);
     }
-    app.text_btn_areas.push(row5); // btn[1] = bg
-
-    // Row 7: Delete button
-    let row7 = Rect::new(ed_inner.x, ed_inner.y + 7, 12, 1);
-    app.text_field_areas.push(row7);
-    let del_focused = app.text_field_focus == TextFieldFocus::DeleteButton && app.current_tab == 3;
-    let del_style = if del_focused {
-        Style::default()
-            .fg(Color::White)
-            .bg(Color::Rgb(180, 60, 60))
+    
+    app.text_btn_areas.clear(); // We use index 0 for Wrap, index 1 for Delete
+    
+    let has_selection = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
+    if has_selection {
+        let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
+        let wrap_style = if ov.wrap { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Gray) };
+        let options_chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[1]);
+        
+        let wrap_btn = Block::default().borders(Borders::ALL).style(wrap_style);
+        let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" }).block(wrap_btn).alignment(Alignment::Center);
+        f.render_widget(wrap_p, options_chunks[0]);
+        app.text_btn_areas.push(options_chunks[0]);
+        
+        let del_btn = Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Red));
+        let del_p = Paragraph::new("Delete").block(del_btn).alignment(Alignment::Center);
+        f.render_widget(del_p, options_chunks[1]);
+        app.text_btn_areas.push(options_chunks[1]);
     } else {
-        Style::default().fg(Color::Rgb(220, 80, 80))
-    };
-    f.render_widget(Paragraph::new(Span::styled(" ✕ Delete ", del_style)), row7);
-    app.text_btn_areas.push(row7); // btn[2] = delete
+        app.text_btn_areas.push(Rect::default());
+        app.text_btn_areas.push(Rect::default());
+    }
+
+    let inst_text = "Instructions:\n\
+    - Click image: Select/Create Text\n\
+    - Drag: Move or Resize Box\n\
+    - Type: Enter Text\n\
+    - Escape: Deselect";
+    
+    let inst_p = Paragraph::new(inst_text).style(Style::default().fg(Color::DarkGray));
+    f.render_widget(inst_p, chunks[2]);
+    
+    // Store where the CP is for mouse events later
+    app.text_list_area = cp_rect; 
 }
 
 fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
