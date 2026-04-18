@@ -745,6 +745,7 @@ struct AutoOptimizeState {
     inputs: Vec<TextArea<'static>>,
     focused_idx: usize,
     optimize_shortest_longest_line: bool,
+    batch_size: u32,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -1833,6 +1834,7 @@ impl App {
             inputs,
             focused_idx: 0,
             optimize_shortest_longest_line: self.saved_auto_optimize_shortest_longest_line,
+            batch_size: self.render_args.auto_optimize_batch_size,
         });
         self.input_mode = InputMode::AutoOptimize;
     }
@@ -1842,6 +1844,9 @@ impl App {
             return;
         }
 
+        if let Some(state) = &self.auto_optimize_state {
+            self.render_args.auto_optimize_batch_size = state.batch_size;
+        }
         self.flush_render_args();
 
         let state = self.auto_optimize_state.take().unwrap();
@@ -2017,12 +2022,14 @@ impl App {
                                                         &fg,
                                                         Some(cancel_inner),
                                                     );
-                                                    let score = if optimize_shortest_longest_line {
-                                                        result.longest_line_bytes as f64
-                                                    } else {
-                                                        result.score
-                                                    };
-                                                    let _ = rtx.blocking_send((a, score));
+                                                    if result.content != "Cancelled" {
+                                                        let score = if optimize_shortest_longest_line {
+                                                            result.longest_line_bytes as f64
+                                                        } else {
+                                                            result.score
+                                                        };
+                                                        let _ = rtx.blocking_send((a, score));
+                                                    }
                                                     drop(permit);
                                                 });
                                             }
@@ -3397,15 +3404,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Up => {
                                     if state.focused_idx == 16 {
-                                        state.focused_idx = 14; // Go to last row, left col
+                                        state.focused_idx = 14;
+                                    } else if state.focused_idx == 17 {
+                                        state.focused_idx = 16;
                                     } else if state.focused_idx >= 2 {
                                         state.focused_idx -= 2;
                                     } else {
-                                        state.focused_idx = 16;
+                                        state.focused_idx = 17;
                                     }
                                 }
                                 KeyCode::Down => {
                                     if state.focused_idx == 16 {
+                                        state.focused_idx = 17;
+                                    } else if state.focused_idx == 17 {
                                         state.focused_idx = 0;
                                     } else if state.focused_idx < 14 {
                                         state.focused_idx += 2;
@@ -3414,14 +3425,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                                 KeyCode::Left => {
-                                    if state.focused_idx > 0 {
+                                    if state.focused_idx == 17 {
+                                        state.batch_size = state.batch_size.saturating_sub(1).max(1);
+                                    } else if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
-                                        state.focused_idx = 16;
+                                        state.focused_idx = 17;
                                     }
                                 }
                                 KeyCode::Right => {
-                                    if state.focused_idx < 16 {
+                                    if state.focused_idx == 17 {
+                                        state.batch_size = state.batch_size.saturating_add(1).min(100);
+                                    } else if state.focused_idx < 17 {
                                         state.focused_idx += 1;
                                     } else {
                                         state.focused_idx = 0;
@@ -3431,11 +3446,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
-                                        state.focused_idx = 16;
+                                        state.focused_idx = 17;
                                     }
                                 }
                                 KeyCode::Tab => {
-                                    if state.focused_idx < 16 {
+                                    if state.focused_idx < 17 {
                                         state.focused_idx += 1;
                                     } else {
                                         state.focused_idx = 0;
@@ -3443,6 +3458,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Char(' ') if state.focused_idx == 16 => {
                                     state.optimize_shortest_longest_line = !state.optimize_shortest_longest_line;
+                                }
+                                KeyCode::Char('-') | KeyCode::Char('_') if state.focused_idx == 17 => {
+                                    state.batch_size = state.batch_size.saturating_sub(1).max(1);
+                                }
+                                KeyCode::Char('+') | KeyCode::Char('=') if state.focused_idx == 17 => {
+                                    state.batch_size = state.batch_size.saturating_add(1).min(100);
                                 }
                                 _ => {
                                     if state.focused_idx < 16 {
@@ -5572,7 +5593,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     if app.input_mode == InputMode::AutoOptimize {
         let vert = Layout::vertical([
             Constraint::Percentage(20),
-            Constraint::Length(31),
+            Constraint::Length(34),
             Constraint::Percentage(20),
         ])
         .split(area);
@@ -5625,8 +5646,9 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
         f.render_widget(Clear, area);
         f.render_widget(block, area);
 
-        // 8 rows of inputs + 1 row for checkbox
+        // 8 rows of inputs + 1 row for checkbox + 1 row for slider
         let mut constraints = vec![Constraint::Length(3); 8];
+        constraints.push(Constraint::Length(3));
         constraints.push(Constraint::Length(3));
         let rows = Layout::vertical(constraints).split(inner_area);
 
@@ -5691,6 +5713,17 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
         };
         let cb_paragraph = Paragraph::new(cb_text).style(cb_style).alignment(Alignment::Center);
         f.render_widget(cb_paragraph, cb_area);
+
+        // Render slider for batch size
+        let slider_area = rows[9];
+        let slider_style = if state.focused_idx == 17 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let slider_text = format!("Batch Size: {} (< / > to adjust)", state.batch_size);
+        let slider_p = Paragraph::new(slider_text).style(slider_style).alignment(Alignment::Center);
+        f.render_widget(slider_p, slider_area);
     }
 }
 
