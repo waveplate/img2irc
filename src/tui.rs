@@ -1894,8 +1894,8 @@ impl App {
         self.rx_optimization = Some(rx);
 
         let mut args = self.render_args.clone();
-        let original_show_disc = args.show_discontinuities;
-        args.show_discontinuities = true;
+        let original_score = args.score;
+        args.score = true;
 
         let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
@@ -2085,7 +2085,7 @@ impl App {
                 }
             }
 
-            best_args.show_discontinuities = original_show_disc;
+            best_args.score = original_score;
             let _ = tx.send(OptimizationUpdate::BestResult(best_args)).await;
             let _ = tx.send(OptimizationUpdate::Finished).await;
         });
