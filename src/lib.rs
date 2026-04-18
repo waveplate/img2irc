@@ -57,6 +57,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         print_ranges: args.print_ranges,
         show_block_bitmaps: args.show_block_bitmaps,
         clear_cache: args.clear_cache,
+        auto_optimize_batch_size: args.auto_optimize_batch_size,
 
         image: args.image.clone(),
         width: args.width.as_ref().map(|p| param_base(p) as u32),

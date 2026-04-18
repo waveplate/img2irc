@@ -109,6 +109,8 @@ pub struct RenderArgs {
     pub show_block_bitmaps: bool,
     pub clear_cache: bool,
 
+    pub auto_optimize_batch_size: u32,
+
     pub image: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -226,6 +228,10 @@ pub struct Args {
     /// enable gpu acceleration
     #[arg(long, default_value_t = false)]
     pub gpu: bool,
+
+    /// Number of auto-optimize permutations processed at once
+    #[arg(long, default_value_t = 10)]
+    pub auto_optimize_batch_size: u32,
 
     #[arg(help = "input image path or URL")]
     pub image: Option<String>,

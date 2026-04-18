@@ -1942,6 +1942,7 @@ impl App {
             let img_clone = image.clone();
             let gs_clone = glyph_store.clone();
             let cancel_clone = cancel_flag.clone();
+            let batch_size = args.auto_optimize_batch_size.max(1);
 
             tokio::spawn(async move {
                 let mut aborted = false;
@@ -2055,6 +2056,8 @@ impl App {
                 }
             });
 
+            let optimize_start_time = std::time::Instant::now();
+
             while let Some((a, score)) = res_rx.recv().await {
                 curr += 1;
                 if score < best_score {
@@ -2065,12 +2068,18 @@ impl App {
                         .await;
                 }
 
-                if curr % 10 == 0 || curr == args_len {
+                if curr % batch_size as usize == 0 || curr == args_len {
+                    let elapsed = optimize_start_time.elapsed().as_secs_f64();
+                    let rate = if elapsed > 0.0 {
+                        curr as f64 / elapsed
+                    } else {
+                        0.0
+                    };
                     let progress = (curr as f64 / args_len as f64 * 100.0) as u32;
                     let _ = tx
                         .send(OptimizationUpdate::Progress(format!(
-                            "{}% -> {}/{} (Best: {:.2})",
-                            progress, curr, args_len, best_score
+                            "{}% -> {}/{} (Best: {:.2}, {:.1} it/s)",
+                            progress, curr, args_len, best_score, rate
                         )))
                         .await;
                 }
