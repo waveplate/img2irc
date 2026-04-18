@@ -5633,6 +5633,18 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
 
         f.render_widget(content, p_area);
     }
+
+    if let Some(cp_state) = &mut app.color_picker_state {
+        if cp_state.is_open {
+            let cp_width = 56;
+            let cp_height = 17;
+            let area_x = (app.terminal_area.width.saturating_sub(cp_width)) / 2;
+            let area_y = (app.terminal_area.height.saturating_sub(cp_height)) / 2;
+            let cp_rect = Rect::new(area_x, area_y, cp_width, cp_height);
+            f.render_widget(Clear, cp_rect);
+            f.render_widget(crate::colorpicker::ColorPickerWidget { state: cp_state }, cp_rect);
+        }
+    }
 }
 
 fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
