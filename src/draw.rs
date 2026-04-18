@@ -1124,9 +1124,8 @@ fn build_rendered_raster(
     raster
 }
 
-fn best_candidate_pool(
+fn best_candidate_pool_pre(
     costs: &[u64],
-    current_choice: (usize, bool),
     pool_size: usize,
 ) -> Vec<(usize, bool, u64)> {
     if pool_size >= costs.len() {
@@ -1155,13 +1154,6 @@ fn best_candidate_pool(
             }
         } else if pool.len() < pool_size {
             pool.push(candidate);
-        }
-    }
-
-    if !pool.iter().any(|&(gi, inv, _)| (gi, inv) == current_choice) {
-        let current_idx = current_choice.0 * 2 + current_choice.1 as usize;
-        if let Some(&cost) = costs.get(current_idx) {
-            pool.push((current_choice.0, current_choice.1, cost));
         }
     }
 
@@ -2215,7 +2207,10 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    let block_glyph_costs: Vec<Vec<u64>> = if args.fix_disc {
+    let candidate_pool_size = args.fix_disc_pool_size.max(1) as usize;
+    let shift_radius = args.fix_disc_shift_radius as isize;
+
+    let (block_glyph_costs, block_glyph_pools): (Vec<Vec<u64>>, Vec<Vec<(usize, bool, u64, u32, i8, i8)>>) = if args.fix_disc {
         grid_data
             .par_iter()
             .enumerate()
@@ -2226,7 +2221,7 @@ pub fn render_blocks_smooth(
 
                 if let Some(flag) = &abort_flag {
                     if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        return Vec::new();
+                        return (Vec::new(), Vec::new());
                     }
                 }
                 let fg_p = PrePixel {
@@ -2247,7 +2242,6 @@ pub fn render_blocks_smooth(
                 };
 
                 let mut base_cost = 0u64;
-                // We could use static sizing since bp is small, but Vec is fine too.
                 let mut diff = vec![0i64; bp];
 
                 for i in 0..bp {
@@ -2259,13 +2253,10 @@ pub fn render_blocks_smooth(
                     let p_b = rgb[2] as u64;
                     let p_sq = p_r * p_r + p_g * p_g + p_b * p_b;
 
-                    // Binary classification: is this pixel closer to FG or BG?
                     let c_fg = p_sq + fg_p.sq - 2 * (p_r * fg_p.r + p_g * fg_p.g + p_b * fg_p.b);
                     let c_bg = p_sq + bg_p.sq - 2 * (p_r * bg_p.r + p_g * bg_p.g + p_b * bg_p.b);
-                    // 0 if pixel is closer to BG (correct assignment), 1 if closer to FG (mismatch)
                     let bg_wins = if c_bg <= c_fg { 0i64 } else { 1i64 };
                     base_cost += bg_wins as u64;
-                    // diff[i] = cost_if_fg - cost_if_bg: negative means FG is better
                     let fg_wins = if c_fg <= c_bg { 0i64 } else { 1i64 };
                     diff[i] = fg_wins - bg_wins;
                 }
@@ -2285,11 +2276,27 @@ pub fn render_blocks_smooth(
                     costs.push(c_total_f);
                     costs.push(c_total_t);
                 }
-                costs
+
+                let pool = best_candidate_pool_pre(&costs, candidate_pool_size);
+                
+                let current_reference = &quantized_references[curr_idx];
+                let pre_pool = pool.into_iter().map(|(gi, inv, internal)| {
+                    let (ref_cost, sx, sy) = best_shifted_reference_match_with_radius(
+                        &current_reference.mask,
+                        &glyphs[gi],
+                        inv,
+                        gw,
+                        gh,
+                        shift_radius,
+                    );
+                    (gi, inv, internal, ref_cost, sx, sy)
+                }).collect();
+
+                (costs, pre_pool)
             })
-            .collect()
+            .unzip()
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
 
     let initial_time = process_start_time.elapsed();
@@ -2300,8 +2307,6 @@ pub fn render_blocks_smooth(
             .as_mut()
             .expect("rendered raster should exist when fix_disc is enabled");
         let t_fix = std::time::Instant::now();
-        let candidate_pool_size = args.fix_disc_pool_size.max(1) as usize;
-        let shift_radius = args.fix_disc_shift_radius as isize;
         let reference_tolerance_ratio = args.fix_disc_ref_tolerance_ratio.max(0.0);
         let reference_tolerance_pixels = args.fix_disc_ref_tolerance_pixels;
         let mut change_manifest = String::from(
@@ -2370,24 +2375,16 @@ pub fn render_blocks_smooth(
                 let mut best_choice = current_choice;
                 let mut best_shift = (current_dx, current_dy);
 
-                let pool = block_glyph_costs
-                    .get(curr_idx)
-                    .map(|costs| best_candidate_pool(costs, current_choice, candidate_pool_size))
-                    .unwrap_or_else(|| vec![(cur_gi, cur_inv, best_internal)]);
+                let mut pool = block_glyph_pools.get(curr_idx).cloned().unwrap_or_default();
+                if !pool.iter().any(|&(gi, inv, _, _, _, _)| (gi, inv) == current_choice) {
+                    pool.push((cur_gi, cur_inv, best_internal, current_ref_cost as u32, current_dx as i8, current_dy as i8));
+                }
 
-                for (gi, candidate_inv, internal) in pool {
+                for (gi, candidate_inv, internal, ref_cost, shift_x, shift_y) in pool {
                     if (gi, candidate_inv) == current_choice {
                         continue;
                     }
 
-                    let (ref_cost, shift_x, shift_y) = best_shifted_reference_match_with_radius(
-                        &current_reference.mask,
-                        &glyphs[gi],
-                        candidate_inv,
-                        gw,
-                        gh,
-                        shift_radius,
-                    );
                     let continuity = continuity_hint_score(
                         curr_idx,
                         (gi, candidate_inv),
