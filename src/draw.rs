@@ -2844,7 +2844,11 @@ pub fn render_blocks_smooth(
         grid_out.push(row_vec);
     }
     
-    let longest_line_bytes = out.lines().map(|l| l.len()).max().unwrap_or(0);
+    let longest_line_bytes = if render == Render::Preview {
+        alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
+    } else {
+        out.lines().map(|l| l.len()).max().unwrap_or(0)
+    };
     
     RenderResult {
         content: out.trim_end_matches('\n').into(),
@@ -3039,7 +3043,11 @@ pub fn render_braille(
         }
     }
     
-    let longest_line_bytes = out.lines().map(|l| l.len()).max().unwrap_or(0);
+    let longest_line_bytes = if render == Render::Preview {
+        alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
+    } else {
+        out.lines().map(|l| l.len()).max().unwrap_or(0)
+    };
     
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
