@@ -5738,7 +5738,30 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let x = layout[2].x + 1;
     let path_display = format!("📁 {}", app.image_path);
     let right_edge = area.x + area.width;
-    let avail = right_edge.saturating_sub(x) as usize;
+
+    // Build right text (timings + spinner)
+    let mut right_text = String::new();
+    if let Some(res) = &app.cached_result {
+        let initial_ms = res.initial_time.as_millis();
+        if initial_ms > 0 || res.fix_disc_time.is_some() {
+            right_text.push_str(&format!(" {}ms", initial_ms));
+            if let Some(fd_time) = res.fix_disc_time {
+                right_text.push_str(&format!(" (+{}ms)", fd_time.as_millis()));
+            }
+            right_text.push_str(" ");
+        }
+    }
+
+    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
+    if is_rendering {
+        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
+        right_text.push_str(&format!(" {} Rendering ", spinner_ch));
+    }
+
+    let right_text_len = right_text.chars().count() as u16; // use chars().count() instead of len() for unicode
+    let avail = right_edge.saturating_sub(x).saturating_sub(right_text_len) as usize;
+
     let truncated = if path_display.len() > avail {
         if avail > 3 {
             format!(
@@ -5751,27 +5774,21 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     } else {
         path_display
     };
-    let path_area = Rect::new(x, area.y, truncated.len() as u16, 1);
+    let path_area = Rect::new(x, area.y, truncated.chars().count() as u16, 1);
     app.path_area = path_area;
     f.buffer_mut()
         .set_string(x, area.y, &truncated, Style::new().fg(TEXT_DIM).bg(BG));
 
-    // Loading spinner in top-right
-    let is_rendering = app.is_rendering.load(Ordering::Relaxed);
-    if is_rendering {
-        let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
-        let label = format!(" {} Rendering ", spinner_ch);
-        let lw = label.len() as u16;
-        let sx = right_edge.saturating_sub(lw);
+    if !right_text.is_empty() {
+        let sx = right_edge.saturating_sub(right_text_len);
         f.buffer_mut().set_string(
             sx,
             area.y,
-            &label,
+            &right_text,
             Style::new()
-                .fg(Color::Yellow)
+                .fg(if is_rendering { Color::Yellow } else { TEXT_DIM })
                 .bg(BG)
-                .add_modifier(Modifier::BOLD),
+                .add_modifier(if is_rendering { Modifier::BOLD } else { Modifier::empty() }),
         );
     }
 }

@@ -582,6 +582,9 @@ pub struct RenderResult {
     pub dynamic_scaling_count: u64,
     pub grid: Vec<Vec<RenderedCell>>,
     pub score: f64,
+    pub longest_line_bytes: usize,
+    pub initial_time: std::time::Duration,
+    pub fix_disc_time: Option<std::time::Duration>,
 }
 
 impl From<&str> for RenderResult {
@@ -594,6 +597,9 @@ impl From<&str> for RenderResult {
             dynamic_scaling_count: 0,
             grid: Vec::new(),
             score: 0.0,
+            longest_line_bytes: 0,
+            initial_time: std::time::Duration::ZERO,
+            fix_disc_time: None,
         }
     }
 }
@@ -1586,6 +1592,8 @@ pub fn render_blocks_smooth(
     glyphs: &[FastGlyph],
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> RenderResult {
+    let process_start_time = std::time::Instant::now();
+
     if glyphs.is_empty() {
         return "Error: no glyphs available".into();
     }
@@ -1748,6 +1756,8 @@ pub fn render_blocks_smooth(
         }
         results
     } else {
+        let shape_cache = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<u64, (usize, bool)>::new()));
+
         image
             .block
             .par_iter()
@@ -1780,7 +1790,6 @@ pub fn render_blocks_smooth(
                         }
                     }
 
-                    let mut best_overall_cost = u64::MAX;
                     let mut best_overall_glyph = 0;
                     let mut best_overall_inv = false;
                     let mut best_overall_fg = [0u8; 3];
@@ -1807,196 +1816,254 @@ pub fn render_blocks_smooth(
                         let mut block_sum_b = 0u64;
                         let mut block_sum_sq = 0u64;
 
-                        let mut p_r = [0u64; 256];
-                        let mut p_g = [0u64; 256];
-                        let mut p_b = [0u64; 256];
-                        let mut p_sq = [0u64; 256];
+                        let palette: &[u32] = match render {
+                            Render::Ansi | Render::Ansi24 => &ANSI256,
+                            _ => &IRC99,
+                        };
+                        let mut indices = Vec::with_capacity(bp);
 
-                        for (i, p) in pixels.iter().enumerate().take(256) {
+                        for p in pixels {
                             block_sum_r += p.r;
                             block_sum_g += p.g;
                             block_sum_b += p.b;
                             block_sum_sq += p.sq;
-                            p_r[i] = p.r;
-                            p_g[i] = p.g;
-                            p_b[i] = p.b;
-                            p_sq[i] = p.sq;
+                            
+                            let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
+                            let idx = nearest_strict_partitioned_hex_colour(
+                                rgb_u32,
+                                palette,
+                                args.grayscale_tolerance,
+                            );
+                            indices.push(idx);
                         }
 
-                        // 2. Find Best Fit for Scale
-                        let mut scale_best_cost = u64::MAX;
-                        let mut scale_best_glyph = 0;
-                        let mut scale_best_inv = false;
-                        let mut scale_best_fg = [0u8; 3];
-                        let mut scale_best_bg = [0u8; 3];
-
-                        if render != Render::Ansi24 {
-                            // --- Indexed Mode (Frequency/Mode Logic) ---
-                            let palette: &[u32] = if render == Render::Ansi {
-                                &ANSI256
+                        let mut shape = Vec::with_capacity(bp);
+                        let mut seen = Vec::new();
+                        for &idx in &indices {
+                            if let Some(pos) = seen.iter().position(|&c| c == idx) {
+                                shape.push(pos as u8);
                             } else {
-                                &IRC99
-                            };
-                            let mut indices = Vec::with_capacity(bp);
-                            for p in pixels {
-                                let rgb_u32 =
-                                    ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                                let idx = match render {
-                                    Render::Ansi => nearest_strict_partitioned_hex_colour(
-                                        rgb_u32,
-                                        &ANSI256,
-                                        args.grayscale_tolerance,
-                                    ),
-                                    Render::Irc | Render::Preview => {
-                                        nearest_strict_partitioned_hex_colour(
-                                            rgb_u32,
-                                            &IRC99,
-                                            args.grayscale_tolerance,
-                                        )
-                                    }
-                                    _ => 0,
-                                };
-                                indices.push(idx);
+                                shape.push(seen.len() as u8);
+                                seen.push(idx);
                             }
+                        }
 
-                            for (gi, fglyph) in glyphs.iter().enumerate() {
-                                let invert_opts: &[bool] = &[false, true];
-                                for &inv in invert_opts {
-                                    let mut fg_cnt = [0u16; 256];
-                                    let mut bg_cnt = [0u16; 256];
-                                    let mut fg_len = 0;
-                                    let mut bg_len = 0;
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        shape.hash(&mut hasher);
+                        let shape_hash = hasher.finish();
 
-                                    let (fg_iter, bg_iter) = if inv {
-                                        (&fglyph.zeros, &fglyph.ones)
+                        let cached = shape_cache.lock().unwrap().get(&shape_hash).copied();
+
+                        let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
+                            c
+                        } else {
+                            let mut best_cost = u64::MAX;
+                            let mut best_glyph = 0;
+                            let mut best_inv = false;
+
+                            if render != Render::Ansi24 {
+                                for (gi, fglyph) in glyphs.iter().enumerate() {
+                                    let invert_opts: &[bool] = &[false, true];
+                                    for &inv in invert_opts {
+                                        let mut fg_cnt = [0u16; 256];
+                                        let mut bg_cnt = [0u16; 256];
+                                        let mut fg_len = 0;
+                                        let mut bg_len = 0;
+
+                                        let (fg_iter, bg_iter) = if inv {
+                                            (&fglyph.zeros, &fglyph.ones)
+                                        } else {
+                                            (&fglyph.ones, &fglyph.zeros)
+                                        };
+
+                                        for &i in fg_iter {
+                                            fg_cnt[indices[i] as usize] += 1;
+                                            fg_len += 1;
+                                        }
+                                        for &i in bg_iter {
+                                            bg_cnt[indices[i] as usize] += 1;
+                                            bg_len += 1;
+                                        }
+                                        let (_fgi_raw, fx) = fg_cnt
+                                            .iter()
+                                            .enumerate()
+                                            .max_by_key(|&(_, c)| c)
+                                            .unwrap_or((0, &0));
+                                        let (_bgi_raw, bx) = bg_cnt
+                                            .iter()
+                                            .enumerate()
+                                            .max_by_key(|&(_, c)| c)
+                                            .unwrap_or((0, &0));
+
+                                        let cost = ((fg_len as u64) - (*fx as u64))
+                                            + ((bg_len as u64) - (*bx as u64));
+
+                                        if cost < best_cost {
+                                            best_cost = cost;
+                                            best_glyph = gi;
+                                            best_inv = inv;
+                                        }
+                                    }
+                                }
+                            } else {
+                                for (gi, fglyph) in glyphs.iter().enumerate() {
+                                    let mut sum_ones_r = 0u64;
+                                    let mut sum_ones_g = 0u64;
+                                    let mut sum_ones_b = 0u64;
+                                    let mut sum_ones_sq = 0u64;
+                                    let count_ones = fglyph.ones.len() as u64;
+
+                                    for &i in &fglyph.ones {
+                                        let px = unsafe { pixels.get_unchecked(i) };
+                                        sum_ones_r += px.r;
+                                        sum_ones_g += px.g;
+                                        sum_ones_b += px.b;
+                                        sum_ones_sq += px.sq;
+                                    }
+                                    let count_zeros = bp as u64 - count_ones;
+                                    let sum_zeros_r = block_sum_r - sum_ones_r;
+                                    let sum_zeros_g = block_sum_g - sum_ones_g;
+                                    let sum_zeros_b = block_sum_b - sum_ones_b;
+                                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+
+                                    let avg_ones = if count_ones > 0 {
+                                        [
+                                            (sum_ones_r / count_ones) as u8,
+                                            (sum_ones_g / count_ones) as u8,
+                                            (sum_ones_b / count_ones) as u8,
+                                        ]
                                     } else {
-                                        (&fglyph.ones, &fglyph.zeros)
+                                        [0, 0, 0]
+                                    };
+                                    let avg_zeros = if count_zeros > 0 {
+                                        [
+                                            (sum_zeros_r / count_zeros) as u8,
+                                            (sum_zeros_g / count_zeros) as u8,
+                                            (sum_zeros_b / count_zeros) as u8,
+                                        ]
+                                    } else {
+                                        [0, 0, 0]
                                     };
 
-                                    for &i in fg_iter {
-                                        fg_cnt[indices[i] as usize] += 1;
-                                        fg_len += 1;
-                                    }
-                                    for &i in bg_iter {
-                                        bg_cnt[indices[i] as usize] += 1;
-                                        bg_len += 1;
-                                    }
-                                    let (fgi_raw, fx) = fg_cnt
-                                        .iter()
-                                        .enumerate()
-                                        .max_by_key(|&(_, c)| c)
-                                        .unwrap_or((0, &0));
-                                    let (bgi_raw, bx) = bg_cnt
-                                        .iter()
-                                        .enumerate()
-                                        .max_by_key(|&(_, c)| c)
-                                        .unwrap_or((0, &0));
+                                    let t1_1 = sum_ones_sq;
+                                    let t2_1 = 2
+                                        * (avg_ones[0] as u64 * sum_ones_r
+                                            + avg_ones[1] as u64 * sum_ones_g
+                                            + avg_ones[2] as u64 * sum_ones_b);
+                                    let t3_1 = count_ones
+                                        * (avg_ones[0] as u64 * avg_ones[0] as u64
+                                            + avg_ones[1] as u64 * avg_ones[1] as u64
+                                            + avg_ones[2] as u64 * avg_ones[2] as u64);
+                                    let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
 
-                                    // Fix: when a partition is empty, its argmax is
-                                    // meaningless. Inherit the other partition's index
-                                    // so that uniform cells get fg==bg correctly.
-                                    let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
-                                    let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
+                                    let t1_0 = sum_zeros_sq;
+                                    let t2_0 = 2
+                                        * (avg_zeros[0] as u64 * sum_zeros_r
+                                            + avg_zeros[1] as u64 * sum_zeros_g
+                                            + avg_zeros[2] as u64 * sum_zeros_b);
+                                    let t3_0 = count_zeros
+                                        * (avg_zeros[0] as u64 * avg_zeros[0] as u64
+                                            + avg_zeros[1] as u64 * avg_zeros[1] as u64
+                                            + avg_zeros[2] as u64 * avg_zeros[2] as u64);
+                                    let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
 
-                                    let cost = ((fg_len as u64) - (*fx as u64))
-                                        + ((bg_len as u64) - (*bx as u64));
-
-                                    if cost < scale_best_cost {
-                                        scale_best_cost = cost;
-                                        scale_best_glyph = gi;
-                                        scale_best_inv = inv;
-                                        scale_best_fg =
-                                            unpack_rgb(palette[fgi.min(palette.len() - 1)]);
-                                        scale_best_bg =
-                                            unpack_rgb(palette[bgi.min(palette.len() - 1)]);
+                                    let cost_normal = c1 + c0;
+                                    if cost_normal < best_cost {
+                                        best_cost = cost_normal;
+                                        best_glyph = gi;
+                                        best_inv = false;
                                     }
                                 }
                             }
+
+                            shape_cache.lock().unwrap().insert(shape_hash, (best_glyph, best_inv));
+                            (best_glyph, best_inv)
+                        };
+
+                        let scale_best_fg;
+                        let scale_best_bg;
+
+                        if render != Render::Ansi24 {
+                            let fglyph = &glyphs[scale_best_glyph];
+                            let (fg_iter, bg_iter) = if scale_best_inv {
+                                (&fglyph.zeros, &fglyph.ones)
+                            } else {
+                                (&fglyph.ones, &fglyph.zeros)
+                            };
+
+                            let mut fg_cnt = [0u16; 256];
+                            let mut bg_cnt = [0u16; 256];
+                            let mut fg_len = 0;
+                            let mut bg_len = 0;
+
+                            for &i in fg_iter {
+                                fg_cnt[indices[i] as usize] += 1;
+                                fg_len += 1;
+                            }
+                            for &i in bg_iter {
+                                bg_cnt[indices[i] as usize] += 1;
+                                bg_len += 1;
+                            }
+                            let (fgi_raw, _) = fg_cnt
+                                .iter()
+                                .enumerate()
+                                .max_by_key(|&(_, c)| c)
+                                .unwrap_or((0, &0));
+                            let (bgi_raw, _) = bg_cnt
+                                .iter()
+                                .enumerate()
+                                .max_by_key(|&(_, c)| c)
+                                .unwrap_or((0, &0));
+
+                            let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
+                            let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
+
+                            scale_best_fg = unpack_rgb(palette[fgi.min(palette.len() - 1)]);
+                            scale_best_bg = unpack_rgb(palette[bgi.min(palette.len() - 1)]);
                         } else {
-                            // --- TrueColor Mode ---
+                            let fglyph = &glyphs[scale_best_glyph];
+                            let count_ones = fglyph.ones.len() as u64;
+                            let mut sum_ones_r = 0u64;
+                            let mut sum_ones_g = 0u64;
+                            let mut sum_ones_b = 0u64;
 
-                            for (gi, fglyph) in glyphs.iter().enumerate() {
-                                let mut sum_ones_r = 0u64;
-                                let mut sum_ones_g = 0u64;
-                                let mut sum_ones_b = 0u64;
-                                let mut sum_ones_sq = 0u64;
-                                let count_ones = fglyph.ones.len() as u64;
-
-                                for &i in &fglyph.ones {
-                                    // SAFETY: fglyph.ones contains valid indices < bp
-                                    let px = unsafe { pixels.get_unchecked(i) };
-                                    sum_ones_r += px.r;
-                                    sum_ones_g += px.g;
-                                    sum_ones_b += px.b;
-                                    sum_ones_sq += px.sq;
-                                }
-                                let count_zeros = bp as u64 - count_ones;
-                                let sum_zeros_r = block_sum_r - sum_ones_r;
-                                let sum_zeros_g = block_sum_g - sum_ones_g;
-                                let sum_zeros_b = block_sum_b - sum_ones_b;
-                                let sum_zeros_sq = block_sum_sq - sum_ones_sq;
-
-                                let avg_ones = if count_ones > 0 {
-                                    [
-                                        (sum_ones_r / count_ones) as u8,
-                                        (sum_ones_g / count_ones) as u8,
-                                        (sum_ones_b / count_ones) as u8,
-                                    ]
-                                } else {
-                                    [0, 0, 0]
-                                };
-                                let avg_zeros = if count_zeros > 0 {
-                                    [
-                                        (sum_zeros_r / count_zeros) as u8,
-                                        (sum_zeros_g / count_zeros) as u8,
-                                        (sum_zeros_b / count_zeros) as u8,
-                                    ]
-                                } else {
-                                    [0, 0, 0]
-                                };
-
-                                let t1_1 = sum_ones_sq;
-                                let t2_1 = 2
-                                    * (avg_ones[0] as u64 * sum_ones_r
-                                        + avg_ones[1] as u64 * sum_ones_g
-                                        + avg_ones[2] as u64 * sum_ones_b);
-                                let t3_1 = count_ones
-                                    * (avg_ones[0] as u64 * avg_ones[0] as u64
-                                        + avg_ones[1] as u64 * avg_ones[1] as u64
-                                        + avg_ones[2] as u64 * avg_ones[2] as u64);
-                                let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-
-                                let t1_0 = sum_zeros_sq;
-                                let t2_0 = 2
-                                    * (avg_zeros[0] as u64 * sum_zeros_r
-                                        + avg_zeros[1] as u64 * sum_zeros_g
-                                        + avg_zeros[2] as u64 * sum_zeros_b);
-                                let t3_0 = count_zeros
-                                    * (avg_zeros[0] as u64 * avg_zeros[0] as u64
-                                        + avg_zeros[1] as u64 * avg_zeros[1] as u64
-                                        + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                                let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-
-                                let cost_normal = c1 + c0;
-                                if cost_normal < scale_best_cost {
-                                    scale_best_cost = cost_normal;
-                                    scale_best_glyph = gi;
-                                    scale_best_inv = false;
-                                    scale_best_fg = avg_ones;
-                                    scale_best_bg = avg_zeros;
-                                }
+                            for &i in &fglyph.ones {
+                                let px = unsafe { pixels.get_unchecked(i) };
+                                sum_ones_r += px.r;
+                                sum_ones_g += px.g;
+                                sum_ones_b += px.b;
                             }
+                            let count_zeros = bp as u64 - count_ones;
+                            let sum_zeros_r = block_sum_r - sum_ones_r;
+                            let sum_zeros_g = block_sum_g - sum_ones_g;
+                            let sum_zeros_b = block_sum_b - sum_ones_b;
+
+                            scale_best_fg = if count_ones > 0 {
+                                [
+                                    (sum_ones_r / count_ones) as u8,
+                                    (sum_ones_g / count_ones) as u8,
+                                    (sum_ones_b / count_ones) as u8,
+                                ]
+                            } else {
+                                [0, 0, 0]
+                            };
+                            scale_best_bg = if count_zeros > 0 {
+                                [
+                                    (sum_zeros_r / count_zeros) as u8,
+                                    (sum_zeros_g / count_zeros) as u8,
+                                    (sum_zeros_b / count_zeros) as u8,
+                                ]
+                            } else {
+                                [0, 0, 0]
+                            };
                         }
 
-                        if scale_best_cost < best_overall_cost {
-                            best_overall_cost = scale_best_cost;
-                            best_overall_glyph = scale_best_glyph;
-                            best_overall_inv = scale_best_inv;
-                            best_overall_fg = scale_best_fg;
-                            best_overall_bg = scale_best_bg;
-                        }
+                        best_overall_glyph = scale_best_glyph;
+                        best_overall_inv = scale_best_inv;
+                        best_overall_fg = scale_best_fg;
+                        best_overall_bg = scale_best_bg;
                     }
-
                     let best_fg_rgb = best_overall_fg;
                     let best_bg_rgb = best_overall_bg;
                     let best_glyph_idx = best_overall_glyph;
@@ -2225,6 +2292,9 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
+    let initial_time = process_start_time.elapsed();
+    let mut fix_disc_time = None;
+
     if args.fix_disc {
         let raster = rendered_raster
             .as_mut()
@@ -2440,6 +2510,7 @@ pub fn render_blocks_smooth(
             }
         }
         log::info!("fix_disc completed in {:?}", t_fix.elapsed());
+        fix_disc_time = Some(t_fix.elapsed());
     }
 
     let cell_disc_scores =
@@ -2775,6 +2846,9 @@ pub fn render_blocks_smooth(
         }
         grid_out.push(row_vec);
     }
+    
+    let longest_line_bytes = out.lines().map(|l| l.len()).max().unwrap_or(0);
+    
     RenderResult {
         content: out.trim_end_matches('\n').into(),
         save_content: if render == Render::Preview {
@@ -2787,6 +2861,9 @@ pub fn render_blocks_smooth(
         dynamic_scaling_count: 0,
         grid: grid_out,
         score: relative_disc_score,
+        longest_line_bytes,
+        initial_time,
+        fix_disc_time,
     }
 }
 pub fn render_braille(
@@ -2964,6 +3041,9 @@ pub fn render_braille(
             alt_out.push_str("\x0f\n");
         }
     }
+    
+    let longest_line_bytes = out.lines().map(|l| l.len()).max().unwrap_or(0);
+    
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
         save_content: if render == Render::Preview {
@@ -2976,6 +3056,9 @@ pub fn render_braille(
         dynamic_scaling_count: 0,
         grid: Vec::new(),
         score: 0.0,
+        longest_line_bytes,
+        initial_time: std::time::Duration::ZERO,
+        fix_disc_time: None,
     }
 }
 
