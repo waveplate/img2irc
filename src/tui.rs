@@ -744,6 +744,7 @@ struct SplitterArea {
 struct AutoOptimizeState {
     inputs: Vec<TextArea<'static>>,
     focused_idx: usize,
+    optimize_shortest_longest_line: bool,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -1134,6 +1135,7 @@ struct App {
     optimization_progress: String,
     auto_optimize_state: Option<AutoOptimizeState>,
     saved_auto_optimize_inputs: Vec<String>,
+    saved_auto_optimize_shortest_longest_line: bool,
     auto_optimize_cancel: Option<Arc<AtomicBool>>,
     general_pane_width: u16,
     pipeline_pane_width: u16,
@@ -1349,6 +1351,7 @@ impl App {
             rx_optimization: None,
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
+            saved_auto_optimize_shortest_longest_line: false,
             auto_optimize_cancel: None,
             general_pane_width: GENERAL_PANE_WIDTH,
             pipeline_pane_width: PIPELINE_PANE_WIDTH,
@@ -1817,30 +1820,19 @@ impl App {
         }
 
         let mut inputs = Vec::new();
-        let labels = [
-            format!("Width Range (current {})", self.width),
-            format!("Crop Top Range (current {})", self.trim_top),
-            format!("Crop Right Range (current {})", self.trim_right),
-            format!("Crop Bottom Range (current {})", self.trim_bottom),
-            format!("Crop Left Range (current {})", self.trim_left),
-            format!("Font Size Range (current {:.1})", self.font_size),
-            format!("Scale X Range (current {})", self.scalex),
-            format!("Scale Y Range (current {})", self.scaley),
-        ];
-
-        for (i, label) in labels.iter().enumerate() {
-            let mut ta = if self.saved_auto_optimize_inputs.len() == labels.len() {
+        for i in 0..16 {
+            let mut ta = if self.saved_auto_optimize_inputs.len() == 16 {
                 TextArea::new(vec![self.saved_auto_optimize_inputs[i].clone()])
             } else {
                 TextArea::default()
             };
-            ta.set_block(Block::default().borders(Borders::ALL).title(label.clone()));
             inputs.push(ta);
         }
 
         self.auto_optimize_state = Some(AutoOptimizeState {
             inputs,
             focused_idx: 0,
+            optimize_shortest_longest_line: self.saved_auto_optimize_shortest_longest_line,
         });
         self.input_mode = InputMode::AutoOptimize;
     }
@@ -1854,39 +1846,31 @@ impl App {
 
         let state = self.auto_optimize_state.take().unwrap();
 
-        fn parse_range_i32(s: &str, current: i32) -> Vec<i32> {
-            if s.trim().is_empty() {
-                return vec![current];
-            }
-            let parts: Vec<&str> = s
-                .split('-')
-                .map(|x| x.trim())
-                .filter(|x| !x.is_empty())
-                .collect();
-            if parts.len() == 2 {
-                let p0 = parts[0].parse().unwrap_or(current);
-                let p1 = parts[1].parse().unwrap_or(current);
-                let min = p0.min(p1);
-                let max = p0.max(p1);
-                (min..=max).collect()
-            } else if parts.len() == 1 {
-                vec![parts[0].parse().unwrap_or(current)]
+        let optimize_shortest_longest_line = state.optimize_shortest_longest_line;
+
+        fn parse_range_i32(s_min: &str, s_max: &str, current: i32) -> Vec<i32> {
+            let p0 = s_min.trim().parse().unwrap_or(current);
+            let p1 = if s_max.trim().is_empty() {
+                p0
             } else {
-                vec![current]
-            }
+                s_max.trim().parse().unwrap_or(p0)
+            };
+            let min = p0.min(p1);
+            let max = p0.max(p1);
+            (min..=max).collect()
         }
 
-        let ws = parse_range_i32(state.inputs[0].lines()[0].as_str(), self.width);
-        let ct = parse_range_i32(state.inputs[1].lines()[0].as_str(), self.trim_top);
-        let cr = parse_range_i32(state.inputs[2].lines()[0].as_str(), self.trim_right);
-        let cb = parse_range_i32(state.inputs[3].lines()[0].as_str(), self.trim_bottom);
-        let cl = parse_range_i32(state.inputs[4].lines()[0].as_str(), self.trim_left);
-        let fs: Vec<f32> = parse_range_i32(state.inputs[5].lines()[0].as_str(), self.font_size.round() as i32)
+        let ws = parse_range_i32(state.inputs[0].lines()[0].as_str(), state.inputs[1].lines()[0].as_str(), self.width);
+        let ct = parse_range_i32(state.inputs[2].lines()[0].as_str(), state.inputs[3].lines()[0].as_str(), self.trim_top);
+        let cr = parse_range_i32(state.inputs[4].lines()[0].as_str(), state.inputs[5].lines()[0].as_str(), self.trim_right);
+        let cb = parse_range_i32(state.inputs[6].lines()[0].as_str(), state.inputs[7].lines()[0].as_str(), self.trim_bottom);
+        let cl = parse_range_i32(state.inputs[8].lines()[0].as_str(), state.inputs[9].lines()[0].as_str(), self.trim_left);
+        let fs: Vec<f32> = parse_range_i32(state.inputs[10].lines()[0].as_str(), state.inputs[11].lines()[0].as_str(), self.font_size.round() as i32)
             .into_iter()
             .map(|x| x as f32)
             .collect();
-        let sx = parse_range_i32(state.inputs[6].lines()[0].as_str(), self.scalex);
-        let sy = parse_range_i32(state.inputs[7].lines()[0].as_str(), self.scaley);
+        let sx = parse_range_i32(state.inputs[12].lines()[0].as_str(), state.inputs[13].lines()[0].as_str(), self.scalex);
+        let sy = parse_range_i32(state.inputs[14].lines()[0].as_str(), state.inputs[15].lines()[0].as_str(), self.scaley);
 
         let total_perms =
             ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
@@ -1898,6 +1882,7 @@ impl App {
 
         self.saved_auto_optimize_inputs =
             state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
+        self.saved_auto_optimize_shortest_longest_line = optimize_shortest_longest_line;
 
         self.is_optimizing = true;
         self.optimization_progress = format!("Starting... ({} perms)", total_perms);
@@ -1914,7 +1899,7 @@ impl App {
 
         let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
-
+        
         tokio::spawn(async move {
             let image = if image_path.is_empty() {
                 PhotonImage::new(vec![0; 4], 1, 1)
@@ -1925,7 +1910,24 @@ impl App {
                 }
             };
 
-            let mut best_score = f64::MAX;
+            let true_initial_score = tokio::task::spawn_blocking({
+                let img = image.clone();
+                let gs = glyph_store.clone();
+                let a = args.clone();
+                move || {
+                    let fg = crate::draw::prepare_glyphs(&gs, &a);
+                    let result = crate::render_output(a, &gs, img, &fg, None);
+                    if optimize_shortest_longest_line {
+                        result.longest_line_bytes as f64
+                    } else {
+                        result.score
+                    }
+                }
+            })
+            .await
+            .unwrap_or(f64::MAX);
+
+            let mut best_score = true_initial_score;
             let mut best_args = args.clone();
             let mut curr = 0;
 
@@ -2014,7 +2016,12 @@ impl App {
                                                         &fg,
                                                         Some(cancel_inner),
                                                     );
-                                                    let _ = rtx.blocking_send((a, result.score));
+                                                    let score = if optimize_shortest_longest_line {
+                                                        result.longest_line_bytes as f64
+                                                    } else {
+                                                        result.score
+                                                    };
+                                                    let _ = rtx.blocking_send((a, score));
                                                     drop(permit);
                                                 });
                                             }
@@ -3379,22 +3386,57 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.input_mode = InputMode::Normal;
                                     app.start_auto_optimization();
                                 }
-                                KeyCode::Up | KeyCode::BackTab => {
+                                KeyCode::Up => {
+                                    if state.focused_idx == 16 {
+                                        state.focused_idx = 14; // Go to last row, left col
+                                    } else if state.focused_idx >= 2 {
+                                        state.focused_idx -= 2;
+                                    } else {
+                                        state.focused_idx = 16;
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if state.focused_idx == 16 {
+                                        state.focused_idx = 0;
+                                    } else if state.focused_idx < 14 {
+                                        state.focused_idx += 2;
+                                    } else {
+                                        state.focused_idx = 16;
+                                    }
+                                }
+                                KeyCode::Left => {
                                     if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
-                                        state.focused_idx = state.inputs.len().saturating_sub(1);
+                                        state.focused_idx = 16;
                                     }
                                 }
-                                KeyCode::Down | KeyCode::Tab => {
-                                    if state.focused_idx + 1 < state.inputs.len() {
+                                KeyCode::Right => {
+                                    if state.focused_idx < 16 {
                                         state.focused_idx += 1;
                                     } else {
                                         state.focused_idx = 0;
                                     }
                                 }
+                                KeyCode::BackTab => {
+                                    if state.focused_idx > 0 {
+                                        state.focused_idx -= 1;
+                                    } else {
+                                        state.focused_idx = 16;
+                                    }
+                                }
+                                KeyCode::Tab => {
+                                    if state.focused_idx < 16 {
+                                        state.focused_idx += 1;
+                                    } else {
+                                        state.focused_idx = 0;
+                                    }
+                                }
+                                KeyCode::Char(' ') if state.focused_idx == 16 => {
+                                    state.optimize_shortest_longest_line = !state.optimize_shortest_longest_line;
+                                }
                                 _ => {
-                                    if state.focused_idx < state.inputs.len() {
+                                    if state.focused_idx < 16 {
                                         state.inputs[state.focused_idx].input(key);
                                     }
                                 }
@@ -4111,9 +4153,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 app.selected_control = i;
                                             }
                                             ControlKind::Action => {
-                                                if was_selected {
-                                                    toggle_control(&mut app)
-                                                }
+                                                toggle_control(&mut app)
                                             }
                                         }
                                     }
@@ -5523,7 +5563,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     if app.input_mode == InputMode::AutoOptimize {
         let vert = Layout::vertical([
             Constraint::Percentage(20),
-            Constraint::Length(26),
+            Constraint::Length(31),
             Constraint::Percentage(20),
         ])
         .split(area);
@@ -5576,43 +5616,72 @@ fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect
         f.render_widget(Clear, area);
         f.render_widget(block, area);
 
-        let constraints: Vec<_> = state.inputs.iter().map(|_| Constraint::Length(3)).collect();
-        let chunks = Layout::vertical(constraints).split(inner_area);
+        // 8 rows of inputs + 1 row for checkbox
+        let mut constraints = vec![Constraint::Length(3); 8];
+        constraints.push(Constraint::Length(3));
+        let rows = Layout::vertical(constraints).split(inner_area);
 
         let titles = [
-            "Width Range",
-            "Crop Top Range",
-            "Crop Right Range",
-            "Crop Bottom Range",
-            "Crop Left Range",
-            "Font Size Range",
-            "Scale X Range",
-            "Scale Y Range",
+            "Width",
+            "Crop Top",
+            "Crop Right",
+            "Crop Bottom",
+            "Crop Left",
+            "Font Size",
+            "Scale X",
+            "Scale Y",
         ];
 
-        for (i, input) in state.inputs.iter_mut().enumerate() {
+        for i in 0..8 {
+            let row_area = rows[i];
+            let cols = Layout::horizontal([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(row_area);
+
             let title = titles.get(i).unwrap_or(&"");
-            if i == state.focused_idx {
-                input.set_style(Style::default().fg(ACCENT));
-                input.set_block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(*title)
-                        .border_style(Style::default().fg(ACCENT)),
-                );
-            } else {
-                input.set_style(Style::default());
-                input.set_block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(*title)
-                        .border_style(Style::default()),
-                );
-            }
-            if i < chunks.len() {
-                f.render_widget(&*input, chunks[i]);
+            
+            for j in 0..2 {
+                let idx = i * 2 + j;
+                let input = &mut state.inputs[idx];
+                let sub_title = if j == 0 { format!("{} (Min)", title) } else { format!("{} (Max)", title) };
+
+                if idx == state.focused_idx {
+                    input.set_style(Style::default().fg(ACCENT));
+                    input.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(sub_title)
+                            .border_style(Style::default().fg(ACCENT)),
+                    );
+                } else {
+                    input.set_style(Style::default());
+                    input.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(sub_title)
+                            .border_style(Style::default()),
+                    );
+                }
+                f.render_widget(&*input, cols[j]);
             }
         }
+
+        // Render checkbox
+        let cb_area = rows[8];
+        let cb_text = if state.optimize_shortest_longest_line {
+            "[x] Optimize for shortest longest line"
+        } else {
+            "[ ] Optimize for shortest longest line"
+        };
+        let cb_style = if state.focused_idx == 16 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default()
+        };
+        let cb_paragraph = Paragraph::new(cb_text).style(cb_style).alignment(Alignment::Center);
+        f.render_widget(cb_paragraph, cb_area);
     }
 }
 
