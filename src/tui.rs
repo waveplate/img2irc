@@ -1702,7 +1702,17 @@ impl App {
 
     fn set_value(&mut self, id: ControlId, val: i32) {
         match id {
-            ControlId::Width => self.width = val,
+            ControlId::Width => {
+                let old_w = self.width;
+                self.width = val;
+                if old_w > 0 && old_w != val && !self.render_args.overlays.is_empty() {
+                    let scale = val as f32 / old_w as f32;
+                    for ov in &mut self.render_args.overlays {
+                        ov.x = (ov.x as f32 * scale).round() as i32;
+                        ov.y = (ov.y as f32 * scale).round() as i32;
+                    }
+                }
+            }
             ControlId::RenderMode => self.render_mode_idx = val as usize,
             ControlId::TrimTop => self.trim_top = val,
             ControlId::TrimRight => self.trim_right = val,
@@ -4255,12 +4265,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // FG button - open color picker
                                     app.current_tab = 3;
                                     app.text_field_focus = TextFieldFocus::FgButton;
-                                    let mode = match app.render_mode_idx {
-                                        0 => crate::colorpicker::PaletteMode::Ansi24,
-                                        1 => crate::colorpicker::PaletteMode::Ansi,
-                                        2 => crate::colorpicker::PaletteMode::Ansi24,
-                                        _ => crate::colorpicker::PaletteMode::Irc,
-                                    };
+                                    let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
                                     let mut cp =
                                         crate::colorpicker::ColorPickerState::new(mode, true);
                                     cp.editing_fg = true;
@@ -4290,12 +4295,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             && sel <= app.render_args.overlays.len()
                                             && app.render_args.overlays[sel - 1].fg.is_some()
                                         {
-                                            let mode = match app.render_mode_idx {
-                                                0 => crate::colorpicker::PaletteMode::Ansi24,
-                                                1 => crate::colorpicker::PaletteMode::Ansi,
-                                                2 => crate::colorpicker::PaletteMode::Ansi24,
-                                                _ => crate::colorpicker::PaletteMode::Irc,
-                                            };
+                                            let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
                                             let mut cp = crate::colorpicker::ColorPickerState::new(
                                                 mode, true,
                                             );
@@ -4651,12 +4651,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && (c == 'c' || c == 'C') =>
                             {
                                 // Start Color Picker
-                                let mode = match app.render_mode_idx {
-                                    0 => crate::colorpicker::PaletteMode::Ansi24,
-                                    1 => crate::colorpicker::PaletteMode::Ansi,
-                                    2 => crate::colorpicker::PaletteMode::Ansi24,
-                                    _ => crate::colorpicker::PaletteMode::Irc,
-                                };
+                                let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
                                 let editing_bg = app.text_field_focus == TextFieldFocus::BgButton;
                                 let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
                                 cp.editing_fg = !editing_bg;
@@ -5062,12 +5057,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     } else if app.text_field_focus == TextFieldFocus::FgButton {
                                         // Open color picker for FG
-                                        let mode = match app.render_mode_idx {
-                                            0 => crate::colorpicker::PaletteMode::Ansi24,
-                                            1 => crate::colorpicker::PaletteMode::Ansi,
-                                            2 => crate::colorpicker::PaletteMode::Ansi24,
-                                            _ => crate::colorpicker::PaletteMode::Irc,
-                                        };
+                                        let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
                                         let mut cp =
                                             crate::colorpicker::ColorPickerState::new(mode, true);
                                         cp.editing_fg = true;
@@ -5096,12 +5086,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 && sel <= app.render_args.overlays.len()
                                                 && app.render_args.overlays[sel - 1].fg.is_some()
                                             {
-                                                let mode = match app.render_mode_idx {
-                                                    0 => crate::colorpicker::PaletteMode::Ansi24,
-                                                    1 => crate::colorpicker::PaletteMode::Ansi,
-                                                    2 => crate::colorpicker::PaletteMode::Ansi24,
-                                                    _ => crate::colorpicker::PaletteMode::Irc,
-                                                };
+                                                let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
                                                 let mut cp =
                                                     crate::colorpicker::ColorPickerState::new(
                                                         mode, true,

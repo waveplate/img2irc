@@ -545,14 +545,22 @@ pub fn emit_colourized(
                 out.push('\x03');
                 match effective_fg {
                     Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                    _ => out.push_str("1"),
+                    Colour::RGB([r, g, b]) => {
+                        let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
+                        let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
+                        write!(out, "{}", idx).unwrap()
+                    }
                 }
 
                 if let Some(bg_c) = &bg {
                     out.push(',');
                     match bg_c {
                         Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                        _ => out.push_str("0"),
+                        Colour::RGB([r, g, b]) => {
+                            let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
+                            let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
+                            write!(out, "{}", idx).unwrap()
+                        }
                     }
                 }
 
@@ -2706,6 +2714,8 @@ pub fn render_blocks_smooth(
 
             let mut final_draw_fg = draw_fg.clone();
             let mut final_draw_bg = draw_bg.clone();
+            let mut final_draw_fg_raw = draw_fg_raw;
+            let mut final_draw_bg_raw = draw_bg_raw;
 
             if let Some(ov) = text_overlay {
                 if let Some(fg_param) = &ov.fg {
@@ -2713,11 +2723,33 @@ pub fn render_blocks_smooth(
                         crate::args::ColorSpec::Index(i) => Colour::Index(*i),
                         crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
                     };
+                    final_draw_fg_raw = match fg_param {
+                        crate::args::ColorSpec::Index(i) => {
+                            let idx = (*i as usize).min(if render == Render::Irc { 98 } else { 255 });
+                            if render == Render::Irc {
+                                unpack_rgb(IRC99[idx])
+                            } else {
+                                unpack_rgb(ANSI256[idx])
+                            }
+                        },
+                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
+                    };
                 }
                 if let Some(bg_param) = &ov.bg {
                     final_draw_bg = Some(match bg_param {
                         crate::args::ColorSpec::Index(i) => Colour::Index(*i),
                         crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
+                    });
+                    final_draw_bg_raw = Some(match bg_param {
+                        crate::args::ColorSpec::Index(i) => {
+                            let idx = (*i as usize).min(if render == Render::Irc { 98 } else { 255 });
+                            if render == Render::Irc {
+                                unpack_rgb(IRC99[idx])
+                            } else {
+                                unpack_rgb(ANSI256[idx])
+                            }
+                        },
+                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
                     });
                 }
                 final_char = overlay_char.unwrap();
@@ -2725,8 +2757,8 @@ pub fn render_blocks_smooth(
 
             row_vec.push(RenderedCell {
                 char: final_char,
-                fg: draw_fg_raw,
-                bg: draw_bg_raw,
+                fg: final_draw_fg_raw,
+                bg: final_draw_bg_raw,
                 inverted: inv,
             });
 
