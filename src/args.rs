@@ -34,7 +34,6 @@ pub enum Render {
     Irc,
     Ansi,
     Ansi24,
-    Preview,
 }
 
 #[derive(Clone, Debug)]
@@ -142,6 +141,7 @@ pub struct RenderArgs {
     pub hue: f32,
     pub invert: bool,
     pub dither: u32,
+    pub as_preview: bool,
     pub luma_brightness: f32,
     pub luma_contrast: f32,
     pub luma_gamma: f32,

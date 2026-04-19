@@ -216,13 +216,13 @@ pub fn render_blocks_gpu(
 
     let palette = match render_mode {
         Render::Ansi => &ANSI256[..],
-        Render::Irc | Render::Preview => &IRC99[..],
+        Render::Irc => &IRC99[..],
         Render::Ansi24 => &[],
     };
 
     let mode_val = match render_mode {
         Render::Ansi => 0,
-        Render::Irc | Render::Preview => 1,
+        Render::Irc => 1,
         Render::Ansi24 => 2,
     };
 

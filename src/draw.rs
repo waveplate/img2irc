@@ -466,6 +466,7 @@ fn block_bitmap(
 pub fn emit_colourized(
     out: &mut String,
     render: Render,
+    as_preview: bool,
     fg: Colour,
     bg: Option<Colour>,
     glyph: char,
@@ -496,113 +497,132 @@ pub fn emit_colourized(
     }
 
     if need_fg || need_bg {
-        match render {
-            Render::Ansi | Render::Ansi24 | Render::Preview => {
-                if let Some(bg_c) = &bg {
-                    out.push_str("\x1b[");
-                    let mut semi = false;
+        if as_preview {
+            if let Some(bg_c) = &bg {
+                out.push_str("\x1b[");
+                let mut semi = false;
 
-                    if need_fg {
-                        match fg {
-                            Colour::Index(i) => {
-                                if render == Render::Preview {
-                                    let is_irc = i < 99;
-                                    let [r, g, b] = if is_irc {
-                                        crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
-                                    } else {
-                                        crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
-                                    };
-                                    write!(out, "38;2;{};{};{}", r, g, b).unwrap()
-                                } else {
-                                    write!(out, "38;5;{}", i).unwrap()
-                                }
-                            },
-                            Colour::RGB([r, g, b]) => {
-                                write!(out, "38;2;{};{};{}", r, g, b).unwrap()
-                            }
-                        }
-                        semi = true;
-                    }
-
-                    if need_bg {
-                        if semi {
-                            out.push(';');
-                        }
-                        match bg_c {
-                            Colour::Index(i) => {
-                                if render == Render::Preview {
-                                    let is_irc = *i < 99;
-                                    let [r, g, b] = if is_irc {
-                                        crate::draw::unpack_rgb(crate::palette::IRC99[*i as usize])
-                                    } else {
-                                        crate::draw::unpack_rgb(crate::palette::ANSI256[*i as usize])
-                                    };
-                                    write!(out, "48;2;{};{};{}", r, g, b).unwrap()
-                                } else {
-                                    write!(out, "48;5;{}", i).unwrap()
-                                }
-                            },
-                            Colour::RGB([r, g, b]) => {
-                                write!(out, "48;2;{};{};{}", r, g, b).unwrap()
-                            }
-                        }
-                    }
-                    out.push('m');
-                } else if need_fg {
+                if need_fg {
                     match fg {
                         Colour::Index(i) => {
-                            if render == Render::Preview {
-                                let is_irc = i < 99;
-                                let [r, g, b] = if is_irc {
-                                    crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
-                                } else {
-                                    crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
-                                };
-                                write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
+                            let [r, g, b] = if render == Render::Irc {
+                                crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
                             } else {
-                                write!(out, "\x1b[38;5;{}m", i).unwrap()
-                            }
+                                crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
+                            };
+                            write!(out, "38;2;{};{};{}", r, g, b).unwrap()
                         },
                         Colour::RGB([r, g, b]) => {
-                            write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
+                            write!(out, "38;2;{};{};{}", r, g, b).unwrap()
                         }
+                    }
+                    semi = true;
+                }
+
+                if need_bg {
+                    if semi {
+                        out.push(';');
+                    }
+                    match bg_c {
+                        Colour::Index(i) => {
+                            let [r, g, b] = if render == Render::Irc {
+                                crate::draw::unpack_rgb(crate::palette::IRC99[*i as usize])
+                            } else {
+                                crate::draw::unpack_rgb(crate::palette::ANSI256[*i as usize])
+                            };
+                            write!(out, "48;2;{};{};{}", r, g, b).unwrap()
+                        },
+                        Colour::RGB([r, g, b]) => {
+                            write!(out, "48;2;{};{};{}", r, g, b).unwrap()
+                        }
+                    }
+                }
+                out.push('m');
+            } else if need_fg {
+                match fg {
+                    Colour::Index(i) => {
+                        let [r, g, b] = if render == Render::Irc {
+                            crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
+                        } else {
+                            crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
+                        };
+                        write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
+                    },
+                    Colour::RGB([r, g, b]) => {
+                        write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                     }
                 }
             }
-            Render::Irc => {
-                // IRC clients often reset the background color if \x03FG is used without a BG.
-                // We MUST always output \x03FG,BG when any color state changes.
-                let effective_fg = if is_space {
-                    lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
-                } else {
-                    &fg
-                };
+        } else {
+            match render {
+                Render::Ansi | Render::Ansi24 => {
+                    if let Some(bg_c) = &bg {
+                        out.push_str("\x1b[");
+                        let mut semi = false;
 
-                out.push('\x03');
-                match effective_fg {
-                    Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
-                    Colour::RGB([r, g, b]) => {
-                        let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
-                        let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                        write!(out, "{}", idx).unwrap()
+                        if need_fg {
+                            match fg {
+                                Colour::Index(i) => write!(out, "38;5;{}", i).unwrap(),
+                                Colour::RGB([r, g, b]) => {
+                                    write!(out, "38;2;{};{};{}", r, g, b).unwrap()
+                                }
+                            }
+                            semi = true;
+                        }
+
+                        if need_bg {
+                            if semi {
+                                out.push(';');
+                            }
+                            match bg_c {
+                                Colour::Index(i) => write!(out, "48;5;{}", i).unwrap(),
+                                Colour::RGB([r, g, b]) => {
+                                    write!(out, "48;2;{};{};{}", r, g, b).unwrap()
+                                }
+                            }
+                        }
+                        out.push('m');
+                    } else if need_fg {
+                        match fg {
+                            Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
+                            Colour::RGB([r, g, b]) => {
+                                write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
+                            }
+                        }
                     }
                 }
+                Render::Irc => {
+                    // IRC clients often reset the background color if \x03FG is used without a BG.
+                    // We MUST always output \x03FG,BG when any color state changes.
+                    let effective_fg = if is_space {
+                        lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
+                    } else {
+                        &fg
+                    };
 
-                if let Some(bg_c) = &bg {
-                    out.push(',');
-                    match bg_c {
+                    out.push('\x03');
+                    match effective_fg {
                         Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
                         Colour::RGB([r, g, b]) => {
                             let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
                             let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                            write!(out, "{}", idx).unwrap()
+                            write!(out, "{:02}", idx).unwrap()
                         }
                     }
-                }
 
-                // Track exactly what we emitted to the terminal so next cell diffs against it
-                // (e.g. if we used lookahead, last_fg is now whatever the lookahead was)
-                *last_fg = Some(effective_fg.clone());
+                    if let Some(bg_c) = &bg {
+                        out.push(',');
+                        match bg_c {
+                            Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
+                            Colour::RGB([r, g, b]) => {
+                                let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
+                                let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
+                                write!(out, "{:02}", idx).unwrap()
+                            }
+                        }
+                    }
+                    *last_fg = Some(effective_fg.clone());
+                }
             }
         }
         *first = false;
@@ -2176,7 +2196,7 @@ pub fn render_blocks_smooth(
                                 None,
                                 None,
                             )
-                        } else if render == Render::Preview {
+                        } else if args.as_preview {
                             let col_hi = make_rgb_u32(&best_fg_rgb);
                             let col_lo = make_rgb_u32(&best_bg_rgb);
                             let hi_idx = nearest_strict_partitioned_hex_colour(
@@ -2823,7 +2843,7 @@ pub fn render_blocks_smooth(
                     };
                     final_draw_fg_raw = match fg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc || args.render == crate::args::Render::Preview;
+                            let is_irc = args.render == crate::args::Render::Irc || args.as_preview;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2841,7 +2861,7 @@ pub fn render_blocks_smooth(
                     });
                     final_draw_bg_raw = Some(match bg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc || args.render == crate::args::Render::Preview;
+                            let is_irc = args.render == crate::args::Render::Irc || args.as_preview;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2868,7 +2888,7 @@ pub fn render_blocks_smooth(
 
             row_cells.push((final_draw_fg.clone(), final_draw_bg.clone(), final_char));
 
-            if render == Render::Preview {
+            if args.as_preview {
                 let (alt_fg, alt_bg) = if overlay.is_some() {
                     (draw_fg.clone(), draw_bg.clone())
                 } else if inv {
@@ -2924,7 +2944,7 @@ pub fn render_blocks_smooth(
         // Pass 2: Emit with lookahead for FG optimization
         for (i, (fg, bg, ch)) in row_cells.iter().enumerate() {
             // Find next non-space cell's FG for lookahead
-            let lookahead = if render == Render::Irc || (render == Render::Preview) {
+            let lookahead = if render == Render::Irc || (args.as_preview) {
                 row_cells[i + 1..].iter().find_map(|(f, _, c)| {
                     let is_sp = *c == ' ' || *c == '\u{2800}';
                     if !is_sp {
@@ -2939,6 +2959,7 @@ pub fn render_blocks_smooth(
             emit_colourized(
                 &mut out,
                 render,
+                args.as_preview,
                 fg.clone(),
                 bg.clone(),
                 *ch,
@@ -2949,7 +2970,7 @@ pub fn render_blocks_smooth(
             );
         }
 
-        if render == Render::Preview {
+        if args.as_preview {
             for (i, (fg, bg, ch)) in alt_row_cells.iter().enumerate() {
                 let lookahead = alt_row_cells[i + 1..].iter().find_map(|(f, _, c)| {
                     let is_sp = *c == ' ' || *c == '\u{2800}';
@@ -2962,6 +2983,7 @@ pub fn render_blocks_smooth(
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
+                    args.as_preview,
                     fg.clone(),
                     bg.clone(),
                     *ch,
@@ -2974,17 +2996,17 @@ pub fn render_blocks_smooth(
         }
 
         let end_seq = match render {
-            Render::Ansi | Render::Ansi24 | Render::Preview => "\x1b[0m\n",
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
             Render::Irc => "\x0f\n",
         };
         out.push_str(end_seq);
-        if render == Render::Preview {
+        if args.as_preview {
             alt_out.push_str("\x0f\n");
         }
         grid_out.push(row_vec);
     }
     
-    let longest_line_bytes = if render == Render::Preview {
+    let longest_line_bytes = if args.as_preview {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
@@ -2992,7 +3014,7 @@ pub fn render_blocks_smooth(
     
     RenderResult {
         content: out.trim_end_matches('\n').into(),
-        save_content: if render == Render::Preview {
+        save_content: if args.as_preview {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
             None
@@ -3068,7 +3090,7 @@ pub fn render_braille(
                         );
                         *counts.entry(col).or_insert(0) += 1;
 
-                        if render == Render::Preview {
+                        if args.as_preview {
                             let alt_col = pick_colour(
                                 &AnsiPixel::new(
                                     &image_chroma.bitmap[yy][xx],
@@ -3088,7 +3110,7 @@ pub fn render_braille(
                 .map(|(c, _)| c)
                 .unwrap_or(match render {
                     Render::Ansi | Render::Irc => Colour::Index(0),
-                    Render::Ansi24 | Render::Preview => Colour::RGB([0, 0, 0]),
+                    Render::Ansi24 => Colour::RGB([0, 0, 0]),
                 });
 
             let mut final_bg = None;
@@ -3120,6 +3142,7 @@ pub fn render_braille(
             emit_colourized(
                 &mut out,
                 render,
+                args.as_preview,
                 final_fg,
                 final_bg.clone(),
                 final_ch,
@@ -3129,7 +3152,7 @@ pub fn render_braille(
                 None,
             );
 
-            if render == Render::Preview {
+            if args.as_preview {
                 let mut alt_fg = alt_counts
                     .into_iter()
                     .max_by_key(|&(_, count)| count)
@@ -3165,6 +3188,7 @@ pub fn render_braille(
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
+                    args.as_preview,
                     alt_fg,
                     alt_bg,
                     alt_ch,
@@ -3176,16 +3200,16 @@ pub fn render_braille(
             }
         }
         let end_seq = match render {
-            Render::Ansi | Render::Ansi24 | Render::Preview => "\x1b[0m\n",
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
             Render::Irc => "\x0f\n",
         };
         out.push_str(end_seq);
-        if render == Render::Preview {
+        if args.as_preview {
             alt_out.push_str("\x0f\n");
         }
     }
     
-    let longest_line_bytes = if render == Render::Preview {
+    let longest_line_bytes = if args.as_preview {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
@@ -3193,7 +3217,7 @@ pub fn render_braille(
     
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
-        save_content: if render == Render::Preview {
+        save_content: if args.as_preview {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
             None
@@ -3223,14 +3247,6 @@ fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
             pixel.irc_std
         }),
         Render::Ansi24 => Colour::RGB(unpack_rgb(pixel.orig)),
-        Render::Preview => {
-            let idx = if args.nograyscale && distinct {
-                pixel.irc_ng
-            } else {
-                pixel.irc_std
-            };
-            Colour::RGB(unpack_rgb(IRC99[idx as usize]))
-        }
     }
 }
 

@@ -52,6 +52,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
     }
 
     RenderArgs {
+        as_preview: false,
         list_blocks: args.list_blocks,
         list_ranges: args.list_ranges,
         print_ranges: args.print_ranges,
@@ -193,7 +194,7 @@ pub fn render_from_canvas(
                 crate::args::Render::Irc => {
                     draw::render_braille(lc, canvas, args, crate::args::Render::Irc)
                 }
-                crate::args::Render::Ansi | crate::args::Render::Preview => {
+                crate::args::Render::Ansi => {
                     draw::render_braille(lc, canvas, args, crate::args::Render::Ansi)
                 }
                 crate::args::Render::Ansi24 => {
@@ -205,18 +206,9 @@ pub fn render_from_canvas(
         }
     } else {
         match args.render {
-            crate::args::Render::Irc => {
-                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
-            }
-            crate::args::Render::Ansi => {
-                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
-            }
-            crate::args::Render::Ansi24 => {
-                draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
-            }
-            crate::args::Render::Preview => {
-                draw::render_blocks(canvas, args, crate::args::Render::Preview, glyphs)
-            }
+            crate::args::Render::Irc => draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs),
+            crate::args::Render::Ansi => draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs),
+            crate::args::Render::Ansi24 => draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs),
         }
     }
 }

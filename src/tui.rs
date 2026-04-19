@@ -1211,6 +1211,11 @@ impl App {
 
             metadata_prompt_settings: None,
             metadata_prompt_path: String::new(),
+            render_mode_idx: match render_args.render {
+                Render::Irc => 0,
+                Render::Ansi => 1,
+                Render::Ansi24 => 2,
+            },
             metadata_prompt_png_path: String::new(),
 
             tree_state,
@@ -1218,12 +1223,6 @@ impl App {
 
             image_path: render_args.image.clone().unwrap_or_default(),
             width: render_args.width.unwrap_or(80) as i32,
-            render_mode_idx: match render_args.render {
-                Render::Preview => 0,
-                Render::Ansi => 1,
-                Render::Ansi24 => 2,
-                Render::Irc => 0,
-            },
             dither: render_args.dither as i32,
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
@@ -1387,10 +1386,9 @@ impl App {
         self.render_args = render_args.clone();
         self.width = render_args.width.unwrap_or(80) as i32;
         self.render_mode_idx = match render_args.render {
-            Render::Preview => 0,
+            Render::Irc => 0,
             Render::Ansi => 1,
             Render::Ansi24 => 2,
-            Render::Irc => 0,
         };
         self.dither = render_args.dither as i32;
         self.gpu = render_args.gpu;
@@ -2181,10 +2179,11 @@ impl App {
         self.render_args.solarize = self.solarize;
         self.render_args.edge_detection = self.edge_detection;
         self.render_args.render = match self.render_mode_idx {
-            0 => Render::Preview,
+            0 => Render::Irc,
             1 => Render::Ansi,
             _ => Render::Ansi24,
         };
+        self.render_args.as_preview = true;
         self.render_args.fliph = self.fliph;
         self.render_args.flipv = self.flipv;
         self.render_args.rotate = self.rotate as f32;
