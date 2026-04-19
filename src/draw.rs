@@ -1933,9 +1933,13 @@ pub fn render_blocks_smooth(
                         let mut block_sum_b = 0u64;
                         let mut block_sum_sq = 0u64;
 
-                        let palette: &[u32] = match render {
-                            Render::Ansi | Render::Ansi24 => &ANSI256,
-                            _ => &IRC99,
+                        let palette: &[u32] = if args.as_preview {
+                            &IRC99
+                        } else {
+                            match render {
+                                Render::Ansi | Render::Ansi24 => &ANSI256,
+                                _ => &IRC99,
+                            }
                         };
                         let mut indices = Vec::with_capacity(bp);
 
@@ -3011,7 +3015,7 @@ pub fn render_blocks_smooth(
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
-                    args.as_preview,
+                    false,
                     fg.clone(),
                     bg.clone(),
                     *ch,
