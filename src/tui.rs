@@ -1154,6 +1154,7 @@ struct App {
     text_selected: Option<usize>,
     text_drag_mode: TextDragMode,
     text_drag_start: Option<(i32, i32)>,
+    base_grid: Option<Vec<Vec<crate::draw::RenderedCell>>>,
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
     text_btn_areas: Vec<Rect>,   // clickable button areas: [fg, bg, delete]
@@ -1372,6 +1373,7 @@ impl App {
             text_selected: None,
             text_drag_mode: TextDragMode::None,
             text_drag_start: None,
+            base_grid: None,
             text_field_focus: TextFieldFocus::List,
             text_field_areas: Vec::new(),
             text_btn_areas: Vec::new(),
@@ -3501,7 +3503,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         
                         if let Some(cp_state) = &mut app.color_picker_state {
                             if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
-                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect);
+                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect, false);
+                            } else if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Right) {
+                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect, true);
                             } else if mouse.kind == crossterm::event::MouseEventKind::Drag(MouseButton::Left) {
                                 handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
                             } else if mouse.kind == crossterm::event::MouseEventKind::Up(MouseButton::Left) {
@@ -5603,10 +5607,35 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .alignment(Alignment::Center);
 
         f.render_widget(content, p_area);
-    }
+        }
 
+        // Render dragging ghost box
+        if app.current_tab == 3 && app.text_drag_mode == TextDragMode::Sizing {
+        let inner_height = app.output_area.height.saturating_sub(2);
+        let line_count = app.cached_render.lines().count() as u16;
+        let pad_y = if line_count < inner_height {
+            inner_height.saturating_sub(line_count) / 2
+        } else {
+            0
+        };
 
-}
+        if let Some(ov) = app.render_args.overlays.last() {
+            let rx = app.output_area.x + 1 + (ov.x * 2) as u16;
+            let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
+            let rw = (ov.w * 2) as u16;
+            let rh = ov.h as u16;
+            if rw > 0 && rh > 0 {
+                let ghost_rect = Rect::new(rx, ry, rw, rh);
+                f.render_widget(
+                    Block::default().borders(Borders::ALL).border_style(
+                        Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 0)),
+                    ),
+                    ghost_rect,
+                );
+            }
+        }
+        }
+        }
 
 fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     if let Some(state) = &mut app.auto_optimize_state {
@@ -6541,9 +6570,10 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(main_block, area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(19), // Color picker
+        Constraint::Length(18), // Color picker
         Constraint::Length(3),  // Options (Wrap toggle / Delete button)
-        Constraint::Min(0),     // Instructions
+        Constraint::Length(8),  // Mini list of overlays
+        Constraint::Min(0),     // Instructions / Status
     ])
     .split(inner);
 
@@ -6618,14 +6648,39 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         app.text_btn_areas.push(Rect::default());
     }
 
-    let inst_text = "Instructions:\n\
-    - Click image: Select/Create Text\n\
-    - Drag: Move or Resize Box\n\
-    - Type: Enter Text\n\
-    - Escape: Deselect";
+    // Mini-list of overlays
+    let mut items: Vec<ListItem> = Vec::new();
+    for (i, ov) in app.render_args.overlays.iter().enumerate() {
+        let is_selected = app.text_selected == Some(i + 1);
+        let text_trunc: String = if ov.text.chars().count() > 20 {
+            format!("{}…", ov.text.chars().take(20).collect::<String>())
+        } else {
+            ov.text.clone()
+        };
+        let label = format!(" #{} {} ({},{}) {}x{}", i+1, text_trunc, ov.x, ov.y, ov.w, ov.h);
+        let style = if is_selected { Style::default().fg(ACCENT).add_modifier(Modifier::BOLD) } else { Style::default().fg(TEXT) };
+        items.push(ListItem::new(label).style(style));
+    }
+    let list_block = Block::default().borders(Borders::ALL).title(" Overlays ");
+    let list = List::new(items).block(list_block);
+    f.render_stateful_widget(list, chunks[2], &mut app.text_list_state);
+    // Note: We don't update text_list_area here because we want mouse to work on image
+
+    let mut status_text = String::from("Instructions:\n\
+    - Click canvas: Create Text\n\
+    - Left Click: Select FG / Right Click: Select BG\n\
+    - Drag Box: Move / Drag Corner: Resize\n\
+    - Type: Enter Text / Esc: Deselect");
+
+    if let Some(sel) = app.text_selected {
+        if sel > 0 && sel <= app.render_args.overlays.len() {
+            let ov = &app.render_args.overlays[sel - 1];
+            status_text = format!("Selected #{} | Pos: {},{} | Size: {}x{}\n", sel, ov.x, ov.y, ov.w, ov.h) + &status_text;
+        }
+    }
     
-    let inst_p = Paragraph::new(inst_text).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst_p, chunks[2]);
+    let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
+    f.render_widget(inst_p, chunks[3]);
     
     // Store where the CP is for mouse events later
     app.text_list_area = cp_rect; 

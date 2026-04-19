@@ -544,7 +544,7 @@ pub fn emit_colourized(
 
                 out.push('\x03');
                 match effective_fg {
-                    Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                    Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
                     Colour::RGB([r, g, b]) => {
                         let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
                         let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
@@ -555,7 +555,7 @@ pub fn emit_colourized(
                 if let Some(bg_c) = &bg {
                     out.push(',');
                     match bg_c {
-                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
+                        Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
                         Colour::RGB([r, g, b]) => {
                             let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
                             let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
@@ -2762,7 +2762,7 @@ pub fn render_blocks_smooth(
                     };
                     final_draw_fg_raw = match fg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = render == Render::Irc || render == Render::Preview;
+                            let is_irc = args.render == crate::args::Render::Irc;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2780,7 +2780,7 @@ pub fn render_blocks_smooth(
                     });
                     final_draw_bg_raw = Some(match bg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = render == Render::Irc || render == Render::Preview;
+                            let is_irc = args.render == crate::args::Render::Irc;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2849,7 +2849,11 @@ pub fn render_blocks_smooth(
                             crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
                         });
                     }
-                    alt_final_char = overlay_char.unwrap();
+                    if let Some(c) = overlay_char {
+                        alt_final_char = c;
+                    } else {
+                        alt_final_char = ' ';
+                    }
                 }
 
                 alt_row_cells.push((final_alt_fg, final_alt_bg, alt_final_char));

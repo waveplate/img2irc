@@ -194,7 +194,7 @@ impl ColorPickerState {
         )
     }
 
-    pub fn handle_mouse_down(&mut self, x: u16, y: u16, area: Rect) -> bool {
+    pub fn handle_mouse_down(&mut self, x: u16, y: u16, area: Rect, is_right: bool) -> bool {
         if !area.contains(ratatui::layout::Position { x, y }) {
             return false;
         }
@@ -212,6 +212,11 @@ impl ColorPickerState {
 
         if main_rect.contains(ratatui::layout::Position { x, y }) {
             self.focus = Focus::MainArea;
+            if is_right {
+                self.editing_fg = false;
+            } else {
+                self.editing_fg = true;
+            }
             self.is_dragging_main = true;
             self.apply_main_area_click(x, y, main_rect);
             return true;
