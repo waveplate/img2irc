@@ -1155,6 +1155,7 @@ struct App {
     text_selected: Option<usize>,
     text_drag_mode: TextDragMode,
     text_drag_start: Option<(i32, i32)>,
+    last_text_click: Option<(std::time::Instant, i32, i32)>,
     base_grid: Option<Vec<Vec<crate::draw::RenderedCell>>>,
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
@@ -1374,6 +1375,7 @@ impl App {
             text_selected: None,
             text_drag_mode: TextDragMode::None,
             text_drag_start: None,
+            last_text_click: None,
             base_grid: None,
             text_field_focus: TextFieldFocus::List,
             text_field_areas: Vec::new(),
@@ -3818,19 +3820,30 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         app.text_drag_mode = TextDragMode::Moving;
                                                         app.text_drag_start = Some((cell_x - app.render_args.overlays[idx].x, cell_y - app.render_args.overlays[idx].y));
                                                     } else {
-                                                        app.render_args.overlays.push(crate::args::TextOverlay {
-                                                            text: "".to_string(),
-                                                            x: cell_x,
-                                                            y: cell_y,
-                                                            w: 0,
-                                                            h: 0,
-                                                            fg: None,
-                                                            bg: None,
-                                                            wrap: false,
+                                                        // Require double-click to create new overlay
+                                                        let now = std::time::Instant::now();
+                                                        let is_double = app.last_text_click.map_or(false, |(t, lx, ly)| {
+                                                            now.duration_since(t).as_millis() < 500 && lx == cell_x && ly == cell_y
                                                         });
-                                                        app.text_selected = Some(app.render_args.overlays.len());
-                                                        app.text_drag_mode = TextDragMode::Sizing;
-                                                        app.text_drag_start = Some((cell_x, cell_y));
+                                                        if is_double {
+                                                            app.render_args.overlays.push(crate::args::TextOverlay {
+                                                                text: "".to_string(),
+                                                                x: cell_x,
+                                                                y: cell_y,
+                                                                w: 0,
+                                                                h: 0,
+                                                                fg: None,
+                                                                bg: None,
+                                                                wrap: false,
+                                                            });
+                                                            app.text_selected = Some(app.render_args.overlays.len());
+                                                            app.text_drag_mode = TextDragMode::Sizing;
+                                                            app.text_drag_start = Some((cell_x, cell_y));
+                                                            app.last_text_click = None;
+                                                        } else {
+                                                            app.last_text_click = Some((now, cell_x, cell_y));
+                                                            app.text_selected = None;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -5569,12 +5582,23 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         f.render_widget(content, p_area);
         }
 
-        // Render active selection box
+        // Render active selection outline around selected text overlay
         if app.current_tab == 3 {
             let inner_height = app.output_area.height.saturating_sub(2);
+            let inner_width = app.output_area.width.saturating_sub(2);
             let line_count = app.cached_render.lines().count() as u16;
             let pad_y = if line_count < inner_height {
                 inner_height.saturating_sub(line_count) / 2
+            } else {
+                0
+            };
+
+            // Compute pad_x from the rendered grid
+            let grid_cols = app.cached_result.as_ref().map_or(0u16, |r| {
+                r.grid.first().map_or(0, |row| row.len()) as u16
+            });
+            let pad_x = if inner_width > grid_cols * 2 {
+                (inner_width - grid_cols * 2) / 2
             } else {
                 0
             };
@@ -5583,37 +5607,76 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                 if sel > 0 && sel <= app.render_args.overlays.len() {
                     let ov = &app.render_args.overlays[sel - 1];
                     let text_to_draw = if app.input_mode == InputMode::TextEdit { app.value_edit_buffer.clone() } else { ov.text.clone() };
-                    
+
                     let lines: Vec<&str> = text_to_draw.split('\n').collect();
-                    let text_w = lines.iter().map(|l| l.chars().count() as u16 * 2).max().unwrap_or(2).max(4); // min 4 columns
-                    let text_h = lines.len().max(1) as u16;
-                    
-                    let rx = app.output_area.x + 1 + (ov.x * 2) as u16;
+                    // Each cell takes 2 terminal columns
+                    let text_cell_w = lines.iter().map(|l| l.chars().count() as i32).max().unwrap_or(1).max(1);
+                    let text_h = lines.len().max(1) as i32;
+
+                    let box_w = if ov.w > 0 { ov.w } else { text_cell_w };
+                    let box_h = if ov.h > 0 { ov.h } else { text_h };
+
+                    // Position in terminal coordinates (each cell = 2 columns)
+                    let rx = app.output_area.x + 1 + pad_x + (ov.x as u16) * 2;
                     let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
-                    
-                    let rw = if ov.w > 0 { (ov.w * 2) as u16 } else { text_w };
-                    let rh = if ov.h > 0 { ov.h as u16 } else { text_h };
-                    
+                    let rw = (box_w as u16) * 2;
+                    let rh = box_h as u16;
+
                     if rw > 0 && rh > 0 {
-                        let ghost_rect = Rect::new(rx, ry, rw, rh);
+                        // Draw a thin selection outline around the overlay region
+                        // without clearing the underlying rendered content
                         let is_dragging = app.text_drag_mode == TextDragMode::Sizing || app.text_drag_mode == TextDragMode::Moving;
-                        let mut block = if is_dragging {
-                            Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 0)))
-                        } else {
-                            Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan).bg(ratatui::style::Color::Rgb(10, 10, 30)))
-                        };
-                        if app.input_mode == InputMode::TextEdit {
-                            block = block.border_type(ratatui::widgets::BorderType::Double);
+                        let border_color = if is_dragging { Color::Yellow } else if app.input_mode == InputMode::TextEdit { Color::Green } else { Color::Cyan };
+                        let border_style = Style::default().fg(border_color);
+
+                        // Top border
+                        if ry > 0 && ry > app.output_area.y {
+                            let top_y = ry.saturating_sub(1);
+                            for dx in 0..rw {
+                                let bx = rx + dx;
+                                if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
+                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, top_y)) {
+                                        cell.set_style(border_style);
+                                        cell.set_char(if dx == 0 { '┌' } else if dx == rw - 1 { '┐' } else { '─' });
+                                    }
+                                }
+                            }
                         }
-                        
-                        let mut p = Paragraph::new(text_to_draw).block(block);
-                        if ov.wrap {
-                            p = p.wrap(ratatui::widgets::Wrap { trim: false });
+                        // Bottom border
+                        let bot_y = ry + rh;
+                        if bot_y < app.output_area.y + app.output_area.height {
+                            for dx in 0..rw {
+                                let bx = rx + dx;
+                                if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
+                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, bot_y)) {
+                                        cell.set_style(border_style);
+                                        cell.set_char(if dx == 0 { '└' } else if dx == rw - 1 { '┘' } else { '─' });
+                                    }
+                                }
+                            }
                         }
-                        
-                        // We must clear drawing over image
-                        f.render_widget(Clear, ghost_rect);
-                        f.render_widget(p, ghost_rect);
+                        // Left/right borders
+                        for dy in 0..rh {
+                            let by = ry + dy;
+                            if by >= app.output_area.y && by < app.output_area.y + app.output_area.height {
+                                // Left
+                                let lx = rx.saturating_sub(1);
+                                if lx >= app.output_area.x && lx < app.output_area.x + app.output_area.width {
+                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(lx, by)) {
+                                        cell.set_style(border_style);
+                                        cell.set_char('│');
+                                    }
+                                }
+                                // Right
+                                let rrx = rx + rw;
+                                if rrx >= app.output_area.x && rrx < app.output_area.x + app.output_area.width {
+                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(rrx, by)) {
+                                        cell.set_style(border_style);
+                                        cell.set_char('│');
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -6554,6 +6617,7 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let chunks = Layout::vertical([
         Constraint::Length(18), // Color picker
+        Constraint::Length(3),  // FG/BG color swatches
         Constraint::Length(3),  // Options (Wrap toggle / Delete button)
         Constraint::Length(8),  // Mini list of overlays
         Constraint::Min(0),     // Instructions / Status
@@ -6606,6 +6670,59 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
         f.render_widget(crate::colorpicker::ColorPickerWidget { state: cp_state }, cp_rect);
     }
+
+    // FG/BG color swatch display
+    {
+        let swatch_area = chunks[1];
+        let swatch_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(BORDER))
+            .title(" Color ");
+        let swatch_inner = swatch_block.inner(swatch_area);
+        f.render_widget(swatch_block, swatch_area);
+
+        let swatch_halves = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(swatch_inner);
+
+        // FG swatch
+        let fg_editing = app.color_picker_state.as_ref().map_or(true, |cp| cp.editing_fg);
+        let fg_label = if fg_editing { "▶Fg " } else { " Fg " };
+        if let Some(sel) = app.text_selected {
+            if sel > 0 && sel <= app.render_args.overlays.len() {
+                let ov = &app.render_args.overlays[sel - 1];
+                let fg_style = if let Some(fg) = &ov.fg {
+                    let (r, g, b) = match fg {
+                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
+                        crate::args::ColorSpec::Index(i) => {
+                            let cp = app.color_picker_state.as_ref().unwrap();
+                            cp.rgb_from_idx(*i as usize)
+                        }
+                    };
+                    Style::default().bg(Color::Rgb(r, g, b)).fg(if (r as u16 + g as u16 + b as u16) > 380 { Color::Black } else { Color::White })
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let fg_text = if ov.fg.is_some() { format!("{}████", fg_label) } else { format!("{}[None]", fg_label) };
+                f.render_widget(Paragraph::new(fg_text).style(fg_style), swatch_halves[0]);
+
+                // BG swatch
+                let bg_label = if !fg_editing { "▶Bg " } else { " Bg " };
+                let bg_style = if let Some(bg) = &ov.bg {
+                    let (r, g, b) = match bg {
+                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
+                        crate::args::ColorSpec::Index(i) => {
+                            let cp = app.color_picker_state.as_ref().unwrap();
+                            cp.rgb_from_idx(*i as usize)
+                        }
+                    };
+                    Style::default().bg(Color::Rgb(r, g, b)).fg(if (r as u16 + g as u16 + b as u16) > 380 { Color::Black } else { Color::White })
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let bg_text = if ov.bg.is_some() { format!("{}████", bg_label) } else { format!("{}[None]", bg_label) };
+                f.render_widget(Paragraph::new(bg_text).style(bg_style), swatch_halves[1]);
+            }
+        }
+    }
     
     app.text_btn_areas.clear(); // We use index 0 for Wrap, index 1 for Delete
     
@@ -6613,7 +6730,7 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     if has_selection {
         let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
         let wrap_style = if ov.wrap { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Gray) };
-        let options_chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[1]);
+        let options_chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[2]);
         
         let wrap_btn = Block::default().borders(Borders::ALL).style(wrap_style);
         let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" }).block(wrap_btn).alignment(Alignment::Center);
@@ -6644,11 +6761,11 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     }
     let list_block = Block::default().borders(Borders::ALL).title(" Overlays ");
     let list = List::new(items).block(list_block);
-    f.render_stateful_widget(list, chunks[2], &mut app.text_list_state);
+    f.render_stateful_widget(list, chunks[3], &mut app.text_list_state);
     // Note: We don't update text_list_area here because we want mouse to work on image
 
     let mut status_text = String::from("Instructions:\n\
-    - Click canvas: Create Text\n\
+    - Double-click canvas: Create Text\n\
     - Left Click: Select FG / Right Click: Select BG\n\
     - Drag Box: Move / Drag Corner: Resize\n\
     - Type: Enter Text / Esc: Deselect");
@@ -6661,11 +6778,11 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     }
     
     let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst_p, chunks[3]);
+    f.render_widget(inst_p, chunks[4]);
     
     // Store rects for mouse events later
     app.color_picker_area = cp_rect;
-    app.text_list_area = chunks[2]; 
+    app.text_list_area = chunks[3]; 
 }
 
 fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
