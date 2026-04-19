@@ -3345,7 +3345,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             app.render_args.overlays[sel - 1].text =
                                                 app.value_edit_buffer.clone();
-                                            app.mark_args_dirty();
                                         }
                                     }
                                 } else {
@@ -3377,7 +3376,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
                                             app.value_edit_buffer.clone();
-                                        app.mark_args_dirty();
                                     }
                                 }
                             }
@@ -3387,7 +3385,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
                                             app.value_edit_buffer.clone();
-                                        app.mark_args_dirty();
                                     }
                                 }
                             }
@@ -3826,7 +3823,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         app.text_selected = Some(app.render_args.overlays.len());
                                                         app.text_drag_mode = TextDragMode::Sizing;
                                                         app.text_drag_start = Some((cell_x, cell_y));
-                                                        app.mark_args_dirty();
                                                     }
                                                 }
                                             }
