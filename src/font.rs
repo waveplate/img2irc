@@ -729,12 +729,6 @@ pub fn glyph_store(
             explicit_chars.push(ch);
         }
     }
-    // Always include standard printable ASCII for text overlays
-    for ch in 32..=126 {
-        if let Some(c) = char::from_u32(ch) {
-            explicit_chars.push(c);
-        }
-    }
     for range_str in include_ranges {
         if let Some(range) = parse_hex_range(range_str) {
             for code in range {
@@ -750,6 +744,15 @@ pub fn glyph_store(
         }
     }
 
+    // ASCII 32-126 are always loaded for text overlay rendering, but only
+    // selected for glyph matching when no specific blocks were requested.
+    let mut overlay_ascii_chars: Vec<char> = Vec::new();
+    for ch in 32..=126u32 {
+        if let Some(c) = char::from_u32(ch) {
+            overlay_ascii_chars.push(c);
+        }
+    }
+
     let mut metric_chars = Vec::new();
     for block_name in &sorted_blocks {
         if let Some(codes) = config_groups.get(*block_name) {
@@ -761,6 +764,7 @@ pub fn glyph_store(
         }
     }
     metric_chars.extend(explicit_chars.iter().copied());
+    metric_chars.extend(overlay_ascii_chars.iter().copied());
 
     let metrics = get_metrics(&mut ctx, &metric_chars);
     let target_cell_width = metrics.cell_width.max(1);
@@ -809,12 +813,27 @@ pub fn glyph_store(
         }
     }
 
+    // Load user-specified explicit includes (--include, --include-range) and select them
     if !explicit_chars.is_empty() {
         let glyphs = get_block_glyphs(&mut ctx, "explicit_includes", &explicit_chars, &metrics);
         groups_out.insert("explicit_includes".to_string(), explicit_chars.clone());
         for (ch, bitmap, font_name) in glyphs {
             all_glyphs.insert(ch, (bitmap, font_name));
             selected_chars.insert(ch);
+        }
+    }
+
+    // Load ASCII overlay characters (always available for text overlays).
+    // Only select them for glyph matching when no specific blocks were requested.
+    let is_filtering = !blocks.is_empty() || include_chars.is_some() || !include_ranges.is_empty();
+    if !overlay_ascii_chars.is_empty() {
+        let glyphs = get_block_glyphs(&mut ctx, "overlay_ascii", &overlay_ascii_chars, &metrics);
+        groups_out.insert("overlay_ascii".to_string(), overlay_ascii_chars.clone());
+        for (ch, bitmap, font_name) in glyphs {
+            all_glyphs.insert(ch, (bitmap, font_name));
+            if !is_filtering {
+                selected_chars.insert(ch);
+            }
         }
     }
 
