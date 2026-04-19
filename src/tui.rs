@@ -1151,6 +1151,7 @@ struct App {
     text_area: Rect,
     text_list_state: ListState,
     text_list_area: Rect,
+    color_picker_area: Rect,
     text_selected: Option<usize>,
     text_drag_mode: TextDragMode,
     text_drag_start: Option<(i32, i32)>,
@@ -1370,6 +1371,7 @@ impl App {
             text_area: Rect::default(),
             text_list_state: ratatui::widgets::ListState::default(),
             text_list_area: Rect::default(),
+            color_picker_area: Rect::default(),
             text_selected: None,
             text_drag_mode: TextDragMode::None,
             text_drag_start: None,
@@ -3336,7 +3338,29 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 if let Event::Key(key) = event {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Enter | KeyCode::Esc => {
+                            KeyCode::Enter => {
+                                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    app.value_edit_buffer.push('\n');
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].text =
+                                                app.value_edit_buffer.clone();
+                                            app.mark_args_dirty();
+                                        }
+                                    }
+                                } else {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].text =
+                                                app.value_edit_buffer.clone();
+                                            app.mark_args_dirty();
+                                        }
+                                    }
+                                    app.input_mode = InputMode::Normal;
+                                    app.value_edit_buffer.clear();
+                                }
+                            }
+                            KeyCode::Esc => {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
@@ -3498,7 +3522,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             match event {
                 Event::Mouse(mouse) => {
                     if app.current_tab == 3 {
-                        let cp_rect = app.text_list_area; // We saved the CP rect here
+                        let cp_rect = app.color_picker_area;
                         let mut handled = false;
                         
                         if let Some(cp_state) = &mut app.color_picker_state {
@@ -3761,18 +3785,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 let inner_width =
                                                     app.output_area.width.saturating_sub(2);
                                                 let row_len = row.len() as u16;
-                                                let pad_x = if inner_width > row_len {
-                                                    (inner_width - row_len) / 2
+                                                let pad_x = if inner_width > row_len * 2 {
+                                                    (inner_width - row_len * 2) / 2
                                                 } else {
                                                     0
                                                 };
                                                 let start_x = app.output_area.x + 1 + pad_x;
                                                 if mouse.column >= start_x
-                                                    && mouse.column < start_x + row_len
+                                                    && mouse.column < start_x + row_len * 2
                                                 {
                                                     let content_x =
                                                         (mouse.column - start_x) as usize;
-                                                    let cell_x = content_x as i32;
+                                                    let cell_x = (content_x / 2) as i32;
                                                     let cell_y = content_y as i32;
 
                                                     let mut found = None;
@@ -4289,28 +4313,40 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let line_count = app.cached_render.lines().count() as u16;
                                     let pad_y = if line_count < inner_height { inner_height.saturating_sub(line_count) / 2 } else { 0 };
                                     if mouse.row >= app.output_area.y + 1 + pad_y {
-                                        let c_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as i32 + app.scroll as i32;
-                                        let c_x = mouse.column.saturating_sub(app.output_area.x + 1) as i32;
-                                        if let Some(sel) = app.text_selected {
-                                            if sel > 0 && sel <= app.render_args.overlays.len() {
-                                                let cell_x = if app.render_args.render == crate::args::Render::Irc || app.render_args.render == crate::args::Render::Preview { c_x / 2 } else { c_x };
-                                                let cell_y = c_y;
+                                        let content_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as usize + app.scroll as usize;
+                                        if content_y < res.grid.len() {
+                                            let row = &res.grid[content_y];
+                                            let inner_width = app.output_area.width.saturating_sub(2);
+                                            let row_len = row.len() as u16;
+                                            let pad_x = if inner_width > row_len * 2 { (inner_width - row_len * 2) / 2 } else { 0 };
+                                            let start_x = app.output_area.x + 1 + pad_x;
+                                            
+                                            if mouse.column >= start_x {
+                                                let c_x = (mouse.column - start_x) as i32;
+                                                let c_y = content_y as i32;
                                                 
-                                                let ov = &mut app.render_args.overlays[sel - 1];
-                                                if app.text_drag_mode == TextDragMode::Moving {
-                                                    // Move
-                                                    if let Some((sx, sy)) = app.text_drag_start {
-                                                        ov.x = cell_x - sx;
-                                                        ov.y = cell_y - sy;
-                                                    }
-                                                } else if app.text_drag_mode == TextDragMode::Sizing {
-                                                    // Resize
-                                                    if let Some((sx, sy)) = app.text_drag_start {
-                                                        ov.w = (cell_x - sx).max(0);
-                                                        ov.h = (cell_y - sy).max(0);
+                                                if let Some(sel) = app.text_selected {
+                                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                                        let cell_x = c_x / 2;
+                                                        let cell_y = c_y;
+                                                        
+                                                        let ov = &mut app.render_args.overlays[sel - 1];
+                                                        if app.text_drag_mode == TextDragMode::Moving {
+                                                            // Move
+                                                            if let Some((sx, sy)) = app.text_drag_start {
+                                                                ov.x = cell_x - sx;
+                                                                ov.y = cell_y - sy;
+                                                            }
+                                                        } else if app.text_drag_mode == TextDragMode::Sizing {
+                                                            // Resize
+                                                            if let Some((sx, sy)) = app.text_drag_start {
+                                                                ov.w = (cell_x - sx).max(0);
+                                                                ov.h = (cell_y - sy).max(0);
+                                                            }
+                                                        }
+                                                        app.mark_args_dirty();
                                                     }
                                                 }
-                                                app.mark_args_dirty();
                                             }
                                         }
                                     }
@@ -6597,25 +6633,23 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 let ov = &app.render_args.overlays[sel - 1];
                 if cp_state.editing_fg {
                     if let Some(fg) = &ov.fg {
-                        match fg {
-                            crate::args::ColorSpec::Rgb(rgb) => cp_state.set_rgb(rgb[0], rgb[1], rgb[2]),
-                            crate::args::ColorSpec::Index(i) => cp_state.set_grid_idx(*i as usize),
-                        }
+                        let (r, g, b) = match fg {
+                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
+                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
+                        };
+                        cp_state.fg_rgb = (r, g, b);
+                        cp_state.set_rgb(r, g, b);
                     } else {
                         cp_state.fg_idx = None;
                     }
                 } else {
                     if let Some(bg) = &ov.bg {
-                        match bg {
-                            crate::args::ColorSpec::Rgb(rgb) => {
-                                cp_state.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
-                                cp_state.set_rgb(rgb[0], rgb[1], rgb[2]);
-                            },
-                            crate::args::ColorSpec::Index(i) => {
-                                cp_state.bg_idx = Some(*i as usize);
-                                cp_state.set_grid_idx(*i as usize);
-                            }
-                        }
+                        let (r, g, b) = match bg {
+                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
+                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
+                        };
+                        cp_state.bg_rgb = Some((r, g, b));
+                        cp_state.set_rgb(r, g, b);
                     } else {
                         cp_state.bg_idx = None;
                         cp_state.bg_rgb = None;
@@ -6682,8 +6716,9 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
     f.render_widget(inst_p, chunks[3]);
     
-    // Store where the CP is for mouse events later
-    app.text_list_area = cp_rect; 
+    // Store rects for mouse events later
+    app.color_picker_area = cp_rect;
+    app.text_list_area = chunks[2]; 
 }
 
 fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
