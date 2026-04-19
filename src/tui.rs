@@ -4344,7 +4344,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                                 ov.h = (cell_y - sy).max(0);
                                                             }
                                                         }
-                                                        app.mark_args_dirty();
                                                     }
                                                 }
                                             }
@@ -4546,8 +4545,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             app.pipeline_dragging = None;
                             app.dragged_control = None;
                             app.dragging_splitter = None;
-                            app.text_drag_mode = TextDragMode::None;
-                            app.text_drag_start = None;
+                            if app.text_drag_mode != TextDragMode::None {
+                                app.mark_args_dirty();
+                                app.text_drag_mode = TextDragMode::None;
+                                app.text_drag_start = None;
+                            }
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if mouse.column >= app.pipeline_active_area.x
@@ -5646,7 +5648,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         }
 
         // Render dragging ghost box
-        if app.current_tab == 3 && app.text_drag_mode == TextDragMode::Sizing {
+        if app.current_tab == 3 && (app.text_drag_mode == TextDragMode::Sizing || app.text_drag_mode == TextDragMode::Moving) {
         let inner_height = app.output_area.height.saturating_sub(2);
         let line_count = app.cached_render.lines().count() as u16;
         let pad_y = if line_count < inner_height {
@@ -5655,7 +5657,9 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             0
         };
 
-        if let Some(ov) = app.render_args.overlays.last() {
+        if let Some(sel) = app.text_selected {
+            if sel > 0 && sel <= app.render_args.overlays.len() {
+                let ov = &app.render_args.overlays[sel - 1];
             let rx = app.output_area.x + 1 + (ov.x * 2) as u16;
             let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
             let rw = (ov.w * 2) as u16;
@@ -5664,11 +5668,12 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                 let ghost_rect = Rect::new(rx, ry, rw, rh);
                 f.render_widget(
                     Block::default().borders(Borders::ALL).border_style(
-                        Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 0)),
+                        Style::default().fg(ratatui::style::Color::Yellow).bg(ratatui::style::Color::Rgb(40, 40, 0)),
                     ),
                     ghost_rect,
                 );
             }
+        }
         }
         }
         }

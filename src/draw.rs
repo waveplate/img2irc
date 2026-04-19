@@ -504,7 +504,19 @@ pub fn emit_colourized(
 
                     if need_fg {
                         match fg {
-                            Colour::Index(i) => write!(out, "38;5;{}", i).unwrap(),
+                            Colour::Index(i) => {
+                                if render == Render::Preview {
+                                    let is_irc = i < 99;
+                                    let [r, g, b] = if is_irc {
+                                        crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
+                                    } else {
+                                        crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
+                                    };
+                                    write!(out, "38;2;{};{};{}", r, g, b).unwrap()
+                                } else {
+                                    write!(out, "38;5;{}", i).unwrap()
+                                }
+                            },
                             Colour::RGB([r, g, b]) => {
                                 write!(out, "38;2;{};{};{}", r, g, b).unwrap()
                             }
@@ -517,7 +529,19 @@ pub fn emit_colourized(
                             out.push(';');
                         }
                         match bg_c {
-                            Colour::Index(i) => write!(out, "48;5;{}", i).unwrap(),
+                            Colour::Index(i) => {
+                                if render == Render::Preview {
+                                    let is_irc = *i < 99;
+                                    let [r, g, b] = if is_irc {
+                                        crate::draw::unpack_rgb(crate::palette::IRC99[*i as usize])
+                                    } else {
+                                        crate::draw::unpack_rgb(crate::palette::ANSI256[*i as usize])
+                                    };
+                                    write!(out, "48;2;{};{};{}", r, g, b).unwrap()
+                                } else {
+                                    write!(out, "48;5;{}", i).unwrap()
+                                }
+                            },
                             Colour::RGB([r, g, b]) => {
                                 write!(out, "48;2;{};{};{}", r, g, b).unwrap()
                             }
@@ -526,7 +550,19 @@ pub fn emit_colourized(
                     out.push('m');
                 } else if need_fg {
                     match fg {
-                        Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
+                        Colour::Index(i) => {
+                            if render == Render::Preview {
+                                let is_irc = i < 99;
+                                let [r, g, b] = if is_irc {
+                                    crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
+                                } else {
+                                    crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
+                                };
+                                write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
+                            } else {
+                                write!(out, "\x1b[38;5;{}m", i).unwrap()
+                            }
+                        },
                         Colour::RGB([r, g, b]) => {
                             write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                         }
@@ -2762,7 +2798,7 @@ pub fn render_blocks_smooth(
                     };
                     final_draw_fg_raw = match fg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc;
+                            let is_irc = args.render == crate::args::Render::Irc || args.render == crate::args::Render::Preview;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2780,7 +2816,7 @@ pub fn render_blocks_smooth(
                     });
                     final_draw_bg_raw = Some(match bg_param {
                         crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc;
+                            let is_irc = args.render == crate::args::Render::Irc || args.render == crate::args::Render::Preview;
                             let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
                             if is_irc {
                                 unpack_rgb(IRC99[idx])
@@ -2793,7 +2829,7 @@ pub fn render_blocks_smooth(
                 }
                 if let Some(c) = overlay_char {
                     final_char = c;
-                } else {
+                } else if ov.bg.is_some() {
                     final_char = ' ';
                 }
             }
@@ -2851,7 +2887,7 @@ pub fn render_blocks_smooth(
                     }
                     if let Some(c) = overlay_char {
                         alt_final_char = c;
-                    } else {
+                    } else if ov.bg.is_some() {
                         alt_final_char = ' ';
                     }
                 }
