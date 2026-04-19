@@ -2682,7 +2682,7 @@ pub fn render_blocks_smooth(
     let cheapest_uniform_glyph: Option<char> = if glyphs.is_empty() {
         None
     } else {
-        let mut best_ch = glyphs[0].ch;
+        let mut best_ch: Option<char> = None;
         let mut best_cost = usize::MAX;
         for g in glyphs.iter() {
             let is_blank = g.ch == ' ' || g.ch == '\u{2800}';
@@ -2694,10 +2694,10 @@ pub fn render_blocks_smooth(
             let cost = g.ch.len_utf8() + if is_blank { 0 } else { 3 };
             if cost < best_cost {
                 best_cost = cost;
-                best_ch = g.ch;
+                best_ch = Some(g.ch);
             }
         }
-        Some(best_ch)
+        best_ch
     };
     let mut out = String::new();
     let mut alt_out = String::new();
