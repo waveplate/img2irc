@@ -3798,8 +3798,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
                                                     let mut found = None;
                                                     for (idx, ov) in app.render_args.overlays.iter().enumerate().rev() {
-                                                        if (ov.w > 0 && ov.h > 0 && cell_x >= ov.x && cell_x < ov.x + ov.w && cell_y >= ov.y && cell_y < ov.y + ov.h)
-                                                        || ((ov.w == 0 || ov.h == 0) && ov.y == cell_y && cell_x >= ov.x && cell_x < ov.x + ov.text.chars().count() as i32) {
+                                                        let mut text_w = 1;
+                                                        let mut text_h = 1;
+                                                        if ov.w == 0 || ov.h == 0 {
+                                                            let lines: Vec<&str> = ov.text.split('\n').collect();
+                                                            text_h = lines.len() as i32;
+                                                            text_w = lines.iter().map(|l| l.chars().count() as i32).max().unwrap_or(1);
+                                                        }
+                                                        let check_w = if ov.w > 0 { ov.w } else { text_w.max(2) };
+                                                        let check_h = if ov.h > 0 { ov.h } else { text_h.max(1) };
+                                                        
+                                                        if cell_x >= ov.x && cell_x < ov.x + check_w && cell_y >= ov.y && cell_y < ov.y + check_h {
                                                             found = Some(idx);
                                                             break;
                                                         }
@@ -4185,14 +4194,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
 
-                            // Mouse clicks on text editor buttons/fields
                             let pos = ratatui::layout::Position {
                                 x: mouse.column,
                                 y: mouse.row,
                             };
-                            // Check btn areas: [0]=fg, [1]=bg, [2]=delete
-                            if app.text_btn_areas.len() >= 3 {
-                                if app.text_btn_areas[2].contains(pos) {
+                            
+                            if app.text_btn_areas.len() >= 2 {
+                                if app.text_btn_areas[1].contains(pos) {
                                     // Delete button
                                     app.current_tab = 3;
                                     if let Some(sel) = app.text_selected {
@@ -4210,94 +4218,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                 } else if app.text_btn_areas[0].contains(pos) {
-                                    // FG button - open color picker
+                                    // Wrap button
                                     app.current_tab = 3;
-                                    app.text_field_focus = TextFieldFocus::FgButton;
-                                    let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
-                                    let mut cp =
-                                        crate::colorpicker::ColorPickerState::new(mode, true);
-                                    cp.editing_fg = true;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            if let Some(ref fg) =
-                                                app.render_args.overlays[sel - 1].fg
-                                            {
-                                                match fg {
-                                                    crate::args::ColorSpec::Rgb(rgb) => {
-                                                        cp.set_rgb(rgb[0], rgb[1], rgb[2])
-                                                    }
-                                                    crate::args::ColorSpec::Index(i) => {
-                                                        cp.set_grid_idx(*i as usize)
-                                                    }
-                                                }
-                                            }
+                                            app.render_args.overlays[sel - 1].wrap = !app.render_args.overlays[sel - 1].wrap;
+                                            app.mark_args_dirty();
                                         }
-                                    }
-                                    app.color_picker_state = Some(cp);
-                                } else if app.text_btn_areas[1].contains(pos) {
-                                    // BG button - open color picker (only if FG is set)
-                                    app.current_tab = 3;
-                                    app.text_field_focus = TextFieldFocus::BgButton;
-                                    if let Some(sel) = app.text_selected {
-                                        if sel > 0
-                                            && sel <= app.render_args.overlays.len()
-                                            && app.render_args.overlays[sel - 1].fg.is_some()
-                                        {
-                                            let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
-                                            let mut cp = crate::colorpicker::ColorPickerState::new(
-                                                mode, true,
-                                            );
-                                            cp.editing_fg = false;
-                                            if let Some(ref bg) =
-                                                app.render_args.overlays[sel - 1].bg
-                                            {
-                                                match bg {
-                                                    crate::args::ColorSpec::Rgb(rgb) => {
-                                                        cp.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
-                                                        cp.set_rgb(rgb[0], rgb[1], rgb[2]);
-                                                    }
-                                                    crate::args::ColorSpec::Index(i) => {
-                                                        cp.bg_idx = Some(*i as usize);
-                                                        cp.set_grid_idx(*i as usize);
-                                                    }
-                                                }
-                                            }
-                                            app.color_picker_state = Some(cp);
-                                        }
-                                    }
-                                }
-                            }
-                            // Check field area clicks (text, x/y, w/h)
-                            if app.text_field_areas.len() >= 3 {
-                                if app.text_field_areas[0].contains(pos) {
-                                    // Text input row
-                                    app.current_tab = 3;
-                                    app.text_field_focus = TextFieldFocus::TextInput;
-                                    // Start editing text immediately on click
-                                    if let Some(sel) = app.text_selected {
-                                        if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.value_edit_buffer =
-                                                app.render_args.overlays[sel - 1].text.clone();
-                                            app.input_mode = InputMode::TextEdit;
-                                        }
-                                    }
-                                } else if app.text_field_areas[1].contains(pos) {
-                                    // X/Y row - determine which based on click position
-                                    app.current_tab = 3;
-                                    let mid = app.text_field_areas[1].x + 10;
-                                    if mouse.column < mid {
-                                        app.text_field_focus = TextFieldFocus::X;
-                                    } else {
-                                        app.text_field_focus = TextFieldFocus::Y;
-                                    }
-                                } else if app.text_field_areas[2].contains(pos) {
-                                    // W/H row
-                                    app.current_tab = 3;
-                                    let mid = app.text_field_areas[2].x + 10;
-                                    if mouse.column < mid {
-                                        app.text_field_focus = TextFieldFocus::W;
-                                    } else {
-                                        app.text_field_focus = TextFieldFocus::H;
                                     }
                                 }
                             }
@@ -5643,34 +5570,54 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         f.render_widget(content, p_area);
         }
 
-        // Render dragging ghost box
-        if app.current_tab == 3 && (app.text_drag_mode == TextDragMode::Sizing || app.text_drag_mode == TextDragMode::Moving) {
-        let inner_height = app.output_area.height.saturating_sub(2);
-        let line_count = app.cached_render.lines().count() as u16;
-        let pad_y = if line_count < inner_height {
-            inner_height.saturating_sub(line_count) / 2
-        } else {
-            0
-        };
+        // Render active selection box
+        if app.current_tab == 3 {
+            let inner_height = app.output_area.height.saturating_sub(2);
+            let line_count = app.cached_render.lines().count() as u16;
+            let pad_y = if line_count < inner_height {
+                inner_height.saturating_sub(line_count) / 2
+            } else {
+                0
+            };
 
-        if let Some(sel) = app.text_selected {
-            if sel > 0 && sel <= app.render_args.overlays.len() {
-                let ov = &app.render_args.overlays[sel - 1];
-            let rx = app.output_area.x + 1 + (ov.x * 2) as u16;
-            let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
-            let rw = (ov.w * 2) as u16;
-            let rh = ov.h as u16;
-            if rw > 0 && rh > 0 {
-                let ghost_rect = Rect::new(rx, ry, rw, rh);
-                f.render_widget(
-                    Block::default().borders(Borders::ALL).border_style(
-                        Style::default().fg(ratatui::style::Color::Yellow).bg(ratatui::style::Color::Rgb(40, 40, 0)),
-                    ),
-                    ghost_rect,
-                );
+            if let Some(sel) = app.text_selected {
+                if sel > 0 && sel <= app.render_args.overlays.len() {
+                    let ov = &app.render_args.overlays[sel - 1];
+                    let text_to_draw = if app.input_mode == InputMode::TextEdit { app.value_edit_buffer.clone() } else { ov.text.clone() };
+                    
+                    let lines: Vec<&str> = text_to_draw.split('\n').collect();
+                    let text_w = lines.iter().map(|l| l.chars().count() as u16 * 2).max().unwrap_or(2).max(4); // min 4 columns
+                    let text_h = lines.len().max(1) as u16;
+                    
+                    let rx = app.output_area.x + 1 + (ov.x * 2) as u16;
+                    let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
+                    
+                    let rw = if ov.w > 0 { (ov.w * 2) as u16 } else { text_w };
+                    let rh = if ov.h > 0 { ov.h as u16 } else { text_h };
+                    
+                    if rw > 0 && rh > 0 {
+                        let ghost_rect = Rect::new(rx, ry, rw, rh);
+                        let is_dragging = app.text_drag_mode == TextDragMode::Sizing || app.text_drag_mode == TextDragMode::Moving;
+                        let mut block = if is_dragging {
+                            Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 0)))
+                        } else {
+                            Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan).bg(ratatui::style::Color::Rgb(10, 10, 30)))
+                        };
+                        if app.input_mode == InputMode::TextEdit {
+                            block = block.border_type(ratatui::widgets::BorderType::Double);
+                        }
+                        
+                        let mut p = Paragraph::new(text_to_draw).block(block);
+                        if ov.wrap {
+                            p = p.wrap(ratatui::widgets::Wrap { trim: false });
+                        }
+                        
+                        // We must clear drawing over image
+                        f.render_widget(Clear, ghost_rect);
+                        f.render_widget(p, ghost_rect);
+                    }
+                }
             }
-        }
-        }
         }
         }
 

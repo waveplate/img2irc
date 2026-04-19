@@ -1608,36 +1608,57 @@ fn get_overlay_at(
     cx: i32,
     cy: i32,
 ) -> Option<Option<char>> {
+    if cy < ov.y {
+        return None;
+    }
+    let dy = (cy - ov.y) as usize;
+    let lines: Vec<&str> = ov.text.split('\n').collect();
+
     if ov.w > 0 && ov.h > 0 {
-        if cx < ov.x || cx >= ov.x + ov.w || cy < ov.y || cy >= ov.y + ov.h {
+        if cx < ov.x || cx >= ov.x + ov.w || cy >= ov.y + ov.h {
             return None; // Outside the box
         }
         
         let dx = cx - ov.x;
-        let dy = cy - ov.y;
         
         if ov.wrap {
-            let idx = (dy * ov.w + dx) as usize;
-            if idx < ov.text.chars().count() {
-                return Some(Some(ov.text.chars().nth(idx).unwrap()));
+            // Reconstruct wrapped lines
+            let mut wrapped_lines = Vec::new();
+            for para in &lines {
+                let mut current_line = Vec::new();
+                for c in para.chars() {
+                    if current_line.len() >= ov.w as usize {
+                        wrapped_lines.push(current_line);
+                        current_line = Vec::new();
+                    }
+                    current_line.push(c);
+                }
+                wrapped_lines.push(current_line);
+            }
+            if dy < wrapped_lines.len() {
+                if dx < wrapped_lines[dy].len() as i32 {
+                    return Some(Some(wrapped_lines[dy][dx as usize]));
+                }
             }
         } else {
-            if dy == 0 {
-                let idx = dx as usize;
-                if idx < ov.text.chars().count() {
-                    return Some(Some(ov.text.chars().nth(idx).unwrap()));
+            if dy < lines.len() {
+                let line_chars: Vec<char> = lines[dy].chars().collect();
+                if dx < line_chars.len() as i32 {
+                    return Some(Some(line_chars[dx as usize]));
                 }
             }
         }
         return Some(None); // Inside box, but no char
     } else {
-        if cy != ov.y || cx < ov.x {
+        if cx < ov.x {
             return None;
         }
-        let dx = cx - ov.x;
-        let idx = dx as usize;
-        if idx < ov.text.chars().count() {
-            return Some(Some(ov.text.chars().nth(idx).unwrap()));
+        if dy < lines.len() {
+            let dx = cx - ov.x;
+            let line_chars: Vec<char> = lines[dy].chars().collect();
+            if dx < line_chars.len() as i32 {
+                return Some(Some(line_chars[dx as usize]));
+            }
         }
         return None;
     }
@@ -2645,6 +2666,10 @@ pub fn render_blocks_smooth(
         let mut best_cost = usize::MAX;
         for g in glyphs.iter() {
             let is_blank = g.ch == ' ' || g.ch == '\u{2800}';
+            let is_block = g.ch >= '\u{2580}' && g.ch <= '\u{259F}';
+            if !is_blank && !is_block {
+                continue;
+            }
             // Effective cost: glyph bytes + estimated FG overhead (0 for blanks, ~3 for others)
             let cost = g.ch.len_utf8() + if is_blank { 0 } else { 3 };
             if cost < best_cost {

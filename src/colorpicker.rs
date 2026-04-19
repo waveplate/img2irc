@@ -261,19 +261,7 @@ impl ColorPickerState {
             return true;
         }
 
-        let ok_btn = Rect::new(inner.x + 55, inner.y + 1, 10, 3);
-        let cancel_btn = Rect::new(inner.x + 55, inner.y + 5, 10, 3);
-
-        if ok_btn.contains(ratatui::layout::Position { x, y }) {
-            self.ok_trigger = true;
-            self.is_open = false;
-            return true;
-        }
-
-        if cancel_btn.contains(ratatui::layout::Position { x, y }) {
-            self.is_open = false;
-            return true;
-        }
+        // Buttons removed since it's an inline widget
 
         true
     }
@@ -592,23 +580,6 @@ impl<'a> Widget for ColorPickerWidget<'a> {
             );
         }
 
-        let btn_x = inner.x + 55;
-        let ok_style = if self.state.focus == Focus::OkButton {
-            Style::default().bg(Color::White).fg(Color::Black)
-        } else {
-            Style::default().bg(Color::Blue).fg(Color::White)
-        };
-        let ok_btn = Block::default().borders(Borders::ALL).style(ok_style);
-        ok_btn.render(Rect::new(btn_x, inner.y + 1, 12, 3), buf);
-        buf.set_string(btn_x + 5, inner.y + 2, "OK", ok_style);
-
-        let cancel_style = if self.state.focus == Focus::CancelButton {
-            Style::default().bg(Color::White).fg(Color::Black)
-        } else {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
-        };
-        let cancel_btn = Block::default().borders(Borders::ALL).style(cancel_style);
-        cancel_btn.render(Rect::new(btn_x, inner.y + 5, 12, 3), buf);
-        buf.set_string(btn_x + 3, inner.y + 6, "Cancel", cancel_style);
+        // OK/Cancel buttons removed for embedded TUI use.
     }
 }
