@@ -2199,25 +2199,38 @@ pub fn render_blocks_smooth(
                         } else if args.as_preview {
                             let col_hi = make_rgb_u32(&best_fg_rgb);
                             let col_lo = make_rgb_u32(&best_bg_rgb);
-                            let hi_idx = nearest_strict_partitioned_hex_colour(
+
+                            let hi_ansi = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_ansi = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
+
+                            let hi_irc = nearest_strict_partitioned_hex_colour(
                                 col_hi,
                                 &IRC99,
                                 args.grayscale_tolerance,
                             );
-                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                            let lo_irc = nearest_strict_partitioned_hex_colour(
                                 col_lo,
                                 &IRC99,
                                 args.grayscale_tolerance,
                             );
-                            let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
-                            let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+
+                            let hi_rgb = unpack_rgb(ANSI256[hi_ansi as usize]);
+                            let lo_rgb = unpack_rgb(ANSI256[lo_ansi as usize]);
                             (
                                 hi_rgb,
                                 lo_rgb,
-                                Some(Colour::RGB(hi_rgb)),
-                                Some(Colour::RGB(lo_rgb)),
-                                Some(Colour::Index(hi_idx)),
-                                Some(Colour::Index(lo_idx)),
+                                Some(Colour::Index(hi_ansi)),
+                                Some(Colour::Index(lo_ansi)),
+                                Some(Colour::Index(hi_irc)),
+                                Some(Colour::Index(lo_irc)),
                             )
                         } else if render == Render::Irc {
                             let col_hi = make_rgb_u32(&best_fg_rgb);
