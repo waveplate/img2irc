@@ -473,6 +473,12 @@ pub fn emit_colourized(
     first: &mut bool,
     last_fg: &mut Option<Colour>,
     last_bg: &mut Option<Colour>,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    last_bold: &mut bool,
+    last_italic: &mut bool,
+    last_underline: &mut bool,
     lookahead_fg: Option<&Colour>,
 ) {
     let is_space = glyph == ' ' || glyph == '\u{2800}';
@@ -480,6 +486,9 @@ pub fn emit_colourized(
     // Determine what actually changed
     let fg_changed = *first || last_fg.as_ref() != Some(&fg);
     let bg_changed = *first || last_bg.as_ref() != bg.as_ref();
+    let bold_changed = *first || *last_bold != bold;
+    let italic_changed = *first || *last_italic != italic;
+    let underline_changed = *first || *last_underline != underline;
 
     // For spaces, FG is invisible (no glyph to color), so we never need to emit FG for them.
     // We also don't update last_fg for spaces, so when a real glyph appears next,
@@ -488,6 +497,22 @@ pub fn emit_colourized(
 
     // BG always matters (it fills the cell), so we need it when changed
     let need_bg = bg_changed;
+    let need_style = bold_changed || italic_changed || underline_changed;
+
+    if need_style {
+        if render == Render::Irc {
+            if bold_changed { out.push('\x02'); }
+            if italic_changed { out.push('\x1D'); }
+            if underline_changed { out.push('\x1F'); }
+        } else if !as_preview {
+            if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
+            if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
+            if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
+        }
+        *last_bold = bold;
+        *last_italic = italic;
+        *last_underline = underline;
+    }
 
     if need_fg {
         *last_fg = Some(fg.clone());
@@ -496,8 +521,13 @@ pub fn emit_colourized(
         *last_bg = bg.clone();
     }
 
-    if need_fg || need_bg {
+    if need_fg || need_bg || need_style {
         if as_preview {
+            if need_style {
+                if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
+                if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
+                if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
+            }
             if let Some(bg_c) = &bg {
                 out.push_str("\x1b[");
                 let mut semi = false;
@@ -552,10 +582,18 @@ pub fn emit_colourized(
                         write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                     }
                 }
+            } else if need_style {
+                // If only style changed but not colors, we already handled it above, 
+                // but we need to make sure we don't fall through to nothing.
             }
         } else {
             match render {
                 Render::Ansi | Render::Ansi24 => {
+                    if need_style {
+                        if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
+                        if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
+                        if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
+                    }
                     if let Some(bg_c) = &bg {
                         out.push_str("\x1b[");
                         let mut semi = false;
@@ -636,6 +674,9 @@ pub struct RenderedCell {
     pub fg: [u8; 3],
     pub bg: Option<[u8; 3]>,
     pub inverted: bool,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
 }
 
 #[derive(Clone)]
@@ -689,9 +730,15 @@ pub fn apply_overlays_to_result(
     for (y, row) in base.grid.iter().enumerate() {
         let mut last_fg: Option<Colour> = None;
         let mut last_bg: Option<Colour> = None;
+        let mut last_bold = false;
+        let mut last_italic = false;
+        let mut last_underline = false;
+        let mut first = true;
         let mut alt_last_fg: Option<Colour> = None;
         let mut alt_last_bg: Option<Colour> = None;
-        let mut first = true;
+        let mut alt_last_bold = false;
+        let mut alt_last_italic = false;
+        let mut alt_last_underline = false;
         let mut alt_first = true;
 
         for (x, cell) in row.iter().enumerate() {
@@ -702,11 +749,17 @@ pub fn apply_overlays_to_result(
             let mut ov_char: Option<char> = None;
             let mut ov_fg: Option<[u8; 3]> = None;
             let mut ov_bg: Option<[u8; 3]> = None;
+            let mut ov_bold = false;
+            let mut ov_italic = false;
+            let mut ov_underline = false;
 
             for ov in overlays {
                 if let Some(opt_c) = get_overlay_at(ov, cx, cy) {
                     let ch = opt_c.unwrap_or(' ');
                     ov_char = Some(ch);
+                    ov_bold = ov.bold;
+                    ov_italic = ov.italic;
+                    ov_underline = ov.underline;
                     ov_fg = ov.fg.as_ref().map(|spec| match spec {
                         crate::args::ColorSpec::Rgb(rgb) => *rgb,
                         crate::args::ColorSpec::Index(i) => {
@@ -733,12 +786,12 @@ pub fn apply_overlays_to_result(
                 }
             }
 
-            let (draw_fg_raw, draw_bg_raw, draw_char) = if let Some(ch) = ov_char {
+            let (draw_fg_raw, draw_bg_raw, draw_char, draw_bold, draw_italic, draw_underline) = if let Some(ch) = ov_char {
                 let fg_raw = ov_fg.unwrap_or(cell.fg);
                 let bg_raw = ov_bg.or(Some(cell.bg.unwrap_or([0, 0, 0])));
-                (fg_raw, bg_raw, ch)
+                (fg_raw, bg_raw, ch, ov_bold, ov_italic, ov_underline)
             } else {
-                (cell.fg, cell.bg, cell.char)
+                (cell.fg, cell.bg, cell.char, cell.bold, cell.italic, cell.underline)
             };
 
             let fg_colour = Colour::RGB(draw_fg_raw);
@@ -754,6 +807,12 @@ pub fn apply_overlays_to_result(
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
+                draw_bold,
+                draw_italic,
+                draw_underline,
+                &mut last_bold,
+                &mut last_italic,
+                &mut last_underline,
                 None,
             );
 
@@ -781,6 +840,12 @@ pub fn apply_overlays_to_result(
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,
+                    draw_bold,
+                    draw_italic,
+                    draw_underline,
+                    &mut alt_last_bold,
+                    &mut alt_last_italic,
+                    &mut alt_last_underline,
                     None,
                 );
             }
@@ -2871,12 +2936,18 @@ pub fn render_blocks_smooth(
         let mut alt_first = true;
         let mut last_fg: Option<Colour> = None;
         let mut last_bg: Option<Colour> = None;
+        let mut last_bold = false;
+        let mut last_italic = false;
+        let mut last_underline = false;
         let mut alt_last_fg: Option<Colour> = None;
         let mut alt_last_bg: Option<Colour> = None;
+        let mut alt_last_bold = false;
+        let mut alt_last_italic = false;
+        let mut alt_last_underline = false;
 
         // Pass 1: Collect processed cell data for the row
-        let mut row_cells: Vec<(Colour, Option<Colour>, char)> = Vec::with_capacity(grid_w);
-        let mut alt_row_cells: Vec<(Colour, Option<Colour>, char)> = Vec::with_capacity(grid_w);
+        let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
+        let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
 
         for x in 0..grid_w {
             let idx = y * grid_w + x;
@@ -3045,9 +3116,19 @@ pub fn render_blocks_smooth(
                 fg: final_draw_fg_raw,
                 bg: final_draw_bg_raw,
                 inverted: inv,
+                bold: text_overlay.map(|ov| ov.bold).unwrap_or(false),
+                italic: text_overlay.map(|ov| ov.italic).unwrap_or(false),
+                underline: text_overlay.map(|ov| ov.underline).unwrap_or(false),
             });
 
-            row_cells.push((final_draw_fg.clone(), final_draw_bg.clone(), final_char));
+            row_cells.push((
+                final_draw_fg.clone(),
+                final_draw_bg.clone(),
+                final_char,
+                text_overlay.map(|ov| ov.bold).unwrap_or(false),
+                text_overlay.map(|ov| ov.italic).unwrap_or(false),
+                text_overlay.map(|ov| ov.underline).unwrap_or(false),
+            ));
 
             if args.as_preview {
                 // Helper: derive IRC99 index from raw RGB, respecting chromatic preference
@@ -3110,15 +3191,22 @@ pub fn render_blocks_smooth(
                     }
                 }
 
-                alt_row_cells.push((final_alt_fg, final_alt_bg, alt_final_char));
+                alt_row_cells.push((
+                    final_alt_fg,
+                    final_alt_bg,
+                    alt_final_char,
+                    text_overlay.map(|ov| ov.bold).unwrap_or(false),
+                    text_overlay.map(|ov| ov.italic).unwrap_or(false),
+                    text_overlay.map(|ov| ov.underline).unwrap_or(false),
+                ));
             }
         }
 
         // Pass 2: Emit with lookahead for FG optimization
-        for (i, (fg, bg, ch)) in row_cells.iter().enumerate() {
+        for (i, (fg, bg, ch, bold, italic, underline)) in row_cells.iter().enumerate() {
             // Find next non-space cell's FG for lookahead
             let lookahead = if render == Render::Irc || (args.as_preview) {
-                row_cells[i + 1..].iter().find_map(|(f, _, c)| {
+                row_cells[i + 1..].iter().find_map(|(f, _, c, _, _, _)| {
                     let is_sp = *c == ' ' || *c == '\u{2800}';
                     if !is_sp {
                         Some(f)
@@ -3139,13 +3227,27 @@ pub fn render_blocks_smooth(
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
+                *bold,
+                *italic,
+                *underline,
+                &mut last_bold,
+                &mut last_italic,
+                &mut last_underline,
                 lookahead,
             );
         }
 
-        if args.as_preview {
-            for (i, (fg, bg, ch)) in alt_row_cells.iter().enumerate() {
-                let lookahead = alt_row_cells[i + 1..].iter().find_map(|(f, _, c)| {
+        if args.as_preview || render == Render::Irc {
+            let mut alt_first = true;
+            let mut alt_last_fg: Option<Colour> = None;
+            let mut alt_last_bg: Option<Colour> = None;
+            let mut alt_last_bold = false;
+            let mut alt_last_italic = false;
+            let mut alt_last_underline = false;
+
+            for (i, (fg, bg, ch, bold, italic, underline)) in alt_row_cells.iter().enumerate() {
+                // Find next non-space cell's FG for lookahead
+                let lookahead = alt_row_cells[i + 1..].iter().find_map(|(f, _, c, _, _, _)| {
                     let is_sp = *c == ' ' || *c == '\u{2800}';
                     if !is_sp {
                         Some(f)
@@ -3153,16 +3255,23 @@ pub fn render_blocks_smooth(
                         None
                     }
                 });
+
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
-                    false,
+                    args.as_preview,
                     fg.clone(),
                     bg.clone(),
                     *ch,
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,
+                    *bold,
+                    *italic,
+                    *underline,
+                    &mut alt_last_bold,
+                    &mut alt_last_italic,
+                    &mut alt_last_underline,
                     lookahead,
                 );
             }
@@ -3227,8 +3336,14 @@ pub fn render_braille(
         let mut alt_first = true;
         let mut last_fg = None;
         let mut last_bg = None;
+        let mut last_bold = false;
+        let mut last_italic = false;
+        let mut last_underline = false;
         let mut alt_last_fg = None;
         let mut alt_last_bg = None;
+        let mut alt_last_bold = false;
+        let mut alt_last_italic = false;
+        let mut alt_last_underline = false;
         for x in (0..w).step_by(2) {
             let mut braille = 0x2800;
             let mut counts: HashMap<Colour, usize> = HashMap::new();
@@ -3288,6 +3403,9 @@ pub fn render_braille(
 
             let mut final_bg = None;
             let mut final_ch = std::char::from_u32(braille).unwrap_or(' ');
+            let mut final_bold = false;
+            let mut final_italic = false;
+            let mut final_underline = false;
 
             for ov in &args.overlays {
                 if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
@@ -3308,6 +3426,9 @@ pub fn render_braille(
                     } else {
                         final_ch = ' ';
                     }
+                    final_bold = ov.bold;
+                    final_italic = ov.italic;
+                    final_underline = ov.underline;
                     break;
                 }
             }
@@ -3322,6 +3443,12 @@ pub fn render_braille(
                 &mut first,
                 &mut last_fg,
                 &mut last_bg,
+                final_bold,
+                final_italic,
+                final_underline,
+                &mut last_bold,
+                &mut last_italic,
+                &mut last_underline,
                 None,
             );
 
@@ -3334,6 +3461,9 @@ pub fn render_braille(
 
                 let mut alt_bg = None;
                 let mut alt_ch = std::char::from_u32(braille).unwrap_or(' ');
+                let mut alt_bold = false;
+                let mut alt_italic = false;
+                let mut alt_underline = false;
 
                 for ov in &args.overlays {
                     if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
@@ -3354,6 +3484,9 @@ pub fn render_braille(
                         } else {
                             alt_ch = ' ';
                         }
+                        alt_bold = ov.bold;
+                        alt_italic = ov.italic;
+                        alt_underline = ov.underline;
                         break;
                     }
                 }
@@ -3368,6 +3501,12 @@ pub fn render_braille(
                     &mut alt_first,
                     &mut alt_last_fg,
                     &mut alt_last_bg,
+                    alt_bold,
+                    alt_italic,
+                    alt_underline,
+                    &mut alt_last_bold,
+                    &mut alt_last_italic,
+                    &mut alt_last_underline,
                     None,
                 );
             }

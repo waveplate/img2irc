@@ -3428,6 +3428,30 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
+                            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                        app.reapply_overlays();
+                                    }
+                                }
+                            }
+                            KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                        app.reapply_overlays();
+                                    }
+                                }
+                            }
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let Some(sel) = app.text_selected {
+                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                        app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                        app.reapply_overlays();
+                                    }
+                                }
+                            }
                             KeyCode::Char(c) => {
                                 app.value_edit_buffer.push(c);
                                 // Update overlay text and reapply cheaply (no full re-render)
@@ -3865,16 +3889,26 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         }
                                                     }
 
+                                                    let now = std::time::Instant::now();
+                                                    let is_double = app.last_text_click.map_or(false, |(t, lx, ly)| {
+                                                        now.duration_since(t).as_millis() < 500 && lx == cell_x && ly == cell_y
+                                                    });
+
                                                     if let Some(idx) = found {
-                                                        app.text_selected = Some(idx + 1);
-                                                        app.text_drag_mode = TextDragMode::Moving;
-                                                        app.text_drag_start = Some((cell_x - app.render_args.overlays[idx].x, cell_y - app.render_args.overlays[idx].y));
+                                                        if is_double {
+                                                            app.text_selected = Some(idx + 1);
+                                                            app.value_edit_buffer = app.render_args.overlays[idx].text.clone();
+                                                            app.input_mode = InputMode::TextEdit;
+                                                            app.text_drag_mode = TextDragMode::None;
+                                                            app.last_text_click = None;
+                                                        } else {
+                                                            app.text_selected = Some(idx + 1);
+                                                            app.text_drag_mode = TextDragMode::Moving;
+                                                            app.text_drag_start = Some((cell_x - app.render_args.overlays[idx].x, cell_y - app.render_args.overlays[idx].y));
+                                                            app.last_text_click = Some((now, cell_x, cell_y));
+                                                        }
                                                     } else {
                                                         // Require double-click to create new overlay
-                                                        let now = std::time::Instant::now();
-                                                        let is_double = app.last_text_click.map_or(false, |(t, lx, ly)| {
-                                                            now.duration_since(t).as_millis() < 500 && lx == cell_x && ly == cell_y
-                                                        });
                                                         if is_double {
                                                             app.render_args.overlays.push(crate::args::TextOverlay {
                                                                 text: "".to_string(),
@@ -3885,6 +3919,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                                 fg: None,
                                                                 bg: None,
                                                                 wrap: false,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
                                                             });
                                                             app.text_selected = Some(app.render_args.overlays.len());
                                                             app.reapply_overlays();
@@ -4244,6 +4281,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             fg: None,
                                             bg: None,
                                             wrap: false,
+                                            bold: false,
+                                            italic: false,
+                                            underline: false,
                                         });
                                         app.text_selected = Some(app.render_args.overlays.len());
                                         app.text_list_state.select(app.text_selected);
@@ -4262,9 +4302,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 y: mouse.row,
                             };
                             
-                            if app.text_btn_areas.len() >= 2 {
-                                if app.text_btn_areas[1].contains(pos) {
-                                    // Delete button
+                            if app.text_btn_areas.len() >= 5 {
+                                if app.text_btn_areas[4].contains(pos) {
+                                    // Delete button (index 4)
                                     app.current_tab = 3;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -4281,12 +4321,36 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                 } else if app.text_btn_areas[0].contains(pos) {
-                                    // Wrap button
+                                    // Wrap button (index 0)
                                     app.current_tab = 3;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             app.render_args.overlays[sel - 1].wrap = !app.render_args.overlays[sel - 1].wrap;
                                             app.mark_args_dirty();
+                                        }
+                                    }
+                                } else if app.text_btn_areas[1].contains(pos) {
+                                    // Bold (index 1)
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                            app.reapply_overlays();
+                                        }
+                                    }
+                                } else if app.text_btn_areas[2].contains(pos) {
+                                    // Italic (index 2)
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                            app.reapply_overlays();
+                                        }
+                                    }
+                                } else if app.text_btn_areas[3].contains(pos) {
+                                    // Underline (index 3)
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                            app.reapply_overlays();
                                         }
                                     }
                                 }
@@ -4704,6 +4768,36 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.focus_next_visible_tab(1);
                             }
+                            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.current_tab == 3 {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                            app.reapply_overlays();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.current_tab == 3 {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                            app.reapply_overlays();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.current_tab == 3 {
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                            app.reapply_overlays();
+                                        }
+                                    }
+                                }
+                            }
                             KeyCode::Esc => {
                                 if app.is_optimizing {
                                     app.perform_auto_optimize();
@@ -5050,6 +5144,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     fg: None,
                                                     bg: None,
                                                     wrap: false,
+                                                    bold: false,
+                                                    italic: false,
+                                                    underline: false,
                                                 },
                                             );
                                             app.text_selected =
@@ -6673,7 +6770,8 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(18), // Color picker
         Constraint::Length(3),  // FG/BG color swatches
-        Constraint::Length(3),  // Options (Wrap toggle / Delete button)
+        Constraint::Length(3),  // Options (Wrap toggle / Bold / Italic / Underline)
+        Constraint::Length(3),  // Delete button
         Constraint::Length(8),  // Mini list of overlays
         Constraint::Min(0),     // Instructions / Status
     ])
@@ -6779,26 +6877,60 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
     }
     
-    app.text_btn_areas.clear(); // We use index 0 for Wrap, index 1 for Delete
+    app.text_btn_areas.clear(); 
     
     let has_selection = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
     if has_selection {
-        let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
+        let sel_idx = app.text_selected.unwrap() - 1;
+        let ov = &app.render_args.overlays[sel_idx];
+        
+        // Row 1: Wrap, Bold, Italic, Underline
+        let options_chunks = Layout::horizontal([
+            Constraint::Percentage(25), 
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25)
+        ]).split(chunks[2]);
+        
+        // Wrap
         let wrap_style = if ov.wrap { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Gray) };
-        let options_chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(chunks[2]);
-        
-        let wrap_btn = Block::default().borders(Borders::ALL).style(wrap_style);
-        let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" }).block(wrap_btn).alignment(Alignment::Center);
+        let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" })
+            .block(Block::default().borders(Borders::ALL).border_style(wrap_style))
+            .alignment(Alignment::Center);
         f.render_widget(wrap_p, options_chunks[0]);
-        app.text_btn_areas.push(options_chunks[0]);
+        app.text_btn_areas.push(options_chunks[0]); // Index 0
         
-        let del_btn = Block::default().borders(Borders::ALL).style(Style::default().fg(Color::Red));
-        let del_p = Paragraph::new("Delete").block(del_btn).alignment(Alignment::Center);
-        f.render_widget(del_p, options_chunks[1]);
-        app.text_btn_areas.push(options_chunks[1]);
+        // Bold
+        let bold_style = if ov.bold { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
+        let bold_p = Paragraph::new(" B ")
+            .block(Block::default().borders(Borders::ALL).border_style(bold_style))
+            .alignment(Alignment::Center);
+        f.render_widget(bold_p, options_chunks[1]);
+        app.text_btn_areas.push(options_chunks[1]); // Index 1
+        
+        // Italic
+        let italic_style = if ov.italic { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
+        let italic_p = Paragraph::new(" I ")
+            .block(Block::default().borders(Borders::ALL).border_style(italic_style))
+            .alignment(Alignment::Center);
+        f.render_widget(italic_p, options_chunks[2]);
+        app.text_btn_areas.push(options_chunks[2]); // Index 2
+        
+        // Underline
+        let underline_style = if ov.underline { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
+        let underline_p = Paragraph::new(" U ")
+            .block(Block::default().borders(Borders::ALL).border_style(underline_style))
+            .alignment(Alignment::Center);
+        f.render_widget(underline_p, options_chunks[3]);
+        app.text_btn_areas.push(options_chunks[3]); // Index 3
+        
+        // Row 2: Delete
+        let del_btn = Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Red));
+        let del_p = Paragraph::new("Delete Overlay").block(del_btn).alignment(Alignment::Center);
+        f.render_widget(del_p, chunks[3]);
+        app.text_btn_areas.push(chunks[3]); // Index 4
     } else {
-        app.text_btn_areas.push(Rect::default());
-        app.text_btn_areas.push(Rect::default());
+        for _ in 0..5 { app.text_btn_areas.push(Rect::default()); }
     }
 
     // Mini-list of overlays
@@ -6816,11 +6948,11 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     }
     let list_block = Block::default().borders(Borders::ALL).title(" Overlays ");
     let list = List::new(items).block(list_block);
-    f.render_stateful_widget(list, chunks[3], &mut app.text_list_state);
+    f.render_stateful_widget(list, chunks[4], &mut app.text_list_state);
     // Note: We don't update text_list_area here because we want mouse to work on image
 
     let mut status_text = String::from("Instructions:\n\
-    - Double-click canvas: Create Text\n\
+    - Double-click canvas: Create Text / Start Editing\n\
     - Left Click: Select FG / Right Click: Select BG\n\
     - Drag Box: Move / Drag Corner: Resize\n\
     - Type: Enter Text / Esc: Deselect");
@@ -6833,11 +6965,11 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     }
     
     let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst_p, chunks[4]);
+    f.render_widget(inst_p, chunks[5]);
     
     // Store rects for mouse events later
     app.color_picker_area = cp_rect;
-    app.text_list_area = chunks[3]; 
+    app.text_list_area = chunks[4]; 
 }
 
 fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
