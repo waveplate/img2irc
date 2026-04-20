@@ -602,22 +602,22 @@ pub fn emit_colourized(
 
                     out.push('\x03');
                     match effective_fg {
-                        Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
+                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
                         Colour::RGB([r, g, b]) => {
                             let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
                             let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                            write!(out, "{:02}", idx).unwrap()
+                            write!(out, "{}", idx).unwrap()
                         }
                     }
 
                     if let Some(bg_c) = &bg {
                         out.push(',');
                         match bg_c {
-                            Colour::Index(i) => write!(out, "{:02}", i).unwrap(),
+                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
                             Colour::RGB([r, g, b]) => {
                                 let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
                                 let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                                write!(out, "{:02}", idx).unwrap()
+                                write!(out, "{}", idx).unwrap()
                             }
                         }
                     }
