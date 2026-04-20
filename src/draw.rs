@@ -3024,7 +3024,7 @@ pub fn render_blocks_smooth(
         grid_out.push(row_vec);
     }
     
-    let longest_line_bytes = if args.as_preview {
+    let longest_line_bytes = if args.as_preview && render == Render::Irc {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
@@ -3032,7 +3032,7 @@ pub fn render_blocks_smooth(
     
     RenderResult {
         content: out.trim_end_matches('\n').into(),
-        save_content: if args.as_preview {
+        save_content: if args.as_preview && render == Render::Irc {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
             None
@@ -3227,7 +3227,7 @@ pub fn render_braille(
         }
     }
     
-    let longest_line_bytes = if args.as_preview {
+    let longest_line_bytes = if args.as_preview && render == Render::Irc {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
@@ -3235,7 +3235,7 @@ pub fn render_braille(
     
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
-        save_content: if args.as_preview {
+        save_content: if args.as_preview && render == Render::Irc {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
             None
