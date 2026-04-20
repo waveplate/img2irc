@@ -5685,12 +5685,13 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                         // Top border
                         if ry > 0 && ry > app.output_area.y {
                             let top_y = ry.saturating_sub(1);
-                            for dx in 0..rw {
-                                let bx = rx + dx;
+                            let start_bx = rx.saturating_sub(1);
+                            let end_bx = rx + rw;
+                            for bx in start_bx..=end_bx {
                                 if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
                                     if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, top_y)) {
                                         cell.set_style(border_style);
-                                        cell.set_char(if dx == 0 { '┌' } else if dx == rw - 1 { '┐' } else { '─' });
+                                        cell.set_char(if bx == start_bx { '┌' } else if bx == end_bx { '┐' } else { '─' });
                                     }
                                 }
                             }
@@ -5698,12 +5699,13 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                         // Bottom border
                         let bot_y = ry + rh;
                         if bot_y < app.output_area.y + app.output_area.height {
-                            for dx in 0..rw {
-                                let bx = rx + dx;
+                            let start_bx = rx.saturating_sub(1);
+                            let end_bx = rx + rw;
+                            for bx in start_bx..=end_bx {
                                 if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
                                     if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, bot_y)) {
                                         cell.set_style(border_style);
-                                        cell.set_char(if dx == 0 { '└' } else if dx == rw - 1 { '┘' } else { '─' });
+                                        cell.set_char(if bx == start_bx { '└' } else if bx == end_bx { '┘' } else { '─' });
                                     }
                                 }
                             }
