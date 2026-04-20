@@ -2895,17 +2895,29 @@ pub fn render_blocks_smooth(
             row_cells.push((final_draw_fg.clone(), final_draw_bg.clone(), final_char));
 
             if args.as_preview {
+                // Helper: derive IRC99 index from raw RGB, respecting chromatic preference
+                let irc_colour_from_rgb = |rgb: [u8; 3]| -> Colour {
+                    let col = make_rgb_u32(&rgb);
+                    let idx = if !is_near_grayscale(col, args.grayscale_tolerance) {
+                        nearest_distinctly_chromatic_hex_colour(col, &IRC99, args.grayscale_tolerance)
+                            .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
+                    } else {
+                        nearest_hex_colour_fast(col, &IRC99)
+                    };
+                    Colour::Index(idx)
+                };
+
                 let (alt_fg, alt_bg) = if overlay.is_some() {
                     (draw_fg.clone(), draw_bg.clone())
                 } else if inv {
                     (
-                        data.alt_bg_col.clone().unwrap_or(Colour::Index(0)),
-                        data.alt_fg_col.clone(),
+                        data.alt_bg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.bg)),
+                        Some(data.alt_fg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.fg))),
                     )
                 } else {
                     (
-                        data.alt_fg_col.clone().unwrap_or(Colour::Index(0)),
-                        data.alt_bg_col.clone(),
+                        data.alt_fg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.fg)),
+                        Some(data.alt_bg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.bg))),
                     )
                 };
                 // Compute uniform-glyph replacement for the IRC alt output
@@ -3194,7 +3206,7 @@ pub fn render_braille(
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
-                    args.as_preview,
+                    false,
                     alt_fg,
                     alt_bg,
                     alt_ch,
