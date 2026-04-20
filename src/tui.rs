@@ -998,6 +998,8 @@ struct App {
     rx_result: mpsc::Receiver<(draw::RenderResult, Arc<font::GlyphStore>)>,
     cached_render: String,
     cached_result: Option<draw::RenderResult>,
+    /// Raw result from render thread (no overlays applied)
+    base_render_result: Option<draw::RenderResult>,
     is_rendering: Arc<AtomicBool>,
     render_tick: usize,
     dragged_control: Option<usize>,
@@ -1196,6 +1198,7 @@ impl App {
             rx_result,
             cached_render: String::new(),
             cached_result: None,
+            base_render_result: None,
             is_rendering: Arc::new(AtomicBool::new(true)),
             render_tick: 0,
             dragged_control: None,
@@ -1828,6 +1831,27 @@ impl App {
         self.last_args_change = Some(Instant::now());
     }
 
+    /// Re-apply text overlays to the cached base render result.
+    /// This is O(grid_cells) — safe to call on every keypress without triggering a re-render.
+    fn reapply_overlays(&mut self) {
+        if let Some(base) = &self.base_render_result {
+            let render = match self.render_mode_idx {
+                0 => Render::Irc,
+                1 => Render::Ansi,
+                _ => Render::Ansi24,
+            };
+            let overlayed = draw::apply_overlays_to_result(
+                base,
+                &self.render_args.overlays,
+                render,
+                true,
+                self.grayscale_tolerance as u8,
+            );
+            self.cached_render = overlayed.content.clone();
+            self.cached_result = Some(overlayed);
+        }
+    }
+
     fn perform_auto_optimize(&mut self) {
         if self.is_optimizing {
             self.is_optimizing = false;
@@ -2257,7 +2281,11 @@ impl App {
         let new_flag = Arc::new(AtomicBool::new(false));
         self.current_cancel_flag = new_flag.clone();
 
-        let _ = self.tx_args.send((self.render_args.clone(), new_flag));
+        // Strip overlays before sending to render thread — overlays are applied as a
+        // post-process in the display layer, so typing text never triggers a full re-render.
+        let mut args_for_render = self.render_args.clone();
+        args_for_render.overlays = Vec::new();
+        let _ = self.tx_args.send((args_for_render, new_flag));
         log::info!(
             "Flushing render args: width={}, scale={:?}, font={:?}",
             self.width,
@@ -3137,8 +3165,22 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             if result.content == "Cancelled" {
                 continue;
             }
-            app.cached_render = result.content.clone();
-            app.cached_result = Some(result);
+            // Store the raw result (no overlays) and apply overlays as a fast post-process
+            let render = match app.render_mode_idx {
+                0 => Render::Irc,
+                1 => Render::Ansi,
+                _ => Render::Ansi24,
+            };
+            let overlayed = draw::apply_overlays_to_result(
+                &result,
+                &app.render_args.overlays,
+                render,
+                true, // as_preview
+                app.grayscale_tolerance as u8,
+            );
+            app.cached_render = overlayed.content.clone();
+            app.cached_result = Some(overlayed);
+            app.base_render_result = Some(result);
             app.arc_glyphs = Some(glyphs);
         }
 
@@ -3341,14 +3383,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         match key.code {
                             KeyCode::Enter => {
                                 if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    // Add newline — update overlay and reapply cheaply
                                     app.value_edit_buffer.push('\n');
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             app.render_args.overlays[sel - 1].text =
                                                 app.value_edit_buffer.clone();
+                                            app.reapply_overlays();
                                         }
                                     }
                                 } else {
+                                    // Commit text — mark dirty for a real re-render
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             app.render_args.overlays[sel - 1].text =
@@ -3361,6 +3406,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Esc => {
+                                // Commit text — mark dirty for a real re-render
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
@@ -3373,19 +3419,23 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Backspace => {
                                 app.value_edit_buffer.pop();
+                                // Update overlay text and reapply cheaply (no full re-render)
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
                                             app.value_edit_buffer.clone();
+                                        app.reapply_overlays();
                                     }
                                 }
                             }
                             KeyCode::Char(c) => {
                                 app.value_edit_buffer.push(c);
+                                // Update overlay text and reapply cheaply (no full re-render)
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.render_args.overlays[sel - 1].text =
                                             app.value_edit_buffer.clone();
+                                        app.reapply_overlays();
                                     }
                                 }
                             }
@@ -3783,18 +3833,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 let inner_width =
                                                     app.output_area.width.saturating_sub(2);
                                                 let row_len = row.len() as u16;
-                                                let pad_x = if inner_width > row_len * 2 {
-                                                    (inner_width - row_len * 2) / 2
+                                                let pad_x = if inner_width > row_len {
+                                                    (inner_width - row_len) / 2
                                                 } else {
                                                     0
                                                 };
                                                 let start_x = app.output_area.x + 1 + pad_x;
                                                 if mouse.column >= start_x
-                                                    && mouse.column < start_x + row_len * 2
+                                                    && mouse.column < start_x + row_len
                                                 {
                                                     let content_x =
                                                         (mouse.column - start_x) as usize;
-                                                    let cell_x = (content_x / 2) as i32;
+                                                    let cell_x = content_x as i32;
                                                     let cell_y = content_y as i32;
 
                                                     let mut found = None;
@@ -3837,6 +3887,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                                 wrap: false,
                                                             });
                                                             app.text_selected = Some(app.render_args.overlays.len());
+                                                            app.reapply_overlays();
                                                             app.text_drag_mode = TextDragMode::Sizing;
                                                             app.text_drag_start = Some((cell_x, cell_y));
                                                             app.last_text_click = None;
@@ -4253,7 +4304,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             let row = &res.grid[content_y];
                                             let inner_width = app.output_area.width.saturating_sub(2);
                                             let row_len = row.len() as u16;
-                                            let pad_x = if inner_width > row_len * 2 { (inner_width - row_len * 2) / 2 } else { 0 };
+                                            let pad_x = if inner_width > row_len { (inner_width - row_len) / 2 } else { 0 };
                                             let start_x = app.output_area.x + 1 + pad_x;
                                             
                                             if mouse.column >= start_x {
@@ -4262,7 +4313,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 
                                                 if let Some(sel) = app.text_selected {
                                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                                        let cell_x = c_x / 2;
+                                                        let cell_x = c_x;
                                                         let cell_y = c_y;
                                                         
                                                         let ov = &mut app.render_args.overlays[sel - 1];
@@ -4271,12 +4322,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             if let Some((sx, sy)) = app.text_drag_start {
                                                                 ov.x = cell_x - sx;
                                                                 ov.y = cell_y - sy;
+                                                                app.reapply_overlays();
                                                             }
                                                         } else if app.text_drag_mode == TextDragMode::Sizing {
                                                             // Resize
                                                             if let Some((sx, sy)) = app.text_drag_start {
                                                                 ov.w = (cell_x - sx).max(0);
                                                                 ov.h = (cell_y - sy).max(0);
+                                                                app.reapply_overlays();
                                                             }
                                                         }
                                                     }
@@ -4550,7 +4603,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                         KeyCode::Char(c) => {
                                             ov.text.push(c);
-                                            app.mark_args_dirty();
+                                            app.reapply_overlays();
                                         }
                                         KeyCode::Esc => {
                                             app.text_selected = None;
@@ -4815,23 +4868,23 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             match app.text_field_focus {
                                                 TextFieldFocus::X => {
                                                     app.render_args.overlays[sel - 1].x -= 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::Y => {
                                                     app.render_args.overlays[sel - 1].y -= 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::W => {
                                                     app.render_args.overlays[sel - 1].w =
                                                         (app.render_args.overlays[sel - 1].w - 1)
                                                             .max(0);
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::H => {
                                                     app.render_args.overlays[sel - 1].h =
                                                         (app.render_args.overlays[sel - 1].h - 1)
                                                             .max(0);
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 _ => {}
                                             }
@@ -4895,19 +4948,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             match app.text_field_focus {
                                                 TextFieldFocus::X => {
                                                     app.render_args.overlays[sel - 1].x += 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::Y => {
                                                     app.render_args.overlays[sel - 1].y += 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::W => {
                                                     app.render_args.overlays[sel - 1].w += 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 TextFieldFocus::H => {
                                                     app.render_args.overlays[sel - 1].h += 1;
-                                                    app.mark_args_dirty();
+                                                    app.reapply_overlays();
                                                 }
                                                 _ => {}
                                             }
@@ -5597,8 +5650,8 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             let grid_cols = app.cached_result.as_ref().map_or(0u16, |r| {
                 r.grid.first().map_or(0, |row| row.len()) as u16
             });
-            let pad_x = if inner_width > grid_cols * 2 {
-                (inner_width - grid_cols * 2) / 2
+            let pad_x = if inner_width > grid_cols {
+                (inner_width - grid_cols) / 2
             } else {
                 0
             };
@@ -5616,10 +5669,10 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                     let box_w = if ov.w > 0 { ov.w } else { text_cell_w };
                     let box_h = if ov.h > 0 { ov.h } else { text_h };
 
-                    // Position in terminal coordinates (each cell = 2 columns)
-                    let rx = app.output_area.x + 1 + pad_x + (ov.x as u16) * 2;
+                    // Position in terminal coordinates (each cell = 1 column)
+                    let rx = app.output_area.x + 1 + pad_x + (ov.x as u16);
                     let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
-                    let rw = (box_w as u16) * 2;
+                    let rw = box_w as u16;
                     let rh = box_h as u16;
 
                     if rw > 0 && rh > 0 {

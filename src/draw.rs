@@ -638,6 +638,7 @@ pub struct RenderedCell {
     pub inverted: bool,
 }
 
+#[derive(Clone)]
 pub struct RenderResult {
     pub content: String,
     pub save_content: Option<String>,
@@ -665,6 +666,160 @@ impl From<&str> for RenderResult {
             initial_time: std::time::Duration::ZERO,
             fix_disc_time: None,
         }
+    }
+}
+
+/// Re-emit content/save_content from the cached grid with overlays applied.
+/// This is O(grid_cells) and never re-runs image processing — safe to call on every keystroke.
+pub fn apply_overlays_to_result(
+    base: &RenderResult,
+    overlays: &[crate::args::TextOverlay],
+    render: Render,
+    as_preview: bool,
+    grayscale_tolerance: u8,
+) -> RenderResult {
+    if base.grid.is_empty() || overlays.is_empty() {
+        // Nothing to apply; just return a clone with corrected content
+        return base.clone();
+    }
+
+    let mut content = String::new();
+    let mut alt_out = String::new();
+
+    for (y, row) in base.grid.iter().enumerate() {
+        let mut last_fg: Option<Colour> = None;
+        let mut last_bg: Option<Colour> = None;
+        let mut alt_last_fg: Option<Colour> = None;
+        let mut alt_last_bg: Option<Colour> = None;
+        let mut first = true;
+        let mut alt_first = true;
+
+        for (x, cell) in row.iter().enumerate() {
+            let cx = x as i32;
+            let cy = y as i32;
+
+            // Check if any overlay covers this cell
+            let mut ov_char: Option<char> = None;
+            let mut ov_fg: Option<[u8; 3]> = None;
+            let mut ov_bg: Option<[u8; 3]> = None;
+
+            for ov in overlays {
+                if let Some(opt_c) = get_overlay_at(ov, cx, cy) {
+                    let ch = opt_c.unwrap_or(' ');
+                    ov_char = Some(ch);
+                    ov_fg = ov.fg.as_ref().map(|spec| match spec {
+                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
+                        crate::args::ColorSpec::Index(i) => {
+                            let palette = match render {
+                                Render::Irc => &IRC99[..],
+                                _ => &ANSI256[..],
+                            };
+                            let hex = if (*i as usize) < palette.len() { palette[*i as usize] } else { 0xFFFFFF };
+                            [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
+                        }
+                    });
+                    ov_bg = ov.bg.as_ref().map(|spec| match spec {
+                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
+                        crate::args::ColorSpec::Index(i) => {
+                            let palette = match render {
+                                Render::Irc => &IRC99[..],
+                                _ => &ANSI256[..],
+                            };
+                            let hex = if (*i as usize) < palette.len() { palette[*i as usize] } else { 0x000000 };
+                            [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
+                        }
+                    });
+                    break;
+                }
+            }
+
+            let (draw_fg_raw, draw_bg_raw, draw_char) = if let Some(ch) = ov_char {
+                let fg_raw = ov_fg.unwrap_or(cell.fg);
+                let bg_raw = ov_bg.or(Some(cell.bg.unwrap_or([0, 0, 0])));
+                (fg_raw, bg_raw, ch)
+            } else {
+                (cell.fg, cell.bg, cell.char)
+            };
+
+            let fg_colour = Colour::RGB(draw_fg_raw);
+            let bg_colour = draw_bg_raw.map(Colour::RGB);
+
+            emit_colourized(
+                &mut content,
+                render,
+                as_preview,
+                fg_colour.clone(),
+                bg_colour.clone(),
+                draw_char,
+                &mut first,
+                &mut last_fg,
+                &mut last_bg,
+                None,
+            );
+
+            if as_preview && render == Render::Irc {
+                // IRC alt output: quantize RGB → IRC99
+                let irc_colour_from_rgb = |rgb: [u8; 3]| -> Colour {
+                    let col = make_rgb_u32(&rgb);
+                    let idx = if !is_near_grayscale(col, grayscale_tolerance) {
+                        nearest_distinctly_chromatic_hex_colour(col, &IRC99, grayscale_tolerance)
+                            .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
+                    } else {
+                        nearest_hex_colour_fast(col, &IRC99)
+                    };
+                    Colour::Index(idx)
+                };
+                let alt_fg = irc_colour_from_rgb(draw_fg_raw);
+                let alt_bg = draw_bg_raw.map(|rgb| irc_colour_from_rgb(rgb));
+                emit_colourized(
+                    &mut alt_out,
+                    Render::Irc,
+                    false,
+                    alt_fg,
+                    alt_bg,
+                    draw_char,
+                    &mut alt_first,
+                    &mut alt_last_fg,
+                    &mut alt_last_bg,
+                    None,
+                );
+            }
+        }
+
+        let end_seq = match render {
+            Render::Ansi | Render::Ansi24 => "\x1b[0m\n",
+            Render::Irc => "\x0f\n",
+        };
+        content.push_str(end_seq);
+        if as_preview && render == Render::Irc {
+            alt_out.push_str("\x0f\n");
+        }
+    }
+
+    let content = content.trim_end_matches('\n').to_string();
+    let save_content = if as_preview && render == Render::Irc {
+        Some(alt_out.trim_end_matches('\n').to_string())
+    } else {
+        None
+    };
+
+    let longest_line_bytes = if let Some(ref s) = save_content {
+        s.lines().map(|l| l.len()).max().unwrap_or(0)
+    } else {
+        content.lines().map(|l| l.len()).max().unwrap_or(0)
+    };
+
+    RenderResult {
+        content,
+        save_content,
+        grid: base.grid.clone(),
+        error_count: base.error_count,
+        total_pixels: base.total_pixels,
+        dynamic_scaling_count: base.dynamic_scaling_count,
+        score: base.score,
+        longest_line_bytes,
+        initial_time: base.initial_time,
+        fix_disc_time: base.fix_disc_time,
     }
 }
 
