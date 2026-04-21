@@ -536,11 +536,12 @@ pub fn emit_colourized(
                             nearest_hex_colour_fast(col, &IRC99) as usize
                         }
                     };
-                    write!(out, "\x03{:02},{:02}", fg_idx, bg_idx).unwrap();
+                    write!(out, "\x03{},{}", fg_idx, bg_idx).unwrap();
                 } else {
-                    write!(out, "\x03{:02}", fg_idx).unwrap();
+                    write!(out, "\x03{}", fg_idx).unwrap();
                 }
                 *last_fg = Some(effective_fg.clone());
+                *last_bg = bg.clone();
             }
         } else {
             // ANSI / Preview Path: Consolidated escape sequences
@@ -684,14 +685,11 @@ pub fn apply_overlays_to_result(
         let mut alt_last_underline = false;
         let mut alt_first = true;
 
-        if render == Render::Irc && !as_preview {
-            content.push_str("\x0f");
-        } else {
+        if render != Render::Irc || as_preview {
             content.push_str("\x1b[0m");
         }
-        if as_preview && render == Render::Irc {
-            alt_out.push_str("\x0f");
-        }
+        // IRC newlines reset formatting implicitly, no need for \x0f at start of line.
+        // alt_out (IRC) also doesn't need a leading reset.
 
         for (x, cell) in row.iter().enumerate() {
             let cx = x as i32;
@@ -2901,13 +2899,8 @@ pub fn render_blocks_smooth(
         let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
         let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
 
-        if render == Render::Irc && !args.as_preview {
-            out.push_str("\x0f");
-        } else {
+        if render != Render::Irc || args.as_preview {
             out.push_str("\x1b[0m");
-        }
-        if args.as_preview && render == Render::Irc {
-            alt_out.push_str("\x0f");
         }
 
         for x in 0..grid_w {
@@ -3306,13 +3299,8 @@ pub fn render_braille(
         let mut alt_last_italic = false;
         let mut alt_last_underline = false;
 
-        if render == Render::Irc && !args.as_preview {
-            out.push_str("\x0f");
-        } else {
+        if render != Render::Irc || args.as_preview {
             out.push_str("\x1b[0m");
-        }
-        if args.as_preview {
-            alt_out.push_str("\x0f");
         }
 
         for x in (0..w).step_by(2) {
