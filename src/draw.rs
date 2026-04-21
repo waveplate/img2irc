@@ -684,7 +684,14 @@ pub fn apply_overlays_to_result(
         let mut alt_last_underline = false;
         let mut alt_first = true;
 
-        content.push_str("\x1b[0m");
+        if render == Render::Irc {
+            content.push_str("\x0f");
+        } else {
+            content.push_str("\x1b[0m");
+        }
+        if as_preview && render == Render::Irc {
+            alt_out.push_str("\x0f");
+        }
 
         for (x, cell) in row.iter().enumerate() {
             let cx = x as i32;
@@ -2894,7 +2901,11 @@ pub fn render_blocks_smooth(
         let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
         let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
 
-        out.push_str("\x1b[0m");
+        if render == Render::Irc {
+            out.push_str("\x0f");
+        } else {
+            out.push_str("\x1b[0m");
+        }
 
         for x in 0..grid_w {
             let idx = y * grid_w + x;
@@ -3292,7 +3303,11 @@ pub fn render_braille(
         let mut alt_last_italic = false;
         let mut alt_last_underline = false;
 
-        out.push_str("\x1b[0m");
+        if render == Render::Irc {
+            out.push_str("\x0f");
+        } else {
+            out.push_str("\x1b[0m");
+        }
 
         for x in (0..w).step_by(2) {
             let mut braille = 0x2800;

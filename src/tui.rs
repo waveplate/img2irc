@@ -6448,19 +6448,12 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
         //let max_bytes = stats_content.lines().map(|l| l.len()).max().unwrap_or(0);
 
         // also get the index of the longest line
-        let longest_line_idx = stats_content
+        let (longest_line_idx, max_bytes) = stats_content
             .lines()
             .enumerate()
-            .max_by_key(|(_, line)| line.len())
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
-
-        // get the length of the longest line
-        let max_bytes = stats_content
-            .lines()
-            .nth(longest_line_idx)
-            .map(|l| l.len())
-            .unwrap_or(0);
+            .map(|(i, l)| (i, l.len()))
+            .max_by_key(|&(_, len)| len)
+            .unwrap_or((0, 0));
 
         let width_chars = app
             .cached_result
