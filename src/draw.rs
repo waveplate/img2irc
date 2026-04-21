@@ -582,6 +582,8 @@ pub fn emit_colourized(
                         write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                     }
                 }
+            } else if bg_changed && bg.is_none() {
+                out.push_str("\x1b[49m");
             } else if need_style {
                 // If only style changed but not colors, we already handled it above, 
                 // but we need to make sure we don't fall through to nothing.
@@ -627,6 +629,8 @@ pub fn emit_colourized(
                                 write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
                             }
                         }
+                    } else if bg_changed && bg.is_none() {
+                        out.push_str("\x1b[49m");
                     }
                 }
                 Render::Irc => {
