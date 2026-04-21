@@ -684,7 +684,7 @@ pub fn apply_overlays_to_result(
         let mut alt_last_underline = false;
         let mut alt_first = true;
 
-        if render == Render::Irc {
+        if render == Render::Irc && !as_preview {
             content.push_str("\x0f");
         } else {
             content.push_str("\x1b[0m");
@@ -2901,10 +2901,13 @@ pub fn render_blocks_smooth(
         let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
         let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
 
-        if render == Render::Irc {
+        if render == Render::Irc && !args.as_preview {
             out.push_str("\x0f");
         } else {
             out.push_str("\x1b[0m");
+        }
+        if args.as_preview && render == Render::Irc {
+            alt_out.push_str("\x0f");
         }
 
         for x in 0..grid_w {
@@ -3217,7 +3220,7 @@ pub fn render_blocks_smooth(
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
-                    args.as_preview,
+                    false,
                     fg.clone(),
                     bg.clone(),
                     *ch,
@@ -3303,10 +3306,13 @@ pub fn render_braille(
         let mut alt_last_italic = false;
         let mut alt_last_underline = false;
 
-        if render == Render::Irc {
+        if render == Render::Irc && !args.as_preview {
             out.push_str("\x0f");
         } else {
             out.push_str("\x1b[0m");
+        }
+        if args.as_preview {
+            alt_out.push_str("\x0f");
         }
 
         for x in (0..w).step_by(2) {
