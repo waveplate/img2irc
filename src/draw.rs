@@ -501,12 +501,26 @@ pub fn emit_colourized(
 
     if need_fg || need_bg || need_style {
         if render == Render::Irc && !as_preview {
-            // IRC Path: Styles are toggled, colors are absolute
+            // IRC Path: Styles are toggled, colors are absolute.
+            // Newlines reset style/color state in most IRC clients.
             if need_style {
-                if bold_changed { out.push('\x02'); }
-                if italic_changed { out.push('\x1D'); }
-                if underline_changed { out.push('\x1F'); }
+                if *first {
+                    // Start of line: assume all styles are OFF.
+                    // Only toggle if we want them ON.
+                    if bold { out.push('\x02'); }
+                    if italic { out.push('\x1D'); }
+                    if underline { out.push('\x1F'); }
+                } else {
+                    // Middle of line: toggle if state changed.
+                    if bold_changed { out.push('\x02'); }
+                    if italic_changed { out.push('\x1D'); }
+                    if underline_changed { out.push('\x1F'); }
+                }
+                *last_bold = bold;
+                *last_italic = italic;
+                *last_underline = underline;
             }
+
             if need_fg || need_bg {
                 let effective_fg = if is_space {
                     lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
@@ -528,18 +542,28 @@ pub fn emit_colourized(
                         }
                     }
                 };
-                if let Some(bg_c) = &bg {
-                    let bg_idx = match bg_c {
-                        Colour::Index(i) => *i as usize,
-                        Colour::RGB(rgb) => {
-                            let col = make_rgb_u32(rgb);
-                            nearest_hex_colour_fast(col, &IRC99) as usize
-                        }
-                    };
-                    write!(out, "\x03{},{}", fg_idx, bg_idx).unwrap();
-                } else {
+
+                if *first || need_bg {
+                    // If it's the first char or BG changed, we MUST specify BG if it exists.
+                    if let Some(bg_c) = &bg {
+                        let bg_idx = match bg_c {
+                            Colour::Index(i) => *i as usize,
+                            Colour::RGB(rgb) => {
+                                let col = make_rgb_u32(rgb);
+                                nearest_hex_colour_fast(col, &IRC99) as usize
+                            }
+                        };
+                        write!(out, "\x03{},{}", fg_idx, bg_idx).unwrap();
+                    } else {
+                        write!(out, "\x03{}", fg_idx).unwrap();
+                    }
+                } else if need_fg {
+                    // If only FG changed, and BG is the same as before, 
+                    // we only emit FG. (Note: Some clients might reset BG, 
+                    // but the user explicitly requested this optimization).
                     write!(out, "\x03{}", fg_idx).unwrap();
                 }
+
                 *last_fg = Some(effective_fg.clone());
                 *last_bg = bg.clone();
             }
