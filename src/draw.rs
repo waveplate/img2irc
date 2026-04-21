@@ -499,176 +499,115 @@ pub fn emit_colourized(
     let need_bg = bg_changed;
     let need_style = bold_changed || italic_changed || underline_changed;
 
-    if need_style {
-        if render == Render::Irc {
-            if bold_changed { out.push('\x02'); }
-            if italic_changed { out.push('\x1D'); }
-            if underline_changed { out.push('\x1F'); }
-        } else if !as_preview {
-            if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
-            if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
-            if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
+    if need_fg || need_bg || need_style {
+        if render == Render::Irc && !as_preview {
+            // IRC Path: Styles are toggled, colors are absolute
+            if need_style {
+                if bold_changed { out.push('\x02'); }
+                if italic_changed { out.push('\x1D'); }
+                if underline_changed { out.push('\x1F'); }
+            }
+            if need_fg || need_bg {
+                let effective_fg = if is_space {
+                    lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
+                } else {
+                    &fg
+                };
+                
+                let grayscale_tolerance = 5;
+                
+                let fg_idx = match effective_fg {
+                    Colour::Index(i) => *i as usize,
+                    Colour::RGB(rgb) => {
+                        let col = make_rgb_u32(rgb);
+                        if !is_near_grayscale(col, grayscale_tolerance) {
+                            nearest_distinctly_chromatic_hex_colour(col, &IRC99, grayscale_tolerance)
+                                .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99)) as usize
+                        } else {
+                            nearest_hex_colour_fast(col, &IRC99) as usize
+                        }
+                    }
+                };
+                if let Some(bg_c) = &bg {
+                    let bg_idx = match bg_c {
+                        Colour::Index(i) => *i as usize,
+                        Colour::RGB(rgb) => {
+                            let col = make_rgb_u32(rgb);
+                            nearest_hex_colour_fast(col, &IRC99) as usize
+                        }
+                    };
+                    write!(out, "\x03{:02},{:02}", fg_idx, bg_idx).unwrap();
+                } else {
+                    write!(out, "\x03{:02}", fg_idx).unwrap();
+                }
+                *last_fg = Some(effective_fg.clone());
+            }
+        } else {
+            // ANSI / Preview Path: Consolidated escape sequences
+            out.push_str("\x1b[");
+            let mut parts = Vec::new();
+
+            if bold_changed { parts.push(if bold { "1".to_string() } else { "22".to_string() }); }
+            if italic_changed { parts.push(if italic { "3".to_string() } else { "23".to_string() }); }
+            if underline_changed { parts.push(if underline { "4".to_string() } else { "24".to_string() }); }
+
+            if need_fg {
+                let [r, g, b] = match fg {
+                    Colour::RGB(rgb) => rgb,
+                    Colour::Index(i) => {
+                        if as_preview || render == Render::Ansi24 {
+                            let pal: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                            unpack_rgb(pal[i as usize])
+                        } else {
+                            [0,0,0]
+                        }
+                    }
+                };
+                if as_preview || render == Render::Ansi24 {
+                    parts.push(format!("38;2;{};{};{}", r, g, b));
+                } else {
+                    if let Colour::Index(i) = fg {
+                        parts.push(format!("38;5;{}", i));
+                    }
+                }
+                *last_fg = Some(fg.clone());
+            }
+
+            if bg_changed {
+                if let Some(bg_c) = &bg {
+                    let [r, g, b] = match bg_c {
+                        Colour::RGB(rgb) => *rgb,
+                        Colour::Index(i) => {
+                            if as_preview || render == Render::Ansi24 {
+                                let pal: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                                unpack_rgb(pal[*i as usize])
+                            } else {
+                                [0,0,0]
+                            }
+                        }
+                    };
+                    if as_preview || render == Render::Ansi24 {
+                        parts.push(format!("48;2;{};{};{}", r, g, b));
+                    } else {
+                        if let Colour::Index(i) = bg_c {
+                            parts.push(format!("48;5;{}", i));
+                        }
+                    }
+                } else {
+                    parts.push("49".to_string());
+                }
+                *last_bg = bg.clone();
+            }
+
+            write!(out, "{}m", parts.join(";")).unwrap();
         }
+
         *last_bold = bold;
         *last_italic = italic;
         *last_underline = underline;
     }
-
-    if need_fg {
-        *last_fg = Some(fg.clone());
-    }
-    if need_bg {
-        *last_bg = bg.clone();
-    }
-
-    if need_fg || need_bg || need_style {
-        if as_preview {
-            if need_style {
-                if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
-                if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
-                if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
-            }
-            if let Some(bg_c) = &bg {
-                out.push_str("\x1b[");
-                let mut semi = false;
-
-                if need_fg {
-                    match fg {
-                        Colour::Index(i) => {
-                            let [r, g, b] = if render == Render::Irc {
-                                crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
-                            } else {
-                                crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
-                            };
-                            write!(out, "38;2;{};{};{}", r, g, b).unwrap()
-                        },
-                        Colour::RGB([r, g, b]) => {
-                            write!(out, "38;2;{};{};{}", r, g, b).unwrap()
-                        }
-                    }
-                    semi = true;
-                }
-
-                if need_bg {
-                    if semi {
-                        out.push(';');
-                    }
-                    match bg_c {
-                        Colour::Index(i) => {
-                            let [r, g, b] = if render == Render::Irc {
-                                crate::draw::unpack_rgb(crate::palette::IRC99[*i as usize])
-                            } else {
-                                crate::draw::unpack_rgb(crate::palette::ANSI256[*i as usize])
-                            };
-                            write!(out, "48;2;{};{};{}", r, g, b).unwrap()
-                        },
-                        Colour::RGB([r, g, b]) => {
-                            write!(out, "48;2;{};{};{}", r, g, b).unwrap()
-                        }
-                    }
-                }
-                out.push('m');
-            } else if need_fg {
-                match fg {
-                    Colour::Index(i) => {
-                        let [r, g, b] = if render == Render::Irc {
-                            crate::draw::unpack_rgb(crate::palette::IRC99[i as usize])
-                        } else {
-                            crate::draw::unpack_rgb(crate::palette::ANSI256[i as usize])
-                        };
-                        write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
-                    },
-                    Colour::RGB([r, g, b]) => {
-                        write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
-                    }
-                }
-            } else if bg_changed && bg.is_none() {
-                out.push_str("\x1b[49m");
-            } else if need_style {
-                // If only style changed but not colors, we already handled it above, 
-                // but we need to make sure we don't fall through to nothing.
-            }
-        } else {
-            match render {
-                Render::Ansi | Render::Ansi24 => {
-                    if need_style {
-                        if bold_changed { write!(out, "\x1b[{}m", if bold { "1" } else { "22" }).unwrap(); }
-                        if italic_changed { write!(out, "\x1b[{}m", if italic { "3" } else { "23" }).unwrap(); }
-                        if underline_changed { write!(out, "\x1b[{}m", if underline { "4" } else { "24" }).unwrap(); }
-                    }
-                    if let Some(bg_c) = &bg {
-                        out.push_str("\x1b[");
-                        let mut semi = false;
-
-                        if need_fg {
-                            match fg {
-                                Colour::Index(i) => write!(out, "38;5;{}", i).unwrap(),
-                                Colour::RGB([r, g, b]) => {
-                                    write!(out, "38;2;{};{};{}", r, g, b).unwrap()
-                                }
-                            }
-                            semi = true;
-                        }
-
-                        if need_bg {
-                            if semi {
-                                out.push(';');
-                            }
-                            match bg_c {
-                                Colour::Index(i) => write!(out, "48;5;{}", i).unwrap(),
-                                Colour::RGB([r, g, b]) => {
-                                    write!(out, "48;2;{};{};{}", r, g, b).unwrap()
-                                }
-                            }
-                        }
-                        out.push('m');
-                    } else if need_fg {
-                        match fg {
-                            Colour::Index(i) => write!(out, "\x1b[38;5;{}m", i).unwrap(),
-                            Colour::RGB([r, g, b]) => {
-                                write!(out, "\x1b[38;2;{};{};{}m", r, g, b).unwrap()
-                            }
-                        }
-                    } else if bg_changed && bg.is_none() {
-                        out.push_str("\x1b[49m");
-                    }
-                }
-                Render::Irc => {
-                    // IRC clients often reset the background color if \x03FG is used without a BG.
-                    // We MUST always output \x03FG,BG when any color state changes.
-                    let effective_fg = if is_space {
-                        lookahead_fg.or(last_fg.as_ref()).unwrap_or(&fg)
-                    } else {
-                        &fg
-                    };
-
-                    out.push('\x03');
-                    match effective_fg {
-                        Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                        Colour::RGB([r, g, b]) => {
-                            let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
-                            let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                            write!(out, "{}", idx).unwrap()
-                        }
-                    }
-
-                    if let Some(bg_c) = &bg {
-                        out.push(',');
-                        match bg_c {
-                            Colour::Index(i) => write!(out, "{}", i).unwrap(),
-                            Colour::RGB([r, g, b]) => {
-                                let col = ((*r as u32) << 16) | ((*g as u32) << 8) | (*b as u32);
-                                let idx = nearest_hex_colour_fast(col, &crate::palette::IRC99[..]);
-                                write!(out, "{}", idx).unwrap()
-                            }
-                        }
-                    }
-                    *last_fg = Some(effective_fg.clone());
-                }
-            }
-        }
-        *first = false;
-    }
+    
+    *first = false;
     out.push(glyph);
 }
 
@@ -744,6 +683,8 @@ pub fn apply_overlays_to_result(
         let mut alt_last_italic = false;
         let mut alt_last_underline = false;
         let mut alt_first = true;
+
+        content.push_str("\x1b[0m");
 
         for (x, cell) in row.iter().enumerate() {
             let cx = x as i32;
@@ -2953,6 +2894,8 @@ pub fn render_blocks_smooth(
         let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
         let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
 
+        out.push_str("\x1b[0m");
+
         for x in 0..grid_w {
             let idx = y * grid_w + x;
             let data = &grid_data[idx];
@@ -3348,6 +3291,9 @@ pub fn render_braille(
         let mut alt_last_bold = false;
         let mut alt_last_italic = false;
         let mut alt_last_underline = false;
+
+        out.push_str("\x1b[0m");
+
         for x in (0..w).step_by(2) {
             let mut braille = 0x2800;
             let mut counts: HashMap<Colour, usize> = HashMap::new();
