@@ -1584,8 +1584,8 @@ impl App {
         }
     }
 
-    fn toggle_tab(&mut self, tab: usize) {
-        self.current_tab = tab.min(2);
+fn toggle_tab(&mut self, tab: usize) {
+        self.current_tab = tab.min(3);
         self.selected_control = 0;
     }
 
@@ -5970,7 +5970,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let mut tab_rects = Vec::new();
     let mut x = layout[1].x;
     for name in tab_names {
-        let w = name.len() as u16;
+        let w = (name.len() + 2) as u16;  // +2 for ratatui default left/right padding
         tab_rects.push(Rect::new(x, layout[1].y, w, 1));
         x += w;
     }
