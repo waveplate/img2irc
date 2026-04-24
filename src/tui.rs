@@ -134,6 +134,13 @@ enum ControlId {
     Solarize,
     EdgeDetection,
     AutoOptimize,
+
+    ShowAdvanced,
+    FixDiscPasses,
+    FixDiscRadius,
+    FixDiscTolRatio,
+    FixDiscTolPixels,
+    FixDiscPool,
 }
 
 #[derive(Clone, Copy)]
@@ -194,6 +201,56 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::FixDisc,
         label: "Fix Disc",
         kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::ShowAdvanced,
+        label: "Advanced",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::FixDiscPasses,
+        label: "Fix Passes",
+        kind: ControlKind::Slider {
+            min: 1,
+            max: 100,
+            default: 10,
+        },
+    },
+    ControlDef {
+        id: ControlId::FixDiscRadius,
+        label: "Fix Radius",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 10,
+            default: 2,
+        },
+    },
+    ControlDef {
+        id: ControlId::FixDiscTolRatio,
+        label: "Fix Tol %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 20,
+        },
+    },
+    ControlDef {
+        id: ControlId::FixDiscTolPixels,
+        label: "Fix Tol Px",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 2,
+        },
+    },
+    ControlDef {
+        id: ControlId::FixDiscPool,
+        label: "Fix Pool",
+        kind: ControlKind::Slider {
+            min: 1,
+            max: 100,
+            default: 12,
+        },
     },
     // ControlDef {
     //     id: ControlId::Misc3,
@@ -1038,6 +1095,12 @@ struct App {
     gpu: bool,
     show_discontinuities: bool,
     fix_disc: bool,
+    show_advanced: bool,
+    fix_disc_passes: i32,
+    fix_disc_shift_radius: i32,
+    fix_disc_ref_tolerance_ratio: f32,
+    fix_disc_ref_tolerance_pixels: i32,
+    fix_disc_pool_size: i32,
 
     misc3: i32,
     misc4: i32,
@@ -1231,6 +1294,13 @@ impl App {
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
             fix_disc: render_args.fix_disc,
+            show_advanced: false,
+            fix_disc_passes: render_args.fix_disc_passes as i32,
+            fix_disc_shift_radius: render_args.fix_disc_shift_radius as i32,
+            fix_disc_ref_tolerance_ratio: render_args.fix_disc_ref_tolerance_ratio,
+            fix_disc_ref_tolerance_pixels: render_args.fix_disc_ref_tolerance_pixels as i32,
+            fix_disc_pool_size: render_args.fix_disc_pool_size as i32,
+
             misc3: render_args.misc3,
             misc4: render_args.misc4,
             misc5: render_args.misc5,
@@ -1399,6 +1469,11 @@ impl App {
         self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
         self.fix_disc = render_args.fix_disc;
+        self.fix_disc_passes = render_args.fix_disc_passes as i32;
+        self.fix_disc_shift_radius = render_args.fix_disc_shift_radius as i32;
+        self.fix_disc_ref_tolerance_ratio = render_args.fix_disc_ref_tolerance_ratio;
+        self.fix_disc_ref_tolerance_pixels = render_args.fix_disc_ref_tolerance_pixels as i32;
+        self.fix_disc_pool_size = render_args.fix_disc_pool_size as i32;
         self.misc3 = render_args.misc3;
         self.misc4 = render_args.misc4;
         self.misc5 = render_args.misc5;
@@ -1492,7 +1567,8 @@ impl App {
 
     fn get_current_control_id(&self) -> ControlId {
         if self.current_tab == 0 {
-            GENERAL_CONTROLS[self.selected_control.min(GENERAL_CONTROLS.len() - 1)].id
+            let ctrls = self.tab_controls(0);
+            ctrls[self.selected_control.min(ctrls.len() - 1)].id
         } else {
             ControlId::Width // Fallback
         }
@@ -1677,6 +1753,12 @@ fn toggle_tab(&mut self, tab: usize) {
             ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::FixDisc => self.fix_disc as i32,
+            ControlId::ShowAdvanced => self.show_advanced as i32,
+            ControlId::FixDiscPasses => self.fix_disc_passes,
+            ControlId::FixDiscRadius => self.fix_disc_shift_radius,
+            ControlId::FixDiscTolRatio => (self.fix_disc_ref_tolerance_ratio * 100.0) as i32,
+            ControlId::FixDiscTolPixels => self.fix_disc_ref_tolerance_pixels,
+            ControlId::FixDiscPool => self.fix_disc_pool_size,
 
             ControlId::Invert => self.invert as i32,
             ControlId::Grayscale => self.grayscale as i32,
@@ -1750,6 +1832,18 @@ fn toggle_tab(&mut self, tab: usize) {
             ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::FixDisc => self.fix_disc = val != 0,
+            ControlId::ShowAdvanced => {
+                self.show_advanced = val != 0;
+                let count = self.tab_controls(0).len();
+                if self.selected_control >= count {
+                    self.selected_control = count.saturating_sub(1);
+                }
+            }
+            ControlId::FixDiscPasses => self.fix_disc_passes = val,
+            ControlId::FixDiscRadius => self.fix_disc_shift_radius = val,
+            ControlId::FixDiscTolRatio => self.fix_disc_ref_tolerance_ratio = val as f32 / 100.0,
+            ControlId::FixDiscTolPixels => self.fix_disc_ref_tolerance_pixels = val,
+            ControlId::FixDiscPool => self.fix_disc_pool_size = val,
 
             ControlId::Invert => self.invert = val != 0,
             ControlId::Grayscale => self.grayscale = val != 0,
@@ -1785,7 +1879,23 @@ fn toggle_tab(&mut self, tab: usize) {
 
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
         match tab {
-            0 => GENERAL_CONTROLS.to_vec(),
+            0 => {
+                let mut ctrls = Vec::new();
+                let advanced_ids = [
+                    ControlId::FixDiscPasses,
+                    ControlId::FixDiscRadius,
+                    ControlId::FixDiscTolRatio,
+                    ControlId::FixDiscTolPixels,
+                    ControlId::FixDiscPool,
+                ];
+                for ctrl in GENERAL_CONTROLS {
+                    if advanced_ids.contains(&ctrl.id) && !self.show_advanced {
+                        continue;
+                    }
+                    ctrls.push(*ctrl);
+                }
+                ctrls
+            }
             1 => vec![], // Pipeline Canvas is handled totally separately
             2 => self
                 .available_blocks
@@ -1819,7 +1929,8 @@ fn toggle_tab(&mut self, tab: usize) {
             return 0;
         }
         let id = if self.current_tab == 0 {
-            GENERAL_CONTROLS[idx.min(GENERAL_CONTROLS.len() - 1)].id
+            let ctrls = self.tab_controls(0);
+            ctrls[idx.min(ctrls.len() - 1)].id
         } else {
             ControlId::Width
         };
@@ -2168,6 +2279,12 @@ fn toggle_tab(&mut self, tab: usize) {
         self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.fix_disc = self.fix_disc;
+        self.render_args.fix_disc_passes = self.fix_disc_passes as u32;
+        self.render_args.fix_disc_shift_radius = self.fix_disc_shift_radius as u32;
+        self.render_args.fix_disc_ref_tolerance_ratio = self.fix_disc_ref_tolerance_ratio;
+        self.render_args.fix_disc_ref_tolerance_pixels = self.fix_disc_ref_tolerance_pixels as u32;
+        self.render_args.fix_disc_pool_size = self.fix_disc_pool_size as u32;
+
         self.render_args.misc3 = self.misc3;
         self.render_args.misc4 = self.misc4;
         self.render_args.misc5 = self.misc5;
@@ -3689,7 +3806,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 {
                                     app.current_tab = 0;
                                     app.selected_control = i;
-                                    if let Some(ctrl) = GENERAL_CONTROLS.get(i) {
+                                    if let Some(ctrl) = app.tab_controls(0).get(i) {
                                         if let ControlKind::Slider { .. } = ctrl.kind {
                                             let delta =
                                                 if mouse.modifiers.contains(KeyModifiers::SHIFT) {
@@ -3776,7 +3893,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 {
                                     app.current_tab = 0;
                                     app.selected_control = i;
-                                    if let Some(ctrl) = GENERAL_CONTROLS.get(i) {
+                                    if let Some(ctrl) = app.tab_controls(0).get(i) {
                                         if let ControlKind::Slider { .. } = ctrl.kind {
                                             let delta =
                                                 if mouse.modifiers.contains(KeyModifiers::SHIFT) {
@@ -5193,7 +5310,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                         app.color_picker_state = Some(cp);
                                     } else if app.text_field_focus == TextFieldFocus::BgButton {
-                                        // Open color picker for BG (only if FG is set)
+                                        // Open wcolor picker for BG (only if FG is set)
                                         if let Some(sel) = app.text_selected {
                                             if sel > 0
                                                 && sel <= app.render_args.overlays.len()
@@ -5371,7 +5488,8 @@ fn adjust_control(app: &mut App, delta: i32) {
 
 fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
     let id = if app.current_tab == 0 {
-        GENERAL_CONTROLS[visual_idx.min(GENERAL_CONTROLS.len() - 1)].id
+        let ctrls = app.tab_controls(0);
+        ctrls[visual_idx.min(ctrls.len() - 1)].id
     } else {
         return;
     };
@@ -6761,7 +6879,7 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     f.render_widget(main_block, area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(18), // Color picker
+        Constraint::Length(25), // Color picker
         Constraint::Length(3),  // FG/BG color swatches
         Constraint::Length(3),  // Options (Wrap toggle / Bold / Italic / Underline)
         Constraint::Length(3),  // Delete button
@@ -6771,7 +6889,7 @@ fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     .split(inner);
 
     // Color Picker always visible
-    let cp_rect = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 18);
+    let cp_rect = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 27);
     
     // Ensure CP is instantiated with correct mode
     let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
