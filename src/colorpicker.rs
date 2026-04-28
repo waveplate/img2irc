@@ -305,10 +305,9 @@ impl ColorPickerState {
                 }
             }
         } else if self.mode == PaletteMode::Ansi {
-            if dx < 32 && dy < 8 {
+            if dx < 32 && dy < 16 {
                 let col = dx / 2;
-                let is_bottom = (dx % 2) == 1;
-                let row = dy * 2 + if is_bottom { 1 } else { 0 };
+                let row = dy;
                 let idx = row * 16 + col;
                 if idx < 256 {
                     self.set_grid_idx(idx as usize);
@@ -374,8 +373,8 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                     let (r, g, b) = self.state.rgb_from_idx(idx as usize);
                     let fg = Color::Rgb(r, g, b);
 
-                    let x = main_rect.x + (col * 2);
-                    let y = main_rect.y + row;
+                    let x = main_rect.x + (col as u16 * 2);
+                    let y = main_rect.y + row as u16;
 
                     buf.get_mut(x, y).set_char('█').set_fg(fg);
                     buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
@@ -388,37 +387,49 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                 }
             }
         } else if self.state.mode == PaletteMode::Ansi {
-            for row in 0..8 {
-                for col in 0..16 {
-                    let top_idx = row * 2 * 16 + col;
-                    let bot_idx = (row * 2 + 1) * 16 + col;
 
-                    let mut fg = Color::Reset;
-                    let mut bg = Color::Reset;
+			// 1. Generate all 240 indices
+			let indices = [0, 2, 4].into_iter().flat_map(|br| {
+			    // We need to reverse the 'b' loop ONLY for the middle band (br == 2)
+			    let b_range: Vec<i32> = if br == 2 { 
+			        (0..6).rev().collect() 
+			    } else { 
+			        (0..6).collect() 
+			    };
 
-                    if top_idx < 256 {
-                        let (r, g, b) = self.state.rgb_from_idx(top_idx as usize);
-                        fg = Color::Rgb(r, g, b);
-                    }
-                    if bot_idx < 256 {
-                        let (r, g, b) = self.state.rgb_from_idx(bot_idx as usize);
-                        bg = Color::Rgb(r, g, b);
-                    }
+			    b_range.into_iter().flat_map(move |b| {
+			        [0, 1, 2, 3, 4, 5, 11, 10, 9, 8, 7, 6].into_iter().map(move |rg| {
+			            let r = br + (rg / 6);
+			            let g = rg % 6;
+			            (16 + 36 * r + 6 * g + b) as usize
+			        })
+			    })
+			})
+			.chain(232..244)         // Grayscale Row 19
+			.chain((244..=255).rev()); // Grayscale Row 20
 
-                    let x = main_rect.x + (col * 2);
-                    let y = main_rect.y + row;
-                    
-                    buf.get_mut(x, y).set_char('▀').set_fg(fg).set_bg(bg);
-                    buf.get_mut(x + 1, y).set_char('▀').set_fg(fg).set_bg(bg);
+			// 2. Single loop to handle all rendering
+			for (i, idx) in indices.enumerate() {
+			    let col_x = (i % 12) as u16;
+			    let row_y = (i / 12) as u16;
+			    
+			    let (r, g, b) = self.state.rgb_from_idx(idx);
+			    let fg = Color::Rgb(r, g, b);
+			    let x = main_rect.x + (col_x * 2);
+			    let y = main_rect.y + row_y;
 
-                    if top_idx as usize == self.state.grid_idx {
-                        buf.get_mut(x, y).set_char('▛').set_fg(Color::White).set_bg(fg);
-                    }
-                    if bot_idx as usize == self.state.grid_idx {
-                        buf.get_mut(x + 1, y).set_char('▙').set_fg(bg).set_bg(Color::White);
-                    }
-                }
-            }
+			    // Draw base blocks
+			    buf.get_mut(x, y).set_char('█').set_fg(fg);
+			    buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
+
+			    // Selection logic
+			    if idx == self.state.grid_idx {
+			        let contrast = if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White };
+			        buf.get_mut(x, y).set_char('X').set_fg(contrast).set_bg(fg);
+			        buf.get_mut(x + 1, y).set_char('X').set_fg(contrast).set_bg(fg);
+			    }
+			}
+
         } else {
             let h = self.state.hue;
             for row in 0..16 {
