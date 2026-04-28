@@ -507,14 +507,26 @@ pub fn emit_colourized(
                 if *first {
                     // Start of line: assume all styles are OFF.
                     // Only toggle if we want them ON.
-                    if bold { out.push('\x02'); }
-                    if italic { out.push('\x1D'); }
-                    if underline { out.push('\x1F'); }
+                    if bold {
+                        out.push('\x02');
+                    }
+                    if italic {
+                        out.push('\x1D');
+                    }
+                    if underline {
+                        out.push('\x1F');
+                    }
                 } else {
                     // Middle of line: toggle if state changed.
-                    if bold_changed { out.push('\x02'); }
-                    if italic_changed { out.push('\x1D'); }
-                    if underline_changed { out.push('\x1F'); }
+                    if bold_changed {
+                        out.push('\x02');
+                    }
+                    if italic_changed {
+                        out.push('\x1D');
+                    }
+                    if underline_changed {
+                        out.push('\x1F');
+                    }
                 }
                 *last_bold = bold;
                 *last_italic = italic;
@@ -527,16 +539,21 @@ pub fn emit_colourized(
                 } else {
                     &fg
                 };
-                
+
                 let grayscale_tolerance = 5;
-                
+
                 let fg_idx = match effective_fg {
                     Colour::Index(i) => *i as usize,
                     Colour::RGB(rgb) => {
                         let col = make_rgb_u32(rgb);
                         if !is_near_grayscale(col, grayscale_tolerance) {
-                            nearest_distinctly_chromatic_hex_colour(col, &IRC99, grayscale_tolerance)
-                                .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99)) as usize
+                            nearest_distinctly_chromatic_hex_colour(
+                                col,
+                                &IRC99,
+                                grayscale_tolerance,
+                            )
+                            .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
+                                as usize
                         } else {
                             nearest_hex_colour_fast(col, &IRC99) as usize
                         }
@@ -558,8 +575,8 @@ pub fn emit_colourized(
                         write!(out, "\x03{}", fg_idx).unwrap();
                     }
                 } else if need_fg {
-                    // If only FG changed, and BG is the same as before, 
-                    // we only emit FG. (Note: Some clients might reset BG, 
+                    // If only FG changed, and BG is the same as before,
+                    // we only emit FG. (Note: Some clients might reset BG,
                     // but the user explicitly requested this optimization).
                     write!(out, "\x03{}", fg_idx).unwrap();
                 }
@@ -572,19 +589,41 @@ pub fn emit_colourized(
             out.push_str("\x1b[");
             let mut parts = Vec::new();
 
-            if bold_changed { parts.push(if bold { "1".to_string() } else { "22".to_string() }); }
-            if italic_changed { parts.push(if italic { "3".to_string() } else { "23".to_string() }); }
-            if underline_changed { parts.push(if underline { "4".to_string() } else { "24".to_string() }); }
+            if bold_changed {
+                parts.push(if bold {
+                    "1".to_string()
+                } else {
+                    "22".to_string()
+                });
+            }
+            if italic_changed {
+                parts.push(if italic {
+                    "3".to_string()
+                } else {
+                    "23".to_string()
+                });
+            }
+            if underline_changed {
+                parts.push(if underline {
+                    "4".to_string()
+                } else {
+                    "24".to_string()
+                });
+            }
 
             if need_fg {
                 let [r, g, b] = match fg {
                     Colour::RGB(rgb) => rgb,
                     Colour::Index(i) => {
                         if as_preview || render == Render::Ansi24 {
-                            let pal: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                            let pal: &[u32] = if render == Render::Irc {
+                                &IRC99
+                            } else {
+                                &ANSI256
+                            };
                             unpack_rgb(pal[i as usize])
                         } else {
-                            [0,0,0]
+                            [0, 0, 0]
                         }
                     }
                 };
@@ -604,10 +643,14 @@ pub fn emit_colourized(
                         Colour::RGB(rgb) => *rgb,
                         Colour::Index(i) => {
                             if as_preview || render == Render::Ansi24 {
-                                let pal: &[u32] = if render == Render::Irc { &IRC99 } else { &ANSI256 };
+                                let pal: &[u32] = if render == Render::Irc {
+                                    &IRC99
+                                } else {
+                                    &ANSI256
+                                };
                                 unpack_rgb(pal[*i as usize])
                             } else {
-                                [0,0,0]
+                                [0, 0, 0]
                             }
                         }
                     };
@@ -631,7 +674,7 @@ pub fn emit_colourized(
         *last_italic = italic;
         *last_underline = underline;
     }
-    
+
     *first = false;
     out.push(glyph);
 }
@@ -741,7 +784,11 @@ pub fn apply_overlays_to_result(
                                 Render::Irc => &IRC99[..],
                                 _ => &ANSI256[..],
                             };
-                            let hex = if (*i as usize) < palette.len() { palette[*i as usize] } else { 0xFFFFFF };
+                            let hex = if (*i as usize) < palette.len() {
+                                palette[*i as usize]
+                            } else {
+                                0xFFFFFF
+                            };
                             [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
                         }
                     });
@@ -752,7 +799,11 @@ pub fn apply_overlays_to_result(
                                 Render::Irc => &IRC99[..],
                                 _ => &ANSI256[..],
                             };
-                            let hex = if (*i as usize) < palette.len() { palette[*i as usize] } else { 0x000000 };
+                            let hex = if (*i as usize) < palette.len() {
+                                palette[*i as usize]
+                            } else {
+                                0x000000
+                            };
                             [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
                         }
                     });
@@ -760,13 +811,21 @@ pub fn apply_overlays_to_result(
                 }
             }
 
-            let (draw_fg_raw, draw_bg_raw, draw_char, draw_bold, draw_italic, draw_underline) = if let Some(ch) = ov_char {
-                let fg_raw = ov_fg.unwrap_or(cell.fg);
-                let bg_raw = ov_bg.or(Some(cell.bg.unwrap_or([0, 0, 0])));
-                (fg_raw, bg_raw, ch, ov_bold, ov_italic, ov_underline)
-            } else {
-                (cell.fg, cell.bg, cell.char, cell.bold, cell.italic, cell.underline)
-            };
+            let (draw_fg_raw, draw_bg_raw, draw_char, draw_bold, draw_italic, draw_underline) =
+                if let Some(ch) = ov_char {
+                    let fg_raw = ov_fg.unwrap_or(cell.fg);
+                    let bg_raw = ov_bg.or(Some(cell.bg.unwrap_or([0, 0, 0])));
+                    (fg_raw, bg_raw, ch, ov_bold, ov_italic, ov_underline)
+                } else {
+                    (
+                        cell.fg,
+                        cell.bg,
+                        cell.char,
+                        cell.bold,
+                        cell.italic,
+                        cell.underline,
+                    )
+                };
 
             let fg_colour = Colour::RGB(draw_fg_raw);
             let bg_colour = draw_bg_raw.map(Colour::RGB);
@@ -1382,10 +1441,7 @@ fn build_rendered_raster(
     raster
 }
 
-fn best_candidate_pool_pre(
-    costs: &[u64],
-    pool_size: usize,
-) -> Vec<(usize, bool, u64)> {
+fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool, u64)> {
     if pool_size >= costs.len() {
         let mut pool: Vec<(usize, bool, u64)> = costs
             .iter()
@@ -1817,11 +1873,7 @@ fn has_flat_uniform_neighbor_context(
     found_neighbor && uniform_color.is_some()
 }
 
-fn get_overlay_at(
-    ov: &crate::args::TextOverlay,
-    cx: i32,
-    cy: i32,
-) -> Option<Option<char>> {
+fn get_overlay_at(ov: &crate::args::TextOverlay, cx: i32, cy: i32) -> Option<Option<char>> {
     if cy < ov.y {
         return None;
     }
@@ -1832,9 +1884,9 @@ fn get_overlay_at(
         if cx < ov.x || cx >= ov.x + ov.w || cy >= ov.y + ov.h {
             return None; // Outside the box
         }
-        
+
         let dx = cx - ov.x;
-        
+
         if ov.wrap {
             // Reconstruct wrapped lines
             let mut wrapped_lines = Vec::new();
@@ -2067,7 +2119,10 @@ pub fn render_blocks_smooth(
         }
         results
     } else {
-        let shape_cache = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<u64, (usize, bool)>::new()));
+        let shape_cache = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            u64,
+            (usize, bool),
+        >::new()));
 
         image
             .block
@@ -2142,7 +2197,7 @@ pub fn render_blocks_smooth(
                             block_sum_g += p.g;
                             block_sum_b += p.b;
                             block_sum_sq += p.sq;
-                            
+
                             let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
                             let idx = nearest_strict_partitioned_hex_colour(
                                 rgb_u32,
@@ -2292,7 +2347,10 @@ pub fn render_blocks_smooth(
                                 }
                             }
 
-                            shape_cache.lock().unwrap().insert(shape_hash, (best_glyph, best_inv));
+                            shape_cache
+                                .lock()
+                                .unwrap()
+                                .insert(shape_hash, (best_glyph, best_inv));
                             (best_glyph, best_inv)
                         };
 
@@ -2535,7 +2593,10 @@ pub fn render_blocks_smooth(
     let candidate_pool_size = args.fix_disc_pool_size.max(1) as usize;
     let shift_radius = args.fix_disc_shift_radius as isize;
 
-    let (block_glyph_costs, block_glyph_pools): (Vec<Vec<u64>>, Vec<Vec<(usize, bool, u64, u32, i8, i8)>>) = if args.fix_disc {
+    let (block_glyph_costs, block_glyph_pools): (
+        Vec<Vec<u64>>,
+        Vec<Vec<(usize, bool, u64, u32, i8, i8)>>,
+    ) = if args.fix_disc {
         grid_data
             .par_iter()
             .enumerate()
@@ -2603,19 +2664,22 @@ pub fn render_blocks_smooth(
                 }
 
                 let pool = best_candidate_pool_pre(&costs, candidate_pool_size);
-                
+
                 let current_reference = &quantized_references[curr_idx];
-                let pre_pool = pool.into_iter().map(|(gi, inv, internal)| {
-                    let (ref_cost, sx, sy) = best_shifted_reference_match_with_radius(
-                        &current_reference.mask,
-                        &glyphs[gi],
-                        inv,
-                        gw,
-                        gh,
-                        shift_radius,
-                    );
-                    (gi, inv, internal, ref_cost, sx, sy)
-                }).collect();
+                let pre_pool = pool
+                    .into_iter()
+                    .map(|(gi, inv, internal)| {
+                        let (ref_cost, sx, sy) = best_shifted_reference_match_with_radius(
+                            &current_reference.mask,
+                            &glyphs[gi],
+                            inv,
+                            gw,
+                            gh,
+                            shift_radius,
+                        );
+                        (gi, inv, internal, ref_cost, sx, sy)
+                    })
+                    .collect();
 
                 (costs, pre_pool)
             })
@@ -2701,8 +2765,18 @@ pub fn render_blocks_smooth(
                 let mut best_shift = (current_dx, current_dy);
 
                 let mut pool = block_glyph_pools.get(curr_idx).cloned().unwrap_or_default();
-                if !pool.iter().any(|&(gi, inv, _, _, _, _)| (gi, inv) == current_choice) {
-                    pool.push((cur_gi, cur_inv, best_internal, current_ref_cost as u32, current_dx as i8, current_dy as i8));
+                if !pool
+                    .iter()
+                    .any(|&(gi, inv, _, _, _, _)| (gi, inv) == current_choice)
+                {
+                    pool.push((
+                        cur_gi,
+                        cur_inv,
+                        best_internal,
+                        current_ref_cost as u32,
+                        current_dx as i8,
+                        current_dy as i8,
+                    ));
                 }
 
                 for (gi, candidate_inv, internal, ref_cost, shift_x, shift_y) in pool {
@@ -2920,8 +2994,10 @@ pub fn render_blocks_smooth(
         let mut alt_last_underline = false;
 
         // Pass 1: Collect processed cell data for the row
-        let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
-        let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> = Vec::with_capacity(grid_w);
+        let mut row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> =
+            Vec::with_capacity(grid_w);
+        let mut alt_row_cells: Vec<(Colour, Option<Colour>, char, bool, bool, bool)> =
+            Vec::with_capacity(grid_w);
 
         if render != Render::Irc || args.as_preview {
             out.push_str("\x1b[0m");
@@ -3060,7 +3136,7 @@ pub fn render_blocks_smooth(
                             } else {
                                 unpack_rgb(ANSI256[idx])
                             }
-                        },
+                        }
                         crate::args::ColorSpec::Rgb(rgb) => *rgb,
                     };
                 }
@@ -3078,7 +3154,7 @@ pub fn render_blocks_smooth(
                             } else {
                                 unpack_rgb(ANSI256[idx])
                             }
-                        },
+                        }
                         crate::args::ColorSpec::Rgb(rgb) => *rgb,
                     });
                 }
@@ -3113,8 +3189,12 @@ pub fn render_blocks_smooth(
                 let irc_colour_from_rgb = |rgb: [u8; 3]| -> Colour {
                     let col = make_rgb_u32(&rgb);
                     let idx = if !is_near_grayscale(col, args.grayscale_tolerance) {
-                        nearest_distinctly_chromatic_hex_colour(col, &IRC99, args.grayscale_tolerance)
-                            .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
+                        nearest_distinctly_chromatic_hex_colour(
+                            col,
+                            &IRC99,
+                            args.grayscale_tolerance,
+                        )
+                        .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
                     } else {
                         nearest_hex_colour_fast(col, &IRC99)
                     };
@@ -3125,13 +3205,25 @@ pub fn render_blocks_smooth(
                     (draw_fg.clone(), draw_bg.clone())
                 } else if inv {
                     (
-                        data.alt_bg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.bg)),
-                        Some(data.alt_fg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.fg))),
+                        data.alt_bg_col
+                            .clone()
+                            .unwrap_or_else(|| irc_colour_from_rgb(data.bg)),
+                        Some(
+                            data.alt_fg_col
+                                .clone()
+                                .unwrap_or_else(|| irc_colour_from_rgb(data.fg)),
+                        ),
                     )
                 } else {
                     (
-                        data.alt_fg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.fg)),
-                        Some(data.alt_bg_col.clone().unwrap_or_else(|| irc_colour_from_rgb(data.bg))),
+                        data.alt_fg_col
+                            .clone()
+                            .unwrap_or_else(|| irc_colour_from_rgb(data.fg)),
+                        Some(
+                            data.alt_bg_col
+                                .clone()
+                                .unwrap_or_else(|| irc_colour_from_rgb(data.bg)),
+                        ),
                     )
                 };
                 // Compute uniform-glyph replacement for the IRC alt output
@@ -3225,14 +3317,16 @@ pub fn render_blocks_smooth(
 
             for (i, (fg, bg, ch, bold, italic, underline)) in alt_row_cells.iter().enumerate() {
                 // Find next non-space cell's FG for lookahead
-                let lookahead = alt_row_cells[i + 1..].iter().find_map(|(f, _, c, _, _, _)| {
-                    let is_sp = *c == ' ' || *c == '\u{2800}';
-                    if !is_sp {
-                        Some(f)
-                    } else {
-                        None
-                    }
-                });
+                let lookahead = alt_row_cells[i + 1..]
+                    .iter()
+                    .find_map(|(f, _, c, _, _, _)| {
+                        let is_sp = *c == ' ' || *c == '\u{2800}';
+                        if !is_sp {
+                            Some(f)
+                        } else {
+                            None
+                        }
+                    });
 
                 emit_colourized(
                     &mut alt_out,
@@ -3265,13 +3359,13 @@ pub fn render_blocks_smooth(
         }
         grid_out.push(row_vec);
     }
-    
+
     let longest_line_bytes = if args.as_preview && render == Render::Irc {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
     };
-    
+
     RenderResult {
         content: out.trim_end_matches('\n').into(),
         save_content: if args.as_preview && render == Render::Irc {
@@ -3503,13 +3597,13 @@ pub fn render_braille(
             alt_out.push_str("\x0f\n");
         }
     }
-    
+
     let longest_line_bytes = if args.as_preview && render == Render::Irc {
         alt_out.lines().map(|l| l.len()).max().unwrap_or(0)
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
     };
-    
+
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
         save_content: if args.as_preview && render == Render::Irc {

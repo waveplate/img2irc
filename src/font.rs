@@ -417,7 +417,11 @@ fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a F
                 if is_monospace_font(&font) {
                     ctx.fallback_faces.insert(path.clone(), font);
                 } else {
-                    log::info!("Warning: Fallback font for '{}' ({}) is not monospace, skipping.", ch, path);
+                    log::info!(
+                        "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
+                        ch,
+                        path
+                    );
                     ctx.missing_chars.insert(ch);
                     return None;
                 }
@@ -625,7 +629,11 @@ fn get_block_glyphs(
                         if is_monospace_font(&font) {
                             ctx.fallback_faces.insert(path.clone(), font);
                         } else {
-                            log::info!("Warning: Fallback font for '{}' ({}) is not monospace, skipping.", ch, path);
+                            log::info!(
+                                "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
+                                ch,
+                                path
+                            );
                             ctx.missing_chars.insert(ch);
                             continue;
                         }

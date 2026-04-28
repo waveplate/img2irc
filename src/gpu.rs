@@ -353,7 +353,7 @@ pub fn render_blocks_gpu(
 
     for chunk in flat_blocks.chunks(max_blocks_per_batch) {
         let chunk_size = chunk.len();
-        
+
         let batch_blocks: Vec<GpuBlockPixel> = chunk
             .par_iter()
             .flat_map(|blk| {
@@ -380,7 +380,7 @@ pub fn render_blocks_gpu(
 
         total_prep_time += t_prep.elapsed();
         let t_batch_gpu = std::time::Instant::now();
-        
+
         process_batch(
             device,
             queue,
@@ -393,7 +393,7 @@ pub fn render_blocks_gpu(
             chunk_size,
             &mut final_results,
         );
-        
+
         total_gpu_time += t_batch_gpu.elapsed();
         t_prep = std::time::Instant::now();
     }

@@ -206,9 +206,15 @@ pub fn render_from_canvas(
         }
     } else {
         match args.render {
-            crate::args::Render::Irc => draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs),
-            crate::args::Render::Ansi => draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs),
-            crate::args::Render::Ansi24 => draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs),
+            crate::args::Render::Irc => {
+                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
+            }
+            crate::args::Render::Ansi => {
+                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
+            }
+            crate::args::Render::Ansi24 => {
+                draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
+            }
         }
     }
 }

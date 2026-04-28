@@ -380,56 +380,72 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                     buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
 
                     if idx as usize == self.state.grid_idx {
-                        let contrast = if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White };
+                        let contrast = if (r as u32 + g as u32 + b as u32) > 380 {
+                            Color::Black
+                        } else {
+                            Color::White
+                        };
                         buf.get_mut(x, y).set_char('X').set_fg(contrast).set_bg(fg);
-                        buf.get_mut(x + 1, y).set_char('X').set_fg(contrast).set_bg(fg);
+                        buf.get_mut(x + 1, y)
+                            .set_char('X')
+                            .set_fg(contrast)
+                            .set_bg(fg);
                     }
                 }
             }
         } else if self.state.mode == PaletteMode::Ansi {
+            // 1. Generate all 240 indices
+            let indices = [0, 2, 4]
+                .into_iter()
+                .flat_map(|br| {
+                    // We need to reverse the 'b' loop ONLY for the middle band (br == 2)
+                    let b_range: Vec<i32> = if br == 2 {
+                        (0..6).rev().collect()
+                    } else {
+                        (0..6).collect()
+                    };
 
-			// 1. Generate all 240 indices
-			let indices = [0, 2, 4].into_iter().flat_map(|br| {
-			    // We need to reverse the 'b' loop ONLY for the middle band (br == 2)
-			    let b_range: Vec<i32> = if br == 2 { 
-			        (0..6).rev().collect() 
-			    } else { 
-			        (0..6).collect() 
-			    };
+                    b_range.into_iter().flat_map(move |b| {
+                        [0, 1, 2, 3, 4, 5, 11, 10, 9, 8, 7, 6]
+                            .into_iter()
+                            .map(move |rg| {
+                                let r = br + (rg / 6);
+                                let g = rg % 6;
+                                (16 + 36 * r + 6 * g + b) as usize
+                            })
+                    })
+                })
+                .chain(232..244) // Grayscale Row 19
+                .chain((244..=255).rev()); // Grayscale Row 20
 
-			    b_range.into_iter().flat_map(move |b| {
-			        [0, 1, 2, 3, 4, 5, 11, 10, 9, 8, 7, 6].into_iter().map(move |rg| {
-			            let r = br + (rg / 6);
-			            let g = rg % 6;
-			            (16 + 36 * r + 6 * g + b) as usize
-			        })
-			    })
-			})
-			.chain(232..244)         // Grayscale Row 19
-			.chain((244..=255).rev()); // Grayscale Row 20
+            // 2. Single loop to handle all rendering
+            for (i, idx) in indices.enumerate() {
+                let col_x = (i % 12) as u16;
+                let row_y = (i / 12) as u16;
 
-			// 2. Single loop to handle all rendering
-			for (i, idx) in indices.enumerate() {
-			    let col_x = (i % 12) as u16;
-			    let row_y = (i / 12) as u16;
-			    
-			    let (r, g, b) = self.state.rgb_from_idx(idx);
-			    let fg = Color::Rgb(r, g, b);
-			    let x = main_rect.x + (col_x * 2);
-			    let y = main_rect.y + row_y;
+                let (r, g, b) = self.state.rgb_from_idx(idx);
+                let fg = Color::Rgb(r, g, b);
+                let x = main_rect.x + (col_x * 2);
+                let y = main_rect.y + row_y;
 
-			    // Draw base blocks
-			    buf.get_mut(x, y).set_char('█').set_fg(fg);
-			    buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
+                // Draw base blocks
+                buf.get_mut(x, y).set_char('█').set_fg(fg);
+                buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
 
-			    // Selection logic
-			    if idx == self.state.grid_idx {
-			        let contrast = if (r as u32 + g as u32 + b as u32) > 380 { Color::Black } else { Color::White };
-			        buf.get_mut(x, y).set_char('X').set_fg(contrast).set_bg(fg);
-			        buf.get_mut(x + 1, y).set_char('X').set_fg(contrast).set_bg(fg);
-			    }
-			}
-
+                // Selection logic
+                if idx == self.state.grid_idx {
+                    let contrast = if (r as u32 + g as u32 + b as u32) > 380 {
+                        Color::Black
+                    } else {
+                        Color::White
+                    };
+                    buf.get_mut(x, y).set_char('X').set_fg(contrast).set_bg(fg);
+                    buf.get_mut(x + 1, y)
+                        .set_char('X')
+                        .set_fg(contrast)
+                        .set_bg(fg);
+                }
+            }
         } else {
             let h = self.state.hue;
             for row in 0..16 {
