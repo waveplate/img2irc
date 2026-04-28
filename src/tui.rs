@@ -1,3 +1,12 @@
+pub mod general;
+pub mod glyphs;
+pub mod pipeline;
+pub mod text;
+pub use general::*;
+pub use glyphs::*;
+pub use pipeline::*;
+pub use text::*;
+
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -1036,7 +1045,7 @@ impl App {
     }
 }
 
-struct App {
+pub(crate) struct App {
     render_args: RenderArgs,
     input_mode: InputMode,
     selected_control: usize,
@@ -1660,7 +1669,7 @@ impl App {
         }
     }
 
-fn toggle_tab(&mut self, tab: usize) {
+    fn toggle_tab(&mut self, tab: usize) {
         self.current_tab = tab.min(3);
         self.selected_control = 0;
     }
@@ -2018,17 +2027,49 @@ fn toggle_tab(&mut self, tab: usize) {
             (min..=max).collect()
         }
 
-        let ws = parse_range_i32(state.inputs[0].lines()[0].as_str(), state.inputs[1].lines()[0].as_str(), self.width);
-        let ct = parse_range_i32(state.inputs[2].lines()[0].as_str(), state.inputs[3].lines()[0].as_str(), self.trim_top);
-        let cr = parse_range_i32(state.inputs[4].lines()[0].as_str(), state.inputs[5].lines()[0].as_str(), self.trim_right);
-        let cb = parse_range_i32(state.inputs[6].lines()[0].as_str(), state.inputs[7].lines()[0].as_str(), self.trim_bottom);
-        let cl = parse_range_i32(state.inputs[8].lines()[0].as_str(), state.inputs[9].lines()[0].as_str(), self.trim_left);
-        let fs: Vec<f32> = parse_range_i32(state.inputs[10].lines()[0].as_str(), state.inputs[11].lines()[0].as_str(), self.font_size.round() as i32)
-            .into_iter()
-            .map(|x| x as f32)
-            .collect();
-        let sx = parse_range_i32(state.inputs[12].lines()[0].as_str(), state.inputs[13].lines()[0].as_str(), self.scalex);
-        let sy = parse_range_i32(state.inputs[14].lines()[0].as_str(), state.inputs[15].lines()[0].as_str(), self.scaley);
+        let ws = parse_range_i32(
+            state.inputs[0].lines()[0].as_str(),
+            state.inputs[1].lines()[0].as_str(),
+            self.width,
+        );
+        let ct = parse_range_i32(
+            state.inputs[2].lines()[0].as_str(),
+            state.inputs[3].lines()[0].as_str(),
+            self.trim_top,
+        );
+        let cr = parse_range_i32(
+            state.inputs[4].lines()[0].as_str(),
+            state.inputs[5].lines()[0].as_str(),
+            self.trim_right,
+        );
+        let cb = parse_range_i32(
+            state.inputs[6].lines()[0].as_str(),
+            state.inputs[7].lines()[0].as_str(),
+            self.trim_bottom,
+        );
+        let cl = parse_range_i32(
+            state.inputs[8].lines()[0].as_str(),
+            state.inputs[9].lines()[0].as_str(),
+            self.trim_left,
+        );
+        let fs: Vec<f32> = parse_range_i32(
+            state.inputs[10].lines()[0].as_str(),
+            state.inputs[11].lines()[0].as_str(),
+            self.font_size.round() as i32,
+        )
+        .into_iter()
+        .map(|x| x as f32)
+        .collect();
+        let sx = parse_range_i32(
+            state.inputs[12].lines()[0].as_str(),
+            state.inputs[13].lines()[0].as_str(),
+            self.scalex,
+        );
+        let sy = parse_range_i32(
+            state.inputs[14].lines()[0].as_str(),
+            state.inputs[15].lines()[0].as_str(),
+            self.scaley,
+        );
 
         let total_perms =
             ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
@@ -2057,7 +2098,7 @@ fn toggle_tab(&mut self, tab: usize) {
 
         let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
-        
+
         tokio::spawn(async move {
             let image = if image_path.is_empty() {
                 PhotonImage::new(vec![0; 4], 1, 1)
@@ -2106,7 +2147,9 @@ fn toggle_tab(&mut self, tab: usize) {
                 let mut aborted = false;
                 let mut gs_map = std::collections::HashMap::new();
                 for &f in &fs {
-                    if tx_clone.is_closed() || cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    if tx_clone.is_closed()
+                        || cancel_clone.load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         aborted = true;
                         break;
                     }
@@ -2176,11 +2219,12 @@ fn toggle_tab(&mut self, tab: usize) {
                                                         Some(cancel_inner),
                                                     );
                                                     if result.content != "Cancelled" {
-                                                        let score = if optimize_shortest_longest_line {
-                                                            result.longest_line_bytes as f64
-                                                        } else {
-                                                            result.score
-                                                        };
+                                                        let score =
+                                                            if optimize_shortest_longest_line {
+                                                                result.longest_line_bytes as f64
+                                                            } else {
+                                                                result.score
+                                                            };
                                                         let _ = rtx.blocking_send((a, score));
                                                     }
                                                     drop(permit);
@@ -3548,7 +3592,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                        app.render_args.overlays[sel - 1].bold =
+                                            !app.render_args.overlays[sel - 1].bold;
                                         app.reapply_overlays();
                                     }
                                 }
@@ -3556,7 +3601,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                        app.render_args.overlays[sel - 1].italic =
+                                            !app.render_args.overlays[sel - 1].italic;
                                         app.reapply_overlays();
                                     }
                                 }
@@ -3564,7 +3610,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
-                                        app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                        app.render_args.overlays[sel - 1].underline =
+                                            !app.render_args.overlays[sel - 1].underline;
                                         app.reapply_overlays();
                                     }
                                 }
@@ -3655,7 +3702,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Left => {
                                     if state.focused_idx == 17 {
-                                        state.batch_size = state.batch_size.saturating_sub(1).max(1);
+                                        state.batch_size =
+                                            state.batch_size.saturating_sub(1).max(1);
                                     } else if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
@@ -3664,7 +3712,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                                 KeyCode::Right => {
                                     if state.focused_idx == 17 {
-                                        state.batch_size = state.batch_size.saturating_add(1).min(100);
+                                        state.batch_size =
+                                            state.batch_size.saturating_add(1).min(100);
                                     } else if state.focused_idx < 17 {
                                         state.focused_idx += 1;
                                     } else {
@@ -3686,12 +3735,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                                 KeyCode::Char(' ') if state.focused_idx == 16 => {
-                                    state.optimize_shortest_longest_line = !state.optimize_shortest_longest_line;
+                                    state.optimize_shortest_longest_line =
+                                        !state.optimize_shortest_longest_line;
                                 }
-                                KeyCode::Char('-') | KeyCode::Char('_') if state.focused_idx == 17 => {
+                                KeyCode::Char('-') | KeyCode::Char('_')
+                                    if state.focused_idx == 17 =>
+                                {
                                     state.batch_size = state.batch_size.saturating_sub(1).max(1);
                                 }
-                                KeyCode::Char('+') | KeyCode::Char('=') if state.focused_idx == 17 => {
+                                KeyCode::Char('+') | KeyCode::Char('=')
+                                    if state.focused_idx == 17 =>
+                                {
                                     state.batch_size = state.batch_size.saturating_add(1).min(100);
                                 }
                                 _ => {
@@ -3706,44 +3760,69 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue;
             }
 
-
-
             match event {
                 Event::Mouse(mouse) => {
                     if app.current_tab == 3 {
                         let cp_rect = app.color_picker_area;
                         let mut handled = false;
-                        
+
                         if let Some(cp_state) = &mut app.color_picker_state {
-                            if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Left) {
-                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect, false);
-                            } else if mouse.kind == crossterm::event::MouseEventKind::Down(MouseButton::Right) {
-                                handled = cp_state.handle_mouse_down(mouse.column, mouse.row, cp_rect, true);
-                            } else if mouse.kind == crossterm::event::MouseEventKind::Drag(MouseButton::Left) {
-                                handled = cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
-                            } else if mouse.kind == crossterm::event::MouseEventKind::Up(MouseButton::Left) {
+                            if mouse.kind
+                                == crossterm::event::MouseEventKind::Down(MouseButton::Left)
+                            {
+                                handled = cp_state.handle_mouse_down(
+                                    mouse.column,
+                                    mouse.row,
+                                    cp_rect,
+                                    false,
+                                );
+                            } else if mouse.kind
+                                == crossterm::event::MouseEventKind::Down(MouseButton::Right)
+                            {
+                                handled = cp_state.handle_mouse_down(
+                                    mouse.column,
+                                    mouse.row,
+                                    cp_rect,
+                                    true,
+                                );
+                            } else if mouse.kind
+                                == crossterm::event::MouseEventKind::Drag(MouseButton::Left)
+                            {
+                                handled =
+                                    cp_state.handle_mouse_drag(mouse.column, mouse.row, cp_rect);
+                            } else if mouse.kind
+                                == crossterm::event::MouseEventKind::Up(MouseButton::Left)
+                            {
                                 cp_state.is_dragging_main = false;
                                 cp_state.is_dragging_hue = false;
                                 handled = true;
                             }
-                            
+
                             if handled {
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         let ov = &mut app.render_args.overlays[sel - 1];
                                         if cp_state.editing_fg {
                                             if let Some(fg_idx) = cp_state.fg_idx {
-                                                ov.fg = Some(crate::args::ColorSpec::Index(fg_idx as u8));
+                                                ov.fg = Some(crate::args::ColorSpec::Index(
+                                                    fg_idx as u8,
+                                                ));
                                             } else {
                                                 let rgb = cp_state.fg_rgb;
-                                                ov.fg = Some(crate::args::ColorSpec::Rgb([rgb.0, rgb.1, rgb.2]));
+                                                ov.fg = Some(crate::args::ColorSpec::Rgb([
+                                                    rgb.0, rgb.1, rgb.2,
+                                                ]));
                                             }
                                         } else {
                                             if let Some(bg_idx) = cp_state.bg_idx {
-                                                ov.bg = Some(crate::args::ColorSpec::Index(bg_idx as u8));
+                                                ov.bg = Some(crate::args::ColorSpec::Index(
+                                                    bg_idx as u8,
+                                                ));
                                             } else {
                                                 if let Some(rgb) = cp_state.bg_rgb {
-                                                    ov.bg = Some(crate::args::ColorSpec::Rgb([rgb.0, rgb.1, rgb.2]));
+                                                    ov.bg = Some(crate::args::ColorSpec::Rgb([
+                                                        rgb.0, rgb.1, rgb.2,
+                                                    ]));
                                                 }
                                             }
                                         }
@@ -3754,7 +3833,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                     }
-                    
+
                     match mouse.kind {
                         MouseEventKind::ScrollUp => {
                             // Check if over output area
@@ -3989,64 +4068,111 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     let cell_y = content_y as i32;
 
                                                     let mut found = None;
-                                                    for (idx, ov) in app.render_args.overlays.iter().enumerate().rev() {
+                                                    for (idx, ov) in app
+                                                        .render_args
+                                                        .overlays
+                                                        .iter()
+                                                        .enumerate()
+                                                        .rev()
+                                                    {
                                                         let mut text_w = 1;
                                                         let mut text_h = 1;
                                                         if ov.w == 0 || ov.h == 0 {
-                                                            let lines: Vec<&str> = ov.text.split('\n').collect();
+                                                            let lines: Vec<&str> =
+                                                                ov.text.split('\n').collect();
                                                             text_h = lines.len() as i32;
-                                                            text_w = lines.iter().map(|l| l.chars().count() as i32).max().unwrap_or(1);
+                                                            text_w = lines
+                                                                .iter()
+                                                                .map(|l| l.chars().count() as i32)
+                                                                .max()
+                                                                .unwrap_or(1);
                                                         }
-                                                        let check_w = if ov.w > 0 { ov.w } else { text_w.max(2) };
-                                                        let check_h = if ov.h > 0 { ov.h } else { text_h.max(1) };
-                                                        
-                                                        if cell_x >= ov.x && cell_x < ov.x + check_w && cell_y >= ov.y && cell_y < ov.y + check_h {
+                                                        let check_w = if ov.w > 0 {
+                                                            ov.w
+                                                        } else {
+                                                            text_w.max(2)
+                                                        };
+                                                        let check_h = if ov.h > 0 {
+                                                            ov.h
+                                                        } else {
+                                                            text_h.max(1)
+                                                        };
+
+                                                        if cell_x >= ov.x
+                                                            && cell_x < ov.x + check_w
+                                                            && cell_y >= ov.y
+                                                            && cell_y < ov.y + check_h
+                                                        {
                                                             found = Some(idx);
                                                             break;
                                                         }
                                                     }
 
                                                     let now = std::time::Instant::now();
-                                                    let is_double = app.last_text_click.map_or(false, |(t, lx, ly)| {
-                                                        now.duration_since(t).as_millis() < 500 && lx == cell_x && ly == cell_y
-                                                    });
+                                                    let is_double = app.last_text_click.map_or(
+                                                        false,
+                                                        |(t, lx, ly)| {
+                                                            now.duration_since(t).as_millis() < 500
+                                                                && lx == cell_x
+                                                                && ly == cell_y
+                                                        },
+                                                    );
 
                                                     if let Some(idx) = found {
                                                         if is_double {
                                                             app.text_selected = Some(idx + 1);
-                                                            app.value_edit_buffer = app.render_args.overlays[idx].text.clone();
+                                                            app.value_edit_buffer =
+                                                                app.render_args.overlays[idx]
+                                                                    .text
+                                                                    .clone();
                                                             app.input_mode = InputMode::TextEdit;
                                                             app.text_drag_mode = TextDragMode::None;
                                                             app.last_text_click = None;
                                                         } else {
                                                             app.text_selected = Some(idx + 1);
-                                                            app.text_drag_mode = TextDragMode::Moving;
-                                                            app.text_drag_start = Some((cell_x - app.render_args.overlays[idx].x, cell_y - app.render_args.overlays[idx].y));
-                                                            app.last_text_click = Some((now, cell_x, cell_y));
+                                                            app.text_drag_mode =
+                                                                TextDragMode::Moving;
+                                                            app.text_drag_start = Some((
+                                                                cell_x
+                                                                    - app.render_args.overlays[idx]
+                                                                        .x,
+                                                                cell_y
+                                                                    - app.render_args.overlays[idx]
+                                                                        .y,
+                                                            ));
+                                                            app.last_text_click =
+                                                                Some((now, cell_x, cell_y));
                                                         }
                                                     } else {
                                                         // Require double-click to create new overlay
                                                         if is_double {
-                                                            app.render_args.overlays.push(crate::args::TextOverlay {
-                                                                text: "".to_string(),
-                                                                x: cell_x,
-                                                                y: cell_y,
-                                                                w: 0,
-                                                                h: 0,
-                                                                fg: None,
-                                                                bg: None,
-                                                                wrap: false,
-                                                                bold: false,
-                                                                italic: false,
-                                                                underline: false,
-                                                            });
-                                                            app.text_selected = Some(app.render_args.overlays.len());
+                                                            app.render_args.overlays.push(
+                                                                crate::args::TextOverlay {
+                                                                    text: "".to_string(),
+                                                                    x: cell_x,
+                                                                    y: cell_y,
+                                                                    w: 0,
+                                                                    h: 0,
+                                                                    fg: None,
+                                                                    bg: None,
+                                                                    wrap: false,
+                                                                    bold: false,
+                                                                    italic: false,
+                                                                    underline: false,
+                                                                },
+                                                            );
+                                                            app.text_selected = Some(
+                                                                app.render_args.overlays.len(),
+                                                            );
                                                             app.reapply_overlays();
-                                                            app.text_drag_mode = TextDragMode::Sizing;
-                                                            app.text_drag_start = Some((cell_x, cell_y));
+                                                            app.text_drag_mode =
+                                                                TextDragMode::Sizing;
+                                                            app.text_drag_start =
+                                                                Some((cell_x, cell_y));
                                                             app.last_text_click = None;
                                                         } else {
-                                                            app.last_text_click = Some((now, cell_x, cell_y));
+                                                            app.last_text_click =
+                                                                Some((now, cell_x, cell_y));
                                                             app.text_selected = None;
                                                         }
                                                     }
@@ -4365,9 +4491,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             ControlKind::FontSelector => {
                                                 app.selected_control = i;
                                             }
-                                            ControlKind::Action => {
-                                                toggle_control(&mut app)
-                                            }
+                                            ControlKind::Action => toggle_control(&mut app),
                                         }
                                     }
                                     break;
@@ -4418,7 +4542,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 x: mouse.column,
                                 y: mouse.row,
                             };
-                            
+
                             if app.text_btn_areas.len() >= 5 {
                                 if app.text_btn_areas[4].contains(pos) {
                                     // Delete button (index 4)
@@ -4442,7 +4566,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.current_tab = 3;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].wrap = !app.render_args.overlays[sel - 1].wrap;
+                                            app.render_args.overlays[sel - 1].wrap =
+                                                !app.render_args.overlays[sel - 1].wrap;
                                             app.mark_args_dirty();
                                         }
                                     }
@@ -4450,7 +4575,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Bold (index 1)
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                            app.render_args.overlays[sel - 1].bold =
+                                                !app.render_args.overlays[sel - 1].bold;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -4458,7 +4584,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Italic (index 2)
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                            app.render_args.overlays[sel - 1].italic =
+                                                !app.render_args.overlays[sel - 1].italic;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -4466,7 +4593,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Underline (index 3)
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                            app.render_args.overlays[sel - 1].underline =
+                                                !app.render_args.overlays[sel - 1].underline;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -4478,36 +4606,58 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if let Some(res) = &app.cached_result {
                                     let inner_height = app.output_area.height.saturating_sub(2);
                                     let line_count = app.cached_render.lines().count() as u16;
-                                    let pad_y = if line_count < inner_height { inner_height.saturating_sub(line_count) / 2 } else { 0 };
+                                    let pad_y = if line_count < inner_height {
+                                        inner_height.saturating_sub(line_count) / 2
+                                    } else {
+                                        0
+                                    };
                                     if mouse.row >= app.output_area.y + 1 + pad_y {
-                                        let content_y = (mouse.row - (app.output_area.y + 1 + pad_y)) as usize + app.scroll as usize;
+                                        let content_y =
+                                            (mouse.row - (app.output_area.y + 1 + pad_y)) as usize
+                                                + app.scroll as usize;
                                         if content_y < res.grid.len() {
                                             let row = &res.grid[content_y];
-                                            let inner_width = app.output_area.width.saturating_sub(2);
+                                            let inner_width =
+                                                app.output_area.width.saturating_sub(2);
                                             let row_len = row.len() as u16;
-                                            let pad_x = if inner_width > row_len { (inner_width - row_len) / 2 } else { 0 };
+                                            let pad_x = if inner_width > row_len {
+                                                (inner_width - row_len) / 2
+                                            } else {
+                                                0
+                                            };
                                             let start_x = app.output_area.x + 1 + pad_x;
-                                            
+
                                             if mouse.column >= start_x {
                                                 let c_x = (mouse.column - start_x) as i32;
                                                 let c_y = content_y as i32;
-                                                
+
                                                 if let Some(sel) = app.text_selected {
-                                                    if sel > 0 && sel <= app.render_args.overlays.len() {
+                                                    if sel > 0
+                                                        && sel <= app.render_args.overlays.len()
+                                                    {
                                                         let cell_x = c_x;
                                                         let cell_y = c_y;
-                                                        
-                                                        let ov = &mut app.render_args.overlays[sel - 1];
-                                                        if app.text_drag_mode == TextDragMode::Moving {
+
+                                                        let ov =
+                                                            &mut app.render_args.overlays[sel - 1];
+                                                        if app.text_drag_mode
+                                                            == TextDragMode::Moving
+                                                        {
                                                             // Move
-                                                            if let Some((sx, sy)) = app.text_drag_start {
+                                                            if let Some((sx, sy)) =
+                                                                app.text_drag_start
+                                                            {
                                                                 ov.x = cell_x - sx;
                                                                 ov.y = cell_y - sy;
                                                                 app.reapply_overlays();
                                                             }
-                                                        } else if app.text_drag_mode == TextDragMode::Sizing {
+                                                        } else if app.text_drag_mode
+                                                            == TextDragMode::Sizing
+                                                        {
                                                             // Resize
-                                                            if let Some((sx, sy)) = app.text_drag_start {
+                                                            if let Some((sx, sy)) =
+                                                                app.text_drag_start
+                                                            {
                                                                 ov.w = (cell_x - sx).max(0);
                                                                 ov.h = (cell_y - sy).max(0);
                                                                 app.reapply_overlays();
@@ -4847,7 +4997,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && (c == 'c' || c == 'C') =>
                             {
                                 // Start Color Picker
-                                let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
+                                let mode = match app.render_mode_idx {
+                                    0 => crate::colorpicker::PaletteMode::Irc,
+                                    1 => crate::colorpicker::PaletteMode::Ansi,
+                                    2 => crate::colorpicker::PaletteMode::Ansi24,
+                                    _ => crate::colorpicker::PaletteMode::Irc,
+                                };
                                 let editing_bg = app.text_field_focus == TextFieldFocus::BgButton;
                                 let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
                                 cp.editing_fg = !editing_bg;
@@ -4889,7 +5044,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.current_tab == 3 {
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].bold = !app.render_args.overlays[sel - 1].bold;
+                                            app.render_args.overlays[sel - 1].bold =
+                                                !app.render_args.overlays[sel - 1].bold;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -4899,7 +5055,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.current_tab == 3 {
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].italic = !app.render_args.overlays[sel - 1].italic;
+                                            app.render_args.overlays[sel - 1].italic =
+                                                !app.render_args.overlays[sel - 1].italic;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -4909,7 +5066,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.current_tab == 3 {
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].underline = !app.render_args.overlays[sel - 1].underline;
+                                            app.render_args.overlays[sel - 1].underline =
+                                                !app.render_args.overlays[sel - 1].underline;
                                             app.reapply_overlays();
                                         }
                                     }
@@ -5287,7 +5445,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     } else if app.text_field_focus == TextFieldFocus::FgButton {
                                         // Open color picker for FG
-                                        let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
+                                        let mode = match app.render_mode_idx {
+                                            0 => crate::colorpicker::PaletteMode::Irc,
+                                            1 => crate::colorpicker::PaletteMode::Ansi,
+                                            2 => crate::colorpicker::PaletteMode::Ansi24,
+                                            _ => crate::colorpicker::PaletteMode::Irc,
+                                        };
                                         let mut cp =
                                             crate::colorpicker::ColorPickerState::new(mode, true);
                                         cp.editing_fg = true;
@@ -5316,7 +5479,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 && sel <= app.render_args.overlays.len()
                                                 && app.render_args.overlays[sel - 1].fg.is_some()
                                             {
-                                                let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
+                                                let mode = match app.render_mode_idx {
+                                                    0 => crate::colorpicker::PaletteMode::Irc,
+                                                    1 => crate::colorpicker::PaletteMode::Ansi,
+                                                    2 => crate::colorpicker::PaletteMode::Ansi24,
+                                                    _ => crate::colorpicker::PaletteMode::Irc,
+                                                };
                                                 let mut cp =
                                                     crate::colorpicker::ColorPickerState::new(
                                                         mode, true,
@@ -5557,113 +5725,6 @@ fn reset_control(app: &mut App) {
     app.mark_args_dirty();
 }
 
-fn add_pipeline_effect(app: &mut App, catalog_idx: usize) {
-    if app
-        .render_args
-        .image
-        .as_deref()
-        .map(|path| path.is_empty())
-        .unwrap_or(true)
-    {
-        return;
-    }
-
-    let effect = if let Some(preview) = app.pipeline_preview_effect.clone() {
-        preview
-    } else {
-        let Some(effect) = PIPELINE_CATALOG
-            .get(catalog_idx)
-            .and_then(|item| item.effect.clone())
-        else {
-            return;
-        };
-        effect
-    };
-
-    let new_id = app.pipeline_next_id;
-    app.pipeline_nodes.push(crate::pipeline::ImageEffectNode {
-        id: new_id,
-        effect,
-        disabled: false,
-    });
-    app.pipeline_next_id += 1;
-    app.pipeline_selected = Some(new_id);
-    app.selected_control = app.pipeline_nodes.len().saturating_sub(1);
-
-    // Refresh preview for next selection
-    app.pipeline_preview_effect = PIPELINE_CATALOG
-        .get(catalog_idx)
-        .and_then(|item| item.effect.clone());
-
-    app.mark_args_dirty();
-}
-
-fn select_pipeline_library(app: &mut App, catalog_idx: usize) {
-    app.pipeline_library_selected = catalog_idx.min(PIPELINE_CATALOG.len().saturating_sub(1));
-    app.pipeline_preview_effect = PIPELINE_CATALOG
-        .get(app.pipeline_library_selected)
-        .and_then(|item| item.effect.clone());
-    app.mark_args_dirty();
-}
-
-fn move_pipeline_library_selection(app: &mut App, direction: i32) {
-    if PIPELINE_CATALOG.is_empty() {
-        app.pipeline_library_selected = 0;
-        return;
-    }
-
-    let mut iter: Box<dyn Iterator<Item = usize>> = if direction < 0 {
-        Box::new((0..app.pipeline_library_selected).rev())
-    } else {
-        Box::new((app.pipeline_library_selected + 1)..PIPELINE_CATALOG.len())
-    };
-
-    if let Some(idx) = iter.find(|idx| PIPELINE_CATALOG[*idx].effect.is_some()) {
-        select_pipeline_library(app, idx);
-    }
-
-    let visible_rows = 20_usize;
-    let scroll = app.pipeline_scroll as usize;
-    if visible_rows > 0 {
-        if app.pipeline_library_selected < scroll {
-            app.pipeline_scroll = app.pipeline_library_selected as u16;
-        } else if app.pipeline_library_selected >= scroll + visible_rows {
-            app.pipeline_scroll =
-                app.pipeline_library_selected
-                    .saturating_sub(visible_rows.saturating_sub(1)) as u16;
-        }
-    }
-}
-
-fn adjust_pipeline_library_preview(app: &mut App, delta: f32) {
-    let Some(effect) = app.pipeline_preview_effect.as_mut() else {
-        return;
-    };
-    let Some(value) = effect.param_f32() else {
-        return;
-    };
-    let (min, max) = effect.param_range().unwrap_or((-9999.0, 9999.0));
-    effect.set_param((value + delta).clamp(min, max));
-    app.mark_args_dirty();
-}
-
-fn adjust_selected_pipeline_param(app: &mut App, delta: f32) {
-    let Some(id) = app.pipeline_selected else {
-        return;
-    };
-
-    let Some(node) = app.pipeline_nodes.iter_mut().find(|node| node.id == id) else {
-        return;
-    };
-
-    let Some(value) = node.effect.param_f32() else {
-        return;
-    };
-    let (min, max) = node.effect.param_range().unwrap_or((-9999.0, 9999.0));
-    node.effect.set_param((value + delta).clamp(min, max));
-    app.mark_args_dirty();
-}
-
 // ── UI Rendering ─────────────────────────────────────────────────────────────
 fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let area = f.area();
@@ -5848,102 +5909,152 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .alignment(Alignment::Center);
 
         f.render_widget(content, p_area);
-        }
+    }
 
-        // Render active selection outline around selected text overlay
-        if app.current_tab == 3 {
-            let inner_height = app.output_area.height.saturating_sub(2);
-            let inner_width = app.output_area.width.saturating_sub(2);
-            let line_count = app.cached_render.lines().count() as u16;
-            let pad_y = if line_count < inner_height {
-                inner_height.saturating_sub(line_count) / 2
-            } else {
-                0
-            };
+    // Render active selection outline around selected text overlay
+    if app.current_tab == 3 {
+        let inner_height = app.output_area.height.saturating_sub(2);
+        let inner_width = app.output_area.width.saturating_sub(2);
+        let line_count = app.cached_render.lines().count() as u16;
+        let pad_y = if line_count < inner_height {
+            inner_height.saturating_sub(line_count) / 2
+        } else {
+            0
+        };
 
-            // Compute pad_x from the rendered grid
-            let grid_cols = app.cached_result.as_ref().map_or(0u16, |r| {
-                r.grid.first().map_or(0, |row| row.len()) as u16
-            });
-            let pad_x = if inner_width > grid_cols {
-                (inner_width - grid_cols) / 2
-            } else {
-                0
-            };
+        // Compute pad_x from the rendered grid
+        let grid_cols = app
+            .cached_result
+            .as_ref()
+            .map_or(0u16, |r| r.grid.first().map_or(0, |row| row.len()) as u16);
+        let pad_x = if inner_width > grid_cols {
+            (inner_width - grid_cols) / 2
+        } else {
+            0
+        };
 
-            if let Some(sel) = app.text_selected {
-                if sel > 0 && sel <= app.render_args.overlays.len() {
-                    let ov = &app.render_args.overlays[sel - 1];
-                    let text_to_draw = if app.input_mode == InputMode::TextEdit { app.value_edit_buffer.clone() } else { ov.text.clone() };
+        if let Some(sel) = app.text_selected {
+            if sel > 0 && sel <= app.render_args.overlays.len() {
+                let ov = &app.render_args.overlays[sel - 1];
+                let text_to_draw = if app.input_mode == InputMode::TextEdit {
+                    app.value_edit_buffer.clone()
+                } else {
+                    ov.text.clone()
+                };
 
-                    let lines: Vec<&str> = text_to_draw.split('\n').collect();
-                    // Each cell takes 2 terminal columns
-                    let text_cell_w = lines.iter().map(|l| l.chars().count() as i32).max().unwrap_or(1).max(1);
-                    let text_h = lines.len().max(1) as i32;
+                let lines: Vec<&str> = text_to_draw.split('\n').collect();
+                // Each cell takes 2 terminal columns
+                let text_cell_w = lines
+                    .iter()
+                    .map(|l| l.chars().count() as i32)
+                    .max()
+                    .unwrap_or(1)
+                    .max(1);
+                let text_h = lines.len().max(1) as i32;
 
-                    let box_w = if ov.w > 0 { ov.w } else { text_cell_w };
-                    let box_h = if ov.h > 0 { ov.h } else { text_h };
+                let box_w = if ov.w > 0 { ov.w } else { text_cell_w };
+                let box_h = if ov.h > 0 { ov.h } else { text_h };
 
-                    // Position in terminal coordinates (each cell = 1 column)
-                    let rx = app.output_area.x + 1 + pad_x + (ov.x as u16);
-                    let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
-                    let rw = box_w as u16;
-                    let rh = box_h as u16;
+                // Position in terminal coordinates (each cell = 1 column)
+                let rx = app.output_area.x + 1 + pad_x + (ov.x as u16);
+                let ry = app.output_area.y + 1 + pad_y + ov.y as u16;
+                let rw = box_w as u16;
+                let rh = box_h as u16;
 
-                    if rw > 0 && rh > 0 {
-                        // Draw a thin selection outline around the overlay region
-                        // without clearing the underlying rendered content
-                        let is_dragging = app.text_drag_mode == TextDragMode::Sizing || app.text_drag_mode == TextDragMode::Moving;
-                        let border_color = if is_dragging { Color::Yellow } else if app.input_mode == InputMode::TextEdit { Color::Green } else { Color::Cyan };
-                        let border_style = Style::default().fg(border_color);
+                if rw > 0 && rh > 0 {
+                    // Draw a thin selection outline around the overlay region
+                    // without clearing the underlying rendered content
+                    let is_dragging = app.text_drag_mode == TextDragMode::Sizing
+                        || app.text_drag_mode == TextDragMode::Moving;
+                    let border_color = if is_dragging {
+                        Color::Yellow
+                    } else if app.input_mode == InputMode::TextEdit {
+                        Color::Green
+                    } else {
+                        Color::Cyan
+                    };
+                    let border_style = Style::default().fg(border_color);
 
-                        // Top border
-                        if ry > 0 && ry > app.output_area.y {
-                            let top_y = ry.saturating_sub(1);
-                            let start_bx = rx.saturating_sub(1);
-                            let end_bx = rx + rw;
-                            for bx in start_bx..=end_bx {
-                                if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
-                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, top_y)) {
-                                        cell.set_style(border_style);
-                                        cell.set_char(if bx == start_bx { '┌' } else if bx == end_bx { '┐' } else { '─' });
-                                    }
+                    // Top border
+                    if ry > 0 && ry > app.output_area.y {
+                        let top_y = ry.saturating_sub(1);
+                        let start_bx = rx.saturating_sub(1);
+                        let end_bx = rx + rw;
+                        for bx in start_bx..=end_bx {
+                            if bx >= app.output_area.x
+                                && bx < app.output_area.x + app.output_area.width
+                            {
+                                if let Some(cell) = f
+                                    .buffer_mut()
+                                    .cell_mut(ratatui::layout::Position::new(bx, top_y))
+                                {
+                                    cell.set_style(border_style);
+                                    cell.set_char(if bx == start_bx {
+                                        '┌'
+                                    } else if bx == end_bx {
+                                        '┐'
+                                    } else {
+                                        '─'
+                                    });
                                 }
                             }
                         }
-                        // Bottom border
-                        let bot_y = ry + rh;
-                        if bot_y < app.output_area.y + app.output_area.height {
-                            let start_bx = rx.saturating_sub(1);
-                            let end_bx = rx + rw;
-                            for bx in start_bx..=end_bx {
-                                if bx >= app.output_area.x && bx < app.output_area.x + app.output_area.width {
-                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(bx, bot_y)) {
-                                        cell.set_style(border_style);
-                                        cell.set_char(if bx == start_bx { '└' } else if bx == end_bx { '┘' } else { '─' });
-                                    }
+                    }
+                    // Bottom border
+                    let bot_y = ry + rh;
+                    if bot_y < app.output_area.y + app.output_area.height {
+                        let start_bx = rx.saturating_sub(1);
+                        let end_bx = rx + rw;
+                        for bx in start_bx..=end_bx {
+                            if bx >= app.output_area.x
+                                && bx < app.output_area.x + app.output_area.width
+                            {
+                                if let Some(cell) = f
+                                    .buffer_mut()
+                                    .cell_mut(ratatui::layout::Position::new(bx, bot_y))
+                                {
+                                    cell.set_style(border_style);
+                                    cell.set_char(if bx == start_bx {
+                                        '└'
+                                    } else if bx == end_bx {
+                                        '┘'
+                                    } else {
+                                        '─'
+                                    });
                                 }
                             }
                         }
-                        // Left/right borders
-                        for dy in 0..rh {
-                            let by = ry + dy;
-                            if by >= app.output_area.y && by < app.output_area.y + app.output_area.height {
-                                // Left
-                                let lx = rx.saturating_sub(1);
-                                if lx >= app.output_area.x && lx < app.output_area.x + app.output_area.width {
-                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(lx, by)) {
-                                        cell.set_style(border_style);
-                                        cell.set_char('│');
-                                    }
+                    }
+                    // Left/right borders
+                    for dy in 0..rh {
+                        let by = ry + dy;
+                        if by >= app.output_area.y
+                            && by < app.output_area.y + app.output_area.height
+                        {
+                            // Left
+                            let lx = rx.saturating_sub(1);
+                            if lx >= app.output_area.x
+                                && lx < app.output_area.x + app.output_area.width
+                            {
+                                if let Some(cell) = f
+                                    .buffer_mut()
+                                    .cell_mut(ratatui::layout::Position::new(lx, by))
+                                {
+                                    cell.set_style(border_style);
+                                    cell.set_char('│');
                                 }
-                                // Right
-                                let rrx = rx + rw;
-                                if rrx >= app.output_area.x && rrx < app.output_area.x + app.output_area.width {
-                                    if let Some(cell) = f.buffer_mut().cell_mut(ratatui::layout::Position::new(rrx, by)) {
-                                        cell.set_style(border_style);
-                                        cell.set_char('│');
-                                    }
+                            }
+                            // Right
+                            let rrx = rx + rw;
+                            if rrx >= app.output_area.x
+                                && rrx < app.output_area.x + app.output_area.width
+                            {
+                                if let Some(cell) = f
+                                    .buffer_mut()
+                                    .cell_mut(ratatui::layout::Position::new(rrx, by))
+                                {
+                                    cell.set_style(border_style);
+                                    cell.set_char('│');
                                 }
                             }
                         }
@@ -5951,97 +6062,6 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                 }
             }
         }
-        }
-
-fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    if let Some(state) = &mut app.auto_optimize_state {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Auto Optimize (Enter: start, Esc: cancel) ")
-            .style(Style::default().fg(Color::Yellow));
-
-        let inner_area = block.inner(area);
-        f.render_widget(Clear, area);
-        f.render_widget(block, area);
-
-        // 8 rows of inputs + 1 row for checkbox + 1 row for slider
-        let mut constraints = vec![Constraint::Length(3); 8];
-        constraints.push(Constraint::Length(3));
-        constraints.push(Constraint::Length(3));
-        let rows = Layout::vertical(constraints).split(inner_area);
-
-        let titles = [
-            "Width",
-            "Crop Top",
-            "Crop Right",
-            "Crop Bottom",
-            "Crop Left",
-            "Font Size",
-            "Scale X",
-            "Scale Y",
-        ];
-
-        for i in 0..8 {
-            let row_area = rows[i];
-            let cols = Layout::horizontal([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(row_area);
-
-            let title = titles.get(i).unwrap_or(&"");
-            
-            for j in 0..2 {
-                let idx = i * 2 + j;
-                let input = &mut state.inputs[idx];
-                let sub_title = if j == 0 { format!("{} (Min)", title) } else { format!("{} (Max)", title) };
-
-                if idx == state.focused_idx {
-                    input.set_style(Style::default().fg(ACCENT));
-                    input.set_block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(sub_title)
-                            .border_style(Style::default().fg(ACCENT)),
-                    );
-                } else {
-                    input.set_style(Style::default());
-                    input.set_block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title(sub_title)
-                            .border_style(Style::default()),
-                    );
-                }
-                f.render_widget(&*input, cols[j]);
-            }
-        }
-
-        // Render checkbox
-        let cb_area = rows[8];
-        let cb_text = if state.optimize_shortest_longest_line {
-            "[x] Optimize for shortest longest line"
-        } else {
-            "[ ] Optimize for shortest longest line"
-        };
-        let cb_style = if state.focused_idx == 16 {
-            Style::default().fg(ACCENT)
-        } else {
-            Style::default()
-        };
-        let cb_paragraph = Paragraph::new(cb_text).style(cb_style).alignment(Alignment::Center);
-        f.render_widget(cb_paragraph, cb_area);
-
-        // Render slider for batch size
-        let slider_area = rows[9];
-        let slider_style = if state.focused_idx == 17 {
-            Style::default().fg(ACCENT)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let slider_text = format!("Batch Size: {} (< / > to adjust)", state.batch_size);
-        let slider_p = Paragraph::new(slider_text).style(slider_style).alignment(Alignment::Center);
-        f.render_widget(slider_p, slider_area);
     }
 }
 
@@ -6088,7 +6108,7 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let mut tab_rects = Vec::new();
     let mut x = layout[1].x;
     for name in tab_names {
-        let w = (name.len() + 2) as u16;  // +2 for ratatui default left/right padding
+        let w = (name.len() + 2) as u16; // +2 for ratatui default left/right padding
         tab_rects.push(Rect::new(x, layout[1].y, w, 1));
         x += w;
     }
@@ -6146,247 +6166,18 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             area.y,
             &right_text,
             Style::new()
-                .fg(if is_rendering { Color::Yellow } else { TEXT_DIM })
+                .fg(if is_rendering {
+                    Color::Yellow
+                } else {
+                    TEXT_DIM
+                })
                 .bg(BG)
-                .add_modifier(if is_rendering { Modifier::BOLD } else { Modifier::empty() }),
+                .add_modifier(if is_rendering {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
         );
-    }
-}
-
-fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    // Panel border
-    let panel = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
-        .border_set(symbols::border::ROUNDED)
-        .style(Style::new().bg(SURFACE));
-    let inner = panel.inner(area);
-    f.render_widget(panel, area);
-
-    app.control_areas.clear();
-
-    let buf = f.buffer_mut();
-
-    let controls = app.tab_controls(0);
-    let avail_height = inner.height as usize;
-    let item_height: u16 = 2; // 1 row content + 1 row spacing
-    let max_visible = avail_height / item_height as usize;
-
-    // Scrolling offset for controls
-    let selected_ctrl = if app.current_tab == 0 {
-        app.selected_control
-    } else {
-        usize::MAX
-    };
-    let scroll_offset = if selected_ctrl != usize::MAX && selected_ctrl >= max_visible {
-        selected_ctrl - max_visible + 1
-    } else {
-        0
-    };
-
-    let mut control_rects = Vec::new();
-    let mut y = inner.y;
-
-    for (v_idx, ctrl) in controls.iter().enumerate() {
-        if v_idx < scroll_offset {
-            control_rects.push(Rect::default());
-            continue;
-        }
-        if y + item_height > inner.y + inner.height {
-            control_rects.push(Rect::default());
-            continue;
-        }
-
-        let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
-        let selected = v_idx == selected_ctrl;
-
-        let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
-            "🛑 STOP AUTO-OPTIMIZE".to_string()
-        } else {
-            ctrl.label.to_string()
-        };
-
-        match ctrl.kind {
-            ControlKind::Slider { min, max, .. } => {
-                let value = app.get_control_value(0, v_idx);
-                if selected && app.input_mode == InputMode::ValueEdit {
-                    // Show edit buffer with cursor
-                    let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
-                    let style = Style::new()
-                        .fg(Color::Yellow)
-                        .bg(SURFACE)
-                        .add_modifier(Modifier::BOLD);
-                    for (i, ch) in edit_text.chars().enumerate() {
-                        if ctrl_area.x + i as u16 >= ctrl_area.x + ctrl_area.width {
-                            break;
-                        }
-                        buf.cell_mut((ctrl_area.x + i as u16, ctrl_area.y))
-                            .map(|cell| cell.set_char(ch).set_style(style));
-                    }
-                } else {
-                    let dv = if ctrl.id == ControlId::FontSize {
-                        Some(format!("{:.1}", value as f32 / 10.0))
-                    } else {
-                        None
-                    };
-                    render_bar(
-                        buf,
-                        ctrl_area,
-                        &label_text,
-                        value,
-                        min,
-                        max,
-                        selected,
-                        dv.as_deref(),
-                    );
-                }
-            }
-            ControlKind::Enum { options, .. } => {
-                let value = app.get_control_value(0, v_idx) as usize;
-                render_enum(buf, ctrl_area, &label_text, options, value, selected);
-            }
-            ControlKind::Toggle { .. } => {
-                let on = app.get_control_value(0, v_idx) != 0;
-                render_toggle(buf, ctrl_area, &label_text, on, selected);
-            }
-            ControlKind::FontSelector => {
-                let font_name: &str = if app.font_idx < app.fonts.len() {
-                    &app.fonts[app.font_idx]
-                } else {
-                    "Default"
-                };
-                render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
-            }
-            ControlKind::EyedropperWidget => {
-                render_eyedropper_widget(
-                    buf,
-                    ctrl_area,
-                    &label_text,
-                    app.eyedropper_color,
-                    selected,
-                );
-            }
-            ControlKind::Action => {
-                let status = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
-                    &app.optimization_progress
-                } else {
-                    ""
-                };
-                render_button(buf, ctrl_area, &label_text, selected, status);
-            }
-        }
-
-        control_rects.push(ctrl_area);
-        y += item_height;
-    }
-
-    app.control_areas = control_rects;
-
-    // Draw scroll indicator if needed
-    let total = controls.len();
-    if total > max_visible {
-        let indicator = format!(
-            " {}/{} ",
-            if selected_ctrl != usize::MAX {
-                selected_ctrl + 1
-            } else {
-                1
-            },
-            total
-        );
-        let ix = inner.x + inner.width - indicator.len() as u16 - 1;
-        let iy = inner.y + inner.height - 1;
-        if iy < area.y + area.height {
-            buf.set_string(ix, iy, &indicator, Style::new().fg(TEXT_DIM).bg(SURFACE));
-        }
-    }
-}
-
-fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    app.tree_area = area;
-    let buf = f.buffer_mut();
-    // Get flattened nodes (this might be expensive to do every frame, but fine for now)
-    // 1. Update Scroll
-    {
-        let nodes = app.tree_state.flatten();
-        let _total = nodes.len();
-        let height = area.height as usize;
-        let selected = app.tree_state.selected_idx;
-        let current_scroll = app.tree_state.scroll as usize;
-
-        if selected >= current_scroll + height {
-            app.tree_state.scroll = (selected - height + 1) as u16;
-        } else if selected < current_scroll {
-            app.tree_state.scroll = selected as u16;
-        }
-    }
-
-    // 2. Render
-    let nodes = app.tree_state.flatten();
-    let total = nodes.len();
-    let start_idx = app.tree_state.scroll as usize;
-    let end_idx = (start_idx + area.height as usize).min(total);
-
-    let visible_nodes = nodes
-        .iter()
-        .skip(start_idx)
-        .take(end_idx - start_idx)
-        .enumerate();
-
-    for (i, node) in visible_nodes {
-        let y = area.y + i as u16;
-        if y >= area.y + area.height {
-            break;
-        }
-
-        // Calculate actual index for selection check
-        let actual_idx = start_idx + i;
-        let selected = actual_idx == app.tree_state.selected_idx;
-
-        let is_tree_focused = app.current_tab == 2 && app.selected_control == 0;
-        let style = if selected && is_tree_focused {
-            Style::new()
-                .bg(ACCENT)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else if selected {
-            Style::new().bg(SURFACE).fg(Color::White)
-        } else {
-            Style::new().fg(TEXT)
-        };
-
-        // Background for the whole line
-        for x in area.x..area.x + area.width {
-            buf[(x, y)].set_style(style);
-        }
-
-        // Indentation
-        let indent_len = (node.level as u16) * 2;
-        let x = area.x + indent_len;
-
-        // Marker
-        let marker = if !node.is_leaf {
-            if node.expanded {
-                "▼ "
-            } else {
-                "▶ "
-            }
-        } else {
-            // Check if selected in render_args
-            let name = &node.full_path;
-            if app.render_args.blocks.contains(name) {
-                "☑ "
-            } else {
-                "☐ "
-            }
-        };
-
-        // Draw marker
-        buf.set_string(x, y, marker, style.fg(ACCENT));
-
-        // Draw name
-        // +2 for marker width
-        buf.set_string(x + 2, y, &node.name, style);
     }
 }
 
@@ -6641,714 +6432,11 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
     }
 }
 
-fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    if app.current_tab != 0 || !app.show_general {
-        app.options_pane_area = Rect::default();
-        app.options_areas.clear();
-        return;
-    }
-
-    let id = app.get_current_control_id();
-    let ctrl = get_control_def(id);
-
-    let (options, current) = match &ctrl.kind {
-        ControlKind::Enum { options, .. } => (
-            options.iter().map(|&s| s.to_string()).collect::<Vec<_>>(),
-            app.get_value(id) as usize,
-        ),
-        ControlKind::FontSelector => (app.fonts.clone(), app.font_idx),
-        _ => return,
-    };
-
-    // Use bottom 3 rows of output
-    let pane_height = 3;
-    let pane_area = Rect::new(
-        area.x,
-        area.y + area.height.saturating_sub(pane_height),
-        area.width,
-        pane_height,
-    );
-    app.options_pane_area = pane_area;
-    app.options_areas.clear();
-    f.render_widget(Clear, pane_area);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {} Options ", ctrl.label))
-        .border_style(Style::new().fg(ACCENT));
-    f.render_widget(&block, pane_area);
-
-    let inner = block.inner(pane_area);
-    let mut x = inner.x;
-
-    // We want to show options around the current one
-    let visible_count = inner.width as usize / 12; // estimate more space
-    let start = current.saturating_sub(visible_count / 2);
-    let end = (start + visible_count).min(options.len());
-
-    for (i, opt) in options.iter().enumerate().skip(start).take(end - start) {
-        let is_selected = i == current;
-        let style = if is_selected {
-            Style::new()
-                .bg(ACCENT)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::new().fg(TEXT)
-        };
-        let text = format!(" {} ", opt);
-        if x + text.len() as u16 > inner.x + inner.width {
-            break;
-        }
-        let opt_area = Rect::new(x, inner.y, text.len() as u16, 1);
-        if app.options_areas.len() <= i {
-            app.options_areas.resize(i + 1, Rect::default());
-        }
-        app.options_areas[i] = opt_area;
-        f.render_widget(Paragraph::new(text.clone()).style(style), opt_area);
-        x += text.len() as u16 + 1;
-    }
-}
-
-fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let max_tree = area.height.saturating_sub(12).max(5);
-    app.glyph_tree_height = app.glyph_tree_height.clamp(5, max_tree);
-    let max_list = area.height.saturating_sub(app.glyph_tree_height + 7).max(5);
-    app.glyph_list_height = app.glyph_list_height.clamp(5, max_list);
-
-    let chunks = Layout::vertical([
-        Constraint::Length(app.glyph_tree_height),
-        Constraint::Length(1),
-        Constraint::Length(app.glyph_list_height),
-        Constraint::Length(1),
-        Constraint::Min(5),
-    ])
-    .split(area);
-
-    let splitter_style = Style::new().fg(BORDER).bg(BG);
-    f.render_widget(Block::default().style(splitter_style), chunks[1]);
-    f.render_widget(Block::default().style(splitter_style), chunks[3]);
-    app.splitter_areas.push(SplitterArea {
-        kind: SplitterKind::GlyphTreeRows,
-        area: chunks[1],
-    });
-    app.splitter_areas.push(SplitterArea {
-        kind: SplitterKind::GlyphListRows,
-        area: chunks[3],
-    });
-
-    // Render tree in the first section
-    let tree_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
-        .border_set(symbols::border::ROUNDED)
-        .style(Style::new().bg(SURFACE));
-    let tree_area = tree_block.inner(chunks[0]);
-    f.render_widget(tree_block, chunks[0]);
-    render_tree(f, app, tree_area);
-
-    app.glyph_list_area = chunks[2];
-    app.preview_area = chunks[4];
-
-    let is_focused = app.current_tab == 2 && app.selected_control == 1;
-    let border_style = if is_focused {
-        Style::new().fg(ACCENT)
-    } else {
-        Style::new().fg(BORDER)
-    };
-    let glyph_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(if is_focused {
-            " Glyphs ◄► "
-        } else {
-            " Glyphs "
-        });
-
-    if let Some(node) = app.tree_state.get_selected_node() {
-        let (config_groups, _) = crate::font::load_blocks_config();
-
-        let target_key = if !node.full_path.is_empty() {
-            &node.full_path
-        } else {
-            &node.name
-        };
-
-        if let Some(codes) = config_groups.get(target_key) {
-            let items: Vec<ListItem> = codes
-                .iter()
-                .map(|&code| {
-                    let ch = char::from_u32(code).unwrap_or('?');
-                    ListItem::new(format!("{} U+{:04X}", ch, code))
-                })
-                .collect();
-
-            let highlight_style = Style::default()
-                .bg(ACCENT)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD);
-
-            let list = List::new(items)
-                .block(glyph_block)
-                .highlight_style(highlight_style)
-                .highlight_symbol("▸ ");
-            f.render_stateful_widget(list, chunks[2], &mut app.glyph_list_state);
-
-            // Preview bitmap below
-            let idx = app.glyph_list_state.selected().unwrap_or(0);
-            if let Some(&code) = codes.get(idx) {
-                if let Some(ch) = char::from_u32(code) {
-                    render_block_bitmap(f, app, chunks[4], ch);
-                }
-            }
-        } else {
-            f.render_widget(
-                Paragraph::new("No known glyphs").block(glyph_block),
-                chunks[2],
-            );
-        }
-    }
-}
-
-fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: Rect, ch: char) {
-    let mut font_name = if app.font_idx < app.fonts.len() {
-        app.fonts[app.font_idx].clone()
-    } else {
-        "Default".to_string()
-    };
-
-    // Use current store to find bitmap and ACTUAL font name
-    let mut found_bitmap = None;
-    if let Some(g) = &app.arc_glyphs {
-        if let Some((_, bitmap, actual_font)) = g.glyphs.iter().find(|(c, _, _)| *c == ch) {
-            found_bitmap = Some(bitmap);
-            font_name = actual_font.clone();
-        }
-    }
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" Preview: {} ({}) ", ch, font_name));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if let Some(bitmap) = found_bitmap {
-        let mut text = ratatui::text::Text::default();
-        for row in bitmap {
-            let mut line = Line::from(vec![]);
-            for &pixel in row {
-                if pixel > 0 {
-                    line.spans
-                        .push(Span::styled("██", Style::new().fg(Color::Cyan)));
-                } else {
-                    // eye friendly distinct background color
-                    line.spans
-                        .push(Span::styled("░░", Style::new().fg(Color::Rgb(60, 60, 80))));
-                }
-            }
-            text.lines.push(line);
-        }
-        let p = Paragraph::new(text);
-        f.render_widget(p, inner);
-    } else {
-        // Not in current store, maybe need to reload or it's just missing
-        let p = Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
-            .alignment(Alignment::Center);
-        f.render_widget(p, inner);
-    }
-}
-
 #[derive(PartialEq, Eq)]
 enum TextDragMode {
     None,
     Moving,
     Sizing,
-}
-
-fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let main_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
-        .border_set(ratatui::symbols::border::ROUNDED)
-        .title(Span::styled(
-            " Text Settings ",
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(SURFACE));
-    let inner = main_block.inner(area);
-    f.render_widget(main_block, area);
-
-    let chunks = Layout::vertical([
-        Constraint::Length(25), // Color picker
-        Constraint::Length(3),  // FG/BG color swatches
-        Constraint::Length(3),  // Options (Wrap toggle / Bold / Italic / Underline)
-        Constraint::Length(3),  // Delete button
-        Constraint::Length(8),  // Mini list of overlays
-        Constraint::Min(0),     // Instructions / Status
-    ])
-    .split(inner);
-
-    // Color Picker always visible
-    let cp_rect = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 27);
-    
-    // Ensure CP is instantiated with correct mode
-    let mode = match app.render_mode_idx { 0 => crate::colorpicker::PaletteMode::Irc, 1 => crate::colorpicker::PaletteMode::Ansi, 2 => crate::colorpicker::PaletteMode::Ansi24, _ => crate::colorpicker::PaletteMode::Irc, };
-    if app.color_picker_state.is_none() {
-        app.color_picker_state = Some(crate::colorpicker::ColorPickerState::new(mode, true));
-    } else {
-        let cp = app.color_picker_state.as_mut().unwrap();
-        cp.mode = mode;
-        cp.is_open = true; // Force open
-    }
-    
-    // Sync CP with selection
-    if let Some(cp_state) = &mut app.color_picker_state {
-        if let Some(sel) = app.text_selected {
-            if sel > 0 && sel <= app.render_args.overlays.len() {
-                let ov = &app.render_args.overlays[sel - 1];
-                if cp_state.editing_fg {
-                    if let Some(fg) = &ov.fg {
-                        let (r, g, b) = match fg {
-                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
-                        };
-                        cp_state.fg_rgb = (r, g, b);
-                        cp_state.set_rgb(r, g, b);
-                    } else {
-                        cp_state.fg_idx = None;
-                    }
-                } else {
-                    if let Some(bg) = &ov.bg {
-                        let (r, g, b) = match bg {
-                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
-                        };
-                        cp_state.bg_rgb = Some((r, g, b));
-                        cp_state.set_rgb(r, g, b);
-                    } else {
-                        cp_state.bg_idx = None;
-                        cp_state.bg_rgb = None;
-                    }
-                }
-            }
-        }
-        f.render_widget(crate::colorpicker::ColorPickerWidget { state: cp_state }, cp_rect);
-    }
-
-    // FG/BG color swatch display
-    {
-        let swatch_area = chunks[1];
-        let swatch_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER))
-            .title(" Color ");
-        let swatch_inner = swatch_block.inner(swatch_area);
-        f.render_widget(swatch_block, swatch_area);
-
-        let swatch_halves = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(swatch_inner);
-
-        // FG swatch
-        let fg_editing = app.color_picker_state.as_ref().map_or(true, |cp| cp.editing_fg);
-        let fg_label = if fg_editing { "▶Fg " } else { " Fg " };
-        if let Some(sel) = app.text_selected {
-            if sel > 0 && sel <= app.render_args.overlays.len() {
-                let ov = &app.render_args.overlays[sel - 1];
-                let fg_style = if let Some(fg) = &ov.fg {
-                    let (r, g, b) = match fg {
-                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                        crate::args::ColorSpec::Index(i) => {
-                            let cp = app.color_picker_state.as_ref().unwrap();
-                            cp.rgb_from_idx(*i as usize)
-                        }
-                    };
-                    Style::default().bg(Color::Rgb(r, g, b)).fg(if (r as u16 + g as u16 + b as u16) > 380 { Color::Black } else { Color::White })
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                let fg_text = if ov.fg.is_some() { format!("{}████", fg_label) } else { format!("{}[None]", fg_label) };
-                f.render_widget(Paragraph::new(fg_text).style(fg_style), swatch_halves[0]);
-
-                // BG swatch
-                let bg_label = if !fg_editing { "▶Bg " } else { " Bg " };
-                let bg_style = if let Some(bg) = &ov.bg {
-                    let (r, g, b) = match bg {
-                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                        crate::args::ColorSpec::Index(i) => {
-                            let cp = app.color_picker_state.as_ref().unwrap();
-                            cp.rgb_from_idx(*i as usize)
-                        }
-                    };
-                    Style::default().bg(Color::Rgb(r, g, b)).fg(if (r as u16 + g as u16 + b as u16) > 380 { Color::Black } else { Color::White })
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                let bg_text = if ov.bg.is_some() { format!("{}████", bg_label) } else { format!("{}[None]", bg_label) };
-                f.render_widget(Paragraph::new(bg_text).style(bg_style), swatch_halves[1]);
-            }
-        }
-    }
-    
-    app.text_btn_areas.clear(); 
-    
-    let has_selection = app.text_selected.map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
-    if has_selection {
-        let sel_idx = app.text_selected.unwrap() - 1;
-        let ov = &app.render_args.overlays[sel_idx];
-        
-        // Row 1: Wrap, Bold, Italic, Underline
-        let options_chunks = Layout::horizontal([
-            Constraint::Percentage(25), 
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25)
-        ]).split(chunks[2]);
-        
-        // Wrap
-        let wrap_style = if ov.wrap { Style::default().fg(Color::Green) } else { Style::default().fg(Color::Gray) };
-        let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" })
-            .block(Block::default().borders(Borders::ALL).border_style(wrap_style))
-            .alignment(Alignment::Center);
-        f.render_widget(wrap_p, options_chunks[0]);
-        app.text_btn_areas.push(options_chunks[0]); // Index 0
-        
-        // Bold
-        let bold_style = if ov.bold { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
-        let bold_p = Paragraph::new(" B ")
-            .block(Block::default().borders(Borders::ALL).border_style(bold_style))
-            .alignment(Alignment::Center);
-        f.render_widget(bold_p, options_chunks[1]);
-        app.text_btn_areas.push(options_chunks[1]); // Index 1
-        
-        // Italic
-        let italic_style = if ov.italic { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
-        let italic_p = Paragraph::new(" I ")
-            .block(Block::default().borders(Borders::ALL).border_style(italic_style))
-            .alignment(Alignment::Center);
-        f.render_widget(italic_p, options_chunks[2]);
-        app.text_btn_areas.push(options_chunks[2]); // Index 2
-        
-        // Underline
-        let underline_style = if ov.underline { Style::default().fg(Color::Cyan) } else { Style::default().fg(Color::Gray) };
-        let underline_p = Paragraph::new(" U ")
-            .block(Block::default().borders(Borders::ALL).border_style(underline_style))
-            .alignment(Alignment::Center);
-        f.render_widget(underline_p, options_chunks[3]);
-        app.text_btn_areas.push(options_chunks[3]); // Index 3
-        
-        // Row 2: Delete
-        let del_btn = Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Red));
-        let del_p = Paragraph::new("Delete Overlay").block(del_btn).alignment(Alignment::Center);
-        f.render_widget(del_p, chunks[3]);
-        app.text_btn_areas.push(chunks[3]); // Index 4
-    } else {
-        for _ in 0..5 { app.text_btn_areas.push(Rect::default()); }
-    }
-
-    // Mini-list of overlays
-    let mut items: Vec<ListItem> = Vec::new();
-    for (i, ov) in app.render_args.overlays.iter().enumerate() {
-        let is_selected = app.text_selected == Some(i + 1);
-        let text_trunc: String = if ov.text.chars().count() > 20 {
-            format!("{}…", ov.text.chars().take(20).collect::<String>())
-        } else {
-            ov.text.clone()
-        };
-        let label = format!(" #{} {} ({},{}) {}x{}", i+1, text_trunc, ov.x, ov.y, ov.w, ov.h);
-        let style = if is_selected { Style::default().fg(ACCENT).add_modifier(Modifier::BOLD) } else { Style::default().fg(TEXT) };
-        items.push(ListItem::new(label).style(style));
-    }
-    let list_block = Block::default().borders(Borders::ALL).title(" Overlays ");
-    let list = List::new(items).block(list_block);
-    f.render_stateful_widget(list, chunks[4], &mut app.text_list_state);
-    // Note: We don't update text_list_area here because we want mouse to work on image
-
-    let mut status_text = String::from("Instructions:\n\
-    - Double-click canvas: Create Text / Start Editing\n\
-    - Left Click: Select FG / Right Click: Select BG\n\
-    - Drag Box: Move / Drag Corner: Resize\n\
-    - Type: Enter Text / Esc: Deselect");
-
-    if let Some(sel) = app.text_selected {
-        if sel > 0 && sel <= app.render_args.overlays.len() {
-            let ov = &app.render_args.overlays[sel - 1];
-            status_text = format!("Selected #{} | Pos: {},{} | Size: {}x{}\n", sel, ov.x, ov.y, ov.w, ov.h) + &status_text;
-        }
-    }
-    
-    let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst_p, chunks[5]);
-    
-    // Store rects for mouse events later
-    app.color_picker_area = cp_rect;
-    app.text_list_area = chunks[4]; 
-}
-
-fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let catalog = PIPELINE_CATALOG;
-    let no_image = app
-        .render_args
-        .image
-        .as_deref()
-        .map(|p| p.is_empty())
-        .unwrap_or(true);
-    let is_focused = app.current_tab == 1 && app.pipeline_expanded.is_some();
-    let border_color = if no_image {
-        Color::Rgb(80, 40, 40)
-    } else if is_focused {
-        ACCENT
-    } else {
-        BORDER
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            " Library ",
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    if no_image {
-        f.render_widget(
-            Paragraph::new("Load an image\nfirst")
-                .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::Rgb(180, 80, 80))),
-            inner,
-        );
-        return;
-    }
-
-    let scroll = app.pipeline_scroll as usize;
-    let items: Vec<ListItem> = catalog
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .map(|(idx, e)| {
-            if e.effect.is_none() {
-                // section header
-                ListItem::new(format!("{}", e.label))
-                    .style(Style::default().fg(ACCENT_DIM).add_modifier(Modifier::BOLD))
-            } else {
-                let is_selected = idx == app.pipeline_library_selected;
-                let style = if is_selected {
-                    let mut style = Style::default()
-                        .fg(Color::White)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD);
-                    if !is_focused {
-                        style = style.remove_modifier(Modifier::BOLD);
-                    }
-                    style
-                } else {
-                    Style::default().fg(TEXT_DIM)
-                };
-
-                let mut spans = vec![Span::styled(format!("  {}", e.label), style)];
-
-                if is_selected {
-                    if let Some(effect) = &e.effect {
-                        if let Some(v) = effect.param_f32() {
-                            let (min, max) = effect.param_range().unwrap_or((0.0, 255.0));
-                            let units = quantized_slider_units_f32(v, min, max, SLIDER_BAR_CELLS);
-                            let bar = render_eighth_block_bar(units, SLIDER_BAR_CELLS);
-                            spans.push(Span::styled("  ", style));
-                            spans.push(Span::styled(
-                                bar,
-                                Style::default().fg(ACCENT).bg(Color::Rgb(15, 15, 20)),
-                            ));
-                            spans.push(Span::styled(format!(" {:>4.0}", v), style));
-                        }
-                    }
-                }
-                ListItem::new(Line::from(spans))
-            }
-        })
-        .collect();
-
-    f.render_widget(List::new(items), inner);
-}
-
-fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    app.pipeline_active_area = area;
-    app.ensure_pipeline_selection();
-    let is_focused = app.current_tab == 1;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(if is_focused { ACCENT } else { BORDER }))
-        .border_set(ratatui::symbols::border::ROUNDED)
-        .style(Style::new().bg(SURFACE))
-        .title(Span::styled(
-            " Active Pipeline ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let mut items = Vec::new();
-    let total_nodes = app.pipeline_nodes.len();
-
-    let mut target_visual_index = 0;
-    let mut current_visual_index = 0;
-
-    for i in 0..=total_nodes {
-        let is_add_node = i == total_nodes;
-        let is_selected = app.selected_control == i && app.pipeline_expanded.is_none();
-        let is_expanded = app.pipeline_expanded == Some(i);
-
-        if is_selected {
-            target_visual_index = current_visual_index;
-        }
-
-        let line_bg = if is_selected || is_expanded {
-            SELECTED_BG
-        } else {
-            SURFACE
-        };
-
-        let (label, is_disabled, active_f32, active_range) = if is_add_node {
-            ("＋ Add Effect...", false, None, None)
-        } else {
-            let node = &app.pipeline_nodes[i];
-            (
-                node.effect.name(),
-                node.disabled,
-                node.effect.param_f32(),
-                node.effect.param_range(),
-            )
-        };
-
-        let (display_f32, display_range) = if is_expanded {
-            if let Some(preview) = &app.pipeline_preview_effect {
-                (preview.param_f32(), preview.param_range())
-            } else {
-                (None, None)
-            }
-        } else {
-            (active_f32, active_range)
-        };
-
-        let text_fg = if is_disabled {
-            TEXT_DIM
-        } else if is_add_node {
-            if is_selected {
-                Color::White
-            } else {
-                TEXT_DIM
-            }
-        } else {
-            TEXT
-        };
-        let icon_str = if is_add_node { "  " } else { "● " };
-        let icon_fg = if is_disabled { TEXT_DIM } else { TOGGLE_ON };
-
-        // 2 chars for icon_str. We want 22 total chars before slider. Pad label to 20.
-        let remaining_len = 20_usize.saturating_sub(label.chars().count());
-        let padding = " ".repeat(remaining_len);
-
-        let mut spans = vec![
-            Span::styled(icon_str, Style::default().fg(icon_fg)),
-            Span::styled(
-                format!("{}{}", label, padding),
-                Style::default().fg(text_fg).add_modifier(
-                    if (is_selected || is_expanded) && !is_disabled && !is_add_node {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    },
-                ),
-            ),
-        ];
-
-        if let Some(v) = display_f32 {
-            let (min, max) = display_range.unwrap_or((0.0, 255.0));
-            let bar_cells = SLIDER_BAR_CELLS;
-            let units = quantized_slider_units_f32(v, min, max, bar_cells);
-            let bar = render_eighth_block_bar(units, bar_cells);
-
-            let display_str = format!("{}", v);
-            let text_len = display_str.chars().count();
-            let center_idx = bar_cells.saturating_sub(text_len) / 2;
-            let is_filled = (units / 8) >= center_idx + text_len / 2;
-
-            let fg_color = if is_selected || is_expanded {
-                BAR_FG
-            } else {
-                ACCENT
-            };
-            let bg_color = Color::Rgb(15, 15, 20);
-
-            let left_part: String = bar.chars().take(center_idx).collect();
-            let right_part: String = bar.chars().skip(center_idx + text_len).collect();
-
-            let text_bg = if is_filled { fg_color } else { bg_color };
-            let text_fg = if is_filled { bg_color } else { fg_color };
-
-            spans.push(Span::styled(
-                left_part,
-                Style::default().fg(fg_color).bg(bg_color),
-            ));
-            spans.push(Span::styled(
-                display_str,
-                Style::default()
-                    .fg(text_fg)
-                    .bg(text_bg)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                right_part,
-                Style::default().fg(fg_color).bg(bg_color),
-            ));
-        }
-
-        items.push(ListItem::new(Line::from(spans)).style(Style::default().bg(line_bg)));
-        current_visual_index += 1;
-
-        if is_expanded {
-            let catalog = crate::tui::PIPELINE_CATALOG;
-            for (lib_idx, e) in catalog.iter().enumerate() {
-                let lib_selected = lib_idx == app.pipeline_library_selected;
-                let lib_style = if lib_selected {
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(SELECTED_BG)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(TEXT_DIM)
-                };
-
-                if lib_selected {
-                    target_visual_index = current_visual_index;
-                }
-
-                if e.effect.is_none() {
-                    let clean_label = e.label.replace("── ", "").replace(" ──", "");
-                    items.push(
-                        ListItem::new(format!("   {}", clean_label)).style(
-                            Style::default()
-                                .fg(ACCENT_DIM)
-                                .add_modifier(Modifier::BOLD)
-                                .bg(SURFACE),
-                        ),
-                    );
-                } else {
-                    let lib_spans = vec![Span::styled(format!("      {}", e.label), lib_style)];
-                    items.push(ListItem::new(Line::from(lib_spans)).style(
-                        Style::default().bg(if lib_selected { SELECTED_BG } else { SURFACE }),
-                    ));
-                }
-                current_visual_index += 1;
-            }
-        }
-    }
-
-    if app.pipeline_list_state.selected() != Some(target_visual_index) {
-        app.pipeline_list_state.select(Some(target_visual_index));
-    }
-
-    // We pass list to stateful widget
-    let list = List::new(items);
-    f.render_stateful_widget(list, inner, &mut app.pipeline_list_state);
 }
 
 fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {

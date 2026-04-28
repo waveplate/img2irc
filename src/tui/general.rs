@@ -1,0 +1,316 @@
+use super::*;
+
+pub(crate) fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.current_tab != 0 || !app.show_general {
+        app.options_pane_area = Rect::default();
+        app.options_areas.clear();
+        return;
+    }
+
+    let id = app.get_current_control_id();
+    let ctrl = get_control_def(id);
+
+    let (options, current) = match &ctrl.kind {
+        ControlKind::Enum { options, .. } => (
+            options.iter().map(|&s| s.to_string()).collect::<Vec<_>>(),
+            app.get_value(id) as usize,
+        ),
+        ControlKind::FontSelector => (app.fonts.clone(), app.font_idx),
+        _ => return,
+    };
+
+    // Use bottom 3 rows of output
+    let pane_height = 3;
+    let pane_area = Rect::new(
+        area.x,
+        area.y + area.height.saturating_sub(pane_height),
+        area.width,
+        pane_height,
+    );
+    app.options_pane_area = pane_area;
+    app.options_areas.clear();
+    f.render_widget(Clear, pane_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} Options ", ctrl.label))
+        .border_style(Style::new().fg(ACCENT));
+    f.render_widget(&block, pane_area);
+
+    let inner = block.inner(pane_area);
+    let mut x = inner.x;
+
+    // We want to show options around the current one
+    let visible_count = inner.width as usize / 12; // estimate more space
+    let start = current.saturating_sub(visible_count / 2);
+    let end = (start + visible_count).min(options.len());
+
+    for (i, opt) in options.iter().enumerate().skip(start).take(end - start) {
+        let is_selected = i == current;
+        let style = if is_selected {
+            Style::new()
+                .bg(ACCENT)
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::new().fg(TEXT)
+        };
+        let text = format!(" {} ", opt);
+        if x + text.len() as u16 > inner.x + inner.width {
+            break;
+        }
+        let opt_area = Rect::new(x, inner.y, text.len() as u16, 1);
+        if app.options_areas.len() <= i {
+            app.options_areas.resize(i + 1, Rect::default());
+        }
+        app.options_areas[i] = opt_area;
+        f.render_widget(Paragraph::new(text.clone()).style(style), opt_area);
+        x += text.len() as u16 + 1;
+    }
+}
+
+pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Panel border
+    let panel = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::new().fg(BORDER))
+        .border_set(symbols::border::ROUNDED)
+        .style(Style::new().bg(SURFACE));
+    let inner = panel.inner(area);
+    f.render_widget(panel, area);
+
+    app.control_areas.clear();
+
+    let buf = f.buffer_mut();
+
+    let controls = app.tab_controls(0);
+    let avail_height = inner.height as usize;
+    let item_height: u16 = 2; // 1 row content + 1 row spacing
+    let max_visible = avail_height / item_height as usize;
+
+    // Scrolling offset for controls
+    let selected_ctrl = if app.current_tab == 0 {
+        app.selected_control
+    } else {
+        usize::MAX
+    };
+    let scroll_offset = if selected_ctrl != usize::MAX && selected_ctrl >= max_visible {
+        selected_ctrl - max_visible + 1
+    } else {
+        0
+    };
+
+    let mut control_rects = Vec::new();
+    let mut y = inner.y;
+
+    for (v_idx, ctrl) in controls.iter().enumerate() {
+        if v_idx < scroll_offset {
+            control_rects.push(Rect::default());
+            continue;
+        }
+        if y + item_height > inner.y + inner.height {
+            control_rects.push(Rect::default());
+            continue;
+        }
+
+        let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
+        let selected = v_idx == selected_ctrl;
+
+        let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
+            "🛑 STOP AUTO-OPTIMIZE".to_string()
+        } else {
+            ctrl.label.to_string()
+        };
+
+        match ctrl.kind {
+            ControlKind::Slider { min, max, .. } => {
+                let value = app.get_control_value(0, v_idx);
+                if selected && app.input_mode == InputMode::ValueEdit {
+                    // Show edit buffer with cursor
+                    let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
+                    let style = Style::new()
+                        .fg(Color::Yellow)
+                        .bg(SURFACE)
+                        .add_modifier(Modifier::BOLD);
+                    for (i, ch) in edit_text.chars().enumerate() {
+                        if ctrl_area.x + i as u16 >= ctrl_area.x + ctrl_area.width {
+                            break;
+                        }
+                        buf.cell_mut((ctrl_area.x + i as u16, ctrl_area.y))
+                            .map(|cell| cell.set_char(ch).set_style(style));
+                    }
+                } else {
+                    let dv = if ctrl.id == ControlId::FontSize {
+                        Some(format!("{:.1}", value as f32 / 10.0))
+                    } else {
+                        None
+                    };
+                    render_bar(
+                        buf,
+                        ctrl_area,
+                        &label_text,
+                        value,
+                        min,
+                        max,
+                        selected,
+                        dv.as_deref(),
+                    );
+                }
+            }
+            ControlKind::Enum { options, .. } => {
+                let value = app.get_control_value(0, v_idx) as usize;
+                render_enum(buf, ctrl_area, &label_text, options, value, selected);
+            }
+            ControlKind::Toggle { .. } => {
+                let on = app.get_control_value(0, v_idx) != 0;
+                render_toggle(buf, ctrl_area, &label_text, on, selected);
+            }
+            ControlKind::FontSelector => {
+                let font_name: &str = if app.font_idx < app.fonts.len() {
+                    &app.fonts[app.font_idx]
+                } else {
+                    "Default"
+                };
+                render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
+            }
+            ControlKind::EyedropperWidget => {
+                render_eyedropper_widget(
+                    buf,
+                    ctrl_area,
+                    &label_text,
+                    app.eyedropper_color,
+                    selected,
+                );
+            }
+            ControlKind::Action => {
+                let status = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
+                    &app.optimization_progress
+                } else {
+                    ""
+                };
+                render_button(buf, ctrl_area, &label_text, selected, status);
+            }
+        }
+
+        control_rects.push(ctrl_area);
+        y += item_height;
+    }
+
+    app.control_areas = control_rects;
+
+    // Draw scroll indicator if needed
+    let total = controls.len();
+    if total > max_visible {
+        let indicator = format!(
+            " {}/{} ",
+            if selected_ctrl != usize::MAX {
+                selected_ctrl + 1
+            } else {
+                1
+            },
+            total
+        );
+        let ix = inner.x + inner.width - indicator.len() as u16 - 1;
+        let iy = inner.y + inner.height - 1;
+        if iy < area.y + area.height {
+            buf.set_string(ix, iy, &indicator, Style::new().fg(TEXT_DIM).bg(SURFACE));
+        }
+    }
+}
+
+pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if let Some(state) = &mut app.auto_optimize_state {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Auto Optimize (Enter: start, Esc: cancel) ")
+            .style(Style::default().fg(Color::Yellow));
+
+        let inner_area = block.inner(area);
+        f.render_widget(Clear, area);
+        f.render_widget(block, area);
+
+        // 8 rows of inputs + 1 row for checkbox + 1 row for slider
+        let mut constraints = vec![Constraint::Length(3); 8];
+        constraints.push(Constraint::Length(3));
+        constraints.push(Constraint::Length(3));
+        let rows = Layout::vertical(constraints).split(inner_area);
+
+        let titles = [
+            "Width",
+            "Crop Top",
+            "Crop Right",
+            "Crop Bottom",
+            "Crop Left",
+            "Font Size",
+            "Scale X",
+            "Scale Y",
+        ];
+
+        for i in 0..8 {
+            let row_area = rows[i];
+            let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(row_area);
+
+            let title = titles.get(i).unwrap_or(&"");
+
+            for j in 0..2 {
+                let idx = i * 2 + j;
+                let input = &mut state.inputs[idx];
+                let sub_title = if j == 0 {
+                    format!("{} (Min)", title)
+                } else {
+                    format!("{} (Max)", title)
+                };
+
+                if idx == state.focused_idx {
+                    input.set_style(Style::default().fg(ACCENT));
+                    input.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(sub_title)
+                            .border_style(Style::default().fg(ACCENT)),
+                    );
+                } else {
+                    input.set_style(Style::default());
+                    input.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(sub_title)
+                            .border_style(Style::default()),
+                    );
+                }
+                f.render_widget(&*input, cols[j]);
+            }
+        }
+
+        // Render checkbox
+        let cb_area = rows[8];
+        let cb_text = if state.optimize_shortest_longest_line {
+            "[x] Optimize for shortest longest line"
+        } else {
+            "[ ] Optimize for shortest longest line"
+        };
+        let cb_style = if state.focused_idx == 16 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default()
+        };
+        let cb_paragraph = Paragraph::new(cb_text)
+            .style(cb_style)
+            .alignment(Alignment::Center);
+        f.render_widget(cb_paragraph, cb_area);
+
+        // Render slider for batch size
+        let slider_area = rows[9];
+        let slider_style = if state.focused_idx == 17 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let slider_text = format!("Batch Size: {} (< / > to adjust)", state.batch_size);
+        let slider_p = Paragraph::new(slider_text)
+            .style(slider_style)
+            .alignment(Alignment::Center);
+        f.render_widget(slider_p, slider_area);
+    }
+}
