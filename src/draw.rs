@@ -185,8 +185,41 @@ const POSITIONS: [(usize, usize, u32); 8] = [
     (1, 3, 0x80),
 ];
 
-static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
-    Lazy::new(|| Mutex::new(HashMap::with_capacity(8_192)));
+static COLOR_CACHE: Lazy<dashmap::DashMap<u32, (u8, u8, u8, u8)>> =
+    Lazy::new(|| dashmap::DashMap::with_capacity(8_192));
+
+struct PaletteInfo {
+    components: Vec<[i32; 3]>,
+    is_chromatic: Vec<bool>,
+}
+
+static ANSI256_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
+    components: ANSI256
+        .iter()
+        .map(|&p| {
+            [
+                ((p >> 16) & 0xFF) as i32,
+                ((p >> 8) & 0xFF) as i32,
+                (p & 0xFF) as i32,
+            ]
+        })
+        .collect(),
+    is_chromatic: ANSI256.iter().map(|&p| !is_near_grayscale(p, 0)).collect(),
+});
+
+static IRC99_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
+    components: IRC99
+        .iter()
+        .map(|&p| {
+            [
+                ((p >> 16) & 0xFF) as i32,
+                ((p >> 8) & 0xFF) as i32,
+                (p & 0xFF) as i32,
+            ]
+        })
+        .collect(),
+    is_chromatic: IRC99.iter().map(|&p| !is_near_grayscale(p, 0)).collect(),
+});
 
 #[inline(always)]
 pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
@@ -200,20 +233,48 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
         return 0;
     }
 
-    for (i, &p) in palette.iter().enumerate() {
-        if palette.len() == 99 && (2..16).contains(&i) {
-            continue;
-        }
+    let info = if palette.len() == 256 {
+        Some(&ANSI256_INFO)
+    } else if palette.len() == 99 {
+        Some(&IRC99_INFO)
+    } else {
+        None
+    };
 
-        let dr = pr - (((p >> 16) & 0xFF) as i32);
-        let dg = pg - (((p >> 8) & 0xFF) as i32);
-        let db = pb - ((p & 0xFF) as i32);
-        let d = (dr * dr + dg * dg + db * db) as u32;
-        if d < best_d {
-            best_d = d;
-            best_i = i as u8;
-            if d == 0 {
-                break;
+    if let Some(inf) = info {
+        for (i, [r, g, b]) in inf.components.iter().enumerate() {
+            if palette.len() == 99 && (2..16).contains(&i) {
+                continue;
+            }
+
+            let dr = pr - r;
+            let dg = pg - g;
+            let db = pb - b;
+            let d = (dr * dr + dg * dg + db * db) as u32;
+            if d < best_d {
+                best_d = d;
+                best_i = i as u8;
+                if d == 0 {
+                    break;
+                }
+            }
+        }
+    } else {
+        for (i, &p) in palette.iter().enumerate() {
+            if palette.len() == 99 && (2..16).contains(&i) {
+                continue;
+            }
+
+            let dr = pr - (((p >> 16) & 0xFF) as i32);
+            let dg = pg - (((p >> 8) & 0xFF) as i32);
+            let db = pb - ((p & 0xFF) as i32);
+            let d = (dr * dr + dg * dg + db * db) as u32;
+            if d < best_d {
+                best_d = d;
+                best_i = i as u8;
+                if d == 0 {
+                    break;
+                }
             }
         }
     }
@@ -233,19 +294,46 @@ pub fn nearest_distinctly_chromatic_hex_colour(
     let mut best_i: Option<u8> = None;
     let mut best_d = u32::MAX;
 
-    for (i, &p) in palette.iter().enumerate() {
-        if is_near_grayscale(p, tolerance) {
-            continue;
+    let info = if palette.len() == 256 {
+        Some(&ANSI256_INFO)
+    } else if palette.len() == 99 {
+        Some(&IRC99_INFO)
+    } else {
+        None
+    };
+
+    if let Some(inf) = info {
+        for (i, [r, g, b]) in inf.components.iter().enumerate() {
+            if is_near_grayscale_rgb(*r as u8, *g as u8, *b as u8, tolerance) {
+                continue;
+            }
+            let dr = pr - r;
+            let dg = pg - g;
+            let db = pb - b;
+            let d = (dr * dr + dg * dg + db * db) as u32;
+            if d < best_d {
+                best_d = d;
+                best_i = Some(i as u8);
+                if d == 0 {
+                    break;
+                }
+            }
         }
-        let dr = pr - (((p >> 16) & 0xFF) as i32);
-        let dg = pg - (((p >> 8) & 0xFF) as i32);
-        let db = pb - ((p & 0xFF) as i32);
-        let d = (dr * dr + dg * dg + db * db) as u32;
-        if d < best_d {
-            best_d = d;
-            best_i = Some(i as u8);
-            if d == 0 {
-                break;
+    } else {
+        for (i, &p) in palette.iter().enumerate() {
+            if is_near_grayscale(p, tolerance) {
+                continue;
+            }
+            let dr = pr - (((p >> 16) & 0xFF) as i32);
+            let dg = pg - (((p >> 8) & 0xFF) as i32);
+            let db = pb - ((p & 0xFF) as i32);
+            let d = (dr * dr + dg * dg + db * db) as u32;
+            if d < best_d {
+                best_d = d;
+                best_i = Some(i as u8);
+                if d == 0 {
+                    break;
+                }
             }
         }
     }
@@ -262,24 +350,54 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
     let pg = ((target >> 8) & 0xFF) as i32;
     let pb = (target & 0xFF) as i32;
 
-    for (i, &p) in palette.iter().enumerate() {
-        if palette.len() == 99 && (2..16).contains(&i) {
-            continue;
+    let info = if palette.len() == 256 {
+        Some(&ANSI256_INFO)
+    } else if palette.len() == 99 {
+        Some(&IRC99_INFO)
+    } else {
+        None
+    };
+
+    if let Some(inf) = info {
+        for (i, [r, g, b]) in inf.components.iter().enumerate() {
+            if palette.len() == 99 && (2..16).contains(&i) {
+                continue;
+            }
+
+            let p_is_chromatic = inf.is_chromatic[i];
+
+            if target_is_chromatic == p_is_chromatic {
+                let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
+                let d = d as u32;
+                if d < best_d {
+                    best_d = d;
+                    best_i = i as u8;
+                    if d == 0 {
+                        break;
+                    }
+                }
+            }
         }
+    } else {
+        for (i, &p) in palette.iter().enumerate() {
+            if palette.len() == 99 && (2..16).contains(&i) {
+                continue;
+            }
 
-        let p_is_chromatic = !is_near_grayscale(p, 0); // Strict check for palette
+            let p_is_chromatic = !is_near_grayscale(p, 0); // Strict check for palette
 
-        if target_is_chromatic == p_is_chromatic {
-            let r = ((p >> 16) & 0xFF) as i32;
-            let g = ((p >> 8) & 0xFF) as i32;
-            let b = (p & 0xFF) as i32;
-            let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
-            let d = d as u32;
-            if d < best_d {
-                best_d = d;
-                best_i = i as u8;
-                if d == 0 {
-                    break;
+            if target_is_chromatic == p_is_chromatic {
+                let r = ((p >> 16) & 0xFF) as i32;
+                let g = ((p >> 8) & 0xFF) as i32;
+                let b = (p & 0xFF) as i32;
+                let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
+                let d = d as u32;
+                if d < best_d {
+                    best_d = d;
+                    best_i = i as u8;
+                    if d == 0 {
+                        break;
+                    }
                 }
             }
         }
@@ -349,7 +467,8 @@ pub enum Colour {
 impl AnsiPixel {
     #[inline]
     pub fn new(px: &u32, tolerance: u8) -> Self {
-        if let Some(&(a, i, an, in_)) = COLOR_CACHE.lock().unwrap().get(px) {
+        if let Some(entry) = COLOR_CACHE.get(px) {
+            let (a, i, an, in_) = *entry;
             return AnsiPixel {
                 orig: *px,
                 ansi_std: a,
@@ -374,10 +493,7 @@ impl AnsiPixel {
             }
         }
 
-        COLOR_CACHE
-            .lock()
-            .unwrap()
-            .insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
+        COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
         AnsiPixel {
             orig: *px,
             ansi_std: ansi_std_val,
@@ -392,7 +508,7 @@ impl AnsiImage {
     pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8) -> Self {
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
-        let flat: Vec<u32> = raw.chunks(4).map(make_rgb_u32).collect();
+        let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
         let mut bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
 
         if !bitmap.len().is_multiple_of(2) {
@@ -427,7 +543,7 @@ fn block_bitmap(
     }
 
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
-        .iter()
+        .par_iter()
         .map(|row| row.iter().map(|px| AnsiPixel::new(px, tolerance)).collect())
         .collect();
 
@@ -438,24 +554,38 @@ fn block_bitmap(
         px_rows[0].len().div_ceil(gw) * gw
     };
 
+    // Pad px_rows if necessary to avoid bounds checks in the tight loop
+    for r in &mut px_rows {
+        if r.len() < pw {
+            r.extend(std::iter::repeat_n(
+                AnsiPixel::new(&0, tolerance),
+                pw - r.len(),
+            ));
+        }
+    }
+    if px_rows.len() < ph {
+        let blank = vec![AnsiPixel::new(&0, tolerance); pw];
+        px_rows.extend(std::iter::repeat_n(blank, ph - px_rows.len()));
+    }
+
     let mut out = Vec::with_capacity(ph / gh);
-    for y in (0..ph).step_by(gh) {
+    out.extend((0..ph).into_par_iter().step_by(gh).map(|y| {
         let mut row = Vec::with_capacity(pw / gw);
         for x in (0..pw).step_by(gw) {
-            let mut block_pixels = vec![vec![AnsiPixel::new(&0, tolerance); gw]; gh];
+            let mut block_pixels = Vec::with_capacity(gh);
             for j in 0..gh {
+                let mut row_pixels = Vec::with_capacity(gw);
                 for i in 0..gw {
-                    if y + j < px_rows.len() && x + i < px_rows[y + j].len() {
-                        block_pixels[j][i] = px_rows[y + j][x + i];
-                    }
+                    row_pixels.push(px_rows[y + j][x + i]);
                 }
+                block_pixels.push(row_pixels);
             }
             row.push(AnsiPixelBlock {
                 pixels: block_pixels,
             });
         }
-        out.push(row);
-    }
+        row
+    }).collect::<Vec<_>>());
     out
 }
 
