@@ -2,6 +2,7 @@ pub mod general;
 pub mod glyphs;
 pub mod pipeline;
 pub mod text;
+pub mod explorer;
 pub use general::*;
 pub use glyphs::*;
 pub use pipeline::*;
@@ -41,7 +42,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
     Terminal,
 };
-use ratatui_explorer::FileExplorer;
+use explorer::FileExplorer;
 use ratatui_image::{
     picker::Picker, protocol::StatefulProtocol, Resize, ResizeEncodeRender, StatefulImage,
 };
@@ -50,7 +51,7 @@ use std::fs::File;
 use std::process::Command;
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
-use tui_textarea::TextArea;
+use ratatui_textarea::TextArea;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 const BG: Color = Color::Rgb(22, 22, 30);
@@ -222,7 +223,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 1,
             max: 100,
-            default: 10,
+            default: 2,
         },
     },
     ControlDef {
@@ -230,7 +231,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Fix Radius",
         kind: ControlKind::Slider {
             min: 0,
-            max: 10,
+            max: 1000,
             default: 2,
         },
     },
@@ -239,7 +240,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Fix Tol %",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100,
+            max: 1000,
             default: 20,
         },
     },
@@ -248,7 +249,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Fix Tol Px",
         kind: ControlKind::Slider {
             min: 0,
-            max: 100,
+            max: 1000,
             default: 2,
         },
     },
@@ -257,7 +258,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Fix Pool",
         kind: ControlKind::Slider {
             min: 1,
-            max: 100,
+            max: 1000,
             default: 12,
         },
     },
@@ -1028,11 +1029,40 @@ impl App {
                             self.render_args.blocks.push(leaf);
                         }
                     }
-                }
-            }
-        }
-        self.mark_args_dirty();
-    }
+                    }
+                    }
+                    self.mark_args_dirty();
+                    }
+                    }
+
+                    fn toggle_glyph_selection(&mut self) {
+                    let (config_groups, _) = crate::font::load_blocks_config();
+                    if let Some(node) = self.tree_state.get_selected_node() {
+                    let target_key = if !node.full_path.is_empty() {
+                    &node.full_path
+                    } else {
+                    &node.name
+                    };
+
+                    if let Some(codes) = config_groups.get(target_key) {
+                    if let Some(idx) = self.glyph_list_state.selected() {
+                    if let Some(&code) = codes.get(idx) {
+                        if let Some(ch) = char::from_u32(code) {
+                            if let Some(pos) =
+                                self.render_args.exclude.iter().position(|&x| x == ch)
+                            {
+                                self.render_args.exclude.remove(pos);
+                            } else {
+                                self.render_args.exclude.push(ch);
+                            }
+                            self.mark_args_dirty();
+                        }
+                    }
+                    }
+                    }
+                    }
+                    }
+
 
     fn collect_leaves(node: &TreeNode, leaves: &mut Vec<String>) {
         if node.is_leaf {
@@ -2460,7 +2490,7 @@ impl App {
     fn open_explorer(&mut self, mode: ExplorerMode) {
         if let Ok(mut explorer) = FileExplorer::new() {
             if matches!(mode, ExplorerMode::Open) {
-                let filter = Arc::new(|file: &ratatui_explorer::File| {
+                let filter = Arc::new(|file: &explorer::File| {
                     if file.is_dir() {
                         return true;
                     }
@@ -3345,7 +3375,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             app.arc_glyphs = Some(glyphs);
         }
 
-        terminal.draw(|f| ui(f, &mut app))?;
+        terminal
+            .draw(|f| ui(f, &mut app))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
@@ -3434,9 +3466,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 < app.explorer_area.y + app.explorer_area.height.saturating_sub(1)
                         {
                             if is_scroll_up {
-                                let _ = dialog.explorer.handle(ratatui_explorer::Input::Up);
+                                let _ = dialog.explorer.handle(explorer::Input::Up);
                             } else if is_scroll_down {
-                                let _ = dialog.explorer.handle(ratatui_explorer::Input::Down);
+                                let _ = dialog.explorer.handle(explorer::Input::Down);
                             } else if is_click {
                                 let offset = dialog.explorer.list_offset();
                                 let clicked_idx =
@@ -3478,7 +3510,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         } else if dialog.explorer.current().is_dir() {
                                             let _ = dialog
                                                 .explorer
-                                                .handle(ratatui_explorer::Input::Right);
+                                                .handle(explorer::Input::Right);
                                         }
                                     } else {
                                         dialog.explorer.set_selected_idx(clicked_idx);
@@ -5390,6 +5422,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.current_tab == 2 {
                                     if app.selected_control == 0 {
                                         app.toggle_tree_selection();
+                                    } else if app.selected_control == 1 {
+                                        app.toggle_glyph_selection();
                                     }
                                 } else if app.current_tab == 1 {
                                     if app.pipeline_expanded.is_none() {

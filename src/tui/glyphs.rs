@@ -69,7 +69,9 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .iter()
                 .map(|&code| {
                     let ch = char::from_u32(code).unwrap_or('?');
-                    ListItem::new(format!("{} U+{:04X}", ch, code))
+                    let is_excluded = app.render_args.exclude.contains(&ch);
+                    let marker = if is_excluded { "☐ " } else { "☑ " };
+                    ListItem::new(format!("{}{} U+{:04X}", marker, ch, code))
                 })
                 .collect();
 
