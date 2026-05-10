@@ -10,6 +10,7 @@ use std::f32::consts::PI;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Clone)]
 pub struct FastGlyph {
@@ -184,41 +185,8 @@ const POSITIONS: [(usize, usize, u32); 8] = [
     (1, 3, 0x80),
 ];
 
-static COLOR_CACHE: Lazy<dashmap::DashMap<u32, (u8, u8, u8, u8)>> =
-    Lazy::new(|| dashmap::DashMap::with_capacity(8_192));
-
-struct PaletteInfo {
-    components: Vec<[i32; 3]>,
-    is_chromatic: Vec<bool>,
-}
-
-static ANSI256_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
-    components: ANSI256
-        .iter()
-        .map(|&p| {
-            [
-                ((p >> 16) & 0xFF) as i32,
-                ((p >> 8) & 0xFF) as i32,
-                (p & 0xFF) as i32,
-            ]
-        })
-        .collect(),
-    is_chromatic: ANSI256.iter().map(|&p| !is_near_grayscale(p, 0)).collect(),
-});
-
-static IRC99_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
-    components: IRC99
-        .iter()
-        .map(|&p| {
-            [
-                ((p >> 16) & 0xFF) as i32,
-                ((p >> 8) & 0xFF) as i32,
-                (p & 0xFF) as i32,
-            ]
-        })
-        .collect(),
-    is_chromatic: IRC99.iter().map(|&p| !is_near_grayscale(p, 0)).collect(),
-});
+static COLOR_CACHE: Lazy<Mutex<HashMap<u32, (u8, u8, u8, u8)>>> =
+    Lazy::new(|| Mutex::new(HashMap::with_capacity(8_192)));
 
 #[inline(always)]
 pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
@@ -232,36 +200,14 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
         return 0;
     }
 
-    let info = if palette.len() == 256 {
-        &ANSI256_INFO
-    } else if palette.len() == 99 {
-        &IRC99_INFO
-    } else {
-        // Fallback for custom palettes
-        for (i, &p) in palette.iter().enumerate() {
-            let dr = pr - (((p >> 16) & 0xFF) as i32);
-            let dg = pg - (((p >> 8) & 0xFF) as i32);
-            let db = pb - ((p & 0xFF) as i32);
-            let d = (dr * dr + dg * dg + db * db) as u32;
-            if d < best_d {
-                best_d = d;
-                best_i = i as u8;
-                if d == 0 {
-                    break;
-                }
-            }
-        }
-        return best_i;
-    };
-
-    for (i, [r, g, b]) in info.components.iter().enumerate() {
+    for (i, &p) in palette.iter().enumerate() {
         if palette.len() == 99 && (2..16).contains(&i) {
             continue;
         }
 
-        let dr = pr - r;
-        let dg = pg - g;
-        let db = pb - b;
+        let dr = pr - (((p >> 16) & 0xFF) as i32);
+        let dg = pg - (((p >> 8) & 0xFF) as i32);
+        let db = pb - ((p & 0xFF) as i32);
         let d = (dr * dr + dg * dg + db * db) as u32;
         if d < best_d {
             best_d = d;
@@ -287,37 +233,13 @@ pub fn nearest_distinctly_chromatic_hex_colour(
     let mut best_i: Option<u8> = None;
     let mut best_d = u32::MAX;
 
-    let info = if palette.len() == 256 {
-        &ANSI256_INFO
-    } else if palette.len() == 99 {
-        &IRC99_INFO
-    } else {
-        for (i, &p) in palette.iter().enumerate() {
-            if is_near_grayscale(p, tolerance) {
-                continue;
-            }
-            let dr = pr - (((p >> 16) & 0xFF) as i32);
-            let dg = pg - (((p >> 8) & 0xFF) as i32);
-            let db = pb - ((p & 0xFF) as i32);
-            let d = (dr * dr + dg * dg + db * db) as u32;
-            if d < best_d {
-                best_d = d;
-                best_i = Some(i as u8);
-                if d == 0 {
-                    break;
-                }
-            }
-        }
-        return best_i;
-    };
-
-    for (i, [r, g, b]) in info.components.iter().enumerate() {
-        if is_near_grayscale_rgb(*r as u8, *g as u8, *b as u8, tolerance) {
+    for (i, &p) in palette.iter().enumerate() {
+        if is_near_grayscale(p, tolerance) {
             continue;
         }
-        let dr = pr - r;
-        let dg = pg - g;
-        let db = pb - b;
+        let dr = pr - (((p >> 16) & 0xFF) as i32);
+        let dg = pg - (((p >> 8) & 0xFF) as i32);
+        let db = pb - ((p & 0xFF) as i32);
         let d = (dr * dr + dg * dg + db * db) as u32;
         if d < best_d {
             best_d = d;
@@ -340,54 +262,24 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
     let pg = ((target >> 8) & 0xFF) as i32;
     let pb = (target & 0xFF) as i32;
 
-    let info = if palette.len() == 256 {
-        Some(&ANSI256_INFO)
-    } else if palette.len() == 99 {
-        Some(&IRC99_INFO)
-    } else {
-        None
-    };
-
-    if let Some(inf) = info {
-        for (i, [r, g, b]) in inf.components.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
-                continue;
-            }
-
-            let p_is_chromatic = inf.is_chromatic[i];
-
-            if target_is_chromatic == p_is_chromatic {
-                let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
-                let d = d as u32;
-                if d < best_d {
-                    best_d = d;
-                    best_i = i as u8;
-                    if d == 0 {
-                        break;
-                    }
-                }
-            }
+    for (i, &p) in palette.iter().enumerate() {
+        if palette.len() == 99 && (2..16).contains(&i) {
+            continue;
         }
-    } else {
-        for (i, &p) in palette.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
-                continue;
-            }
 
-            let p_is_chromatic = !is_near_grayscale(p, 0);
+        let p_is_chromatic = !is_near_grayscale(p, 0); // Strict check for palette
 
-            if target_is_chromatic == p_is_chromatic {
-                let r = ((p >> 16) & 0xFF) as i32;
-                let g = ((p >> 8) & 0xFF) as i32;
-                let b = (p & 0xFF) as i32;
-                let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
-                let d = d as u32;
-                if d < best_d {
-                    best_d = d;
-                    best_i = i as u8;
-                    if d == 0 {
-                        break;
-                    }
+        if target_is_chromatic == p_is_chromatic {
+            let r = ((p >> 16) & 0xFF) as i32;
+            let g = ((p >> 8) & 0xFF) as i32;
+            let b = (p & 0xFF) as i32;
+            let d = (pr - r).pow(2) + (pg - g).pow(2) + (pb - b).pow(2);
+            let d = d as u32;
+            if d < best_d {
+                best_d = d;
+                best_i = i as u8;
+                if d == 0 {
+                    break;
                 }
             }
         }
@@ -457,8 +349,7 @@ pub enum Colour {
 impl AnsiPixel {
     #[inline]
     pub fn new(px: &u32, tolerance: u8) -> Self {
-        if let Some(entry) = COLOR_CACHE.get(px) {
-            let (a, i, an, in_) = *entry;
+        if let Some(&(a, i, an, in_)) = COLOR_CACHE.lock().unwrap().get(px) {
             return AnsiPixel {
                 orig: *px,
                 ansi_std: a,
@@ -483,7 +374,10 @@ impl AnsiPixel {
             }
         }
 
-        COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
+        COLOR_CACHE
+            .lock()
+            .unwrap()
+            .insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
         AnsiPixel {
             orig: *px,
             ansi_std: ansi_std_val,
@@ -498,7 +392,7 @@ impl AnsiImage {
     pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8) -> Self {
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
-        let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
+        let flat: Vec<u32> = raw.chunks(4).map(make_rgb_u32).collect();
         let mut bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
 
         if !bitmap.len().is_multiple_of(2) {
@@ -533,7 +427,7 @@ fn block_bitmap(
     }
 
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
-        .par_iter()
+        .iter()
         .map(|row| row.iter().map(|px| AnsiPixel::new(px, tolerance)).collect())
         .collect();
 
@@ -544,37 +438,24 @@ fn block_bitmap(
         px_rows[0].len().div_ceil(gw) * gw
     };
 
-    for r in &mut px_rows {
-        if r.len() < pw {
-            r.extend(std::iter::repeat_n(
-                AnsiPixel::new(&0, tolerance),
-                pw - r.len(),
-            ));
-        }
-    }
-    if px_rows.len() < ph {
-        let blank = vec![AnsiPixel::new(&0, tolerance); pw];
-        px_rows.extend(std::iter::repeat_n(blank, ph - px_rows.len()));
-    }
-
     let mut out = Vec::with_capacity(ph / gh);
-    out.extend((0..ph).into_par_iter().step_by(gh).map(|y| {
+    for y in (0..ph).step_by(gh) {
         let mut row = Vec::with_capacity(pw / gw);
         for x in (0..pw).step_by(gw) {
-            let mut block_pixels = Vec::with_capacity(gh);
+            let mut block_pixels = vec![vec![AnsiPixel::new(&0, tolerance); gw]; gh];
             for j in 0..gh {
-                let mut row_pixels = Vec::with_capacity(gw);
                 for i in 0..gw {
-                    row_pixels.push(px_rows[y + j][x + i]);
+                    if y + j < px_rows.len() && x + i < px_rows[y + j].len() {
+                        block_pixels[j][i] = px_rows[y + j][x + i];
+                    }
                 }
-                block_pixels.push(row_pixels);
             }
             row.push(AnsiPixelBlock {
                 pixels: block_pixels,
             });
         }
-        row
-    }).collect::<Vec<_>>());
+        out.push(row);
+    }
     out
 }
 
@@ -2234,7 +2115,10 @@ pub fn render_blocks_smooth(
         }
         results
     } else {
-        let shape_cache = dashmap::DashMap::<u64, (usize, bool)>::new();
+        let shape_cache = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            u64,
+            (usize, bool),
+        >::new()));
 
         image
             .block
@@ -2311,25 +2195,17 @@ pub fn render_blocks_smooth(
                             block_sum_sq += p.sq;
 
                             let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                            let idx = nearest_strict_partitioned_hex_colour(
-                                rgb_u32,
-                                palette,
-                                args.grayscale_tolerance,
-                            );
+                            let idx = nearest_hex_colour_fast(rgb_u32, palette);
                             indices.push(idx);
                         }
 
                         let mut shape = Vec::with_capacity(bp);
-                        let mut seen = Vec::with_capacity(bp);
-                        let mut lookup = [-1i8; 256];
+                        let mut seen = Vec::new();
                         for &idx in &indices {
-                            let l_idx = idx as usize;
-                            if lookup[l_idx] != -1 {
-                                shape.push(lookup[l_idx] as u8);
+                            if let Some(pos) = seen.iter().position(|&c| c == idx) {
+                                shape.push(pos as u8);
                             } else {
-                                let pos = seen.len() as u8;
-                                lookup[l_idx] = pos as i8;
-                                shape.push(pos);
+                                shape.push(seen.len() as u8);
                                 seen.push(idx);
                             }
                         }
@@ -2339,7 +2215,7 @@ pub fn render_blocks_smooth(
                         shape.hash(&mut hasher);
                         let shape_hash = hasher.finish();
 
-                        let cached = shape_cache.get(&shape_hash).map(|v| *v);
+                        let cached = shape_cache.lock().unwrap().get(&shape_hash).copied();
 
                         let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
                             c
@@ -2463,7 +2339,10 @@ pub fn render_blocks_smooth(
                                 }
                             }
 
-                            shape_cache.insert(shape_hash, (best_glyph, best_inv));
+                            shape_cache
+                                .lock()
+                                .unwrap()
+                                .insert(shape_hash, (best_glyph, best_inv));
                             (best_glyph, best_inv)
                         };
 

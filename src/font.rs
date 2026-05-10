@@ -8,7 +8,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use toml::Value;
 use unicode_width::UnicodeWidthChar;
 
@@ -42,10 +42,10 @@ struct CachedBlock {
 }
 
 struct FontContext {
-    user_faces: HashMap<String, Arc<FontVec>>,
-    fallback_faces: dashmap::DashMap<String, Arc<FontVec>>,
+    user_faces: HashMap<String, FontVec>,
+    fallback_faces: HashMap<String, FontVec>,
     font_paths: Vec<String>,
-    missing_chars: dashmap::DashSet<char>,
+    missing_chars: HashSet<char>,
     font_size: f32,
 }
 
@@ -68,7 +68,7 @@ impl FontContext {
                         if is_monospace_font(&font) {
                             log::info!("Loaded font: {}", path);
                             font_paths.push(path.clone());
-                            user_faces.insert(path, Arc::new(font));
+                            user_faces.insert(path, font);
                         } else {
                             log::info!("Warning: Font '{}' is not monospace, skipping.", font_name);
                         }
@@ -85,23 +85,23 @@ impl FontContext {
 
         FontContext {
             user_faces,
-            fallback_faces: dashmap::DashMap::new(),
+            fallback_faces: HashMap::new(),
             font_paths,
-            missing_chars: dashmap::DashSet::new(),
+            missing_chars: HashSet::new(),
             font_size,
         }
     }
 
-    fn get_main_font(&self) -> Arc<FontVec> {
+    fn get_main_font(&self) -> &FontVec {
         // Return the first successfully loaded user face
         // We iterate font_paths to preserve priority order
         for path in &self.font_paths {
             if let Some(font) = self.user_faces.get(path) {
-                return font.clone();
+                return font;
             }
         }
         // Should be unreachable due to check in new()
-        self.user_faces.values().next().unwrap().clone()
+        self.user_faces.values().next().unwrap()
     }
 }
 
@@ -397,7 +397,7 @@ fn is_renderable_char(ch: char) -> bool {
     matches!(ch.width(), Some(1))
 }
 
-fn resolve_font_for_char(ctx: &FontContext, ch: char) -> Option<Arc<FontVec>> {
+fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a FontVec> {
     if ctx.missing_chars.contains(&ch) {
         return None;
     }
@@ -405,7 +405,7 @@ fn resolve_font_for_char(ctx: &FontContext, ch: char) -> Option<Arc<FontVec>> {
     for path in &ctx.font_paths {
         if let Some(font) = ctx.user_faces.get(path) {
             if font.glyph_id(ch).0 != 0 {
-                return Some(font.clone());
+                return Some(font);
             }
         }
     }
@@ -415,7 +415,7 @@ fn resolve_font_for_char(ctx: &FontContext, ch: char) -> Option<Arc<FontVec>> {
         if let Ok(data) = fs::read(&path) {
             if let Ok(font) = FontVec::try_from_vec(data) {
                 if is_monospace_font(&font) {
-                    ctx.fallback_faces.insert(path.clone(), Arc::new(font));
+                    ctx.fallback_faces.insert(path.clone(), font);
                 } else {
                     log::info!(
                         "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
@@ -429,10 +429,9 @@ fn resolve_font_for_char(ctx: &FontContext, ch: char) -> Option<Arc<FontVec>> {
         }
     }
 
-    if let Some(entry) = ctx.fallback_faces.get(&path) {
-        let font = entry.value();
+    if let Some(font) = ctx.fallback_faces.get(&path) {
         if font.glyph_id(ch).0 != 0 {
-            return Some(font.clone());
+            return Some(font);
         }
     }
 
@@ -471,7 +470,7 @@ fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMet
     format!("{:x}", hasher.finish())
 }
 
-fn get_metrics(ctx: &FontContext, chars: &[char]) -> CachedMetrics {
+fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
     let mut metric_chars = chars.to_vec();
     metric_chars.sort_unstable();
     metric_chars.dedup();
@@ -500,7 +499,7 @@ fn get_metrics(ctx: &FontContext, chars: &[char]) -> CachedMetrics {
         let scaled_font = main_font.as_scaled(scale);
         let line_height = (scaled_font.height() + scaled_font.line_gap()).max(1.0);
         let cell_height = line_height.ceil() as usize;
-        let advance_unscaled = measure_reference_advance_unscaled(&main_font);
+        let advance_unscaled = measure_reference_advance_unscaled(main_font);
         let advance = (ctx.font_size * advance_unscaled / main_font.height_unscaled()).max(1.0);
         let cell_width = advance.round().max(1.0) as usize;
 
@@ -571,7 +570,7 @@ fn get_metrics(ctx: &FontContext, chars: &[char]) -> CachedMetrics {
 }
 
 fn get_block_glyphs(
-    ctx: &FontContext,
+    ctx: &mut FontContext,
     block_name: &str,
     chars: &[char],
     metrics: &CachedMetrics,
@@ -588,69 +587,76 @@ fn get_block_glyphs(
     }
 
     log::info!("Rendering block '{}' ({} glyphs)", block_name, chars.len());
+    let mut glyphs = Vec::new();
 
-    use rayon::prelude::*;
-    let glyphs: Vec<(char, GlyphBitmap, String)> = chars
-        .par_iter()
-        .filter_map(|&ch| {
-            if ctx.missing_chars.contains(&ch) {
-                return None;
-            }
+    for &ch in chars {
+        let mut found = false;
 
-            if !is_renderable_char(ch) {
-                return None;
-            }
+        if ctx.missing_chars.contains(&ch) {
+            log::info!("Skipping missing char: {}", ch);
+            continue;
+        }
 
-            // 1. User fonts
-            for font_path in &ctx.font_paths {
-                if let Some(font) = ctx.user_faces.get(font_path) {
-                    if font.glyph_id(ch).0 != 0 {
-                        let bitmap = render_glyph_from_font(font, ch, metrics);
-                        let font_name = Path::new(font_path)
-                            .file_stem()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| font_path.clone());
-                        return Some((ch, bitmap, font_name));
-                    }
+        if !is_renderable_char(ch) {
+            log::info!("Skipping non-renderable char: {}", ch);
+            continue;
+        }
+
+        // 1. User fonts
+        for font_path in &ctx.font_paths {
+            if let Some(font) = ctx.user_faces.get(font_path) {
+                if font.glyph_id(ch).0 != 0 {
+                    let bitmap = render_glyph_from_font(font, ch, metrics);
+                    let font_name = Path::new(font_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| font_path.clone());
+                    glyphs.push((ch, bitmap, font_name));
+                    found = true;
+                    break;
                 }
             }
+        }
+        if found {
+            continue;
+        }
 
-            // 2. Fallback
-            if let Some(path) = get_fallback_font_path(ch) {
-                if !ctx.fallback_faces.contains_key(&path) {
-                    if let Ok(data) = fs::read(&path) {
-                        if let Ok(font) = FontVec::try_from_vec(data) {
-                            if is_monospace_font(&font) {
-                                ctx.fallback_faces.insert(path.clone(), Arc::new(font));
-                            } else {
-                                log::info!(
-                                    "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
-                                    ch,
-                                    path
-                                );
-                                ctx.missing_chars.insert(ch);
-                                return None;
-                            }
+        // 2. Fallback
+        if let Some(path) = get_fallback_font_path(ch) {
+            if !ctx.fallback_faces.contains_key(&path) {
+                if let Ok(data) = fs::read(&path) {
+                    if let Ok(font) = FontVec::try_from_vec(data) {
+                        if is_monospace_font(&font) {
+                            ctx.fallback_faces.insert(path.clone(), font);
+                        } else {
+                            log::info!(
+                                "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
+                                ch,
+                                path
+                            );
+                            ctx.missing_chars.insert(ch);
+                            continue;
                         }
                     }
                 }
-                if let Some(entry) = ctx.fallback_faces.get(&path) {
-                    let font = entry.value();
-                    if font.glyph_id(ch).0 != 0 {
-                        let bitmap = render_glyph_from_font(font, ch, metrics);
-                        let font_name = Path::new(&path)
-                            .file_stem()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.clone());
-                        return Some((ch, bitmap, font_name));
-                    }
+            }
+            if let Some(font) = ctx.fallback_faces.get(&path) {
+                if font.glyph_id(ch).0 != 0 {
+                    let bitmap = render_glyph_from_font(font, ch, metrics);
+                    let font_name = Path::new(&path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.clone());
+                    glyphs.push((ch, bitmap, font_name));
+                    found = true;
                 }
             }
+        }
 
+        if !found {
             ctx.missing_chars.insert(ch);
-            None
-        })
-        .collect();
+        }
+    }
 
     let block = CachedBlock {
         glyphs: glyphs.clone(),
@@ -683,10 +689,10 @@ pub fn glyph_store(
     include_chars: Option<&String>,
     fonts: &[String],
     font_size: f32,
-    _load_all: bool,
+    load_all: bool,
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> GlyphStore {
-    let ctx = FontContext::new(fonts, font_size);
+    let mut ctx = FontContext::new(fonts, font_size);
     let (config_groups, _) = load_blocks_config();
 
     // Determine which blocks to load
@@ -753,7 +759,7 @@ pub fn glyph_store(
     metric_chars.extend(explicit_chars.iter().copied());
     metric_chars.extend(overlay_ascii_chars.iter().copied());
 
-    let metrics = get_metrics(&ctx, &metric_chars);
+    let metrics = get_metrics(&mut ctx, &metric_chars);
     let target_cell_width = metrics.cell_width.max(1);
     let target_cell_height = metrics.cell_height.max(1);
 
@@ -783,7 +789,7 @@ pub fn glyph_store(
                 }
             }
             if !block_chars.is_empty() {
-                let glyphs = get_block_glyphs(&ctx, block_name, &block_chars, &metrics);
+                let glyphs = get_block_glyphs(&mut ctx, block_name, &block_chars, &metrics);
                 groups_out.insert(block_name.clone(), block_chars.clone());
 
                 let is_selected = blocks_to_select.contains(block_name);
@@ -802,7 +808,7 @@ pub fn glyph_store(
 
     // Load user-specified explicit includes (--include, --include-range) and select them
     if !explicit_chars.is_empty() {
-        let glyphs = get_block_glyphs(&ctx, "explicit_includes", &explicit_chars, &metrics);
+        let glyphs = get_block_glyphs(&mut ctx, "explicit_includes", &explicit_chars, &metrics);
         groups_out.insert("explicit_includes".to_string(), explicit_chars.clone());
         for (ch, bitmap, font_name) in glyphs {
             all_glyphs.insert(ch, (bitmap, font_name));
@@ -814,7 +820,7 @@ pub fn glyph_store(
     // Only select them for glyph matching when no specific blocks were requested.
     let is_filtering = !blocks.is_empty() || include_chars.is_some() || !include_ranges.is_empty();
     if !overlay_ascii_chars.is_empty() {
-        let glyphs = get_block_glyphs(&ctx, "overlay_ascii", &overlay_ascii_chars, &metrics);
+        let glyphs = get_block_glyphs(&mut ctx, "overlay_ascii", &overlay_ascii_chars, &metrics);
         groups_out.insert("overlay_ascii".to_string(), overlay_ascii_chars.clone());
         for (ch, bitmap, font_name) in glyphs {
             all_glyphs.insert(ch, (bitmap, font_name));
