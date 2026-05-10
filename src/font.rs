@@ -699,17 +699,32 @@ pub fn glyph_store(
     let mut blocks_to_load = HashSet::new();
     let mut blocks_to_select = HashSet::new();
 
-    // Always load all blocks defined in config to ensure TUI can show them
-    blocks_to_load.extend(config_groups.keys().cloned());
-
-    // Only select specified blocks for glyph matching
+    // Always select specified blocks or prefixes
     for name in blocks {
         let name_lc = name.to_lowercase();
+        let mut matched = false;
         for key in config_groups.keys() {
             if key == &name_lc || key.starts_with(&format!("{}.", name_lc)) {
                 blocks_to_select.insert(key.clone());
+                blocks_to_load.insert(key.clone());
+                matched = true;
             }
         }
+        if !matched {
+            blocks_to_select.insert(name_lc.clone());
+            blocks_to_load.insert(name_lc);
+        }
+    }
+
+    if blocks.is_empty() && !load_all {
+        // If no blocks specified and not loading all, load ALL known blocks (legacy behavior?)
+        // Wait, if blocks is empty, args.blocks is empty.
+        // Old behavior: "If no blocks specified, load ALL known blocks from config"
+        blocks_to_load.extend(config_groups.keys().cloned());
+        blocks_to_select.extend(config_groups.keys().cloned());
+    } else if load_all {
+        // Load all, but only select specified
+        blocks_to_load.extend(config_groups.keys().cloned());
     }
 
     // Iterating sorted blocks for consistent logging/order

@@ -2195,7 +2195,11 @@ pub fn render_blocks_smooth(
                             block_sum_sq += p.sq;
 
                             let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                            let idx = nearest_hex_colour_fast(rgb_u32, palette);
+                            let idx = nearest_strict_partitioned_hex_colour(
+                                rgb_u32,
+                                palette,
+                                args.grayscale_tolerance,
+                            );
                             indices.push(idx);
                         }
 

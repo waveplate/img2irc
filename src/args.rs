@@ -559,7 +559,7 @@ pub struct Args {
     #[arg(
         long = "passes",
         visible_alias = "fix-disc-passes",
-        default_value = "2"
+        default_value = "10"
     )]
     pub fix_disc_passes: u32,
 
