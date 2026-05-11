@@ -2325,6 +2325,10 @@ impl App {
         });
     }
 
+    fn cancel_render(&mut self) {
+        self.current_cancel_flag.store(true, Ordering::Relaxed);
+    }
+
     fn flush_render_args(&mut self) {
         if !self.args_dirty {
             return;
@@ -5106,7 +5110,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Esc => {
-                                if app.is_optimizing {
+                               app.cancel_render();
+                               app.args_dirty = false;
+
+                               if app.is_optimizing {
+
                                     app.perform_auto_optimize();
                                     continue;
                                 }
