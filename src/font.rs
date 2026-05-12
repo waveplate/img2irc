@@ -172,6 +172,111 @@ struct BlockEntry {
     exclude: Option<Vec<u32>>,
 }
 
+pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
+    let mut toml_path = None;
+    if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
+        let path = Path::new(&config_dir).join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let path = PathBuf::from("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let config_home = env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
+        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        if let Ok(home) = env::var("HOME") {
+            let path = Path::new(&home)
+                .join(".config")
+                .join("img2irc")
+                .join("blocks.toml");
+            if path.exists() {
+                toml_path = Some(path);
+            }
+        }
+    }
+
+    let toml_path = toml_path.expect("Failed to find blocks.toml for adding range");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let mut raw_config: toml::map::Map<String, Value> =
+        toml::from_str(&toml_str).expect("Invalid TOML");
+
+    let mut entry = toml::map::Map::new();
+    entry.insert("ranges".to_string(), Value::Array(vec![Value::Array(vec![Value::Integer(start as i64), Value::Integer(end as i64)])]));
+
+    raw_config.insert(name.to_string(), Value::Table(entry));
+
+    let new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+}
+
+pub fn save_blocks_config(exclude: &[char]) {
+    let mut toml_path = None;
+    if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
+        let path = Path::new(&config_dir).join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let path = PathBuf::from("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let config_home = env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
+        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        if let Ok(home) = env::var("HOME") {
+            let path = Path::new(&home)
+                .join(".config")
+                .join("img2irc")
+                .join("blocks.toml");
+            if path.exists() {
+                toml_path = Some(path);
+            }
+        }
+    }
+
+    let toml_path = toml_path.expect("Failed to find blocks.toml for saving");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let mut raw_config: toml::map::Map<String, Value> =
+        toml::from_str(&toml_str).expect("Invalid TOML");
+
+    let exclude_values: Vec<Value> = exclude
+        .iter()
+        .map(|&ch| Value::Integer(ch as i64))
+        .collect();
+
+    // Ensure [global] exists and update its exclude list
+    let global = raw_config
+        .entry("global".to_string())
+        .or_insert_with(|| Value::Table(toml::map::Map::new()));
+
+    if let Some(table) = global.as_table_mut() {
+        table.insert("exclude".to_string(), Value::Array(exclude_values));
+    }
+
+    let new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+}
+
 pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {

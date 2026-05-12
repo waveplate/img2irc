@@ -838,6 +838,19 @@ struct TreeNode {
     is_leaf: bool,
 }
 
+impl TreeNode {
+    fn new(name: String, full_path: String, level: usize, is_leaf: bool) -> Self {
+        Self {
+            name,
+            full_path,
+            children: Vec::new(),
+            expanded: false,
+            level,
+            is_leaf,
+        }
+    }
+}
+
 struct TreeState {
     root: Vec<TreeNode>,
     selected_idx: usize,
@@ -1119,6 +1132,10 @@ pub(crate) struct App {
     font_search: String,
     font_list_state: ListState,
 
+    // Unicode Explorer State
+    show_unicode_explorer: bool,
+    unicode_list_state: ListState,
+
     // Metadata prompt state
     metadata_prompt_settings: Option<RenderArgs>,
     metadata_prompt_path: String,
@@ -1223,6 +1240,8 @@ pub(crate) struct App {
     glyphs_area: Rect,
     tree_area: Rect,
     glyph_list_area: Rect,
+    glyph_save_area: Rect,
+    glyph_add_area: Rect,
     explorer_area: Rect,
     preview_area: Rect,
     output_area: Rect,
@@ -1265,6 +1284,204 @@ pub(crate) struct App {
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
     text_btn_areas: Vec<Rect>,   // clickable button areas: [fg, bg, delete]
     color_picker_state: Option<crate::colorpicker::ColorPickerState>,
+}
+
+const UNICODE_BLOCKS: &[(&str, u32, u32)] = &[
+    ("Basic Latin", 0x0020, 0x007F),
+    ("Latin-1 Supplement", 0x0080, 0x00FF),
+    ("Latin Extended-A", 0x0100, 0x017F),
+    ("Latin Extended-B", 0x0180, 0x024F),
+    ("IPA Extensions", 0x0250, 0x02AF),
+    ("Spacing Modifier Letters", 0x02B0, 0x02FF),
+    ("Combining Diacritical Marks", 0x0300, 0x036F),
+    ("Greek and Coptic", 0x0370, 0x03FF),
+    ("Cyrillic", 0x0400, 0x04FF),
+    ("Cyrillic Supplement", 0x0500, 0x052F),
+    ("Armenian", 0x0530, 0x058F),
+    ("Hebrew", 0x0590, 0x05FF),
+    ("Arabic", 0x0600, 0x06FF),
+    ("Syriac", 0x0700, 0x074F),
+    ("Arabic Supplement", 0x0750, 0x077F),
+    ("Thaana", 0x0780, 0x07BF),
+    ("NKo", 0x07C0, 0x07FF),
+    ("Samaritan", 0x0800, 0x083F),
+    ("Mandaic", 0x0840, 0x085F),
+    ("Arabic Extended-A", 0x08A0, 0x08FF),
+    ("Devanagari", 0x0900, 0x097F),
+    ("Bengali", 0x0980, 0x09FF),
+    ("Gurmukhi", 0x0A00, 0x0A7F),
+    ("Gujarati", 0x0A80, 0x0AFF),
+    ("Oriya", 0x0B00, 0x0B7F),
+    ("Tamil", 0x0B80, 0x0BFF),
+    ("Telugu", 0x0C00, 0x0C7F),
+    ("Kannada", 0x0C80, 0x0CFF),
+    ("Malayalam", 0x0D00, 0x0D7F),
+    ("Sinhala", 0x0D80, 0x0DFF),
+    ("Thai", 0x0E00, 0x0E7F),
+    ("Lao", 0x0E80, 0x0EFF),
+    ("Tibetan", 0x0F00, 0x0FFF),
+    ("Myanmar", 0x1000, 0x109F),
+    ("Georgian", 0x10A0, 0x10FF),
+    ("Hangul Jamo", 0x1100, 0x11FF),
+    ("Ethiopic", 0x1200, 0x137F),
+    ("Ethiopic Supplement", 0x1380, 0x139F),
+    ("Cherokee", 0x13A0, 0x13FF),
+    ("Unified Canadian Aboriginal Syllabics", 0x1400, 0x167F),
+    ("Ogham", 0x1680, 0x169F),
+    ("Runic", 0x16A0, 0x16FF),
+    ("Tagalog", 0x1700, 0x171F),
+    ("Hanunoo", 0x1720, 0x173F),
+    ("Buhid", 0x1740, 0x175F),
+    ("Tagbanwa", 0x1760, 0x177F),
+    ("Khmer", 0x1780, 0x17FF),
+    ("Mongolian", 0x1800, 0x18AF),
+    ("Unified Canadian Aboriginal Syllabics Extended", 0x18B0, 0x18FF),
+    ("Limbu", 0x1900, 0x194F),
+    ("Tai Le", 0x1950, 0x197F),
+    ("New Tai Lue", 0x1980, 0x19DF),
+    ("Khmer Symbols", 0x19E0, 0x19FF),
+    ("Buginese", 0x1A00, 0x1A1F),
+    ("Tai Tham", 0x1A20, 0x1AAF),
+    ("Combining Diacritical Marks Extended", 0x1AB0, 0x1AFF),
+    ("Balinese", 0x1B00, 0x1B7F),
+    ("Sundanese", 0x1B80, 0x1BBF),
+    ("Batak", 0x1BC0, 0x1BFF),
+    ("Lepcha", 0x1C00, 0x1C4F),
+    ("Ol Chiki", 0x1C50, 0x1C7F),
+    ("Sundanese Supplement", 0x1CC0, 0x1CCF),
+    ("Vedic Extensions", 0x1CD0, 0x1CFF),
+    ("Phonetic Extensions", 0x1D00, 0x1D7F),
+    ("Phonetic Extensions Supplement", 0x1D80, 0x1DBF),
+    ("Combining Diacritical Marks Supplement", 0x1DC0, 0x1DFF),
+    ("Latin Extended Additional", 0x1E00, 0x1EFF),
+    ("Greek Extended", 0x1F00, 0x1FFF),
+    ("General Punctuation", 0x2000, 0x206F),
+    ("Superscripts and Subscripts", 0x2070, 0x209F),
+    ("Currency Symbols", 0x20A0, 0x20CF),
+    ("Combining Diacritical Marks for Symbols", 0x20D0, 0x20FF),
+    ("Letterlike Symbols", 0x2100, 0x214F),
+    ("Number Forms", 0x2150, 0x218F),
+    ("Arrows", 0x2190, 0x21FF),
+    ("Mathematical Operators", 0x2200, 0x22FF),
+    ("Miscellaneous Technical", 0x2300, 0x23FF),
+    ("Control Pictures", 0x2400, 0x243F),
+    ("Optical Character Recognition", 0x2440, 0x245F),
+    ("Enclosed Alphanumerics", 0x2460, 0x24FF),
+    ("Box Drawing", 0x2500, 0x257F),
+    ("Block Elements", 0x2580, 0x259F),
+    ("Geometric Shapes", 0x25A0, 0x25FF),
+    ("Miscellaneous Symbols", 0x2600, 0x26FF),
+    ("Dingbats", 0x2700, 0x27BF),
+    ("Miscellaneous Mathematical Symbols-A", 0x27C0, 0x27EF),
+    ("Supplemental Arrows-A", 0x27F0, 0x27FF),
+    ("Braille Patterns", 0x2800, 0x28FF),
+    ("Supplemental Arrows-B", 0x2900, 0x297F),
+    ("Miscellaneous Mathematical Symbols-B", 0x2980, 0x29FF),
+    ("Supplemental Mathematical Operators", 0x2A00, 0x2AFF),
+    ("Miscellaneous Symbols and Arrows", 0x2B00, 0x2BFF),
+    ("Glagolitic", 0x2C00, 0x2C5F),
+    ("Latin Extended-C", 0x2C60, 0x2C7F),
+    ("Coptic", 0x2C80, 0x2CFF),
+    ("Georgian Supplement", 0x2D00, 0x2D2F),
+    ("Tifinagh", 0x2D30, 0x2D7F),
+    ("Ethiopic Extended", 0x2D80, 0x2DDF),
+    ("Cyrillic Extended-A", 0x2DE0, 0x2DFF),
+    ("Supplemental Punctuation", 0x2E00, 0x2E7F),
+    ("CJK Radicals Supplement", 0x2E80, 0x2EFF),
+    ("Kangxi Radicals", 0x2F00, 0x2FDF),
+    ("Ideographic Description Characters", 0x2FF0, 0x2FFF),
+    ("CJK Symbols and Punctuation", 0x3000, 0x303F),
+    ("Hiragana", 0x3040, 0x309F),
+    ("Katakana", 0x30A0, 0x30FF),
+    ("Bopomofo", 0x3100, 0x312F),
+    ("Hangul Compatibility Jamo", 0x3130, 0x318F),
+    ("Kanbun", 0x3190, 0x319F),
+    ("Bopomofo Extended", 0x31A0, 0x31BF),
+    ("CJK Strokes", 0x31C0, 0x31EF),
+    ("Katakana Phonetic Extensions", 0x31F0, 0x31FF),
+    ("Enclosed CJK Letters and Months", 0x3200, 0x32FF),
+    ("CJK Compatibility", 0x3300, 0x33FF),
+    ("CJK Unified Ideographs Extension A", 0x3400, 0x4DBF),
+    ("Yijing Hexagram Symbols", 0x4DC0, 0x4DFF),
+    ("CJK Unified Ideographs", 0x4E00, 0x9FFF),
+    ("Yi Syllables", 0xA000, 0xA48F),
+    ("Yi Radicals", 0xA490, 0xA4CF),
+    ("Lisu", 0xA4D0, 0xA4FF),
+    ("Vai", 0xA500, 0xA63F),
+    ("Cyrillic Extended-B", 0xA640, 0xA69F),
+    ("Bamum", 0xA6A0, 0xA6FF),
+    ("Modifier Tone Letters", 0xA700, 0xA71F),
+    ("Latin Extended-D", 0xA720, 0xA7FF),
+    ("Syloti Nagri", 0xA800, 0xA82F),
+    ("Common Indic Number Forms", 0xA830, 0xA83F),
+    ("Phags-pa", 0xA840, 0xA87F),
+    ("Saurashtra", 0xA880, 0xA8DF),
+    ("Devanagari Extended", 0xA8E0, 0xA8FF),
+    ("Kayah Li", 0xA900, 0xA92F),
+    ("Rejang", 0xA930, 0xA95F),
+    ("Hangul Jamo Extended-A", 0xA960, 0xA97F),
+    ("Javanese", 0xA980, 0xA9DF),
+    ("Myanmar Extended-B", 0xA9E0, 0xA9FF),
+    ("Cham", 0xAA00, 0xAA5F),
+    ("Myanmar Extended-A", 0xAA60, 0xAA7F),
+    ("Tai Viet", 0xAA80, 0xAADF),
+    ("Meetei Mayek Extensions", 0xAAE0, 0xAAFF),
+    ("Ethiopic Extended-A", 0xAB00, 0xAB2F),
+    ("Latin Extended-E", 0xAB30, 0xAB6F),
+    ("Cherokee Supplement", 0xAB70, 0xABBF),
+    ("Meetei Mayek", 0xABC0, 0xABFF),
+    ("Hangul Syllables", 0xAC00, 0xD7AF),
+    ("Hangul Jamo Extended-B", 0xD7B0, 0xD7FF),
+    ("High Surrogates", 0xD800, 0xDB7F),
+    ("High Private Use Surrogates", 0xDB80, 0xDBFF),
+    ("Low Surrogates", 0xDC00, 0xDFFF),
+    ("Private Use Area", 0xE000, 0xF8FF),
+    ("CJK Compatibility Ideographs", 0xF900, 0xFAFF),
+    ("Alphabetic Presentation Forms", 0xFB00, 0xFB4F),
+    ("Arabic Presentation Forms-A", 0xFB50, 0xFDFF),
+    ("Variation Selectors", 0xFE00, 0xFE0F),
+    ("Vertical Forms", 0xFE10, 0xFE1F),
+    ("Combining Half Marks", 0xFE20, 0xFE2F),
+    ("CJK Compatibility Forms", 0xFE30, 0xFE4F),
+    ("Small Form Variants", 0xFE50, 0xFE6F),
+    ("Arabic Presentation Forms-B", 0xFE70, 0xFEFF),
+    ("Halfwidth and Fullwidth Forms", 0xFF00, 0xFFEF),
+    ("Specials", 0xFFF0, 0xFFFF),
+];
+
+fn render_unicode_explorer(f: &mut Frame, app: &mut App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(ratatui::symbols::border::ROUNDED)
+        .title(" Unicode Range Explorer ")
+        .style(Style::default().bg(SURFACE));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(3), // Instructions
+    ])
+    .split(inner);
+
+    let items: Vec<ListItem> = UNICODE_BLOCKS
+        .iter()
+        .map(|(name, start, end)| {
+            ListItem::new(format!("{:<40} U+{:04X} - U+{:04X}", name, start, end))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .highlight_style(Style::default().bg(ACCENT).fg(Color::White))
+        .highlight_symbol("▸ ");
+
+    f.render_stateful_widget(list, chunks[0], &mut app.unicode_list_state);
+
+    let inst = Paragraph::new("↑/↓: Navigate | Enter: Add Range | Esc: Close")
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(inst, chunks[1]);
 }
 
 impl App {
@@ -1314,8 +1531,10 @@ impl App {
             show_font_picker: false,
             font_search: String::new(),
             font_list_state: ListState::default(),
-
+            show_unicode_explorer: false,
+            unicode_list_state: ListState::default(),
             metadata_prompt_settings: None,
+
             metadata_prompt_path: String::new(),
             render_mode_idx: match render_args.render {
                 Render::Irc => 0,
@@ -1457,6 +1676,8 @@ impl App {
             glyphs_area: Rect::default(),
             tree_area: Rect::default(),
             glyph_list_area: Rect::default(),
+            glyph_save_area: Rect::default(),
+            glyph_add_area: Rect::default(),
             explorer_area: Rect::default(),
             preview_area: Rect::default(),
             output_area: Rect::default(),
@@ -3386,6 +3607,49 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
 
+            if app.show_unicode_explorer {
+                if let Event::Key(key) = event {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_unicode_explorer = false;
+                            }
+                            KeyCode::Up => {
+                                let curr = app.unicode_list_state.selected().unwrap_or(0);
+                                app.unicode_list_state
+                                    .select(Some(curr.saturating_sub(1)));
+                            }
+                            KeyCode::Down => {
+                                let curr = app.unicode_list_state.selected().unwrap_or(0);
+                                if curr < UNICODE_BLOCKS.len() - 1 {
+                                    app.unicode_list_state.select(Some(curr + 1));
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Some(idx) = app.unicode_list_state.selected() {
+                                    let (name, start, end) = UNICODE_BLOCKS[idx];
+                                    crate::font::add_range_to_blocks_config(name, start, end);
+                                    // Add to tree as well
+                                    let new_node = TreeNode::new(
+                                        name.to_string(),
+                                        name.to_string(),
+                                        0,
+                                        true,
+                                    );
+                                    app.tree_state.root.push(new_node);
+                                    app.available_blocks.push(name.to_string());
+                                    app.available_blocks.sort();
+                                    app.show_unicode_explorer = false;
+                                    log::info!("Added Unicode range: {} (U+{:04X}-U+{:04X})", name, start, end);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+
             if app.input_mode == InputMode::Explorer {
                 if let Event::Key(key) = event {
                     if let Some(mut dialog) = app.explorer_dialog.take() {
@@ -4180,7 +4444,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         };
 
                                                         // Check if clicking near the bottom-right corner for resizing
-                                                        let is_resize_area = cell_x >= ov.x + check_w - 2 && cell_y >= ov.y + check_h - 1;
+                                                        let is_resize_area = cell_x >= ov.x + check_w - 5 && cell_y >= ov.y + check_h - 2;
 
                                                         if is_double {
                                                             app.text_selected = Some(idx + 1);
@@ -4366,6 +4630,25 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.selected_control = 1;
                                 let row = (mouse.row - app.glyph_list_area.y) as usize;
                                 app.glyph_list_state.select(Some(row));
+                                continue;
+                            } else if mouse.column >= app.glyph_save_area.x
+                                && mouse.column < app.glyph_save_area.x + app.glyph_save_area.width
+                                && mouse.row >= app.glyph_save_area.y
+                                && mouse.row < app.glyph_save_area.y + app.glyph_save_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 2;
+                                crate::font::save_blocks_config(&app.render_args.exclude);
+                                log::info!("Saved glyph exclusions to blocks.toml");
+                                continue;
+                            } else if mouse.column >= app.glyph_add_area.x
+                                && mouse.column < app.glyph_add_area.x + app.glyph_add_area.width
+                                && mouse.row >= app.glyph_add_area.y
+                                && mouse.row < app.glyph_add_area.y + app.glyph_add_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 3;
+                                app.show_unicode_explorer = true;
                                 continue;
                             }
 
@@ -5409,7 +5692,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                 } else if app.current_tab == 2 {
-                                    if app.selected_control < 1 {
+                                    if app.selected_control < 3 {
                                         app.selected_control += 1;
                                     }
                                 } else if app.current_tab == 1 {
@@ -5465,6 +5748,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.toggle_tree_selection();
                                     } else if app.selected_control == 1 {
                                         app.toggle_glyph_selection();
+                                    } else if app.selected_control == 2 {
+                                        crate::font::save_blocks_config(&app.render_args.exclude);
+                                        log::info!("Saved glyph exclusions to blocks.toml");
+                                    } else if app.selected_control == 3 {
+                                        app.show_unicode_explorer = true;
                                     }
                                 } else if app.current_tab == 1 {
                                     if app.pipeline_expanded.is_none() {
@@ -5480,7 +5768,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Enter => {
-                                if app.current_tab == 3 {
+                                if app.current_tab == 2 {
+                                    if app.selected_control == 0 {
+                                        app.toggle_tree_selection();
+                                    } else if app.selected_control == 1 {
+                                        app.toggle_glyph_selection();
+                                    } else if app.selected_control == 2 {
+                                        crate::font::save_blocks_config(&app.render_args.exclude);
+                                        log::info!("Saved glyph exclusions to blocks.toml");
+                                    } else if app.selected_control == 3 {
+                                        app.show_unicode_explorer = true;
+                                    }
+                                } else if app.current_tab == 3 {
                                     if app.text_field_focus == TextFieldFocus::List {
                                         if app.text_selected == Some(0) {
                                             // Add new overlay
@@ -5940,6 +6239,17 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
 
         f.render_stateful_widget(list, area, &mut app.font_list_state);
+    }
+
+    if app.show_unicode_explorer {
+        let area = Rect::new(
+            (f.area().width.saturating_sub(80)) / 2,
+            (f.area().height.saturating_sub(30)) / 2,
+            80.min(f.area().width),
+            30.min(f.area().height),
+        );
+        f.render_widget(Clear, area);
+        render_unicode_explorer(f, app, area);
     }
 
     if app.input_mode == InputMode::AutoOptimize {

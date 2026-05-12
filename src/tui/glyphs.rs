@@ -65,6 +65,14 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
         };
 
         if let Some(codes) = config_groups.get(target_key) {
+            let glyph_chunks = Layout::vertical([
+                Constraint::Min(0),
+                Constraint::Length(3), // Save button
+            ])
+            .split(chunks[2]);
+
+            app.glyph_list_area = glyph_chunks[0];
+
             let items: Vec<ListItem> = codes
                 .iter()
                 .map(|&code| {
@@ -84,7 +92,53 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .block(glyph_block)
                 .highlight_style(highlight_style)
                 .highlight_symbol("▸ ");
-            f.render_stateful_widget(list, chunks[2], &mut app.glyph_list_state);
+            f.render_stateful_widget(list, glyph_chunks[0], &mut app.glyph_list_state);
+
+            // Buttons at bottom
+            let btn_chunks = Layout::horizontal([
+                Constraint::Percentage(50),
+                Constraint::Percentage(50),
+            ])
+            .split(glyph_chunks[1]);
+
+            app.glyph_save_area = btn_chunks[0];
+            app.glyph_add_area = btn_chunks[1];
+
+            let save_focused = app.selected_control == 2;
+            let add_focused = app.selected_control == 3;
+
+            let save_style = if save_focused {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TEXT)
+            };
+            let add_style = if add_focused {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(TEXT)
+            };
+
+            let save_btn = Paragraph::new(" Save ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(ratatui::symbols::border::ROUNDED)
+                        .border_style(save_style),
+                )
+                .alignment(Alignment::Center)
+                .style(save_style);
+            f.render_widget(save_btn, btn_chunks[0]);
+
+            let add_btn = Paragraph::new(" Add Range ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(ratatui::symbols::border::ROUNDED)
+                        .border_style(add_style),
+                )
+                .alignment(Alignment::Center)
+                .style(add_style);
+            f.render_widget(add_btn, btn_chunks[1]);
 
             // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);
