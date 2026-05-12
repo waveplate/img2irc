@@ -4155,6 +4155,33 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     );
 
                                                     if let Some(idx) = found {
+                                                        let ov = &app.render_args.overlays[idx];
+                                                        let mut text_w = 1;
+                                                        let mut text_h = 1;
+                                                        if ov.w == 0 || ov.h == 0 {
+                                                            let lines: Vec<&str> =
+                                                                ov.text.split('\n').collect();
+                                                            text_h = lines.len() as i32;
+                                                            text_w = lines
+                                                                .iter()
+                                                                .map(|l| l.chars().count() as i32)
+                                                                .max()
+                                                                .unwrap_or(1);
+                                                        }
+                                                        let check_w = if ov.w > 0 {
+                                                            ov.w
+                                                        } else {
+                                                            text_w.max(2)
+                                                        };
+                                                        let check_h = if ov.h > 0 {
+                                                            ov.h
+                                                        } else {
+                                                            text_h.max(1)
+                                                        };
+
+                                                        // Check if clicking near the bottom-right corner for resizing
+                                                        let is_resize_area = cell_x >= ov.x + check_w - 2 && cell_y >= ov.y + check_h - 1;
+
                                                         if is_double {
                                                             app.text_selected = Some(idx + 1);
                                                             app.value_edit_buffer =
@@ -4164,6 +4191,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             app.input_mode = InputMode::TextEdit;
                                                             app.text_drag_mode = TextDragMode::None;
                                                             app.last_text_click = None;
+                                                        } else if is_resize_area {
+                                                            app.text_selected = Some(idx + 1);
+                                                            app.text_drag_mode = TextDragMode::Sizing;
+                                                            app.text_drag_start = Some((ov.x, ov.y));
+                                                            app.last_text_click = Some((now, cell_x, cell_y));
                                                         } else {
                                                             app.text_selected = Some(idx + 1);
                                                             app.text_drag_mode =
@@ -4691,14 +4723,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             == TextDragMode::Sizing
                                                         {
                                                             // Resize
-                                                            if let Some((sx, sy)) =
+                                                            if let Some((ox, oy)) =
                                                                 app.text_drag_start
                                                             {
-                                                                ov.w = (cell_x - sx).max(0);
-                                                                ov.h = (cell_y - sy).max(0);
+                                                                ov.w = (cell_x - ox + 1).max(0);
+                                                                ov.h = (cell_y - oy + 1).max(0);
                                                                 app.reapply_overlays();
                                                             }
                                                         }
+
                                                     }
                                                 }
                                             }

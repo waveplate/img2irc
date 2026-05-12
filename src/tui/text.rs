@@ -73,7 +73,10 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             }
         }
         f.render_widget(
-            crate::colorpicker::ColorPickerWidget { state: cp_state },
+            crate::colorpicker::ColorPickerWidget {
+                state: cp_state,
+                show_details: false,
+            },
             cp_rect,
         );
     }

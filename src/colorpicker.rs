@@ -330,6 +330,7 @@ impl ColorPickerState {
 
 pub struct ColorPickerWidget<'a> {
     pub state: &'a mut ColorPickerState,
+    pub show_details: bool,
 }
 
 impl<'a> Widget for ColorPickerWidget<'a> {
@@ -502,109 +503,112 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                 .set_fg(Color::White);
         }
 
-        let swatch_rect = Rect::new(inner.x + 40, inner.y + 1, 14, 6);
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Color ")
-            .style(Style::default().fg(Color::DarkGray))
-            .render(swatch_rect, buf);
-        let swatch_inner = Rect::new(
-            swatch_rect.x + 1,
-            swatch_rect.y + 1,
-            swatch_rect.width.saturating_sub(2),
-            swatch_rect.height.saturating_sub(2),
-        );
+        if self.show_details {
+            let swatch_rect = Rect::new(inner.x + 40, inner.y + 1, 14, 6);
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Color ")
+                .style(Style::default().fg(Color::DarkGray))
+                .render(swatch_rect, buf);
+            let swatch_inner = Rect::new(
+                swatch_rect.x + 1,
+                swatch_rect.y + 1,
+                swatch_rect.width.saturating_sub(2),
+                swatch_rect.height.saturating_sub(2),
+            );
 
-        let mut render_swatch = |y: u16, title: &str, rgb: Option<(u8, u8, u8)>, editing: bool| {
-            buf.set_string(swatch_inner.x, y, title, Style::default().fg(Color::Gray));
-            if let Some(rgb) = rgb {
-                let color = Color::Rgb(rgb.0, rgb.1, rgb.2);
-                for x in 0..6 {
-                    buf.get_mut(swatch_inner.x + 3 + x, y)
-                        .set_char(' ')
-                        .set_bg(color);
-                }
-            } else {
-                buf.set_string(
-                    swatch_inner.x + 4,
-                    y,
-                    "[None]",
-                    Style::default().fg(Color::DarkGray),
-                );
-            }
-            if editing {
-                buf.set_string(
-                    swatch_inner.x - 1,
-                    y,
-                    "▶",
-                    Style::default().fg(Color::White),
-                );
-            }
-        };
+            let mut render_swatch =
+                |y: u16, title: &str, rgb: Option<(u8, u8, u8)>, editing: bool| {
+                    buf.set_string(swatch_inner.x, y, title, Style::default().fg(Color::Gray));
+                    if let Some(rgb) = rgb {
+                        let color = Color::Rgb(rgb.0, rgb.1, rgb.2);
+                        for x in 0..6 {
+                            buf.get_mut(swatch_inner.x + 3 + x, y)
+                                .set_char(' ')
+                                .set_bg(color);
+                        }
+                    } else {
+                        buf.set_string(
+                            swatch_inner.x + 4,
+                            y,
+                            "[None]",
+                            Style::default().fg(Color::DarkGray),
+                        );
+                    }
+                    if editing {
+                        buf.set_string(
+                            swatch_inner.x - 1,
+                            y,
+                            "▶",
+                            Style::default().fg(Color::White),
+                        );
+                    }
+                };
 
-        render_swatch(
-            swatch_inner.y + 1,
-            "Fg",
-            Some(self.state.fg_rgb),
-            self.state.editing_fg,
-        );
-        if self.state.is_dual {
             render_swatch(
-                swatch_inner.y + 3,
-                "Bg",
-                self.state.bg_rgb,
-                !self.state.editing_fg,
+                swatch_inner.y + 1,
+                "Fg",
+                Some(self.state.fg_rgb),
+                self.state.editing_fg,
             );
+            if self.state.is_dual {
+                render_swatch(
+                    swatch_inner.y + 3,
+                    "Bg",
+                    self.state.bg_rgb,
+                    !self.state.editing_fg,
+                );
 
-            let bg_none_btn = Rect::new(swatch_inner.x, swatch_inner.y + 5, 12, 1);
-            let hover = !self.state.editing_fg;
-            buf.set_string(
-                bg_none_btn.x,
-                bg_none_btn.y,
-                " [Clear Bg] ",
-                Style::default().fg(if hover { Color::White } else { Color::DarkGray }),
-            );
-        }
+                let bg_none_btn = Rect::new(swatch_inner.x, swatch_inner.y + 5, 12, 1);
+                let hover = !self.state.editing_fg;
+                buf.set_string(
+                    bg_none_btn.x,
+                    bg_none_btn.y,
+                    " [Clear Bg] ",
+                    Style::default().fg(if hover { Color::White } else { Color::DarkGray }),
+                );
+            }
 
-        let val_y = inner.y + 9;
-        let val_x = inner.x + 40;
-        buf.set_string(
-            val_x,
-            val_y,
-            format!("R: {:>3}", self.state.rgb.0),
-            Style::default().fg(Color::Gray),
-        );
-        buf.set_string(
-            val_x,
-            val_y + 1,
-            format!("G: {:>3}", self.state.rgb.1),
-            Style::default().fg(Color::Gray),
-        );
-        buf.set_string(
-            val_x,
-            val_y + 2,
-            format!("B: {:>3}", self.state.rgb.2),
-            Style::default().fg(Color::Gray),
-        );
-        buf.set_string(
-            val_x,
-            val_y + 4,
-            format!("#{}", self.state.hex),
-            Style::default().fg(Color::White),
-        );
-
-        if self.state.mode != PaletteMode::Ansi24 {
-            let label = if self.state.mode == PaletteMode::Irc {
-                "IRC"
-            } else {
-                "ANSI"
-            };
+            let val_y = inner.y + 9;
+            let val_x = inner.x + 40;
             buf.set_string(
                 val_x,
-                val_y + 6,
-                format!("{}: {}", label, self.state.grid_idx),
-                Style::default().fg(Color::Yellow),
+                val_y,
+                format!("R: {:>3}", self.state.rgb.0),
+                Style::default().fg(Color::Gray),
             );
+            buf.set_string(
+                val_x,
+                val_y + 1,
+                format!("G: {:>3}", self.state.rgb.1),
+                Style::default().fg(Color::Gray),
+            );
+            buf.set_string(
+                val_x,
+                val_y + 2,
+                format!("B: {:>3}", self.state.rgb.2),
+                Style::default().fg(Color::Gray),
+            );
+            buf.set_string(
+                val_x,
+                val_y + 4,
+                format!("#{}", self.state.hex),
+                Style::default().fg(Color::White),
+            );
+
+            if self.state.mode != PaletteMode::Ansi24 {
+                let label = if self.state.mode == PaletteMode::Irc {
+                    "IRC"
+                } else {
+                    "ANSI"
+                };
+                buf.set_string(
+                    val_x,
+                    val_y + 6,
+                    format!("{}: {}", label, self.state.grid_idx),
+                    Style::default().fg(Color::Yellow),
+                );
+            }
         }
 
         // OK/Cancel buttons removed for embedded TUI use.
