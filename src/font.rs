@@ -346,6 +346,12 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         flatten_toml(&k, &v, &mut blocks);
     }
 
+    let global_exclude: HashSet<u32> = blocks
+        .get("global")
+        .and_then(|e| e.exclude.as_ref())
+        .map(|v| v.iter().copied().collect())
+        .unwrap_or_default();
+
     let mut resolved_groups: HashMap<String, Vec<u32>> = HashMap::new();
     let mut all_chars = HashSet::new();
 
@@ -354,6 +360,7 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         blocks: &HashMap<String, BlockEntry>,
         resolved: &mut HashMap<String, Vec<u32>>,
         visited: &mut HashSet<String>,
+        global_exclude: &HashSet<u32>,
     ) -> Vec<u32> {
         if let Some(res) = resolved.get(name) {
             return res.clone();
@@ -377,13 +384,19 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
             }
             if let Some(inc) = &entry.include {
                 for other in inc {
-                    glyphs.extend(resolve_block(other, blocks, resolved, visited));
+                    glyphs.extend(resolve_block(other, blocks, resolved, visited, global_exclude));
                 }
             }
             if let Some(exc) = &entry.exclude {
                 let exc_set: HashSet<_> = exc.iter().collect();
                 glyphs.retain(|g| !exc_set.contains(g));
             }
+        }
+
+        // Apply global exclude to all blocks except "global" itself if needed,
+        // though normally global wouldn't be matched against anyway.
+        if name != "global" {
+            glyphs.retain(|g| !global_exclude.contains(g));
         }
 
         glyphs.sort();
@@ -394,7 +407,13 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
 
     for name in blocks.keys() {
         let mut visited = HashSet::new();
-        let glyphs = resolve_block(name, &blocks, &mut resolved_groups, &mut visited);
+        let glyphs = resolve_block(
+            name,
+            &blocks,
+            &mut resolved_groups,
+            &mut visited,
+            &global_exclude,
+        );
         for &code in &glyphs {
             if let Some(ch) = char::from_u32(code) {
                 all_chars.insert(ch);

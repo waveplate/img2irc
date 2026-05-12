@@ -1449,7 +1449,7 @@ const UNICODE_BLOCKS: &[(&str, u32, u32)] = &[
     ("Specials", 0xFFF0, 0xFFFF),
 ];
 
-fn render_unicode_explorer(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_set(ratatui::symbols::border::ROUNDED)

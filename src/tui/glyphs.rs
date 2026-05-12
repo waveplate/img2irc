@@ -118,7 +118,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 Style::default().fg(TEXT)
             };
 
-            let save_btn = Paragraph::new(" Save ")
+            let save_btn = Paragraph::new(" Save Glyph Config ")
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
