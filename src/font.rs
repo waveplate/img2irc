@@ -164,12 +164,35 @@ fn get_fallback_font_path(ch: char) -> Option<String> {
     result
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum HexOrInt {
+    Hex(String),
+    Int(u32),
+}
+
+impl HexOrInt {
+    fn to_u32(&self) -> u32 {
+        match self {
+            HexOrInt::Hex(s) => {
+                let s = s.trim_start_matches("0x");
+                u32::from_str_radix(s, 16).unwrap_or(0)
+            }
+            HexOrInt::Int(i) => *i,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct BlockEntry {
-    glyphs: Option<Vec<u32>>,
-    ranges: Option<Vec<[u32; 2]>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    glyphs: Option<Vec<HexOrInt>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ranges: Option<Vec<[HexOrInt; 2]>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     include: Option<Vec<String>>,
-    exclude: Option<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    exclude: Option<Vec<HexOrInt>>,
 }
 
 pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
@@ -212,7 +235,10 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
         toml::from_str(&toml_str).expect("Invalid TOML");
 
     let mut entry = toml::map::Map::new();
-    entry.insert("ranges".to_string(), Value::Array(vec![Value::Array(vec![Value::Integer(start as i64), Value::Integer(end as i64)])]));
+    entry.insert("ranges".to_string(), Value::Array(vec![Value::Array(vec![
+        Value::String(format!("0x{:04X}", start)),
+        Value::String(format!("0x{:04X}", end))
+    ])]));
 
     raw_config.insert(name.to_string(), Value::Table(entry));
 
@@ -267,7 +293,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     let block_exclude: Vec<Value> = exclude
         .iter()
         .filter(|&ch| block_codes.contains(&(*ch as u32)))
-        .map(|&ch| Value::Integer(ch as i64))
+        .map(|&ch| Value::String(format!("0x{:04X}", ch as u32)))
         .collect();
 
     // Ensure the block entry exists and update its exclude list
@@ -377,11 +403,11 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         let mut glyphs = Vec::new();
         if let Some(entry) = blocks.get(name) {
             if let Some(g) = &entry.glyphs {
-                glyphs.extend(g);
+                glyphs.extend(g.iter().map(|h| h.to_u32()));
             }
             if let Some(r) = &entry.ranges {
                 for range in r {
-                    for code in range[0]..=range[1] {
+                    for code in range[0].to_u32()..=range[1].to_u32() {
                         glyphs.push(code);
                     }
                 }
@@ -392,7 +418,7 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
                 }
             }
             if let Some(exc) = &entry.exclude {
-                let exc_set: HashSet<_> = exc.iter().collect();
+                let exc_set: HashSet<_> = exc.iter().map(|h| h.to_u32()).collect();
                 glyphs.retain(|g| !exc_set.contains(g));
             }
         }
@@ -820,7 +846,8 @@ pub fn glyph_store(
         let name_lc = name.to_lowercase();
         let mut matched = false;
         for key in config_groups.keys() {
-            if key == &name_lc || key.starts_with(&format!("{}.", name_lc)) {
+            let key_lc = key.to_lowercase();
+            if key_lc == name_lc || key_lc.starts_with(&format!("{}.", name_lc)) {
                 blocks_to_select.insert(key.clone());
                 blocks_to_load.insert(key.clone());
                 matched = true;
