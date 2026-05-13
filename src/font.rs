@@ -220,7 +220,7 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
 
-pub fn save_blocks_config(exclude: &[char]) {
+pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
         let path = Path::new(&config_dir).join("blocks.toml");
@@ -259,21 +259,32 @@ pub fn save_blocks_config(exclude: &[char]) {
     let mut raw_config: toml::map::Map<String, Value> =
         toml::from_str(&toml_str).expect("Invalid TOML");
 
-    let exclude_values: Vec<Value> = exclude
+    // Load full config to know which characters belong to which block
+    let (config_groups, _) = load_blocks_config();
+    let block_codes = config_groups.get(block_name).expect("Block not found");
+
+    // Filter global exclude list to only those in the current block
+    let block_exclude: Vec<Value> = exclude
         .iter()
+        .filter(|&ch| block_codes.contains(&(*ch as u32)))
         .map(|&ch| Value::Integer(ch as i64))
         .collect();
 
-    // Ensure [global] exists and update its exclude list
-    let global = raw_config
-        .entry("global".to_string())
+    // Ensure the block entry exists and update its exclude list
+    let block_entry = raw_config
+        .entry(block_name.to_string())
         .or_insert_with(|| Value::Table(toml::map::Map::new()));
 
-    if let Some(table) = global.as_table_mut() {
-        table.insert("exclude".to_string(), Value::Array(exclude_values));
+    if let Some(table) = block_entry.as_table_mut() {
+        if block_exclude.is_empty() {
+            table.remove("exclude");
+        } else {
+            table.insert("exclude".to_string(), Value::Array(block_exclude));
+        }
     }
 
-    let new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    let new_toml =
+        toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
 
@@ -346,12 +357,6 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         flatten_toml(&k, &v, &mut blocks);
     }
 
-    let global_exclude: HashSet<u32> = blocks
-        .get("global")
-        .and_then(|e| e.exclude.as_ref())
-        .map(|v| v.iter().copied().collect())
-        .unwrap_or_default();
-
     let mut resolved_groups: HashMap<String, Vec<u32>> = HashMap::new();
     let mut all_chars = HashSet::new();
 
@@ -360,7 +365,6 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         blocks: &HashMap<String, BlockEntry>,
         resolved: &mut HashMap<String, Vec<u32>>,
         visited: &mut HashSet<String>,
-        global_exclude: &HashSet<u32>,
     ) -> Vec<u32> {
         if let Some(res) = resolved.get(name) {
             return res.clone();
@@ -384,19 +388,13 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
             }
             if let Some(inc) = &entry.include {
                 for other in inc {
-                    glyphs.extend(resolve_block(other, blocks, resolved, visited, global_exclude));
+                    glyphs.extend(resolve_block(other, blocks, resolved, visited));
                 }
             }
             if let Some(exc) = &entry.exclude {
                 let exc_set: HashSet<_> = exc.iter().collect();
                 glyphs.retain(|g| !exc_set.contains(g));
             }
-        }
-
-        // Apply global exclude to all blocks except "global" itself if needed,
-        // though normally global wouldn't be matched against anyway.
-        if name != "global" {
-            glyphs.retain(|g| !global_exclude.contains(g));
         }
 
         glyphs.sort();
@@ -407,13 +405,7 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
 
     for name in blocks.keys() {
         let mut visited = HashSet::new();
-        let glyphs = resolve_block(
-            name,
-            &blocks,
-            &mut resolved_groups,
-            &mut visited,
-            &global_exclude,
-        );
+        let glyphs = resolve_block(name, &blocks, &mut resolved_groups, &mut visited);
         for &code in &glyphs {
             if let Some(ch) = char::from_u32(code) {
                 all_chars.insert(ch);

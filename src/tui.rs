@@ -4638,10 +4638,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             {
                                 app.current_tab = 2;
                                 app.selected_control = 2;
-                                crate::font::save_blocks_config(&app.render_args.exclude);
-                                log::info!("Saved glyph exclusions to blocks.toml");
+                                if let Some(node) = app.tree_state.get_selected_node() {
+                                    let target_key = if !node.full_path.is_empty() {
+                                        &node.full_path
+                                    } else {
+                                        &node.name
+                                    };
+                                    crate::font::save_blocks_config(
+                                        target_key,
+                                        &app.render_args.exclude,
+                                    );
+                                    log::info!("Saved glyph config for block: {}", target_key);
+                                }
                                 continue;
-                            } else if mouse.column >= app.glyph_add_area.x
+                            }
+ else if mouse.column >= app.glyph_add_area.x
                                 && mouse.column < app.glyph_add_area.x + app.glyph_add_area.width
                                 && mouse.row >= app.glyph_add_area.y
                                 && mouse.row < app.glyph_add_area.y + app.glyph_add_area.height
@@ -5749,8 +5760,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.selected_control == 1 {
                                         app.toggle_glyph_selection();
                                     } else if app.selected_control == 2 {
-                                        crate::font::save_blocks_config(&app.render_args.exclude);
-                                        log::info!("Saved glyph exclusions to blocks.toml");
+                                        if let Some(node) = app.tree_state.get_selected_node() {
+                                            let target_key = if !node.full_path.is_empty() {
+                                                &node.full_path
+                                            } else {
+                                                &node.name
+                                            };
+                                            crate::font::save_blocks_config(
+                                                target_key,
+                                                &app.render_args.exclude,
+                                            );
+                                            log::info!(
+                                                "Saved glyph config for block: {}",
+                                                target_key
+                                            );
+                                        }
                                     } else if app.selected_control == 3 {
                                         app.show_unicode_explorer = true;
                                     }
@@ -5774,8 +5798,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.selected_control == 1 {
                                         app.toggle_glyph_selection();
                                     } else if app.selected_control == 2 {
-                                        crate::font::save_blocks_config(&app.render_args.exclude);
-                                        log::info!("Saved glyph exclusions to blocks.toml");
+                                        if let Some(node) = app.tree_state.get_selected_node() {
+                                            let target_key = if !node.full_path.is_empty() {
+                                                &node.full_path
+                                            } else {
+                                                &node.name
+                                            };
+                                            crate::font::save_blocks_config(
+                                                target_key,
+                                                &app.render_args.exclude,
+                                            );
+                                            log::info!(
+                                                "Saved glyph config for block: {}",
+                                                target_key
+                                            );
+                                        }
                                     } else if app.selected_control == 3 {
                                         app.show_unicode_explorer = true;
                                     }
