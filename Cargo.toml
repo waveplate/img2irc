@@ -63,6 +63,7 @@ ratatui-image = { version = "10.0.7", default-features = false, features = ["cro
 pollster = "0.4.0"
 unicode-width = "0.2.0"
 educe = "0.6"
+regex = "1.11"
 
 [target.'cfg(target_env = "musl")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }

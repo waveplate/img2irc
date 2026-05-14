@@ -38,8 +38,8 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs},
+    text::{Text, Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Terminal,
 };
 use explorer::FileExplorer;
@@ -353,6 +353,15 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
+        id: ControlId::Rotate,
+        label: "Rotate",
+        kind: ControlKind::Slider {
+             min: -180,
+             max: 180,
+             default: 0,
+        },
+    },
+    ControlDef {
         id: ControlId::FlipH,
         label: "Flip H",
         kind: ControlKind::Toggle { default: false },
@@ -637,6 +646,10 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
         effect: Some(crate::pipeline::ImageEffect::Hue(0.0)),
     },
     CatalogItem {
+        label: "Rotate",
+        effect: Some(crate::pipeline::ImageEffect::Rotate(0.0)),
+    },
+    CatalogItem {
         label: "── Effects ──",
         effect: None,
     },
@@ -788,6 +801,8 @@ enum FocusTarget {
     Pipeline,
     GlyphTree,
     GlyphList,
+    GlyphSave,
+    GlyphAdd,
     Text,
 }
 
@@ -1583,6 +1598,7 @@ const UNICODE_BLOCKS: &[(&str, u32, u32)] = &[
     ("Chess Symbols", 0x1FA70, 0x1FAFF),
     ("Symbols and Pictographs Extended-A", 0x1FB00, 0x1FBFF),
     ("Symbols for Legacy Computing", 0x1FB00, 0x1FBFF),
+    ("Symbols for Legacy Computing Supplement", 0x1CC00, 0x1CEBF),
 ];
 
 fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
@@ -1595,12 +1611,19 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let chunks = Layout::vertical([
+    let main_chunks = Layout::vertical([
         Constraint::Min(0),
         Constraint::Length(3), // Instructions
     ])
     .split(inner);
 
+    let explorer_chunks = Layout::horizontal([
+        Constraint::Percentage(50),
+        Constraint::Percentage(50),
+    ])
+    .split(main_chunks[0]);
+
+    // 1. List of ranges (Left)
     let items: Vec<ListItem> = UNICODE_BLOCKS
         .iter()
         .map(|(name, start, end)| {
@@ -1609,15 +1632,43 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
+        .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(BORDER)))
         .highlight_style(Style::default().bg(ACCENT).fg(Color::White))
         .highlight_symbol("▸ ");
 
-    f.render_stateful_widget(list, chunks[0], &mut app.unicode_list_state);
+    f.render_stateful_widget(list, explorer_chunks[0], &mut app.unicode_list_state);
 
-    let inst = Paragraph::new("↑/↓: Navigate | Enter: Add Range | Esc: Close")
+    // 2. Character Grid (Right)
+    if let Some(idx) = app.unicode_list_state.selected() {
+        let (_name, start, end) = UNICODE_BLOCKS[idx];
+        let mut chars_text = Text::default();
+        let width = explorer_chunks[1].width as usize / 2; // 2 chars per glyph spot roughly
+        if width > 0 {
+            let mut current_line = Line::from(vec![]);
+            for code in start..=end {
+                if let Some(ch) = char::from_u32(code) {
+                    current_line.spans.push(Span::raw(format!("{} ", ch)));
+                    if current_line.spans.len() >= width {
+                        chars_text.lines.push(current_line);
+                        current_line = Line::from(vec![]);
+                    }
+                }
+            }
+            if !current_line.spans.is_empty() {
+                chars_text.lines.push(current_line);
+            }
+        }
+
+        let char_grid = Paragraph::new(chars_text)
+            .block(Block::default().title(format!(" Characters (U+{:04X}-U+{:04X}) ", start, end)))
+            .wrap(Wrap { trim: false });
+        f.render_widget(char_grid, explorer_chunks[1]);
+    }
+
+    let inst = Paragraph::new("↑/↓: Navigate | PgUp/PgDn: Scroll | Enter: Add Range | Esc: Close")
         .alignment(Alignment::Center)
         .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst, chunks[1]);
+    f.render_widget(inst, main_chunks[1]);
 }
 
 impl App {
@@ -1987,7 +2038,12 @@ impl App {
         match self.current_tab {
             0 => vec![FocusTarget::General],
             1 => vec![FocusTarget::Pipeline],
-            2 => vec![FocusTarget::GlyphTree, FocusTarget::GlyphList],
+            2 => vec![
+                FocusTarget::GlyphTree,
+                FocusTarget::GlyphList,
+                FocusTarget::GlyphSave,
+                FocusTarget::GlyphAdd,
+            ],
             3 => vec![FocusTarget::Text],
             _ => vec![FocusTarget::General],
         }
@@ -1999,7 +2055,10 @@ impl App {
             1 => Some(FocusTarget::Pipeline),
             2 => Some(match self.selected_control {
                 0 => FocusTarget::GlyphTree,
-                _ => FocusTarget::GlyphList,
+                1 => FocusTarget::GlyphList,
+                2 => FocusTarget::GlyphSave,
+                3 => FocusTarget::GlyphAdd,
+                _ => FocusTarget::GlyphTree,
             }),
             3 => Some(FocusTarget::Text),
             _ => None,
@@ -2022,6 +2081,14 @@ impl App {
             FocusTarget::GlyphList => {
                 self.current_tab = 2;
                 self.selected_control = 1;
+            }
+            FocusTarget::GlyphSave => {
+                self.current_tab = 2;
+                self.selected_control = 2;
+            }
+            FocusTarget::GlyphAdd => {
+                self.current_tab = 2;
+                self.selected_control = 3;
             }
             FocusTarget::Text => {
                 self.current_tab = 3;
@@ -3761,24 +3828,34 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.unicode_list_state.select(Some(curr + 1));
                                 }
                             }
+                            KeyCode::PageUp => {
+                                let curr = app.unicode_list_state.selected().unwrap_or(0);
+                                app.unicode_list_state
+                                    .select(Some(curr.saturating_sub(10)));
+                            }
+                            KeyCode::PageDown => {
+                                let curr = app.unicode_list_state.selected().unwrap_or(0);
+                                app.unicode_list_state
+                                    .select(Some((curr + 10).min(UNICODE_BLOCKS.len() - 1)));
+                            }
                             KeyCode::Enter => {
                                 if let Some(idx) = app.unicode_list_state.selected() {
                                     let (name, start, end) = UNICODE_BLOCKS[idx];
                                     crate::font::add_range_to_blocks_config(name, start, end);
-                                    // Add to tree as well
-                                    let new_node = TreeNode::new(
-                                        name.to_string(),
-                                        name.to_string(),
-                                        0,
-                                        true,
-                                    );
-                                    app.tree_state.root.push(new_node);
-                                    app.available_blocks.push(name.to_string());
-                                    app.available_blocks.sort();
+
+                                    if !app.available_blocks.contains(&name.to_string()) {
+                                        app.available_blocks.push(name.to_string());
+                                        app.available_blocks.sort();
+                                    }
+
+                                    // Refresh tree
+                                    app.tree_state = TreeState::new(&app.available_blocks);
+
                                     app.show_unicode_explorer = false;
                                     log::info!("Added Unicode range: {} (U+{:04X}-U+{:04X})", name, start, end);
                                 }
                             }
+
                             _ => {}
                         }
                     }
@@ -5533,6 +5610,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('g') => app.toggle_tab(0),
                             KeyCode::Char('p') => app.toggle_tab(1),
                             KeyCode::Char('y') => app.toggle_tab(2),
+                            KeyCode::Delete | KeyCode::Backspace if app.current_tab == 2 && app.selected_control == 0 => {
+                                if let Some(node) = app.tree_state.get_selected_node() {
+                                    let name = node.full_path.clone();
+                                    crate::font::remove_range_from_blocks_config(&name);
+                                    app.available_blocks.retain(|b| b != &name);
+                                    // Refresh tree
+                                    let tree_state = TreeState::new(&app.available_blocks);
+                                    app.tree_state = tree_state;
+                                    log::info!("Removed Unicode range: {}", name);
+                                }
+                            }
                             KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 app.focus_next_visible_tab(-1);
                             }

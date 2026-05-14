@@ -1,6 +1,7 @@
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use fontdb::{Database, Family, Query, Source};
 use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
@@ -8,7 +9,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use toml::Value;
 use unicode_width::UnicodeWidthChar;
 
@@ -42,8 +43,8 @@ struct CachedBlock {
 }
 
 struct FontContext {
-    user_faces: HashMap<String, FontVec>,
-    fallback_faces: HashMap<String, FontVec>,
+    user_faces: HashMap<String, Arc<FontVec>>,
+    fallback_faces: HashMap<String, Arc<FontVec>>,
     font_paths: Vec<String>,
     missing_chars: HashSet<char>,
     font_size: f32,
@@ -68,7 +69,7 @@ impl FontContext {
                         if is_monospace_font(&font) {
                             log::info!("Loaded font: {}", path);
                             font_paths.push(path.clone());
-                            user_faces.insert(path, font);
+                            user_faces.insert(path, Arc::new(font));
                         } else {
                             log::info!("Warning: Font '{}' is not monospace, skipping.", font_name);
                         }
@@ -92,16 +93,16 @@ impl FontContext {
         }
     }
 
-    fn get_main_font(&self) -> &FontVec {
+    fn get_main_font(&self) -> Arc<FontVec> {
         // Return the first successfully loaded user face
         // We iterate font_paths to preserve priority order
         for path in &self.font_paths {
             if let Some(font) = self.user_faces.get(path) {
-                return font;
+                return font.clone();
             }
         }
         // Should be unreachable due to check in new()
-        self.user_faces.values().next().unwrap()
+        self.user_faces.values().next().unwrap().clone()
     }
 }
 
@@ -127,44 +128,47 @@ fn find_font_path(font_name: &str) -> Option<String> {
     })
 }
 
-static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Option<String>>>> =
+static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Vec<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-fn get_fallback_font_path(ch: char) -> Option<String> {
-    if let Some(path) = FALLBACK_FONT_CACHE.lock().unwrap().get(&ch) {
-        return path.clone();
+fn get_fallback_font_paths(ch: char) -> Vec<String> {
+    if let Some(paths) = FALLBACK_FONT_CACHE.lock().unwrap().get(&ch) {
+        return paths.clone();
     }
 
+    // Use -s to get a sorted list of all matching fonts. 
     let output = Command::new("fc-match")
+        .arg("-s")
         .arg("-f")
-        .arg("%{file}")
-        .arg(format!("monospace:charset={:x}", ch as u32))
+        .arg("%{file}\n")
+        .arg(format!(":charset={:X}", ch as u32))
         .output()
         .ok();
 
-    let result = if let Some(output) = output {
+    let mut results = Vec::new();
+    if let Some(output) = output {
         if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                Some(path)
-            } else {
-                None
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let path = line.trim().to_string();
+                if !path.is_empty() && !results.contains(&path) {
+                    results.push(path);
+                }
+                if results.len() >= 8 { // Increased limit to find more potential matches
+                    break;
+                }
             }
-        } else {
-            None
         }
-    } else {
-        None
-    };
+    }
 
     FALLBACK_FONT_CACHE
         .lock()
         .unwrap()
-        .insert(ch, result.clone());
-    result
+        .insert(ch, results.clone());
+    results
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum HexOrInt {
     Hex(String),
@@ -183,6 +187,16 @@ impl HexOrInt {
     }
 }
 
+// Custom serialization to write as integer (post-processed to hex)
+impl Serialize for HexOrInt {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u32(self.to_u32())
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct BlockEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -193,6 +207,18 @@ struct BlockEntry {
     include: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     exclude: Option<Vec<HexOrInt>>,
+}
+
+fn is_graphical_emoji(ch: char) -> bool {
+    let cp = ch as u32;
+    // Common emoji ranges
+    (cp >= 0x1F300 && cp <= 0x1F64F) || // Misc Symbols and Pictographs, Emoticons
+    (cp >= 0x1F680 && cp <= 0x1F6FF) || // Transport and Map
+    (cp >= 0x1F700 && cp <= 0x1F77F) || // Alchemical Symbols
+    (cp >= 0x1F900 && cp <= 0x1F9FF) || // Misc Symbols and Arrows
+    (cp >= 0x1FA70 && cp <= 0x1FAFF) || // Symbols and Pictographs Extended-A
+    (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc Symbols (some are emojis)
+    (cp >= 0x2700 && cp <= 0x27BF)      // Dingbats
 }
 
 pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
@@ -236,14 +262,98 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
 
     let mut entry = toml::map::Map::new();
     entry.insert("ranges".to_string(), Value::Array(vec![Value::Array(vec![
-        Value::String(format!("0x{:04X}", start)),
-        Value::String(format!("0x{:04X}", end))
+        Value::Integer(start as i64),
+        Value::Integer(end as i64)
     ])]));
+
+    // Automatically exclude graphical emojis
+    let mut exclude = Vec::new();
+    for cp in start..=end {
+        if let Some(ch) = char::from_u32(cp) {
+            if is_graphical_emoji(ch) {
+                exclude.push(Value::Integer(cp as i64));
+            }
+        }
+    }
+    if !exclude.is_empty() {
+        entry.insert("exclude".to_string(), Value::Array(exclude));
+    }
 
     raw_config.insert(name.to_string(), Value::Table(entry));
 
-    let new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    let mut new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    
+    // Post-process to ensure hex format without quotes where it looks like a Unicode point
+    // This is a heuristic: replace large integers or specific ranges with 0xHEX
+    // Actually, TOML doesn't distinguish hex/dec in the Value enum.
+    // We'll use a regex to replace integers that are likely Unicode points or specifically requested.
+    let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
+    new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
+        let val: i64 = caps[2].parse().unwrap();
+        if val > 127 {
+            format!("{}0x{:04X}", &caps[1], val)
+        } else {
+            caps[0].to_string()
+        }
+    }).to_string();
+
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+}
+
+pub fn remove_range_from_blocks_config(name: &str) {
+    let mut toml_path = None;
+    if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
+        let path = Path::new(&config_dir).join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let path = PathBuf::from("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        let config_home = env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
+        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        if path.exists() {
+            toml_path = Some(path);
+        }
+    }
+    if toml_path.is_none() {
+        if let Ok(home) = env::var("HOME") {
+            let path = Path::new(&home)
+                .join(".config")
+                .join("img2irc")
+                .join("blocks.toml");
+            if path.exists() {
+                toml_path = Some(path);
+            }
+        }
+    }
+
+    let toml_path = toml_path.expect("Failed to find blocks.toml for removing range");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let mut raw_config: toml::map::Map<String, Value> =
+        toml::from_str(&toml_str).expect("Invalid TOML");
+
+    if raw_config.remove(name).is_some() {
+        let mut new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+        
+        let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
+        new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
+            let val: i64 = caps[2].parse().unwrap();
+            if val > 127 {
+                format!("{}0x{:04X}", &caps[1], val)
+            } else {
+                caps[0].to_string()
+            }
+        }).to_string();
+
+        fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+    }
 }
 
 pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
@@ -293,7 +403,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     let block_exclude: Vec<Value> = exclude
         .iter()
         .filter(|&ch| block_codes.contains(&(*ch as u32)))
-        .map(|&ch| Value::String(format!("0x{:04X}", ch as u32)))
+        .map(|&ch| Value::Integer(ch as u32 as i64))
         .collect();
 
     // Ensure the block entry exists and update its exclude list
@@ -309,8 +419,19 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
         }
     }
 
-    let new_toml =
+    let mut new_toml =
         toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    
+    let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
+    new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
+        let val: i64 = caps[2].parse().unwrap();
+        if val > 127 {
+            format!("{}0x{:04X}", &caps[1], val)
+        } else {
+            caps[0].to_string()
+        }
+    }).to_string();
+
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
 
@@ -348,8 +469,99 @@ pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
         }
     }
 
-    let toml_path = toml_path.expect("Failed to find blocks.toml");
-    let toml_str = fs::read_to_string(toml_path).expect("Failed to read blocks.toml");
+    let toml_str = if let Some(path) = toml_path {
+        fs::read_to_string(path).expect("Failed to read blocks.toml")
+    } else {
+        let default_toml = r#"[default]
+include = [
+    "polygons",
+    "eighth.v",
+    "eighth.h",
+    "space",
+    "half",
+    "full",
+]
+
+[eighth.h]
+ranges = [[
+    0x2589,
+    0x258F,
+]]
+
+[eighth.v]
+ranges = [[
+    0x2581,
+    0x2587,
+]]
+
+[quarter]
+ranges = [[
+    0x2596,
+    0x259F,
+]]
+
+[half]
+glyphs = [0x2580]
+
+[full]
+glyphs = [0x2588]
+
+[largetype]
+ranges = [[
+    0x1CE1A,
+    0x1CE50,
+]]
+
+[sextants]
+ranges = [[
+    0x1FB00,
+    0x1FB3B,
+]]
+
+[octants]
+ranges = [[
+    0x1CD20,
+    0x1CDE5,
+]]
+
+[polygons]
+exclude = [
+    0x1FB69,
+    0x1FB6B,
+    0x1FB6D,
+    0x1FB6F,
+]
+ranges = [[
+    0x1FB3C,
+    0x1FB6F,
+]]
+
+[space]
+glyphs = [32]
+"#;
+        // Attempt to save default toml
+        let mut save_path = None;
+        if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
+            save_path = Some(Path::new(&config_home).join("img2irc").join("blocks.toml"));
+        } else if let Ok(home) = env::var("HOME") {
+            save_path = Some(Path::new(&home).join(".config").join("img2irc").join("blocks.toml"));
+        }
+
+        if let Some(p) = save_path {
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).ok();
+            }
+            if fs::write(&p, default_toml).is_err() {
+                // If config home fails, try current dir
+                fs::write("blocks.toml", default_toml).ok();
+            }
+        } else {
+            fs::write("blocks.toml", default_toml).ok();
+        }
+
+        default_toml.to_string()
+    };
+
     let raw_config: BTreeMap<String, Value> = toml::from_str(&toml_str).expect("Invalid TOML");
 
     let mut blocks: HashMap<String, BlockEntry> = HashMap::new();
@@ -525,21 +737,27 @@ pub fn is_monospace_font(font: &FontVec) -> bool {
         }
     }
     if advances.len() < 2 {
-        return false; // can't tell; skip
+        // If we can't find enough ASCII characters to check (e.g. symbol-only font),
+        // we assume it is monospaced or at least usable.
+        return true;
     }
     // All advances should be the same for monospace
     let first = advances[0];
-    advances.iter().all(|a| (a - first).abs() < 0.1) // Using a tighter threshold than glyphmatch
+    // Relaxed threshold to 1.0 to allow for slight variations in "monospaced" fonts
+    advances.iter().all(|a| (a - first).abs() < 1.0)
 }
 
 fn is_renderable_char(ch: char) -> bool {
     if ch.is_control() {
         return false;
     }
-    matches!(ch.width(), Some(1))
+    // Allow width 1 and 2. Some symbols might be reported as 2 but we still want to try rendering them.
+    // Also some chars might return None for width but are still renderable.
+    let w = ch.width().unwrap_or(1);
+    w >= 1 && w <= 2
 }
 
-fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a FontVec> {
+fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec>, String)> {
     if ctx.missing_chars.contains(&ch) {
         return None;
     }
@@ -547,36 +765,46 @@ fn resolve_font_for_char<'a>(ctx: &'a mut FontContext, ch: char) -> Option<&'a F
     for path in &ctx.font_paths {
         if let Some(font) = ctx.user_faces.get(path) {
             if font.glyph_id(ch).0 != 0 {
-                return Some(font);
+                let font_name = Path::new(path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                return Some((font.clone(), font_name));
             }
         }
     }
 
-    let path = get_fallback_font_path(ch)?;
-    if !ctx.fallback_faces.contains_key(&path) {
-        if let Ok(data) = fs::read(&path) {
-            if let Ok(font) = FontVec::try_from_vec(data) {
-                if is_monospace_font(&font) {
-                    ctx.fallback_faces.insert(path.clone(), font);
-                } else {
-                    log::info!(
-                        "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
-                        ch,
-                        path
-                    );
-                    ctx.missing_chars.insert(ch);
-                    return None;
+    let paths = get_fallback_font_paths(ch);
+    for path in paths {
+        if !ctx.fallback_faces.contains_key(&path) {
+            if let Ok(data) = fs::read(&path) {
+                match FontVec::try_from_vec(data) {
+                    Ok(font) => {
+                        if is_monospace_font(&font) {
+                            log::info!("Adding fallback font: {}", path);
+                            ctx.fallback_faces.insert(path.clone(), Arc::new(font));
+                        } else {
+                            log::debug!("Fallback font {} is not monospace, skipping", path);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load font {}: {:?}", path, e);
+                    }
                 }
             }
         }
-    }
-
-    if let Some(font) = ctx.fallback_faces.get(&path) {
-        if font.glyph_id(ch).0 != 0 {
-            return Some(font);
+        if let Some(font) = ctx.fallback_faces.get(&path) {
+            if font.glyph_id(ch).0 != 0 {
+                let font_name = Path::new(&path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                return Some((font.clone(), font_name));
+            }
         }
     }
 
+    log::info!("Could not resolve font for character U+{:04X}", ch as u32);
     ctx.missing_chars.insert(ch);
     None
 }
@@ -641,7 +869,7 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         let scaled_font = main_font.as_scaled(scale);
         let line_height = (scaled_font.height() + scaled_font.line_gap()).max(1.0);
         let cell_height = line_height.ceil() as usize;
-        let advance_unscaled = measure_reference_advance_unscaled(main_font);
+        let advance_unscaled = measure_reference_advance_unscaled(&*main_font);
         let advance = (ctx.font_size * advance_unscaled / main_font.height_unscaled()).max(1.0);
         let cell_width = advance.round().max(1.0) as usize;
 
@@ -659,7 +887,7 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         if !is_renderable_char(ch) {
             continue;
         }
-        if let Some(font) = resolve_font_for_char(ctx, ch) {
+        if let Some((font, _)) = resolve_font_for_char(ctx, ch) {
             if let Some(outline) = font.outline(font.glyph_id(ch)) {
                 let glyph_min_x = outline.bounds.min.x.min(outline.bounds.max.x);
                 let glyph_max_x = outline.bounds.min.x.max(outline.bounds.max.x);
@@ -744,55 +972,11 @@ fn get_block_glyphs(
             continue;
         }
 
-        // 1. User fonts
-        for font_path in &ctx.font_paths {
-            if let Some(font) = ctx.user_faces.get(font_path) {
-                if font.glyph_id(ch).0 != 0 {
-                    let bitmap = render_glyph_from_font(font, ch, metrics);
-                    let font_name = Path::new(font_path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| font_path.clone());
-                    glyphs.push((ch, bitmap, font_name));
-                    found = true;
-                    break;
-                }
-            }
-        }
-        if found {
-            continue;
-        }
-
-        // 2. Fallback
-        if let Some(path) = get_fallback_font_path(ch) {
-            if !ctx.fallback_faces.contains_key(&path) {
-                if let Ok(data) = fs::read(&path) {
-                    if let Ok(font) = FontVec::try_from_vec(data) {
-                        if is_monospace_font(&font) {
-                            ctx.fallback_faces.insert(path.clone(), font);
-                        } else {
-                            log::info!(
-                                "Warning: Fallback font for '{}' ({}) is not monospace, skipping.",
-                                ch,
-                                path
-                            );
-                            ctx.missing_chars.insert(ch);
-                            continue;
-                        }
-                    }
-                }
-            }
-            if let Some(font) = ctx.fallback_faces.get(&path) {
-                if font.glyph_id(ch).0 != 0 {
-                    let bitmap = render_glyph_from_font(font, ch, metrics);
-                    let font_name = Path::new(&path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.clone());
-                    glyphs.push((ch, bitmap, font_name));
-                    found = true;
-                }
-            }
+        // 1. Try resolving font (handles user fonts and fallbacks)
+        if let Some((font, font_name)) = resolve_font_for_char(ctx, ch) {
+            let bitmap = render_glyph_from_font(&*font, ch, metrics);
+            glyphs.push((ch, bitmap, font_name));
+            found = true;
         }
 
         if !found {

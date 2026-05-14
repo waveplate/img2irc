@@ -60,7 +60,7 @@ impl ImageEffect {
             ImageEffect::Eyedropper => "Select Color",
             ImageEffect::Invert => "Invert",
             ImageEffect::BoxBlur => "Box Blur",
-            ImageEffect::GaussBlur(_) => "Gauss Blur",
+            ImageEffect::GaussBlur(_) => "Gaussian Blur",
             ImageEffect::LumaBlur(_) => "Luma Blur",
             ImageEffect::Pixelize(_) => "Pixelize",
             ImageEffect::Halftone => "Halftone",
@@ -108,6 +108,7 @@ impl ImageEffect {
                 | ImageEffect::Saturation(_)
                 | ImageEffect::Gamma(_)
                 | ImageEffect::Hue(_)
+                | ImageEffect::Rotate(_)
                 | ImageEffect::GaussBlur(_)
                 | ImageEffect::LumaBlur(_)
                 | ImageEffect::Pixelize(_)
@@ -150,10 +151,9 @@ impl ImageEffect {
     /// Get param range (min, max) for slider display
     pub fn param_range(&self) -> Option<(f32, f32)> {
         match self {
-            ImageEffect::Brightness(_) | ImageEffect::Contrast(_) | ImageEffect::Saturation(_) => {
+            ImageEffect::Brightness(_) | ImageEffect::Contrast(_) | ImageEffect::Saturation(_) | ImageEffect::Gamma(_)=> {
                 Some((-255.0, 255.0))
             }
-            ImageEffect::Gamma(_) => Some((0.0, 255.0)),
             ImageEffect::Hue(_) => Some((0.0, 360.0)),
             ImageEffect::GaussBlur(_) | ImageEffect::LumaBlur(_) => Some((0.0, 20.0)),
             ImageEffect::Pixelize(_) => Some((1.0, 64.0)),
@@ -162,7 +162,7 @@ impl ImageEffect {
             ImageEffect::CropTop(_)
             | ImageEffect::CropBottom(_)
             | ImageEffect::CropLeft(_)
-            | ImageEffect::CropRight(_) => Some((0.0, 500.0)),
+            | ImageEffect::CropRight(_) => Some((0.0, 5000.0)),
             ImageEffect::Rotate(_) => Some((-180.0, 180.0)),
             ImageEffect::ScaleX(_) | ImageEffect::ScaleY(_) => Some((50.0, 200.0)),
             _ => None,
