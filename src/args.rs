@@ -36,6 +36,10 @@ pub enum Render {
     Ansi24,
 }
 
+fn default_discontinuity_threshold() -> f32 {
+    0.5
+}
+
 #[derive(Clone, Debug)]
 pub enum Param {
     Fixed(f32),
@@ -185,6 +189,8 @@ pub struct RenderArgs {
     pub solarize: bool,
     pub edge_detection: bool,
     pub show_discontinuities: bool,
+    #[serde(default = "default_discontinuity_threshold")]
+    pub discontinuity_threshold: f32,
     pub fix_disc: bool,
     pub fix_disc_passes: u32,
     pub fix_disc_shift_radius: u32,
@@ -550,6 +556,14 @@ pub struct Args {
         default_value_t = false
     )]
     pub show_discontinuities: bool,
+
+    /// threshold above which a cell is treated as a discontinuity
+    #[arg(
+        long = "disc-threshold",
+        visible_alias = "discontinuity-threshold",
+        default_value = "0.5"
+    )]
+    pub discontinuity_threshold: f32,
 
     /// fix discontinuities by trying alternative glyphs
     #[arg(long = "fix", visible_alias = "fix-disc", default_value_t = false)]

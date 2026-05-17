@@ -2476,8 +2476,7 @@ pub fn render_blocks_smooth(
         return "".into();
     }
 
-    let needs_frequency_metric =
-        args.show_discontinuities || args.fix_disc || args.score || args.fft_debug_dir.is_some();
+    let needs_frequency_metric = true;
 
     let scales = vec![(1.0, 1.0)];
 
@@ -3380,23 +3379,27 @@ pub fn render_blocks_smooth(
         fix_disc_time = Some(t_fix.elapsed());
     }
 
-    let cell_disc_scores = if args.show_discontinuities || args.score {
-        all_cell_discontinuity_scores(
-            rendered_raster
-                .as_ref()
-                .expect("rendered raster should exist when scoring discontinuities"),
-            grid_w,
-            grid_h,
-            gw,
-            gh,
-        )
-    } else {
-        Vec::new()
-    };
+    let disc_threshold = args.discontinuity_threshold.max(0.0);
+    let t_disc_score = std::time::Instant::now();
+    let cell_disc_scores = all_cell_discontinuity_scores(
+        rendered_raster
+            .as_ref()
+            .expect("rendered raster should exist when scoring discontinuities"),
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+    );
+    let disc_score_time = t_disc_score.elapsed();
     let relative_disc_score = if cell_disc_scores.is_empty() {
         0.0
     } else {
-        cell_disc_scores.iter().copied().sum::<f32>() as f64 / cell_disc_scores.len() as f64
+        cell_disc_scores
+            .iter()
+            .copied()
+            .map(|score| (score - disc_threshold).max(0.0))
+            .sum::<f32>() as f64
+            / cell_disc_scores.len() as f64
     };
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
@@ -3410,12 +3413,12 @@ pub fn render_blocks_smooth(
             .iter()
             .copied()
             .fold(0.0f32, f32::max)
-            .max(1.0);
+            .max(disc_threshold + 1.0);
         cell_disc_scores
             .into_iter()
             .map(|score| {
-                if score > 0.5 {
-                    let severity = (score / max_score).min(1.0);
+                if score >= disc_threshold {
+                    let severity = ((score - disc_threshold) / (max_score - disc_threshold)).min(1.0);
                     let red = (80.0 + 175.0 * severity).min(255.0) as u8;
                     let bg_int = (red / 2).max(30);
                     Some(([red, 20, 20], [bg_int, 10, 10]))
@@ -3428,9 +3431,12 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
-    if args.show_discontinuities || args.score {
-        log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
-    }
+    log::info!(
+        "Discontinuity scoring completed in {:?} (threshold {:.2})",
+        disc_score_time,
+        disc_threshold
+    );
+    log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
 
     // Precompute cheapest glyph for uniform cells (FG==BG, glyph invisible).
     // Space/braille blank allow skipping the FG color code (~3 byte saving),

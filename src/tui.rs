@@ -91,6 +91,7 @@ enum ControlId {
 
     Gpu,
     HighlightDisc,
+    DiscThreshold,
     FixDisc,
     TrimTop,
     TrimRight,
@@ -206,6 +207,15 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::HighlightDisc,
         label: "Show Disc",
         kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::DiscThreshold,
+        label: "Disc Thresh",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000,
+            default: 5,
+        },
     },
     ControlDef {
         id: ControlId::FixDisc,
@@ -1165,6 +1175,7 @@ pub(crate) struct App {
     dither: i32,
     gpu: bool,
     show_discontinuities: bool,
+    discontinuity_threshold: i32,
     fix_disc: bool,
     show_advanced: bool,
     fix_disc_passes: i32,
@@ -1738,6 +1749,7 @@ impl App {
             dither: render_args.dither as i32,
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
+            discontinuity_threshold: (render_args.discontinuity_threshold * 10.0).round() as i32,
             fix_disc: render_args.fix_disc,
             show_advanced: false,
             fix_disc_passes: render_args.fix_disc_passes as i32,
@@ -1915,6 +1927,7 @@ impl App {
         self.dither = render_args.dither as i32;
         self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
+        self.discontinuity_threshold = (render_args.discontinuity_threshold * 10.0).round() as i32;
         self.fix_disc = render_args.fix_disc;
         self.fix_disc_passes = render_args.fix_disc_passes as i32;
         self.fix_disc_shift_radius = render_args.fix_disc_shift_radius as i32;
@@ -2215,6 +2228,7 @@ impl App {
             ControlId::Dither => self.dither,
             ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
+            ControlId::DiscThreshold => self.discontinuity_threshold,
             ControlId::FixDisc => self.fix_disc as i32,
             ControlId::ShowAdvanced => self.show_advanced as i32,
             ControlId::FixDiscPasses => self.fix_disc_passes,
@@ -2294,6 +2308,7 @@ impl App {
             ControlId::Dither => self.dither = val,
             ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
+            ControlId::DiscThreshold => self.discontinuity_threshold = val.max(0),
             ControlId::FixDisc => self.fix_disc = val != 0,
             ControlId::ShowAdvanced => {
                 self.show_advanced = val != 0;
@@ -2780,6 +2795,7 @@ impl App {
         self.render_args.grayscale = self.grayscale;
         self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
+        self.render_args.discontinuity_threshold = self.discontinuity_threshold as f32 / 10.0;
         self.render_args.fix_disc = self.fix_disc;
         self.render_args.fix_disc_passes = self.fix_disc_passes as u32;
         self.render_args.fix_disc_shift_radius = self.fix_disc_shift_radius as u32;
@@ -7085,7 +7101,7 @@ enum TextDragMode {
     Sizing,
 }
 
-fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
+fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let keys = [
         ("Tab", "Switch"),
         ("↑↓", "Navigate"),
@@ -7113,6 +7129,13 @@ fn render_status_bar(f: &mut ratatui::Frame, _app: &mut App, area: Rect) {
         .collect();
 
     let mut full_spans = vec![];
+    if let Some(res) = &app.cached_result {
+        full_spans.push(Span::styled(
+            format!(" Error {:.3}% ", res.score),
+            Style::new().fg(Color::White).bg(ACCENT_DIM).add_modifier(Modifier::BOLD),
+        ));
+        full_spans.push(Span::raw(" "));
+    }
     full_spans.extend(spans);
 
     let line = Line::from(full_spans);

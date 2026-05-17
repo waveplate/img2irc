@@ -126,6 +126,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         solarize: args.solarize,
         edge_detection: args.edge_detection,
         show_discontinuities: args.show_discontinuities,
+        discontinuity_threshold: args.discontinuity_threshold,
         fix_disc: args.fix_disc,
         fix_disc_passes: args.fix_disc_passes,
         fix_disc_shift_radius: args.fix_disc_shift_radius,
