@@ -3131,7 +3131,7 @@ impl App {
 
 fn list_system_fonts() -> Vec<String> {
     // Try to use fc-list with spacing=100 (monospace)
-    if let Ok(output) = Command::new("fc-list").arg(":spacing=100").output() {
+    if let Ok(output) = Command::new("fc-list").output() {
         if output.status.success() {
             let s = String::from_utf8_lossy(&output.stdout);
             let mut fonts: Vec<String> = s

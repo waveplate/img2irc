@@ -10,7 +10,6 @@ use std::f32::consts::PI;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 #[derive(Clone)]
 pub struct FastGlyph {
@@ -1220,6 +1219,12 @@ struct LocalPatch {
     cell_offset_y: usize,
 }
 
+#[derive(Clone, Copy)]
+struct BoundarySegment {
+    start: (usize, usize),
+    end: (usize, usize),
+}
+
 fn extract_local_patch(
     raster: &[[u8; 3]],
     cell_x: usize,
@@ -1314,6 +1319,171 @@ fn paint_cell_pixels(
 
 fn local_patch_frequency_score(patch_pixels: &[[u8; 3]], width: usize, height: usize) -> f32 {
     spectral_high_frequency_score(patch_pixels, width, height)
+}
+
+fn build_boundary_segments(
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> Vec<BoundarySegment> {
+    let mut segments = Vec::new();
+
+    if width >= 2 {
+        for y in 0..height {
+            let row = y * width;
+            for x in 1..width {
+                if raster_boundary_strength(pixels[row + x - 1], pixels[row + x])
+                    >= DISCONTINUITY_EDGE_THRESHOLD
+                {
+                    segments.push(BoundarySegment {
+                        start: (x, y),
+                        end: (x, y + 1),
+                    });
+                }
+            }
+        }
+    }
+
+    if height >= 2 {
+        for y in 1..height {
+            for x in 0..width {
+                if raster_boundary_strength(pixels[(y - 1) * width + x], pixels[y * width + x])
+                    >= DISCONTINUITY_EDGE_THRESHOLD
+                {
+                    segments.push(BoundarySegment {
+                        start: (x, y),
+                        end: (x + 1, y),
+                    });
+                }
+            }
+        }
+    }
+
+    segments
+}
+
+fn segment_intersects_center_cell(segment: &BoundarySegment, patch: &LocalPatch, gw: usize, gh: usize) -> bool {
+    let x0 = patch.cell_offset_x;
+    let y0 = patch.cell_offset_y;
+    let x1 = x0 + gw;
+    let y1 = y0 + gh;
+
+    let min_x = segment.start.0.min(segment.end.0);
+    let max_x = segment.start.0.max(segment.end.0);
+    let min_y = segment.start.1.min(segment.end.1);
+    let max_y = segment.start.1.max(segment.end.1);
+
+    max_x >= x0 && min_x <= x1 && max_y >= y0 && min_y <= y1
+}
+
+fn component_endpoint_span(vertices: &[(usize, usize)]) -> f32 {
+    let mut best = 0usize;
+    for (i, &(ax, ay)) in vertices.iter().enumerate() {
+        for &(bx, by) in &vertices[i + 1..] {
+            best = best.max(ax.abs_diff(bx) + ay.abs_diff(by));
+        }
+    }
+    best as f32
+}
+
+fn local_patch_boundary_complexity_score(
+    raster: &[[u8; 3]],
+    cell_x: usize,
+    cell_y: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> f32 {
+    use std::collections::{HashMap, VecDeque};
+
+    let patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+    let segments = build_boundary_segments(&patch.pixels, patch.width, patch.height);
+    if segments.is_empty() {
+        return 0.0;
+    }
+
+    let mut endpoint_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (idx, segment) in segments.iter().enumerate() {
+        endpoint_map.entry(segment.start).or_default().push(idx);
+        endpoint_map.entry(segment.end).or_default().push(idx);
+    }
+
+    let mut visited = vec![false; segments.len()];
+    let mut total_penalty = 0.0f32;
+    let mut counted_components = 0u32;
+
+    for start_idx in 0..segments.len() {
+        if visited[start_idx] {
+            continue;
+        }
+
+        let mut queue = VecDeque::from([start_idx]);
+        let mut component = Vec::new();
+        let mut relevant = false;
+
+        while let Some(seg_idx) = queue.pop_front() {
+            if visited[seg_idx] {
+                continue;
+            }
+            visited[seg_idx] = true;
+            let segment = segments[seg_idx];
+            relevant |= segment_intersects_center_cell(&segment, &patch, gw, gh);
+            component.push(seg_idx);
+
+            for endpoint in [segment.start, segment.end] {
+                if let Some(neighbors) = endpoint_map.get(&endpoint) {
+                    for &next_idx in neighbors {
+                        if !visited[next_idx] {
+                            queue.push_back(next_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !relevant {
+            continue;
+        }
+
+        counted_components += 1;
+        let mut degree_map: HashMap<(usize, usize), usize> = HashMap::new();
+        let mut min_x = usize::MAX;
+        let mut min_y = usize::MAX;
+        let mut max_x = 0usize;
+        let mut max_y = 0usize;
+
+        for &seg_idx in &component {
+            let segment = segments[seg_idx];
+            for endpoint in [segment.start, segment.end] {
+                *degree_map.entry(endpoint).or_insert(0) += 1;
+                min_x = min_x.min(endpoint.0);
+                min_y = min_y.min(endpoint.1);
+                max_x = max_x.max(endpoint.0);
+                max_y = max_y.max(endpoint.1);
+            }
+        }
+
+        let endpoints: Vec<(usize, usize)> = degree_map
+            .iter()
+            .filter_map(|(&pt, &deg)| (deg == 1).then_some(pt))
+            .collect();
+
+        let length = component.len() as f32;
+        let baseline = if endpoints.len() >= 2 {
+            component_endpoint_span(&endpoints).max(1.0)
+        } else {
+            (max_x.saturating_sub(min_x) + max_y.saturating_sub(min_y)).max(1) as f32
+        };
+
+        total_penalty += (length - baseline).max(0.0);
+    }
+
+    if counted_components == 0 {
+        0.0
+    } else {
+        (100.0 * total_penalty / (counted_components as f32 * (gw + gh).max(1) as f32)).min(100.0)
+    }
 }
 
 fn save_rgb_pixels_as_png(
@@ -1883,70 +2053,213 @@ fn continuity_hint_score(
     score
 }
 
-fn max_continuity_samples(
-    curr_idx: usize,
-    grid_w: usize,
-    grid_h: usize,
-    gw: usize,
+const DISCONTINUITY_EDGE_THRESHOLD: f32 = 0.05;
+const DISCONTINUITY_ALLOWED_STEP: f32 = 2.0;
+const DISCONTINUITY_APPEAR_PENALTY: f32 = 1.5;
+
+#[inline(always)]
+fn raster_boundary_strength(a: [u8; 3], b: [u8; 3]) -> f32 {
+    normalized_rgb_distance(a, b)
+}
+
+fn vertical_boundary_positions(
+    raster: &[[u8; 3]],
+    width: usize,
+    seam_x: usize,
+    y: usize,
+    search_radius: usize,
+) -> Vec<f32> {
+    if width < 2 {
+        return Vec::new();
+    }
+
+    let start = seam_x.saturating_sub(search_radius).max(1);
+    let end = (seam_x + search_radius).min(width - 1);
+    if start > end {
+        return Vec::new();
+    }
+
+    let row = y * width;
+    let mut positions = Vec::new();
+
+    for x in start..=end {
+        let strength = raster_boundary_strength(raster[row + x - 1], raster[row + x]);
+        if strength >= DISCONTINUITY_EDGE_THRESHOLD {
+            positions.push(x as f32 - 0.5);
+        }
+    }
+
+    positions
+}
+
+fn horizontal_boundary_positions(
+    raster: &[[u8; 3]],
+    width: usize,
+    height: usize,
+    x: usize,
+    seam_y: usize,
+    search_radius: usize,
+) -> Vec<f32> {
+    if height < 2 {
+        return Vec::new();
+    }
+
+    let start = seam_y.saturating_sub(search_radius).max(1);
+    let end = (seam_y + search_radius).min(height - 1);
+    if start > end {
+        return Vec::new();
+    }
+
+    let mut positions = Vec::new();
+
+    for y in start..=end {
+        let strength = raster_boundary_strength(raster[(y - 1) * width + x], raster[y * width + x]);
+        if strength >= DISCONTINUITY_EDGE_THRESHOLD {
+            positions.push(y as f32 - 0.5);
+        }
+    }
+
+    positions
+}
+
+fn seam_discontinuity_score(
+    rows: &[Vec<f32>],
+    allow_step: f32,
+) -> f32 {
+    if rows.len() < 2 {
+        return 0.0;
+    }
+
+    let mut penalty = 0.0f32;
+    let mut had_any_boundary = false;
+    let mut comparisons = 0u32;
+
+    for i in 1..rows.len() {
+        let prev = &rows[i - 1];
+        let curr = &rows[i];
+        if prev.is_empty() && curr.is_empty() {
+            continue;
+        }
+
+        had_any_boundary = true;
+        comparisons += 1;
+
+        let at_edge = i == 1 || i + 1 == rows.len();
+        if prev.len() != curr.len() && !at_edge {
+            penalty += (prev.len().abs_diff(curr.len()) as f32) * DISCONTINUITY_APPEAR_PENALTY;
+        }
+
+        let paired = prev.len().min(curr.len());
+        for j in 0..paired {
+            let jump = (curr[j] - prev[j]).abs();
+            if jump > allow_step {
+                penalty += jump - allow_step;
+            }
+        }
+    }
+
+    if !had_any_boundary || comparisons == 0 {
+        return 0.0;
+    }
+
+    let normalized = penalty / (comparisons as f32 * DISCONTINUITY_APPEAR_PENALTY.max(allow_step));
+    (normalized * 100.0).min(100.0)
+}
+
+fn vertical_seam_discontinuity_score(
+    raster: &[[u8; 3]],
+    width: usize,
+    seam_x: usize,
+    y0: usize,
     gh: usize,
-) -> u32 {
-    let cx = curr_idx % grid_w;
-    let cy = curr_idx / grid_w;
-    let mut total = 0u32;
-    if cx > 0 {
-        total += gh as u32;
-    }
-    if cx + 1 < grid_w {
-        total += gh as u32;
-    }
-    if cy > 0 {
-        total += gw as u32;
-    }
-    if cy + 1 < grid_h {
-        total += gw as u32;
-    }
-    total
+    search_radius: usize,
+) -> f32 {
+    let positions: Vec<Vec<f32>> = (0..gh)
+        .map(|dy| vertical_boundary_positions(raster, width, seam_x, y0 + dy, search_radius))
+        .collect();
+    seam_discontinuity_score(&positions, DISCONTINUITY_ALLOWED_STEP)
+}
+
+fn horizontal_seam_discontinuity_score(
+    raster: &[[u8; 3]],
+    width: usize,
+    height: usize,
+    x0: usize,
+    seam_y: usize,
+    gw: usize,
+    search_radius: usize,
+) -> f32 {
+    let positions: Vec<Vec<f32>> = (0..gw)
+        .map(|dx| horizontal_boundary_positions(raster, width, height, x0 + dx, seam_y, search_radius))
+        .collect();
+    seam_discontinuity_score(&positions, DISCONTINUITY_ALLOWED_STEP)
 }
 
 fn cell_discontinuity_score(
     curr_idx: usize,
-    grid_data: &[BlockData],
-    grid_state: &[(usize, bool)],
-    glyphs: &[FastGlyph],
+    raster: &[[u8; 3]],
     grid_w: usize,
     grid_h: usize,
     gw: usize,
     gh: usize,
 ) -> f32 {
-    let data = &grid_data[curr_idx];
-    if data.fg == data.bg {
-        return 0.0;
+    let width = grid_w * gw;
+    let height = grid_h * gh;
+    let cx = curr_idx % grid_w;
+    let cy = curr_idx / grid_w;
+    let x0 = cx * gw;
+    let y0 = cy * gh;
+    let search_radius = gw.min(gh).clamp(1, 3);
+
+    let mut total = 0.0f32;
+    let mut count = 0u32;
+
+    if cx > 0 {
+        total += vertical_seam_discontinuity_score(raster, width, x0, y0, gh, search_radius);
+        count += 1;
+    }
+    if cx + 1 < grid_w {
+        total += vertical_seam_discontinuity_score(
+            raster,
+            width,
+            x0 + gw,
+            y0,
+            gh,
+            search_radius,
+        );
+        count += 1;
+    }
+    if cy > 0 {
+        total += horizontal_seam_discontinuity_score(raster, width, height, x0, y0, gw, search_radius);
+        count += 1;
+    }
+    if cy + 1 < grid_h {
+        total += horizontal_seam_discontinuity_score(
+            raster,
+            width,
+            height,
+            x0,
+            y0 + gh,
+            gw,
+            search_radius,
+        );
+        count += 1;
     }
 
-    let current_choice = grid_state[curr_idx];
-    let continuity = continuity_hint_score(
-        curr_idx,
-        current_choice,
-        grid_data,
-        grid_state,
-        glyphs,
-        grid_w,
-        grid_h,
-        gw,
-        gh,
-    );
-    let max_samples = max_continuity_samples(curr_idx, grid_w, grid_h, gw, gh);
-    if max_samples == 0 {
+    let seam_score = if count == 0 {
         0.0
     } else {
-        100.0 * (1.0 - continuity as f32 / max_samples as f32)
-    }
+        total / count as f32
+    };
+
+    let perimeter_score =
+        local_patch_boundary_complexity_score(raster, cx, cy, grid_w, grid_h, gw, gh);
+
+    seam_score.max(perimeter_score)
 }
 
 fn all_cell_discontinuity_scores(
-    grid_data: &[BlockData],
-    grid_state: &[(usize, bool)],
-    glyphs: &[FastGlyph],
+    raster: &[[u8; 3]],
     grid_w: usize,
     grid_h: usize,
     gw: usize,
@@ -1954,10 +2267,43 @@ fn all_cell_discontinuity_scores(
 ) -> Vec<f32> {
     (0..grid_w * grid_h)
         .into_par_iter()
-        .map(|idx| {
-            cell_discontinuity_score(idx, grid_data, grid_state, glyphs, grid_w, grid_h, gw, gh)
-        })
+        .map(|idx| cell_discontinuity_score(idx, raster, grid_w, grid_h, gw, gh))
         .collect()
+}
+
+fn affected_discontinuity_cell_indices(
+    curr_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+) -> Vec<usize> {
+    let cx = curr_idx % grid_w;
+    let cy = curr_idx / grid_w;
+    let x0 = cx.saturating_sub(NEIGHBORHOOD_RADIUS);
+    let y0 = cy.saturating_sub(NEIGHBORHOOD_RADIUS);
+    let x1 = (cx + NEIGHBORHOOD_RADIUS).min(grid_w - 1);
+    let y1 = (cy + NEIGHBORHOOD_RADIUS).min(grid_h - 1);
+
+    let mut indices = Vec::with_capacity((x1 - x0 + 1) * (y1 - y0 + 1));
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            indices.push(y * grid_w + x);
+        }
+    }
+    indices
+}
+
+fn local_discontinuity_sum_for_indices(
+    raster: &[[u8; 3]],
+    indices: &[usize],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> f32 {
+    indices
+        .iter()
+        .map(|&idx| cell_discontinuity_score(idx, raster, grid_w, grid_h, gw, gh))
+        .sum()
 }
 
 fn has_flat_uniform_neighbor_context(
@@ -2072,6 +2418,40 @@ pub fn render_blocks(
 #[inline(always)]
 fn luma(rgb: &[u8; 3]) -> u8 {
     (0.299 * rgb[0] as f32 + 0.587 * rgb[1] as f32 + 0.114 * rgb[2] as f32).round() as u8
+}
+
+#[inline(always)]
+fn last_max_index_u16(counts: &[u16; 256]) -> (usize, u16) {
+    let mut best_idx = 0usize;
+    let mut best_count = 0u16;
+    for (idx, &count) in counts.iter().enumerate() {
+        if count >= best_count {
+            best_count = count;
+            best_idx = idx;
+        }
+    }
+    (best_idx, best_count)
+}
+
+#[inline(always)]
+fn canonical_shape_hash(indices: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut remap = [u8::MAX; 256];
+    let mut next = 0u8;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+
+    indices.len().hash(&mut hasher);
+    for &idx in indices {
+        let slot = &mut remap[idx as usize];
+        if *slot == u8::MAX {
+            *slot = next;
+            next = next.wrapping_add(1);
+        }
+        slot.hash(&mut hasher);
+    }
+
+    hasher.finish()
 }
 
 pub fn render_blocks_smooth(
@@ -2245,10 +2625,7 @@ pub fn render_blocks_smooth(
         }
         results
     } else {
-        let shape_cache = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
-            u64,
-            (usize, bool),
-        >::new()));
+        let shape_cache = std::sync::Arc::new(dashmap::DashMap::<u64, (usize, bool)>::new());
 
         image
             .block
@@ -2262,10 +2639,12 @@ pub fn render_blocks_smooth(
                 let mut row_data = Vec::with_capacity(block_row.len());
                 let mut row_state = Vec::with_capacity(block_row.len());
                 let mut working_pixels_buffer = Vec::with_capacity(bp);
+                let mut original_pixels = Vec::with_capacity(bp);
+                let mut indices = Vec::with_capacity(bp);
 
                 for blk in block_row {
                     // 1. Capture Base Pixels
-                    let mut original_pixels = Vec::with_capacity(bp);
+                    original_pixels.clear();
                     for y in 0..gh {
                         for x in 0..gw {
                             let px_orig = blk.pixels[y][x].orig;
@@ -2316,7 +2695,8 @@ pub fn render_blocks_smooth(
                                 _ => &IRC99,
                             }
                         };
-                        let mut indices = Vec::with_capacity(bp);
+                        let mut base_cnt = [0u16; 256];
+                        indices.clear();
 
                         for p in pixels {
                             block_sum_r += p.r;
@@ -2330,26 +2710,13 @@ pub fn render_blocks_smooth(
                                 palette,
                                 args.grayscale_tolerance,
                             );
+                            base_cnt[idx as usize] += 1;
                             indices.push(idx);
                         }
 
-                        let mut shape = Vec::with_capacity(bp);
-                        let mut seen = Vec::new();
-                        for &idx in &indices {
-                            if let Some(pos) = seen.iter().position(|&c| c == idx) {
-                                shape.push(pos as u8);
-                            } else {
-                                shape.push(seen.len() as u8);
-                                seen.push(idx);
-                            }
-                        }
+                        let shape_hash = canonical_shape_hash(&indices);
 
-                        use std::hash::{Hash, Hasher};
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        shape.hash(&mut hasher);
-                        let shape_hash = hasher.finish();
-
-                        let cached = shape_cache.lock().unwrap().get(&shape_hash).copied();
+                        let cached = shape_cache.get(&shape_hash).map(|entry| *entry);
 
                         let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
                             c
@@ -2360,46 +2727,37 @@ pub fn render_blocks_smooth(
 
                             if render != Render::Ansi24 {
                                 for (gi, fglyph) in glyphs.iter().enumerate() {
-                                    let invert_opts: &[bool] = &[false, true];
-                                    for &inv in invert_opts {
-                                        let mut fg_cnt = [0u16; 256];
-                                        let mut bg_cnt = [0u16; 256];
-                                        let mut fg_len = 0;
-                                        let mut bg_len = 0;
+                                    let mut ones_cnt = [0u16; 256];
+                                    for &i in &fglyph.ones {
+                                        ones_cnt[indices[i] as usize] += 1;
+                                    }
 
-                                        let (fg_iter, bg_iter) = if inv {
-                                            (&fglyph.zeros, &fglyph.ones)
-                                        } else {
-                                            (&fglyph.ones, &fglyph.zeros)
-                                        };
-
-                                        for &i in fg_iter {
-                                            fg_cnt[indices[i] as usize] += 1;
-                                            fg_len += 1;
+                                    let (_, ones_mode_count) = last_max_index_u16(&ones_cnt);
+                                    let mut zeros_mode_count = 0u16;
+                                    for idx in 0..256 {
+                                        let count = base_cnt[idx] - ones_cnt[idx];
+                                        if count >= zeros_mode_count {
+                                            zeros_mode_count = count;
                                         }
-                                        for &i in bg_iter {
-                                            bg_cnt[indices[i] as usize] += 1;
-                                            bg_len += 1;
-                                        }
-                                        let (_fgi_raw, fx) = fg_cnt
-                                            .iter()
-                                            .enumerate()
-                                            .max_by_key(|&(_, c)| c)
-                                            .unwrap_or((0, &0));
-                                        let (_bgi_raw, bx) = bg_cnt
-                                            .iter()
-                                            .enumerate()
-                                            .max_by_key(|&(_, c)| c)
-                                            .unwrap_or((0, &0));
+                                    }
 
-                                        let cost = ((fg_len as u64) - (*fx as u64))
-                                            + ((bg_len as u64) - (*bx as u64));
+                                    let ones_len = fglyph.ones.len() as u64;
+                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
 
-                                        if cost < best_cost {
-                                            best_cost = cost;
-                                            best_glyph = gi;
-                                            best_inv = inv;
-                                        }
+                                    let cost_normal = (ones_len - ones_mode_count as u64)
+                                        + (zeros_len - zeros_mode_count as u64);
+                                    if cost_normal < best_cost {
+                                        best_cost = cost_normal;
+                                        best_glyph = gi;
+                                        best_inv = false;
+                                    }
+
+                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                        + (ones_len - ones_mode_count as u64);
+                                    if cost_inverted < best_cost {
+                                        best_cost = cost_inverted;
+                                        best_glyph = gi;
+                                        best_inv = true;
                                     }
                                 }
                             } else {
@@ -2473,10 +2831,7 @@ pub fn render_blocks_smooth(
                                 }
                             }
 
-                            shape_cache
-                                .lock()
-                                .unwrap()
-                                .insert(shape_hash, (best_glyph, best_inv));
+                            shape_cache.insert(shape_hash, (best_glyph, best_inv));
                             (best_glyph, best_inv)
                         };
 
@@ -2485,36 +2840,28 @@ pub fn render_blocks_smooth(
 
                         if render != Render::Ansi24 {
                             let fglyph = &glyphs[scale_best_glyph];
-                            let (fg_iter, bg_iter) = if scale_best_inv {
-                                (&fglyph.zeros, &fglyph.ones)
+                            let mut ones_cnt = [0u16; 256];
+                            for &i in &fglyph.ones {
+                                ones_cnt[indices[i] as usize] += 1;
+                            }
+                            let (ones_mode_idx, _) = last_max_index_u16(&ones_cnt);
+                            let mut zeros_mode_idx = 0usize;
+                            let mut zeros_mode_count = 0u16;
+                            for idx in 0..256 {
+                                let count = base_cnt[idx] - ones_cnt[idx];
+                                if count >= zeros_mode_count {
+                                    zeros_mode_count = count;
+                                    zeros_mode_idx = idx;
+                                }
+                            }
+
+                            let ones_len = fglyph.ones.len();
+                            let zeros_len = bp - ones_len;
+                            let (fgi_raw, bgi_raw, fg_len, bg_len) = if scale_best_inv {
+                                (zeros_mode_idx, ones_mode_idx, zeros_len, ones_len)
                             } else {
-                                (&fglyph.ones, &fglyph.zeros)
+                                (ones_mode_idx, zeros_mode_idx, ones_len, zeros_len)
                             };
-
-                            let mut fg_cnt = [0u16; 256];
-                            let mut bg_cnt = [0u16; 256];
-                            let mut fg_len = 0;
-                            let mut bg_len = 0;
-
-                            for &i in fg_iter {
-                                fg_cnt[indices[i] as usize] += 1;
-                                fg_len += 1;
-                            }
-                            for &i in bg_iter {
-                                bg_cnt[indices[i] as usize] += 1;
-                                bg_len += 1;
-                            }
-                            let (fgi_raw, _) = fg_cnt
-                                .iter()
-                                .enumerate()
-                                .max_by_key(|&(_, c)| c)
-                                .unwrap_or((0, &0));
-                            let (bgi_raw, _) = bg_cnt
-                                .iter()
-                                .enumerate()
-                                .max_by_key(|&(_, c)| c)
-                                .unwrap_or((0, &0));
-
                             let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
                             let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
 
@@ -2855,7 +3202,6 @@ pub fn render_blocks_smooth(
                 if has_flat_uniform_neighbor_context(curr_idx, &grid_data, grid_w, grid_h) {
                     continue;
                 }
-
                 let current_choice = (cur_gi, cur_inv);
                 let current_continuity = continuity_hint_score(
                     curr_idx,
@@ -2882,14 +3228,14 @@ pub fn render_blocks_smooth(
                     );
 
                 let mut best_ref_cost = current_ref_cost;
-                let mut best_internal = block_glyph_costs
+                let current_internal = block_glyph_costs
                     .get(curr_idx)
                     .and_then(|v| v.get(cur_gi * 2 + cur_inv as usize).copied())
                     .unwrap_or(u64::MAX);
+                let mut best_internal = current_internal;
                 let mut best_continuity = current_continuity;
                 let mut best_choice = current_choice;
                 let mut best_shift = (current_dx, current_dy);
-
                 let mut pool = block_glyph_pools.get(curr_idx).cloned().unwrap_or_default();
                 if !pool
                     .iter()
@@ -2909,7 +3255,6 @@ pub fn render_blocks_smooth(
                     if (gi, candidate_inv) == current_choice {
                         continue;
                     }
-
                     let continuity = continuity_hint_score(
                         curr_idx,
                         (gi, candidate_inv),
@@ -3035,8 +3380,19 @@ pub fn render_blocks_smooth(
         fix_disc_time = Some(t_fix.elapsed());
     }
 
-    let cell_disc_scores =
-        all_cell_discontinuity_scores(&grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh);
+    let cell_disc_scores = if args.show_discontinuities || args.score {
+        all_cell_discontinuity_scores(
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring discontinuities"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        )
+    } else {
+        Vec::new()
+    };
     let relative_disc_score = if cell_disc_scores.is_empty() {
         0.0
     } else {
@@ -4163,10 +4519,12 @@ mod tests {
         let smooth_state = vec![(0, false), (1, false)];
         let broken_state = vec![(0, false), (2, false)];
 
-        let smooth_score =
-            cell_discontinuity_score(0, &grid_data, &smooth_state, &glyphs, 2, 1, gw, gh);
-        let broken_score =
-            cell_discontinuity_score(0, &grid_data, &broken_state, &glyphs, 2, 1, gw, gh);
+        let smooth_raster = build_rendered_raster(&grid_data, &smooth_state, &glyphs, 2, 1, gw, gh);
+        let broken_raster =
+            build_rendered_raster(&grid_data, &broken_state, &glyphs, 2, 1, gw, gh);
+
+        let smooth_score = cell_discontinuity_score(0, &smooth_raster, 2, 1, gw, gh);
+        let broken_score = cell_discontinuity_score(0, &broken_raster, 2, 1, gw, gh);
 
         assert!(
             broken_score > smooth_score,
@@ -4174,5 +4532,39 @@ mod tests {
             broken_score,
             smooth_score
         );
+    }
+
+    #[test]
+    fn discontinuity_score_does_not_flag_straight_colour_seam() {
+        let gw = 4;
+        let gh = 4;
+        let grid_w = 2;
+        let grid_h = 1;
+        let raster = vec![
+            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
+            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
+            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
+            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
+        ];
+
+        let score = cell_discontinuity_score(0, &raster, grid_w, grid_h, gw, gh);
+        assert!(score <= 1.0, "score={}", score);
+    }
+
+    #[test]
+    fn discontinuity_score_flags_large_stair_step() {
+        let gw = 4;
+        let gh = 4;
+        let grid_w = 2;
+        let grid_h = 1;
+        let raster = vec![
+            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0],
+            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0],
+            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255],
+            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255],
+        ];
+
+        let score = cell_discontinuity_score(0, &raster, grid_w, grid_h, gw, gh);
+        assert!(score > 10.0, "score={}", score);
     }
 }

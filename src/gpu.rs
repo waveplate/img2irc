@@ -271,9 +271,6 @@ pub fn render_blocks_gpu(
 
     let mut final_results = Vec::with_capacity(total_blocks);
 
-    let mut current_gpu_blocks = Vec::with_capacity(max_blocks_per_batch * bp as usize);
-    let mut batch_count = 0;
-
     // We prepare a reusable Results Buffer scaled to max_blocks_per_batch
     let max_results_size = (max_blocks_per_batch as u64) * std::mem::size_of::<GpuResult>() as u64;
     let results_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -396,24 +393,6 @@ pub fn render_blocks_gpu(
 
         total_gpu_time += t_batch_gpu.elapsed();
         t_prep = std::time::Instant::now();
-    }
-
-    if batch_count > 0 {
-        total_prep_time += t_prep.elapsed();
-        let t_batch_gpu = std::time::Instant::now();
-        process_batch(
-            device,
-            queue,
-            &compute_pipeline,
-            &bind_group,
-            &blocks_buf,
-            &results_buf,
-            &staging_buf,
-            &current_gpu_blocks,
-            batch_count,
-            &mut final_results,
-        );
-        total_gpu_time += t_batch_gpu.elapsed();
     }
 
     log::debug!("Total Prep Time: {:?}", total_prep_time);
