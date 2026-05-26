@@ -113,6 +113,11 @@ static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
 });
 
 fn find_font_path(font_name: &str) -> Option<String> {
+    let direct_path = Path::new(font_name);
+    if direct_path.is_file() {
+        return Some(direct_path.to_string_lossy().to_string());
+    }
+
     let db = DB.lock().unwrap();
     let query = Query {
         families: &[Family::Name(font_name)],
