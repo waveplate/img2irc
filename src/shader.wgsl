@@ -164,6 +164,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var scale_best_bg_r: u32 = 0u;
     var scale_best_bg_g: u32 = 0u;
     var scale_best_bg_b: u32 = 0u;
+    var scale_best_fgi: u32 = 0u;
+    var scale_best_bgi: u32 = 0u;
     
     // Indexed Mode
     let palette_size = arrayLength(&palette);
@@ -254,6 +256,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 scale_best_cost = cost;
                 scale_best_glyph = gi;
                 scale_best_inv = inv_iter;
+                scale_best_fgi = fgi;
+                scale_best_bgi = bgi;
                 
                 if (metadata.render_mode != 2u) {
                     let safe_fgi = min(fgi, palette_size - 1u);
@@ -275,55 +279,62 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let ones_start = glyph.ones_starts;
         let count_ones = glyph.ones_len;
         
-        var sum_ones_r: u32 = 0u;
-        var sum_ones_g: u32 = 0u;
-        var sum_ones_b: u32 = 0u;
-        
-        for (var j: u32 = 0u; j < count_ones; j++) {
-            let px_idx = glyph_ones[ones_start + j];
-            let px = blocks[base_pixel_idx + px_idx];
-            sum_ones_r += px.r;
-            sum_ones_g += px.g;
-            sum_ones_b += px.b;
+        // Find a pixel matching scale_best_fgi under the foreground group
+        var found_fg = false;
+        for (var j: u32 = 0u; j < bp; j++) {
+            var is_one = false;
+            for (var k: u32 = 0u; k < count_ones; k++) {
+                if (glyph_ones[ones_start + k] == j) {
+                    is_one = true;
+                    break;
+                }
+            }
+            let is_target = (scale_best_inv == 0u && is_one) || (scale_best_inv == 1u && !is_one);
+            if (is_target) {
+                if (indices[j] == scale_best_fgi) {
+                    let px = blocks[base_pixel_idx + j];
+                    scale_best_fg_r = px.r;
+                    scale_best_fg_g = px.g;
+                    scale_best_fg_b = px.b;
+                    found_fg = true;
+                    break;
+                }
+            }
+        }
+        if (!found_fg) {
+            let safe_fgi = min(scale_best_fgi, palette_size - 1u);
+            scale_best_fg_r = (palette[safe_fgi] >> 16u) & 0xFFu;
+            scale_best_fg_g = (palette[safe_fgi] >> 8u) & 0xFFu;
+            scale_best_fg_b = palette[safe_fgi] & 0xFFu;
         }
         
-        let count_zeros = bp - count_ones;
-        let sum_zeros_r = block_sum_r - sum_ones_r;
-        let sum_zeros_g = block_sum_g - sum_ones_g;
-        let sum_zeros_b = block_sum_b - sum_ones_b;
-        
-        var avg_ones_r = 0u;
-        var avg_ones_g = 0u;
-        var avg_ones_b = 0u;
-        if (count_ones > 0u) {
-            avg_ones_r = sum_ones_r / count_ones;
-            avg_ones_g = sum_ones_g / count_ones;
-            avg_ones_b = sum_ones_b / count_ones;
+        // Find a pixel matching scale_best_bgi under the background group
+        var found_bg = false;
+        for (var j: u32 = 0u; j < bp; j++) {
+            var is_one = false;
+            for (var k: u32 = 0u; k < count_ones; k++) {
+                if (glyph_ones[ones_start + k] == j) {
+                    is_one = true;
+                    break;
+                }
+            }
+            let is_target = (scale_best_inv == 0u && !is_one) || (scale_best_inv == 1u && is_one);
+            if (is_target) {
+                if (indices[j] == scale_best_bgi) {
+                    let px = blocks[base_pixel_idx + j];
+                    scale_best_bg_r = px.r;
+                    scale_best_bg_g = px.g;
+                    scale_best_bg_b = px.b;
+                    found_bg = true;
+                    break;
+                }
+            }
         }
-        
-        var avg_zeros_r = 0u;
-        var avg_zeros_g = 0u;
-        var avg_zeros_b = 0u;
-        if (count_zeros > 0u) {
-            avg_zeros_r = sum_zeros_r / count_zeros;
-            avg_zeros_g = sum_zeros_g / count_zeros;
-            avg_zeros_b = sum_zeros_b / count_zeros;
-        }
-        
-        if (scale_best_inv == 0u) {
-            scale_best_fg_r = avg_ones_r;
-            scale_best_fg_g = avg_ones_g;
-            scale_best_fg_b = avg_ones_b;
-            scale_best_bg_r = avg_zeros_r;
-            scale_best_bg_g = avg_zeros_g;
-            scale_best_bg_b = avg_zeros_b;
-        } else {
-            scale_best_fg_r = avg_zeros_r;
-            scale_best_fg_g = avg_zeros_g;
-            scale_best_fg_b = avg_zeros_b;
-            scale_best_bg_r = avg_ones_r;
-            scale_best_bg_g = avg_ones_g;
-            scale_best_bg_b = avg_ones_b;
+        if (!found_bg) {
+            let safe_bgi = min(scale_best_bgi, palette_size - 1u);
+            scale_best_bg_r = (palette[safe_bgi] >> 16u) & 0xFFu;
+            scale_best_bg_g = (palette[safe_bgi] >> 8u) & 0xFFu;
+            scale_best_bg_b = palette[safe_bgi] & 0xFFu;
         }
     }
     

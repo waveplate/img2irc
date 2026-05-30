@@ -122,16 +122,12 @@ pub fn apply_effects(
         flipv(&mut photon_image);
     }
 
-    let filter = if args.render == crate::args::Render::Ansi24 {
-        SamplingFilter::Nearest
-    } else {
-        match args.filter {
-            args::SamplingFilter::Nearest => SamplingFilter::Nearest,
-            args::SamplingFilter::Triangle => SamplingFilter::Triangle,
-            args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
-            args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
-            args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
-        }
+    let filter = match args.filter {
+        args::SamplingFilter::Nearest => SamplingFilter::Nearest,
+        args::SamplingFilter::Triangle => SamplingFilter::Triangle,
+        args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
+        args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
+        args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
     };
 
     let mut photon_image = resize(&photon_image, width, height, filter);

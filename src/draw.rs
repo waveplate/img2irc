@@ -2766,79 +2766,63 @@ pub fn render_blocks_smooth(
                         let scale_best_fg;
                         let scale_best_bg;
 
+                        let fglyph = &glyphs[scale_best_glyph];
+                        let mut ones_cnt = [0u16; 256];
+                        for &i in &fglyph.ones {
+                            ones_cnt[indices[i] as usize] += 1;
+                        }
+                        let (ones_mode_idx, _) = last_max_index_u16(&ones_cnt);
+                        let mut zeros_mode_idx = 0usize;
+                        let mut zeros_mode_count = 0u16;
+                        for idx in 0..256 {
+                            let count = base_cnt[idx] - ones_cnt[idx];
+                            if count >= zeros_mode_count {
+                                zeros_mode_count = count;
+                                zeros_mode_idx = idx;
+                            }
+                        }
+
+                        let ones_len = fglyph.ones.len();
+                        let zeros_len = bp - ones_len;
+                        let (fgi_raw, bgi_raw, fg_len, bg_len) = if scale_best_inv {
+                            (zeros_mode_idx, ones_mode_idx, zeros_len, ones_len)
+                        } else {
+                            (ones_mode_idx, zeros_mode_idx, ones_len, zeros_len)
+                        };
+                        let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
+                        let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
+
                         if render != Render::Ansi24 {
-                            let fglyph = &glyphs[scale_best_glyph];
-                            let mut ones_cnt = [0u16; 256];
-                            for &i in &fglyph.ones {
-                                ones_cnt[indices[i] as usize] += 1;
-                            }
-                            let (ones_mode_idx, _) = last_max_index_u16(&ones_cnt);
-                            let mut zeros_mode_idx = 0usize;
-                            let mut zeros_mode_count = 0u16;
-                            for idx in 0..256 {
-                                let count = base_cnt[idx] - ones_cnt[idx];
-                                if count >= zeros_mode_count {
-                                    zeros_mode_count = count;
-                                    zeros_mode_idx = idx;
-                                }
-                            }
-
-                            let ones_len = fglyph.ones.len();
-                            let zeros_len = bp - ones_len;
-                            let (fgi_raw, bgi_raw, fg_len, bg_len) = if scale_best_inv {
-                                (zeros_mode_idx, ones_mode_idx, zeros_len, ones_len)
-                            } else {
-                                (ones_mode_idx, zeros_mode_idx, ones_len, zeros_len)
-                            };
-                            let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
-                            let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
-
                             scale_best_fg = unpack_rgb(palette[fgi.min(palette.len() - 1)]);
                             scale_best_bg = unpack_rgb(palette[bgi.min(palette.len() - 1)]);
                         } else {
-                            let fglyph = &glyphs[scale_best_glyph];
-                            let count_ones = fglyph.ones.len() as u64;
-                            let mut sum_ones_r = 0u64;
-                            let mut sum_ones_g = 0u64;
-                            let mut sum_ones_b = 0u64;
-
-                            for &i in &fglyph.ones {
-                                let px = unsafe { pixels.get_unchecked(i) };
-                                sum_ones_r += px.r;
-                                sum_ones_g += px.g;
-                                sum_ones_b += px.b;
+                            let mut ones_rgb = None;
+                            for i in 0..bp {
+                                let is_under_ones = fglyph.ones.contains(&i);
+                                let is_target = if !scale_best_inv { is_under_ones } else { !is_under_ones };
+                                if is_target && indices[i] as usize == fgi {
+                                    let px = unsafe { pixels.get_unchecked(i) };
+                                    ones_rgb = Some([px.r as u8, px.g as u8, px.b as u8]);
+                                    break;
+                                }
                             }
-                            let count_zeros = bp as u64 - count_ones;
-                            let sum_zeros_r = block_sum_r - sum_ones_r;
-                            let sum_zeros_g = block_sum_g - sum_ones_g;
-                            let sum_zeros_b = block_sum_b - sum_ones_b;
+                            scale_best_fg = ones_rgb.unwrap_or_else(|| {
+                                unpack_rgb(palette[fgi.min(palette.len() - 1)])
+                            });
 
-                            let avg_ones = if count_ones > 0 {
-                                [
-                                    (sum_ones_r / count_ones) as u8,
-                                    (sum_ones_g / count_ones) as u8,
-                                    (sum_ones_b / count_ones) as u8,
-                                ]
-                            } else {
-                                [0, 0, 0]
-                            };
-                            let avg_zeros = if count_zeros > 0 {
-                                [
-                                    (sum_zeros_r / count_zeros) as u8,
-                                    (sum_zeros_g / count_zeros) as u8,
-                                    (sum_zeros_b / count_zeros) as u8,
-                                ]
-                            } else {
-                                [0, 0, 0]
-                            };
-
-                            if !scale_best_inv {
-                                scale_best_fg = avg_ones;
-                                scale_best_bg = avg_zeros;
-                            } else {
-                                scale_best_fg = avg_zeros;
-                                scale_best_bg = avg_ones;
+                            let mut zeros_rgb = None;
+                            for i in 0..bp {
+                                let is_under_ones = fglyph.ones.contains(&i);
+                                let is_target = if !scale_best_inv { !is_under_ones } else { is_under_ones };
+                                if is_target && indices[i] as usize == bgi {
+                                    let px = unsafe { pixels.get_unchecked(i) };
+                                    zeros_rgb = Some([px.r as u8, px.g as u8, px.b as u8]);
+                                    break;
+                                }
                             }
+                            scale_best_bg = zeros_rgb.unwrap_or_else(|| {
+                                unpack_rgb(palette[bgi.min(palette.len() - 1)])
+                            });
                         }
 
                         best_overall_glyph = scale_best_glyph;
