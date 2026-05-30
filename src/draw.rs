@@ -2724,109 +2724,38 @@ pub fn render_blocks_smooth(
                             let mut best_glyph = 0;
                             let mut best_inv = false;
 
-                            if render != Render::Ansi24 {
-                                for (gi, fglyph) in glyphs.iter().enumerate() {
-                                    let mut ones_cnt = [0u16; 256];
-                                    for &i in &fglyph.ones {
-                                        ones_cnt[indices[i] as usize] += 1;
-                                    }
+                            for (gi, fglyph) in glyphs.iter().enumerate() {
+                                let mut ones_cnt = [0u16; 256];
+                                for &i in &fglyph.ones {
+                                    ones_cnt[indices[i] as usize] += 1;
+                                }
 
-                                    let (_, ones_mode_count) = last_max_index_u16(&ones_cnt);
-                                    let mut zeros_mode_count = 0u16;
-                                    for idx in 0..256 {
-                                        let count = base_cnt[idx] - ones_cnt[idx];
-                                        if count >= zeros_mode_count {
-                                            zeros_mode_count = count;
-                                        }
-                                    }
-
-                                    let ones_len = fglyph.ones.len() as u64;
-                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
-
-                                    let cost_normal = (ones_len - ones_mode_count as u64)
-                                        + (zeros_len - zeros_mode_count as u64);
-                                    if cost_normal < best_cost {
-                                        best_cost = cost_normal;
-                                        best_glyph = gi;
-                                        best_inv = false;
-                                    }
-
-                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
-                                        + (ones_len - ones_mode_count as u64);
-                                    if cost_inverted < best_cost {
-                                        best_cost = cost_inverted;
-                                        best_glyph = gi;
-                                        best_inv = true;
+                                let (_, ones_mode_count) = last_max_index_u16(&ones_cnt);
+                                let mut zeros_mode_count = 0u16;
+                                for idx in 0..256 {
+                                    let count = base_cnt[idx] - ones_cnt[idx];
+                                    if count >= zeros_mode_count {
+                                        zeros_mode_count = count;
                                     }
                                 }
-                            } else {
-                                for (gi, fglyph) in glyphs.iter().enumerate() {
-                                    let mut sum_ones_r = 0u64;
-                                    let mut sum_ones_g = 0u64;
-                                    let mut sum_ones_b = 0u64;
-                                    let mut sum_ones_sq = 0u64;
-                                    let count_ones = fglyph.ones.len() as u64;
 
-                                    for &i in &fglyph.ones {
-                                        let px = unsafe { pixels.get_unchecked(i) };
-                                        sum_ones_r += px.r;
-                                        sum_ones_g += px.g;
-                                        sum_ones_b += px.b;
-                                        sum_ones_sq += px.sq;
-                                    }
-                                    let count_zeros = bp as u64 - count_ones;
-                                    let sum_zeros_r = block_sum_r - sum_ones_r;
-                                    let sum_zeros_g = block_sum_g - sum_ones_g;
-                                    let sum_zeros_b = block_sum_b - sum_ones_b;
-                                    let sum_zeros_sq = block_sum_sq - sum_ones_sq;
+                                let ones_len = fglyph.ones.len() as u64;
+                                let zeros_len = (bp - fglyph.ones.len()) as u64;
 
-                                    let avg_ones = if count_ones > 0 {
-                                        [
-                                            (sum_ones_r / count_ones) as u8,
-                                            (sum_ones_g / count_ones) as u8,
-                                            (sum_ones_b / count_ones) as u8,
-                                        ]
-                                    } else {
-                                        [0, 0, 0]
-                                    };
-                                    let avg_zeros = if count_zeros > 0 {
-                                        [
-                                            (sum_zeros_r / count_zeros) as u8,
-                                            (sum_zeros_g / count_zeros) as u8,
-                                            (sum_zeros_b / count_zeros) as u8,
-                                        ]
-                                    } else {
-                                        [0, 0, 0]
-                                    };
+                                let cost_normal = (ones_len - ones_mode_count as u64)
+                                    + (zeros_len - zeros_mode_count as u64);
+                                if cost_normal < best_cost {
+                                    best_cost = cost_normal;
+                                    best_glyph = gi;
+                                    best_inv = false;
+                                }
 
-                                    let t1_1 = sum_ones_sq;
-                                    let t2_1 = 2
-                                        * (avg_ones[0] as u64 * sum_ones_r
-                                            + avg_ones[1] as u64 * sum_ones_g
-                                            + avg_ones[2] as u64 * sum_ones_b);
-                                    let t3_1 = count_ones
-                                        * (avg_ones[0] as u64 * avg_ones[0] as u64
-                                            + avg_ones[1] as u64 * avg_ones[1] as u64
-                                            + avg_ones[2] as u64 * avg_ones[2] as u64);
-                                    let c1 = (t1_1 + t3_1).saturating_sub(t2_1);
-
-                                    let t1_0 = sum_zeros_sq;
-                                    let t2_0 = 2
-                                        * (avg_zeros[0] as u64 * sum_zeros_r
-                                            + avg_zeros[1] as u64 * sum_zeros_g
-                                            + avg_zeros[2] as u64 * sum_zeros_b);
-                                    let t3_0 = count_zeros
-                                        * (avg_zeros[0] as u64 * avg_zeros[0] as u64
-                                            + avg_zeros[1] as u64 * avg_zeros[1] as u64
-                                            + avg_zeros[2] as u64 * avg_zeros[2] as u64);
-                                    let c0 = (t1_0 + t3_0).saturating_sub(t2_0);
-
-                                    let cost_normal = c1 + c0;
-                                    if cost_normal < best_cost {
-                                        best_cost = cost_normal;
-                                        best_glyph = gi;
-                                        best_inv = false;
-                                    }
+                                let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                    + (ones_len - ones_mode_count as u64);
+                                if cost_inverted < best_cost {
+                                    best_cost = cost_inverted;
+                                    best_glyph = gi;
+                                    best_inv = true;
                                 }
                             }
 
@@ -2884,7 +2813,7 @@ pub fn render_blocks_smooth(
                             let sum_zeros_g = block_sum_g - sum_ones_g;
                             let sum_zeros_b = block_sum_b - sum_ones_b;
 
-                            scale_best_fg = if count_ones > 0 {
+                            let avg_ones = if count_ones > 0 {
                                 [
                                     (sum_ones_r / count_ones) as u8,
                                     (sum_ones_g / count_ones) as u8,
@@ -2893,7 +2822,7 @@ pub fn render_blocks_smooth(
                             } else {
                                 [0, 0, 0]
                             };
-                            scale_best_bg = if count_zeros > 0 {
+                            let avg_zeros = if count_zeros > 0 {
                                 [
                                     (sum_zeros_r / count_zeros) as u8,
                                     (sum_zeros_g / count_zeros) as u8,
@@ -2902,6 +2831,14 @@ pub fn render_blocks_smooth(
                             } else {
                                 [0, 0, 0]
                             };
+
+                            if !scale_best_inv {
+                                scale_best_fg = avg_ones;
+                                scale_best_bg = avg_zeros;
+                            } else {
+                                scale_best_fg = avg_zeros;
+                                scale_best_bg = avg_ones;
+                            }
                         }
 
                         best_overall_glyph = scale_best_glyph;

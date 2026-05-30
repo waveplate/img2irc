@@ -140,24 +140,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var block_sum_b: u32 = 0u;
     var block_sum_sq: u32 = 0u;
 
-    if (metadata.render_mode != 2u) {
-        for (var i: u32 = 0u; i < bp; i++) {
-            let p = blocks[base_pixel_idx + i];
-            let r = p.r;
-            let g = p.g;
-            let b = p.b;
-            let rgb_u32 = (r << 16u) | (g << 8u) | b;
-            let idx = nearest_strict_partitioned_hex_colour(rgb_u32, metadata.tolerance);
-            indices[i] = idx;
+    for (var i: u32 = 0u; i < bp; i++) {
+        let p = blocks[base_pixel_idx + i];
+        let r = p.r;
+        let g = p.g;
+        let b = p.b;
+        if (metadata.render_mode == 2u) {
+            block_sum_r += r;
+            block_sum_g += g;
+            block_sum_b += b;
         }
-    } else {
-        for (var i: u32 = 0u; i < bp; i++) {
-            let p = blocks[base_pixel_idx + i];
-            block_sum_r += p.r;
-            block_sum_g += p.g;
-            block_sum_b += p.b;
-            block_sum_sq += p.sq;
-        }
+        let rgb_u32 = (r << 16u) | (g << 8u) | b;
+        let idx = nearest_strict_partitioned_hex_colour(rgb_u32, metadata.tolerance);
+        indices[i] = idx;
     }
     
     var scale_best_cost: u32 = 0xFFFFFFFFu;
@@ -170,97 +165,97 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var scale_best_bg_g: u32 = 0u;
     var scale_best_bg_b: u32 = 0u;
     
-    if (metadata.render_mode != 2u) {
-        // Indexed Mode
-        let palette_size = arrayLength(&palette);
-        
-        var fg_cnt: array<u32, 256>;
-        var bg_cnt: array<u32, 256>;
-        
-        var base_cnt: array<u32, 256>;
-        for (var i: u32 = 0u; i < 256u; i++) {
-            base_cnt[i] = 0u;
-        }
-        for (var i: u32 = 0u; i < bp; i++) {
-            base_cnt[indices[i]]++;
-        }
+    // Indexed Mode
+    let palette_size = arrayLength(&palette);
+    
+    var fg_cnt: array<u32, 256>;
+    var bg_cnt: array<u32, 256>;
+    
+    var base_cnt: array<u32, 256>;
+    for (var i: u32 = 0u; i < 256u; i++) {
+        base_cnt[i] = 0u;
+    }
+    for (var i: u32 = 0u; i < bp; i++) {
+        base_cnt[indices[i]]++;
+    }
 
-        for (var gi: u32 = 0u; gi < metadata.num_glyphs; gi++) {
-            let glyph = glyphs[gi];
-            let ones_start = glyph.ones_starts;
-            let ones_len = glyph.ones_len;
+    for (var gi: u32 = 0u; gi < metadata.num_glyphs; gi++) {
+        let glyph = glyphs[gi];
+        let ones_start = glyph.ones_starts;
+        let ones_len = glyph.ones_len;
 
-            for (var inv_iter: u32 = 0u; inv_iter < 2u; inv_iter++) {
-                
-                for (var i: u32 = 0u; i < 256u; i++) {
-                    if (base_cnt[i] > 0u) {
-                        if (inv_iter == 0u) {
-                            fg_cnt[i] = 0u;
-                            bg_cnt[i] = base_cnt[i];
-                        } else {
-                            fg_cnt[i] = base_cnt[i];
-                            bg_cnt[i] = 0u;
-                        }
-                    } else {
+        for (var inv_iter: u32 = 0u; inv_iter < 2u; inv_iter++) {
+            
+            for (var i: u32 = 0u; i < 256u; i++) {
+                if (base_cnt[i] > 0u) {
+                    if (inv_iter == 0u) {
                         fg_cnt[i] = 0u;
+                        bg_cnt[i] = base_cnt[i];
+                    } else {
+                        fg_cnt[i] = base_cnt[i];
                         bg_cnt[i] = 0u;
                     }
-                }
-                
-                var fg_len: u32;
-                var bg_len: u32;
-
-                if (inv_iter == 0u) {
-                    fg_len = ones_len;
-                    bg_len = bp - ones_len;
-                    for (var j: u32 = 0u; j < ones_len; j++) {
-                        let p = glyph_ones[ones_start + j];
-                        let idx = indices[p];
-                        bg_cnt[idx]--;
-                        fg_cnt[idx]++;
-                    }
                 } else {
-                    fg_len = bp - ones_len;
-                    bg_len = ones_len;
-                    for (var j: u32 = 0u; j < ones_len; j++) {
-                        let p = glyph_ones[ones_start + j];
-                        let idx = indices[p];
-                        fg_cnt[idx]--;
-                        bg_cnt[idx]++;
-                    }
+                    fg_cnt[i] = 0u;
+                    bg_cnt[i] = 0u;
                 }
-                
-                // Find modes
-                var fgi_raw: u32 = 0u;
-                var fx: u32 = 0u;
-                var bgi_raw: u32 = 0u;
-                var bx: u32 = 0u;
-                
-                for (var i: u32 = 0u; i < 256u; i++) {
-                    let fc = fg_cnt[i];
-                    if (fc >= fx) {
-                        fx = fc;
-                        fgi_raw = i;
-                    }
-                    let bc = bg_cnt[i];
-                    if (bc >= bx) {
-                        bx = bc;
-                        bgi_raw = i;
-                    }
+            }
+            
+            var fg_len: u32;
+            var bg_len: u32;
+
+            if (inv_iter == 0u) {
+                fg_len = ones_len;
+                bg_len = bp - ones_len;
+                for (var j: u32 = 0u; j < ones_len; j++) {
+                    let p = glyph_ones[ones_start + j];
+                    let idx = indices[p];
+                    bg_cnt[idx]--;
+                    fg_cnt[idx]++;
                 }
+            } else {
+                fg_len = bp - ones_len;
+                bg_len = ones_len;
+                for (var j: u32 = 0u; j < ones_len; j++) {
+                    let p = glyph_ones[ones_start + j];
+                    let idx = indices[p];
+                    fg_cnt[idx]--;
+                    bg_cnt[idx]++;
+                }
+            }
+            
+            // Find modes
+            var fgi_raw: u32 = 0u;
+            var fx: u32 = 0u;
+            var bgi_raw: u32 = 0u;
+            var bx: u32 = 0u;
+            
+            for (var i: u32 = 0u; i < 256u; i++) {
+                let fc = fg_cnt[i];
+                if (fc >= fx) {
+                    fx = fc;
+                    fgi_raw = i;
+                }
+                let bc = bg_cnt[i];
+                if (bc >= bx) {
+                    bx = bc;
+                    bgi_raw = i;
+                }
+            }
+            
+            var fgi: u32 = fgi_raw;
+            if (fg_len == 0u) { fgi = bgi_raw; }
+            var bgi: u32 = bgi_raw;
+            if (bg_len == 0u) { bgi = fgi_raw; }
+            
+            let cost = (fg_len - fx) + (bg_len - bx);
+            
+            if (cost < scale_best_cost) {
+                scale_best_cost = cost;
+                scale_best_glyph = gi;
+                scale_best_inv = inv_iter;
                 
-                var fgi: u32 = fgi_raw;
-                if (fg_len == 0u) { fgi = bgi_raw; }
-                var bgi: u32 = bgi_raw;
-                if (bg_len == 0u) { bgi = fgi_raw; }
-                
-                let cost = (fg_len - fx) + (bg_len - bx);
-                
-                if (cost < scale_best_cost) {
-                    scale_best_cost = cost;
-                    scale_best_glyph = gi;
-                    scale_best_inv = inv_iter;
-                    
+                if (metadata.render_mode != 2u) {
                     let safe_fgi = min(fgi, palette_size - 1u);
                     scale_best_fg_r = (palette[safe_fgi] >> 16u) & 0xFFu;
                     scale_best_fg_g = (palette[safe_fgi] >> 8u) & 0xFFu;
@@ -273,75 +268,62 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 }
             }
         }
-    } else {
-        // TrueColor Mode
-        for (var gi: u32 = 0u; gi < metadata.num_glyphs; gi++) {
-            let glyph = glyphs[gi];
-            var sum_ones_r: u32 = 0u;
-            var sum_ones_g: u32 = 0u;
-            var sum_ones_b: u32 = 0u;
-            var sum_ones_sq: u32 = 0u;
-            let count_ones = glyph.ones_len;
-            
-            for (var j: u32 = 0u; j < count_ones; j++) {
-                let px_idx = glyph_ones[glyph.ones_starts + j];
-                let px = blocks[base_pixel_idx + px_idx];
-                sum_ones_r += px.r;
-                sum_ones_g += px.g;
-                sum_ones_b += px.b;
-                sum_ones_sq += px.sq;
-            }
-            
-            let count_zeros = bp - count_ones;
-            let sum_zeros_r = block_sum_r - sum_ones_r;
-            let sum_zeros_g = block_sum_g - sum_ones_g;
-            let sum_zeros_b = block_sum_b - sum_ones_b;
-            let sum_zeros_sq = block_sum_sq - sum_ones_sq;
-            
-            var avg_ones_r: u32 = 0u;
-            var avg_ones_g: u32 = 0u;
-            var avg_ones_b: u32 = 0u;
-            if (count_ones > 0u) {
-                avg_ones_r = sum_ones_r / count_ones;
-                avg_ones_g = sum_ones_g / count_ones;
-                avg_ones_b = sum_ones_b / count_ones;
-            }
-            
-            var avg_zeros_r: u32 = 0u;
-            var avg_zeros_g: u32 = 0u;
-            var avg_zeros_b: u32 = 0u;
-            if (count_zeros > 0u) {
-                avg_zeros_r = sum_zeros_r / count_zeros;
-                avg_zeros_g = sum_zeros_g / count_zeros;
-                avg_zeros_b = sum_zeros_b / count_zeros;
-            }
-            
-            // Cost calculation: sum of squared differences from partition means
-            // dist = sum(x - mean)^2 = sum(x^2) - 2*mean*sum(x) + count*mean^2
-            let t1_1 = sum_ones_sq;
-            let t2_1 = 2u * (avg_ones_r * sum_ones_r + avg_ones_g * sum_ones_g + avg_ones_b * sum_ones_b);
-            let t3_1 = count_ones * (avg_ones_r * avg_ones_r + avg_ones_g * avg_ones_g + avg_ones_b * avg_ones_b);
-            var c1: u32 = 0u;
-            if (t1_1 + t3_1 > t2_1) { c1 = t1_1 + t3_1 - t2_1; }
-            
-            let t1_0 = sum_zeros_sq;
-            let t2_0 = 2u * (avg_zeros_r * sum_zeros_r + avg_zeros_g * sum_zeros_g + avg_zeros_b * sum_zeros_b);
-            let t3_0 = count_zeros * (avg_zeros_r * avg_zeros_r + avg_zeros_g * avg_zeros_g + avg_zeros_b * avg_zeros_b);
-            var c0: u32 = 0u;
-            if (t1_0 + t3_0 > t2_0) { c0 = t1_0 + t3_0 - t2_0; }
-            
-            let cost_normal = c1 + c0;
-            if (cost_normal < scale_best_cost) {
-                scale_best_cost = cost_normal;
-                scale_best_glyph = gi;
-                scale_best_inv = 0u;
-                scale_best_fg_r = avg_ones_r;
-                scale_best_fg_g = avg_ones_g;
-                scale_best_fg_b = avg_ones_b;
-                scale_best_bg_r = avg_zeros_r;
-                scale_best_bg_g = avg_zeros_g;
-                scale_best_bg_b = avg_zeros_b;
-            }
+    }
+    
+    if (metadata.render_mode == 2u) {
+        let glyph = glyphs[scale_best_glyph];
+        let ones_start = glyph.ones_starts;
+        let count_ones = glyph.ones_len;
+        
+        var sum_ones_r: u32 = 0u;
+        var sum_ones_g: u32 = 0u;
+        var sum_ones_b: u32 = 0u;
+        
+        for (var j: u32 = 0u; j < count_ones; j++) {
+            let px_idx = glyph_ones[ones_start + j];
+            let px = blocks[base_pixel_idx + px_idx];
+            sum_ones_r += px.r;
+            sum_ones_g += px.g;
+            sum_ones_b += px.b;
+        }
+        
+        let count_zeros = bp - count_ones;
+        let sum_zeros_r = block_sum_r - sum_ones_r;
+        let sum_zeros_g = block_sum_g - sum_ones_g;
+        let sum_zeros_b = block_sum_b - sum_ones_b;
+        
+        var avg_ones_r = 0u;
+        var avg_ones_g = 0u;
+        var avg_ones_b = 0u;
+        if (count_ones > 0u) {
+            avg_ones_r = sum_ones_r / count_ones;
+            avg_ones_g = sum_ones_g / count_ones;
+            avg_ones_b = sum_ones_b / count_ones;
+        }
+        
+        var avg_zeros_r = 0u;
+        var avg_zeros_g = 0u;
+        var avg_zeros_b = 0u;
+        if (count_zeros > 0u) {
+            avg_zeros_r = sum_zeros_r / count_zeros;
+            avg_zeros_g = sum_zeros_g / count_zeros;
+            avg_zeros_b = sum_zeros_b / count_zeros;
+        }
+        
+        if (scale_best_inv == 0u) {
+            scale_best_fg_r = avg_ones_r;
+            scale_best_fg_g = avg_ones_g;
+            scale_best_fg_b = avg_ones_b;
+            scale_best_bg_r = avg_zeros_r;
+            scale_best_bg_g = avg_zeros_g;
+            scale_best_bg_b = avg_zeros_b;
+        } else {
+            scale_best_fg_r = avg_zeros_r;
+            scale_best_fg_g = avg_zeros_g;
+            scale_best_fg_b = avg_zeros_b;
+            scale_best_bg_r = avg_ones_r;
+            scale_best_bg_g = avg_ones_g;
+            scale_best_bg_b = avg_ones_b;
         }
     }
     
