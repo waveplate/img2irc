@@ -208,7 +208,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         gpu: args.gpu,
         save: args.save.clone(),
         fft_debug_dir: args.fft_debug_dir.clone(),
-        ocr_text: args.ocr_text,
+        ocr: args.ocr,
         ocr_min_confidence: args.ocr_min_confidence,
         ocr_min_ascii_ratio: args.ocr_min_ascii_ratio,
         ocr_model_tier: args.ocr_model_tier,

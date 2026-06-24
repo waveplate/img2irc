@@ -103,7 +103,7 @@ struct ClipboardImageUrl {
 enum ControlId {
     Width,
     RenderMode,
-    OcrText,
+    Ocr,
     OcrTextlineOrientation,
     OcrMostAngle,
     OcrDocOrientation,
@@ -224,8 +224,8 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::OcrText,
-        label: "OCR Text",
+        id: ControlId::Ocr,
+        label: "OCR",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
@@ -1273,7 +1273,7 @@ pub(crate) struct App {
     // Control values
     width: i32,
     render_mode_idx: usize,
-    ocr_text: bool,
+    ocr: bool,
     ocr_textline_orientation: bool,
     ocr_most_angle: bool,
     ocr_doc_orientation: bool,
@@ -1871,7 +1871,7 @@ impl App {
             image_path: render_args.image.clone().unwrap_or_default(),
             ocr_overlay_count: 0,
             width: render_args.width.unwrap_or(80) as i32,
-            ocr_text: render_args.ocr_text,
+            ocr: render_args.ocr,
             ocr_textline_orientation: render_args.ocr_textline_orientation,
             ocr_most_angle: render_args.ocr_most_angle,
             ocr_doc_orientation: render_args.ocr_doc_orientation,
@@ -2059,7 +2059,7 @@ impl App {
     fn apply_settings(&mut self, render_args: &RenderArgs) {
         self.render_args = render_args.clone();
         self.width = render_args.width.unwrap_or(80) as i32;
-        self.ocr_text = render_args.ocr_text;
+        self.ocr = render_args.ocr;
         self.ocr_textline_orientation = render_args.ocr_textline_orientation;
         self.ocr_most_angle = render_args.ocr_most_angle;
         self.ocr_doc_orientation = render_args.ocr_doc_orientation;
@@ -2359,7 +2359,7 @@ impl App {
         match id {
             ControlId::Width => self.width,
             ControlId::RenderMode => self.render_mode_idx as i32,
-            ControlId::OcrText => self.ocr_text as i32,
+            ControlId::Ocr => self.ocr as i32,
             ControlId::OcrTextlineOrientation => self.ocr_textline_orientation as i32,
             ControlId::OcrMostAngle => self.ocr_most_angle as i32,
             ControlId::OcrDocOrientation => self.ocr_doc_orientation as i32,
@@ -2449,7 +2449,7 @@ impl App {
                 }
             }
             ControlId::RenderMode => self.render_mode_idx = val as usize,
-            ControlId::OcrText => self.ocr_text = val != 0,
+            ControlId::Ocr => self.ocr = val != 0,
             ControlId::OcrTextlineOrientation => self.ocr_textline_orientation = val != 0,
             ControlId::OcrMostAngle => self.ocr_most_angle = val != 0,
             ControlId::OcrDocOrientation => self.ocr_doc_orientation = val != 0,
@@ -2966,7 +2966,7 @@ impl App {
         self.render_args.gamma = self.gamma as f32;
         self.render_args.hue = self.hue as f32;
         self.render_args.width = Some(self.width as u32);
-        self.render_args.ocr_text = self.ocr_text;
+        self.render_args.ocr = self.ocr;
         self.render_args.ocr_textline_orientation = self.ocr_textline_orientation;
         self.render_args.ocr_most_angle = self.ocr_most_angle;
         self.render_args.ocr_doc_orientation = self.ocr_doc_orientation;
@@ -4313,7 +4313,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
-            let ocr_detections = if effective_args.ocr_text {
+            let ocr_detections = if effective_args.ocr {
                 match crate::ocr::detect_text(&arc_image, &effective_args) {
                     Ok(detections) => {
                         crate::ocr::log_detections(&detections, &effective_args);
@@ -4332,7 +4332,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             } else {
                 Vec::new()
             };
-            if !effective_args.ocr_text {
+            if !effective_args.ocr {
                 crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
             }
 
@@ -4375,7 +4375,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &effective_args));
             }
 
-            if effective_args.ocr_text {
+            if effective_args.ocr {
                 crate::ocr::choose_text_render_geometry(
                     &mut effective_args,
                     &arc_image,
@@ -4384,13 +4384,13 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 );
             }
 
-            let render_image = if effective_args.ocr_text {
+            let render_image = if effective_args.ocr {
                 crate::ocr::remove_detected_text(&arc_image, &effective_args, &ocr_detections)
             } else {
                 (*arc_image).clone()
             };
 
-            let ocr_overlays = if effective_args.ocr_text {
+            let ocr_overlays = if effective_args.ocr {
                 crate::ocr::detections_to_overlays(
                     &arc_image,
                     &render_image,

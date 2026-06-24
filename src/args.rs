@@ -218,7 +218,7 @@ pub struct RenderArgs {
     pub score: bool,
     pub save: Option<String>,
     pub fft_debug_dir: Option<String>,
-    pub ocr_text: bool,
+    pub ocr: bool,
     pub ocr_min_confidence: f32,
     pub ocr_min_ascii_ratio: f32,
     pub ocr_model_tier: OcrModelTier,
@@ -676,8 +676,8 @@ pub struct Args {
     pub fft_debug_dir: Option<String>,
 
     /// detect readable text with PaddleOCR and overlay it as normal text
-    #[arg(long = "ocr-text", default_value_t = false)]
-    pub ocr_text: bool,
+    #[arg(long = "ocr", default_value_t = false)]
+    pub ocr: bool,
 
     /// minimum OCR confidence for text overlays
     #[arg(long = "ocr-min-confidence", default_value_t = 0.0)]

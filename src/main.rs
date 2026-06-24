@@ -113,7 +113,7 @@ async fn main() {
         .await
     {
         Ok(image) => {
-            let ocr_detections = if render_args.ocr_text {
+            let ocr_detections = if render_args.ocr {
                 match img2irc_rs::ocr::detect_text(&image, &render_args) {
                     Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
@@ -134,7 +134,7 @@ async fn main() {
             };
 
             // 2. Resolve auto font size based on loaded image unless OCR chose it.
-            if !render_args.ocr_text {
+            if !render_args.ocr {
                 img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
             }
 
