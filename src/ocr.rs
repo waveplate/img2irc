@@ -478,11 +478,54 @@ fn overlay_line_rows(
     }
 
     let image_h = source.get_height().max(1) as f32;
-    let mut rows = Vec::with_capacity(clusters.len());
-    let mut last_row = -1;
-    for (sum, count, _) in clusters {
+
+    // Segment clusters into groups of consecutive lines
+    let mut groups: Vec<Vec<(f32, f32)>> = Vec::new();
+    let threshold_group = median_height * 1.8;
+
+    for (sum, count, min_y) in clusters {
         let center = sum / count as f32;
-        let mut row = ((center / image_h) * grid_h as f32).floor() as i32;
+        if let Some(last_group) = groups.last_mut() {
+            if let Some(&(last_center, _)) = last_group.last() {
+                if center - last_center <= threshold_group {
+                    last_group.push((center, min_y));
+                    continue;
+                }
+            }
+        }
+        groups.push(vec![(center, min_y)]);
+    }
+
+    // Map each group's lines to rows, centering around the middle line
+    let mut rows_to_adjust = Vec::new();
+    for group in groups {
+        let n = group.len();
+        if n == 1 {
+            let (center, _) = group[0];
+            let row = ((center / image_h) * grid_h as f32).floor() as i32;
+            rows_to_adjust.push((center, row));
+        } else {
+            let c_first = group[0].0;
+            let c_last = group[n - 1].0;
+            let d = (c_last - c_first) / (n - 1) as f32;
+            let d_rows = (d / image_h) * grid_h as f32;
+            let s = d_rows.round().max(1.0) as i32;
+
+            let m = n / 2;
+            let c_m = group[m].0;
+            let row_m = ((c_m / image_h) * grid_h as f32).floor() as i32;
+
+            for (idx, &(center, _)) in group.iter().enumerate() {
+                let row = row_m + (idx as i32 - m as i32) * s;
+                rows_to_adjust.push((center, row));
+            }
+        }
+    }
+
+    // Perform sequential adjustment to prevent overlap and clamp to grid boundaries
+    let mut rows = Vec::with_capacity(rows_to_adjust.len());
+    let mut last_row = -1;
+    for (center, mut row) in rows_to_adjust {
         row = row.clamp(0, grid_h - 1);
         if row <= last_row && last_row + 1 < grid_h {
             row = last_row + 1;
@@ -585,7 +628,7 @@ pub fn detections_to_overlays(
 
         let image_w = source.get_width().max(1) as f32;
         let image_h = source.get_height().max(1) as f32;
-        let x = ((min_x as f32 / image_w) * grid_w as f32).floor() as i32;
+        let x = ((min_x as f32 / image_w) * grid_w as f32).round() as i32;
         let center_y = (min_y + max_y) as f32 * 0.5;
         let y = line_rows
             .iter()
@@ -596,7 +639,7 @@ pub fn detections_to_overlays(
             continue;
         }
 
-        let x2 = ((max_x as f32 / image_w) * grid_w as f32).ceil() as i32;
+        let x2 = ((max_x as f32 / image_w) * grid_w as f32).round() as i32;
         let text_width = det.text.chars().count().max(1) as i32;
         let w = (x2 - x)
             .max(text_width)
