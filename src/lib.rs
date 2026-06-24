@@ -3,7 +3,73 @@ pub mod config;
 pub mod draw;
 pub mod effects;
 pub mod font;
+#[cfg(feature = "gpu")]
 pub mod gpu;
+#[cfg(feature = "ocr")]
+pub mod ocr;
+#[cfg(not(feature = "ocr"))]
+pub mod ocr {
+    use crate::args::{RenderArgs, TextOverlay};
+    use crate::font::GlyphStore;
+    use photon_rs::PhotonImage;
+    use std::error::Error;
+
+    #[derive(Clone, Debug)]
+    pub struct OcrDetection {
+        pub text: String,
+        pub confidence: f32,
+        pub polygon: Vec<[f32; 2]>,
+    }
+
+    pub fn detect_text(
+        _source: &PhotonImage,
+        _args: &RenderArgs,
+    ) -> Result<Vec<OcrDetection>, Box<dyn Error>> {
+        Err("OCR support is not compiled in; rebuild with `--features ocr`".into())
+    }
+
+    pub fn valid_detections<'a>(
+        detections: &'a [OcrDetection],
+        _args: &'a RenderArgs,
+    ) -> impl Iterator<Item = &'a OcrDetection> + 'a {
+        detections.iter().filter(|_| false)
+    }
+
+    pub fn log_detections(_detections: &[OcrDetection], _args: &RenderArgs) {}
+
+    pub fn choose_text_render_geometry(
+        _args: &mut RenderArgs,
+        _source: &PhotonImage,
+        _glyphs: &GlyphStore,
+        _detections: &[OcrDetection],
+    ) {
+    }
+
+    pub fn choose_text_font_size(
+        _args: &mut RenderArgs,
+        _detections: &[OcrDetection],
+        _image_h: u32,
+    ) {
+    }
+
+    pub fn detections_to_overlays(
+        _source: &PhotonImage,
+        _background_source: &PhotonImage,
+        _args: &RenderArgs,
+        _glyphs: &GlyphStore,
+        _detections: &[OcrDetection],
+    ) -> Vec<TextOverlay> {
+        Vec::new()
+    }
+
+    pub fn remove_detected_text(
+        source: &PhotonImage,
+        _args: &RenderArgs,
+        _detections: &[OcrDetection],
+    ) -> PhotonImage {
+        source.clone()
+    }
+}
 pub mod palette;
 pub mod pipeline;
 
@@ -142,6 +208,26 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         gpu: args.gpu,
         save: args.save.clone(),
         fft_debug_dir: args.fft_debug_dir.clone(),
+        ocr_text: args.ocr_text,
+        ocr_min_confidence: args.ocr_min_confidence,
+        ocr_min_ascii_ratio: args.ocr_min_ascii_ratio,
+        ocr_model_tier: args.ocr_model_tier,
+        ocr_model_cache: args.ocr_model_cache.clone(),
+        ocr_det_model: args.ocr_det_model.clone(),
+        ocr_cls_model: args.ocr_cls_model.clone(),
+        ocr_rec_model: args.ocr_rec_model.clone(),
+        ocr_dict: args.ocr_dict.clone(),
+        ocr_textline_orientation: args.ocr_textline_orientation,
+        ocr_most_angle: args.ocr_most_angle,
+        ocr_doc_orientation: args.ocr_doc_orientation,
+        ocr_doc_orientation_model: args.ocr_doc_orientation_model.clone(),
+        ocr_doc_unwarping: args.ocr_doc_unwarping,
+        ocr_threads: args.ocr_threads,
+        ocr_max_side_len: args.ocr_max_side_len,
+        ocr_max_text_height_ratio: args.ocr_max_text_height_ratio,
+        ocr_box_score_threshold: args.ocr_box_score_threshold,
+        ocr_box_threshold: args.ocr_box_threshold,
+        ocr_unclip_ratio: args.ocr_unclip_ratio,
 
         score: args.score,
         pipeline: Vec::new(),
@@ -187,8 +273,14 @@ pub fn render_from_canvas(
     canvas: &draw::AnsiImage,
     luma_canvas: Option<&draw::AnsiImage>,
     glyphs: &[draw::FastGlyph],
-    _abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> draw::RenderResult {
+    if let Some(flag) = &abort_flag {
+        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+            return draw::RenderResult::from("Cancelled");
+        }
+    }
+
     if args.braille {
         if let Some(lc) = luma_canvas {
             match args.render {
@@ -208,14 +300,18 @@ pub fn render_from_canvas(
     } else {
         match args.render {
             crate::args::Render::Irc => {
-                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs)
+                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs, abort_flag)
             }
             crate::args::Render::Ansi => {
-                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs)
+                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs, abort_flag)
             }
-            crate::args::Render::Ansi24 => {
-                draw::render_blocks(canvas, args, crate::args::Render::Ansi24, glyphs)
-            }
+            crate::args::Render::Ansi24 => draw::render_blocks(
+                canvas,
+                args,
+                crate::args::Render::Ansi24,
+                glyphs,
+                abort_flag,
+            ),
         }
     }
 }

@@ -95,11 +95,9 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
             f.render_stateful_widget(list, glyph_chunks[0], &mut app.glyph_list_state);
 
             // Buttons at bottom
-            let btn_chunks = Layout::horizontal([
-                Constraint::Percentage(50),
-                Constraint::Percentage(50),
-            ])
-            .split(glyph_chunks[1]);
+            let btn_chunks =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(glyph_chunks[1]);
 
             app.glyph_save_area = btn_chunks[0];
             app.glyph_add_area = btn_chunks[1];

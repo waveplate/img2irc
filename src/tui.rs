@@ -1,8 +1,8 @@
+pub mod explorer;
 pub mod general;
 pub mod glyphs;
 pub mod pipeline;
 pub mod text;
-pub mod explorer;
 pub use general::*;
 pub use glyphs::*;
 pub use pipeline::*;
@@ -12,7 +12,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     error::Error,
-    io::{self},
+    io::{self, Read},
+    process::Stdio,
     sync::Arc,
     time::Duration,
 };
@@ -27,31 +28,32 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use photon_rs::PhotonImage;
+use regex::Regex;
 
 use crate::{
-    args::{ColourSpace, Encoding, Render, RenderArgs, SamplingFilter},
+    args::{ColourSpace, Encoding, OcrModelTier, Render, RenderArgs, SamplingFilter},
     draw, font,
 };
+use explorer::FileExplorer;
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
-    text::{Text, Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Terminal,
 };
-use explorer::FileExplorer;
 use ratatui_image::{
     picker::Picker, protocol::StatefulProtocol, Resize, ResizeEncodeRender, StatefulImage,
 };
+use ratatui_textarea::TextArea;
 use simplelog::*;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::process::Command;
 use std::time::Instant;
 use tokio::sync::{mpsc, watch};
-use ratatui_textarea::TextArea;
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 const BG: Color = Color::Rgb(22, 22, 30);
@@ -83,11 +85,34 @@ enum OptimizationUpdate {
     Finished,
 }
 
+#[derive(Debug)]
+enum ClipboardPasteResult {
+    Loaded { path: String, bytes: usize },
+    Empty,
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
+struct ClipboardImageUrl {
+    url: String,
+    referer: Option<String>,
+}
+
 // ── Control types ────────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ControlId {
     Width,
     RenderMode,
+    OcrText,
+    OcrTextlineOrientation,
+    OcrMostAngle,
+    OcrDocOrientation,
+    OcrDocUnwarping,
+    OcrMinConfidence,
+    OcrModelTier,
+    OcrMaxSideLen,
+    OcrMaxTextHeight,
+    OcrThreads,
 
     Gpu,
     HighlightDisc,
@@ -196,6 +221,75 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             min: 10,
             max: 300,
             default: 80,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrText,
+        label: "OCR Text",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::OcrTextlineOrientation,
+        label: "OCR Line Ori",
+        kind: ControlKind::Toggle { default: true },
+    },
+    ControlDef {
+        id: ControlId::OcrMostAngle,
+        label: "OCR Most Angle",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::OcrDocOrientation,
+        label: "OCR Doc Ori",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::OcrDocUnwarping,
+        label: "OCR Unwarp",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::OcrMinConfidence,
+        label: "OCR Conf %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 70,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrModelTier,
+        label: "OCR Model",
+        kind: ControlKind::Enum {
+            options: &["Tiny", "Small", "Medium"],
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrMaxSideLen,
+        label: "OCR Max Side",
+        kind: ControlKind::Slider {
+            min: 320,
+            max: 5000,
+            default: 3000,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrMaxTextHeight,
+        label: "OCR Max H %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 1000,
+            default: 250,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrThreads,
+        label: "OCR Threads",
+        kind: ControlKind::Slider {
+            min: 1,
+            max: 32,
+            default: 4,
         },
     },
     ControlDef {
@@ -366,9 +460,9 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::Rotate,
         label: "Rotate",
         kind: ControlKind::Slider {
-             min: -180,
-             max: 180,
-             default: 0,
+            min: -180,
+            max: 180,
+            default: 0,
         },
     },
     ControlDef {
@@ -427,7 +521,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 0,
             max: 255,
-            default: 0,
+            default: 32,
         },
     },
     ControlDef {
@@ -1067,23 +1161,23 @@ impl App {
                             self.render_args.blocks.push(leaf);
                         }
                     }
-                    }
-                    }
-                    self.mark_args_dirty();
-                    }
-                    }
+                }
+            }
+            self.mark_args_dirty();
+        }
+    }
 
-                    fn toggle_glyph_selection(&mut self) {
-                    let (config_groups, _) = crate::font::load_blocks_config();
-                    if let Some(node) = self.tree_state.get_selected_node() {
-                    let target_key = if !node.full_path.is_empty() {
-                    &node.full_path
-                    } else {
-                    &node.name
-                    };
+    fn toggle_glyph_selection(&mut self) {
+        let (config_groups, _) = crate::font::load_blocks_config();
+        if let Some(node) = self.tree_state.get_selected_node() {
+            let target_key = if !node.full_path.is_empty() {
+                &node.full_path
+            } else {
+                &node.name
+            };
 
-                    if let Some(codes) = config_groups.get(target_key) {
-                    if let Some(idx) = self.glyph_list_state.selected() {
+            if let Some(codes) = config_groups.get(target_key) {
+                if let Some(idx) = self.glyph_list_state.selected() {
                     if let Some(&code) = codes.get(idx) {
                         if let Some(ch) = char::from_u32(code) {
                             if let Some(pos) =
@@ -1096,11 +1190,10 @@ impl App {
                             self.mark_args_dirty();
                         }
                     }
-                    }
-                    }
-                    }
-                    }
-
+                }
+            }
+        }
+    }
 
     fn collect_leaves(node: &TreeNode, leaves: &mut Vec<String>) {
         if node.is_leaf {
@@ -1129,7 +1222,11 @@ pub(crate) struct App {
     args_dirty: bool,
     last_args_change: Option<Instant>,
 
-    rx_result: mpsc::Receiver<(draw::RenderResult, Arc<font::GlyphStore>)>,
+    rx_result: mpsc::Receiver<(
+        draw::RenderResult,
+        Arc<font::GlyphStore>,
+        Vec<crate::args::TextOverlay>,
+    )>,
     cached_render: String,
     cached_result: Option<draw::RenderResult>,
     /// Raw result from render thread (no overlays applied)
@@ -1165,13 +1262,27 @@ pub(crate) struct App {
     metadata_prompt_settings: Option<RenderArgs>,
     metadata_prompt_path: String,
     metadata_prompt_png_path: String,
+    clipboard_paste_rx: Option<std::sync::mpsc::Receiver<ClipboardPasteResult>>,
+    clipboard_paste_in_progress: bool,
+    clipboard_paste_status: Option<String>,
 
     // Image path
     image_path: String,
+    ocr_overlay_count: usize,
 
     // Control values
     width: i32,
     render_mode_idx: usize,
+    ocr_text: bool,
+    ocr_textline_orientation: bool,
+    ocr_most_angle: bool,
+    ocr_doc_orientation: bool,
+    ocr_doc_unwarping: bool,
+    ocr_min_confidence: i32,
+    ocr_model_tier_idx: usize,
+    ocr_max_side_len: i32,
+    ocr_max_text_height_ratio: i32,
+    ocr_threads: i32,
     dither: i32,
     gpu: bool,
     show_discontinuities: bool,
@@ -1361,7 +1472,11 @@ const UNICODE_BLOCKS: &[(&str, u32, u32)] = &[
     ("Tagbanwa", 0x1760, 0x177F),
     ("Khmer", 0x1780, 0x17FF),
     ("Mongolian", 0x1800, 0x18AF),
-    ("Unified Canadian Aboriginal Syllabics Extended", 0x18B0, 0x18FF),
+    (
+        "Unified Canadian Aboriginal Syllabics Extended",
+        0x18B0,
+        0x18FF,
+    ),
     ("Limbu", 0x1900, 0x194F),
     ("Tai Le", 0x1950, 0x197F),
     ("New Tai Lue", 0x1980, 0x19DF),
@@ -1628,11 +1743,9 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     ])
     .split(inner);
 
-    let explorer_chunks = Layout::horizontal([
-        Constraint::Percentage(50),
-        Constraint::Percentage(50),
-    ])
-    .split(main_chunks[0]);
+    let explorer_chunks =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_chunks[0]);
 
     // 1. List of ranges (Left)
     let items: Vec<ListItem> = UNICODE_BLOCKS
@@ -1643,7 +1756,11 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(BORDER)))
+        .block(
+            Block::default()
+                .borders(Borders::RIGHT)
+                .border_style(Style::default().fg(BORDER)),
+        )
         .highlight_style(Style::default().bg(ACCENT).fg(Color::White))
         .highlight_symbol("▸ ");
 
@@ -1686,7 +1803,11 @@ impl App {
     fn new(
         render_args: RenderArgs,
         tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
-        rx_result: mpsc::Receiver<(draw::RenderResult, Arc<font::GlyphStore>)>,
+        rx_result: mpsc::Receiver<(
+            draw::RenderResult,
+            Arc<font::GlyphStore>,
+            Vec<crate::args::TextOverlay>,
+        )>,
         initial_flag: Arc<AtomicBool>,
     ) -> App {
         let (blocks_map, _) = crate::font::load_blocks_config();
@@ -1734,6 +1855,9 @@ impl App {
             metadata_prompt_settings: None,
 
             metadata_prompt_path: String::new(),
+            clipboard_paste_rx: None,
+            clipboard_paste_in_progress: false,
+            clipboard_paste_status: None,
             render_mode_idx: match render_args.render {
                 Render::Irc => 0,
                 Render::Ansi => 1,
@@ -1745,7 +1869,23 @@ impl App {
             glyph_list_state: ListState::default(),
 
             image_path: render_args.image.clone().unwrap_or_default(),
+            ocr_overlay_count: 0,
             width: render_args.width.unwrap_or(80) as i32,
+            ocr_text: render_args.ocr_text,
+            ocr_textline_orientation: render_args.ocr_textline_orientation,
+            ocr_most_angle: render_args.ocr_most_angle,
+            ocr_doc_orientation: render_args.ocr_doc_orientation,
+            ocr_doc_unwarping: render_args.ocr_doc_unwarping,
+            ocr_min_confidence: (render_args.ocr_min_confidence * 100.0).round() as i32,
+            ocr_model_tier_idx: match render_args.ocr_model_tier {
+                OcrModelTier::Tiny => 0,
+                OcrModelTier::Small => 1,
+                OcrModelTier::Medium => 2,
+            },
+            ocr_max_side_len: render_args.ocr_max_side_len as i32,
+            ocr_max_text_height_ratio: (render_args.ocr_max_text_height_ratio * 100.0).round()
+                as i32,
+            ocr_threads: render_args.ocr_threads as i32,
             dither: render_args.dither as i32,
             gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
@@ -1919,6 +2059,21 @@ impl App {
     fn apply_settings(&mut self, render_args: &RenderArgs) {
         self.render_args = render_args.clone();
         self.width = render_args.width.unwrap_or(80) as i32;
+        self.ocr_text = render_args.ocr_text;
+        self.ocr_textline_orientation = render_args.ocr_textline_orientation;
+        self.ocr_most_angle = render_args.ocr_most_angle;
+        self.ocr_doc_orientation = render_args.ocr_doc_orientation;
+        self.ocr_doc_unwarping = render_args.ocr_doc_unwarping;
+        self.ocr_min_confidence = (render_args.ocr_min_confidence * 100.0).round() as i32;
+        self.ocr_model_tier_idx = match render_args.ocr_model_tier {
+            OcrModelTier::Tiny => 0,
+            OcrModelTier::Small => 1,
+            OcrModelTier::Medium => 2,
+        };
+        self.ocr_max_side_len = render_args.ocr_max_side_len as i32;
+        self.ocr_max_text_height_ratio =
+            (render_args.ocr_max_text_height_ratio * 100.0).round() as i32;
+        self.ocr_threads = render_args.ocr_threads as i32;
         self.render_mode_idx = match render_args.render {
             Render::Irc => 0,
             Render::Ansi => 1,
@@ -2204,6 +2359,16 @@ impl App {
         match id {
             ControlId::Width => self.width,
             ControlId::RenderMode => self.render_mode_idx as i32,
+            ControlId::OcrText => self.ocr_text as i32,
+            ControlId::OcrTextlineOrientation => self.ocr_textline_orientation as i32,
+            ControlId::OcrMostAngle => self.ocr_most_angle as i32,
+            ControlId::OcrDocOrientation => self.ocr_doc_orientation as i32,
+            ControlId::OcrDocUnwarping => self.ocr_doc_unwarping as i32,
+            ControlId::OcrMinConfidence => self.ocr_min_confidence,
+            ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
+            ControlId::OcrMaxSideLen => self.ocr_max_side_len,
+            ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio,
+            ControlId::OcrThreads => self.ocr_threads,
             ControlId::TrimTop => self.trim_top,
             ControlId::TrimRight => self.trim_right,
             ControlId::TrimBottom => self.trim_bottom,
@@ -2284,6 +2449,16 @@ impl App {
                 }
             }
             ControlId::RenderMode => self.render_mode_idx = val as usize,
+            ControlId::OcrText => self.ocr_text = val != 0,
+            ControlId::OcrTextlineOrientation => self.ocr_textline_orientation = val != 0,
+            ControlId::OcrMostAngle => self.ocr_most_angle = val != 0,
+            ControlId::OcrDocOrientation => self.ocr_doc_orientation = val != 0,
+            ControlId::OcrDocUnwarping => self.ocr_doc_unwarping = val != 0,
+            ControlId::OcrMinConfidence => self.ocr_min_confidence = val.clamp(0, 100),
+            ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
+            ControlId::OcrMaxSideLen => self.ocr_max_side_len = val.max(32),
+            ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio = val.clamp(0, 1000),
+            ControlId::OcrThreads => self.ocr_threads = val.max(1),
             ControlId::TrimTop => self.trim_top = val,
             ControlId::TrimRight => self.trim_right = val,
             ControlId::TrimBottom => self.trim_bottom = val,
@@ -2766,6 +2941,7 @@ impl App {
 
     fn cancel_render(&mut self) {
         self.current_cancel_flag.store(true, Ordering::Relaxed);
+        self.is_rendering.store(false, Ordering::Relaxed);
     }
 
     fn flush_render_args(&mut self) {
@@ -2790,6 +2966,21 @@ impl App {
         self.render_args.gamma = self.gamma as f32;
         self.render_args.hue = self.hue as f32;
         self.render_args.width = Some(self.width as u32);
+        self.render_args.ocr_text = self.ocr_text;
+        self.render_args.ocr_textline_orientation = self.ocr_textline_orientation;
+        self.render_args.ocr_most_angle = self.ocr_most_angle;
+        self.render_args.ocr_doc_orientation = self.ocr_doc_orientation;
+        self.render_args.ocr_doc_unwarping = self.ocr_doc_unwarping;
+        self.render_args.ocr_min_confidence = self.ocr_min_confidence as f32 / 100.0;
+        self.render_args.ocr_model_tier = match self.ocr_model_tier_idx {
+            0 => OcrModelTier::Tiny,
+            1 => OcrModelTier::Small,
+            _ => OcrModelTier::Medium,
+        };
+        self.render_args.ocr_max_side_len = self.ocr_max_side_len.max(32) as u32;
+        self.render_args.ocr_max_text_height_ratio =
+            (self.ocr_max_text_height_ratio.max(0) as f32) / 100.0;
+        self.render_args.ocr_threads = self.ocr_threads.max(1) as usize;
         self.render_args.dither = self.dither as u32;
         self.render_args.invert = self.invert;
         self.render_args.grayscale = self.grayscale;
@@ -3063,85 +3254,488 @@ impl App {
     /// Attempts xclip (X11) first, then wl-paste (Wayland).
     /// Saves the image to a temp file and loads it.
     fn paste_from_clipboard(&mut self) {
-        use std::io::Write;
+        if self.clipboard_paste_in_progress {
+            log::info!("Clipboard paste already in progress");
+            self.clipboard_paste_status = Some("Paste already running".to_string());
+            return;
+        }
 
-        let clipboard_data = Self::try_clipboard_x11().or_else(|| Self::try_clipboard_wayland());
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.clipboard_paste_rx = Some(rx);
+        self.clipboard_paste_in_progress = true;
+        self.clipboard_paste_status = Some("Pasting image...".to_string());
+
+        std::thread::spawn(move || {
+            let _ = tx.send(Self::clipboard_paste_worker());
+        });
+    }
+
+    fn poll_clipboard_paste(&mut self) {
+        let Some(rx) = self.clipboard_paste_rx.take() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(ClipboardPasteResult::Loaded { path, bytes }) => {
+                log::info!("Loaded image from clipboard: {} ({} bytes)", path, bytes);
+                self.image_path = path.clone();
+                self.render_args.image = Some(path);
+                self.clipboard_paste_in_progress = false;
+                self.clipboard_paste_status = Some(format!("Pasted image ({} bytes)", bytes));
+                self.mark_args_dirty();
+            }
+            Ok(ClipboardPasteResult::Empty) => {
+                log::info!("No image found in clipboard");
+                self.clipboard_paste_in_progress = false;
+                self.clipboard_paste_status = Some("No clipboard image found".to_string());
+            }
+            Ok(ClipboardPasteResult::Failed(err)) => {
+                log::info!("Failed to paste image from clipboard: {}", err);
+                self.clipboard_paste_in_progress = false;
+                self.clipboard_paste_status = Some(format!("Paste failed: {}", err));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.clipboard_paste_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::info!("Clipboard paste worker disconnected");
+                self.clipboard_paste_in_progress = false;
+                self.clipboard_paste_status = Some("Paste worker stopped".to_string());
+            }
+        }
+    }
+
+    fn clipboard_paste_worker() -> ClipboardPasteResult {
+        let advertised_image = Self::clipboard_advertises_image_target();
+
+        if let Some(result) = Self::try_clipboard_native_image() {
+            return result;
+        }
+
+        let clipboard_data = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            Self::try_clipboard_wayland().or_else(|| Self::try_clipboard_x11())
+        } else {
+            Self::try_clipboard_x11().or_else(|| Self::try_clipboard_wayland())
+        };
 
         if let Some(data) = clipboard_data {
-            if data.is_empty() {
-                log::info!("Clipboard is empty or contains no image");
-                return;
-            }
+            return Self::save_clipboard_image_bytes(data);
+        }
 
-            // Detect format from magic bytes and pick extension
-            let ext = if data.starts_with(&[0x89, b'P', b'N', b'G']) {
-                "png"
-            } else if data.starts_with(&[0xFF, 0xD8]) {
-                "jpg"
-            } else if data.starts_with(b"GIF") {
-                "gif"
-            } else if data.starts_with(b"BM") {
-                "bmp"
-            } else if data.starts_with(b"RIFF") {
-                "webp"
-            } else {
-                "png" // assume PNG as fallback
-            };
-
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let tmp_path = format!("/tmp/img2irc_clipboard_{}.{}", ts, ext);
-            match std::fs::File::create(&tmp_path) {
-                Ok(mut f) => {
-                    if let Err(e) = f.write_all(&data) {
-                        log::info!("Failed to write clipboard image: {}", e);
-                        return;
-                    }
-                }
-                Err(e) => {
-                    log::info!("Failed to create temp file: {}", e);
-                    return;
-                }
-            }
-
-            log::info!(
-                "Loaded image from clipboard: {} ({} bytes)",
-                tmp_path,
-                data.len()
+        if advertised_image {
+            return ClipboardPasteResult::Failed(
+                "clipboard advertises image data, but img2irc could not read it".to_string(),
             );
-            self.image_path = tmp_path.clone();
-            self.render_args.image = Some(tmp_path);
-            self.mark_args_dirty();
+        }
+
+        if let Some(image_url) = Self::try_clipboard_url() {
+            if let Some(path) =
+                image_url
+                    .url
+                    .strip_prefix("file://")
+                    .or(Some(image_url.url.as_str()).filter(|_| {
+                        !image_url.url.starts_with("http://")
+                            && !image_url.url.starts_with("https://")
+                    }))
+            {
+                let path = path.to_string();
+                return ClipboardPasteResult::Loaded {
+                    bytes: std::fs::metadata(&path)
+                        .map(|m| m.len() as usize)
+                        .unwrap_or(0),
+                    path,
+                };
+            }
+            return Self::download_clipboard_url(&image_url);
+        }
+
+        ClipboardPasteResult::Empty
+    }
+
+    fn try_clipboard_native_image() -> Option<ClipboardPasteResult> {
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(clipboard) => clipboard,
+            Err(e) => {
+                log::info!("Native clipboard unavailable: {}", e);
+                return None;
+            }
+        };
+
+        let image = match clipboard.get_image() {
+            Ok(image) => image,
+            Err(e) => {
+                log::info!("Native clipboard image unavailable: {}", e);
+                return None;
+            }
+        };
+
+        let tmp_path = Self::clipboard_tmp_path("png");
+        let bytes = image.bytes.into_owned();
+        let width = image.width as u32;
+        let height = image.height as u32;
+        match image::save_buffer_with_format(
+            &tmp_path,
+            &bytes,
+            width,
+            height,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        ) {
+            Ok(()) => {
+                let size = std::fs::metadata(&tmp_path)
+                    .map(|m| m.len() as usize)
+                    .unwrap_or(bytes.len());
+                log::info!(
+                    "Read native clipboard image {}x{} ({} bytes)",
+                    width,
+                    height,
+                    size
+                );
+                Some(ClipboardPasteResult::Loaded {
+                    path: tmp_path,
+                    bytes: size,
+                })
+            }
+            Err(e) => Some(ClipboardPasteResult::Failed(format!(
+                "failed to encode native clipboard image: {}",
+                e
+            ))),
+        }
+    }
+
+    fn save_clipboard_image_bytes(data: Vec<u8>) -> ClipboardPasteResult {
+        use std::io::Write;
+
+        if data.is_empty() {
+            return ClipboardPasteResult::Empty;
+        }
+
+        let Some(ext) = Self::image_extension_for_bytes(&data) else {
+            return ClipboardPasteResult::Failed(
+                "clipboard image data has an unknown format".to_string(),
+            );
+        };
+
+        let tmp_path = Self::clipboard_tmp_path(ext);
+        match std::fs::File::create(&tmp_path) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(&data) {
+                    return ClipboardPasteResult::Failed(format!(
+                        "failed to write clipboard image: {}",
+                        e
+                    ));
+                }
+            }
+            Err(e) => {
+                return ClipboardPasteResult::Failed(format!("failed to create temp file: {}", e));
+            }
+        }
+
+        ClipboardPasteResult::Loaded {
+            path: tmp_path,
+            bytes: data.len(),
+        }
+    }
+
+    fn download_clipboard_url(image_url: &ClipboardImageUrl) -> ClipboardPasteResult {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(e) => {
+                return ClipboardPasteResult::Failed(format!("failed to build HTTP client: {}", e))
+            }
+        };
+
+        let mut request = client
+            .get(&image_url.url)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+            )
+            .header(
+                reqwest::header::ACCEPT,
+                "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            );
+
+        let fallback_referer = Self::url_origin(&image_url.url);
+        let referer = image_url.referer.as_deref().or(fallback_referer.as_deref());
+        if let Some(referer) = referer {
+            request = request.header(reqwest::header::REFERER, referer);
+        }
+
+        let response = match request.send() {
+            Ok(response) => response,
+            Err(e) => return ClipboardPasteResult::Failed(format!("failed to fetch URL: {}", e)),
+        };
+
+        if !response.status().is_success() {
+            return ClipboardPasteResult::Failed(format!(
+                "URL returned HTTP {}",
+                response.status()
+            ));
+        }
+
+        let bytes = match response.bytes() {
+            Ok(bytes) => bytes.to_vec(),
+            Err(e) => return ClipboardPasteResult::Failed(format!("failed to read URL: {}", e)),
+        };
+
+        Self::save_clipboard_image_bytes(bytes)
+    }
+
+    fn url_origin(url: &str) -> Option<String> {
+        let parsed = url::Url::parse(url).ok()?;
+        let scheme = parsed.scheme();
+        let host = parsed.host_str()?;
+        let port = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+        Some(format!("{}://{}{}/", scheme, host, port))
+    }
+
+    fn clipboard_tmp_path(ext: &str) -> String {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        format!("/tmp/img2irc_clipboard_{}.{}", ts, ext)
+    }
+
+    fn image_extension_for_bytes(data: &[u8]) -> Option<&'static str> {
+        if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+            Some("png")
+        } else if data.starts_with(&[0xFF, 0xD8]) {
+            Some("jpg")
+        } else if data.starts_with(b"GIF") {
+            Some("gif")
+        } else if data.starts_with(b"BM") {
+            Some("bmp")
+        } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP") {
+            Some("webp")
+        } else if data.starts_with(b"II*\0") || data.starts_with(b"MM\0*") {
+            Some("tiff")
         } else {
-            log::info!("No image found in clipboard (tried xclip and wl-paste)");
+            None
         }
     }
 
     fn try_clipboard_x11() -> Option<Vec<u8>> {
-        for target in &["image/png", "image/jpeg", "image/bmp"] {
-            if let Ok(output) = Command::new("xclip")
-                .args(["-selection", "clipboard", "-t", target, "-o"])
-                .output()
-            {
-                if output.status.success() && !output.stdout.is_empty() {
-                    return Some(output.stdout);
-                }
+        for target in &[
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/tiff",
+            "image/bmp",
+        ] {
+            if let Some(data) = Self::run_clipboard_command(
+                "xclip",
+                &["-selection", "clipboard", "-t", target, "-o"],
+                Duration::from_secs(15),
+            ) {
+                log::info!(
+                    "Read clipboard image target {} via xclip ({} bytes)",
+                    target,
+                    data.len()
+                );
+                return Some(data);
             }
         }
         None
     }
 
     fn try_clipboard_wayland() -> Option<Vec<u8>> {
-        for mime in &["image/png", "image/jpeg", "image/bmp"] {
-            if let Ok(output) = Command::new("wl-paste").args(["--type", mime]).output() {
-                if output.status.success() && !output.stdout.is_empty() {
-                    return Some(output.stdout);
+        for mime in &[
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/tiff",
+            "image/bmp",
+            "image",
+        ] {
+            if let Some(data) =
+                Self::run_clipboard_command("wl-paste", &["--type", mime], Duration::from_secs(15))
+            {
+                log::info!(
+                    "Read clipboard image target {} via wl-paste ({} bytes)",
+                    mime,
+                    data.len()
+                );
+                return Some(data);
+            }
+        }
+        None
+    }
+
+    fn clipboard_advertises_image_target() -> bool {
+        let has_wayland_image = || {
+            Self::run_clipboard_command("wl-paste", &["--list-types"], Duration::from_secs(2))
+                .and_then(|data| String::from_utf8(data).ok())
+                .map_or(false, |targets| {
+                    targets
+                        .lines()
+                        .any(|line| line.trim().starts_with("image/"))
+                })
+        };
+
+        let has_x11_image = || {
+            Self::run_clipboard_command(
+                "xclip",
+                &["-selection", "clipboard", "-t", "TARGETS", "-o"],
+                Duration::from_secs(2),
+            )
+            .and_then(|data| String::from_utf8(data).ok())
+            .map_or(false, |targets| {
+                targets
+                    .lines()
+                    .any(|line| line.trim().starts_with("image/"))
+            })
+        };
+
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            has_wayland_image() || has_x11_image()
+        } else {
+            has_x11_image() || has_wayland_image()
+        }
+    }
+
+    fn try_clipboard_url() -> Option<ClipboardImageUrl> {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            Self::try_clipboard_url_wayland().or_else(|| Self::try_clipboard_url_x11())
+        } else {
+            Self::try_clipboard_url_x11().or_else(|| Self::try_clipboard_url_wayland())
+        }
+    }
+
+    fn try_clipboard_url_x11() -> Option<ClipboardImageUrl> {
+        for target in &[
+            "text/uri-list",
+            "text/html",
+            "text/plain;charset=utf-8",
+            "text/plain",
+            "UTF8_STRING",
+        ] {
+            if let Some(data) = Self::run_clipboard_command(
+                "xclip",
+                &["-selection", "clipboard", "-t", target, "-o"],
+                Duration::from_secs(2),
+            ) {
+                if let Ok(text) = String::from_utf8(data) {
+                    if let Some(url) = Self::extract_url_from_clipboard_text(&text) {
+                        return Some(url);
+                    }
                 }
             }
         }
         None
+    }
+
+    fn try_clipboard_url_wayland() -> Option<ClipboardImageUrl> {
+        for mime in &[
+            "text/uri-list",
+            "text/html",
+            "text/plain;charset=utf-8",
+            "text/plain",
+        ] {
+            if let Some(data) =
+                Self::run_clipboard_command("wl-paste", &["--type", mime], Duration::from_secs(2))
+            {
+                if let Ok(text) = String::from_utf8(data) {
+                    if let Some(url) = Self::extract_url_from_clipboard_text(&text) {
+                        return Some(url);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_url_from_clipboard_text(text: &str) -> Option<ClipboardImageUrl> {
+        let source_url = Regex::new(r"(?im)^SourceURL:(\S+)\s*$")
+            .ok()
+            .and_then(|re| re.captures(text))
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().to_string());
+
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with("http://") || line.starts_with("https://") {
+                return Some(ClipboardImageUrl {
+                    url: line.to_string(),
+                    referer: source_url.clone(),
+                });
+            }
+            if line.starts_with("file://") {
+                return Some(ClipboardImageUrl {
+                    url: line.to_string(),
+                    referer: None,
+                });
+            }
+        }
+
+        let html_src = Regex::new(r#"(?i)<img[^>]+src=["']([^"']+)["']"#).ok()?;
+        html_src
+            .captures(text)
+            .and_then(|caps| caps.get(1))
+            .map(|m| ClipboardImageUrl {
+                url: m.as_str().replace("&amp;", "&"),
+                referer: source_url,
+            })
+    }
+
+    fn run_clipboard_command(program: &str, args: &[&str], timeout: Duration) -> Option<Vec<u8>> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+
+        let mut stdout = child.stdout.take()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut data = Vec::new();
+            let result = stdout.read_to_end(&mut data).map(|_| data);
+            let _ = tx.send(result);
+        });
+
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let data = rx
+                        .recv_timeout(Duration::from_secs(10))
+                        .ok()
+                        .and_then(Result::ok)?;
+                    if status.success() && !data.is_empty() {
+                        return Some(data);
+                    }
+                    log::info!(
+                        "Clipboard command returned no data: {} {:?}, status={}, bytes={}",
+                        program,
+                        args,
+                        status,
+                        data.len()
+                    );
+                    return None;
+                }
+                Ok(None) if started.elapsed() >= timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = rx.recv_timeout(Duration::from_millis(250));
+                    log::info!("Clipboard command timed out: {} {:?}", program, args);
+                    return None;
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(e) => {
+                    log::info!("Clipboard command failed: {} {:?}: {}", program, args, e);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        }
     }
 }
 
@@ -3583,7 +4177,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     let _ = WriteLogger::init(
         LevelFilter::Info,
         Config::default(),
-        File::create("img2irc.log").unwrap(),
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("img2irc.log")
+            .unwrap(),
     );
 
     std::panic::set_hook(Box::new(|panic_info| {
@@ -3608,22 +4206,33 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     }
     render_args.render = Render::Ansi;
 
-    let glyph_store = font::glyph_store(
-        &render_args.blocks,
-        &render_args.exclude_range,
-        &render_args.exclude,
-        &render_args.include_range,
-        render_args.include.as_ref(),
-        &render_args.font,
-        render_args.font_size,
-        // if (render_args.font_size - 0.0).abs() < f32::EPSILON {
-        //     24.0
-        // } else {
-        //     render_args.font_size
-        // },
-        true,
-        None,
-    );
+    let no_initial_image = render_args
+        .image
+        .as_deref()
+        .map(|p| p.is_empty())
+        .unwrap_or(true);
+    let glyph_store = if no_initial_image {
+        font::GlyphStore {
+            glyphs: Vec::new(),
+            groups: std::collections::HashMap::new(),
+            selected: std::collections::HashSet::new(),
+            metrics: (1, 1),
+            float_metrics: (1.0, 1.0),
+        }
+    } else {
+        font::glyph_store(
+            &render_args.blocks,
+            &render_args.exclude_range,
+            &render_args.exclude,
+            &render_args.include_range,
+            render_args.include.as_ref(),
+            &render_args.font,
+            render_args.font_size,
+            true,
+            None,
+        )
+    };
+    let initial_glyphs_loaded = !no_initial_image;
 
     let image = if let Some(path) = &render_args.image {
         match crate::load_image_from_url_or_path(path, &render_args, &glyph_store).await {
@@ -3660,12 +4269,30 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         let mut last_font = thread_render_args.font.clone();
         let mut last_font_size = thread_render_args.font_size;
         let mut last_blocks = thread_render_args.blocks.clone();
+        let mut last_exclude_range = thread_render_args.exclude_range.clone();
+        let mut last_exclude = thread_render_args.exclude.clone();
+        let mut last_include_range = thread_render_args.include_range.clone();
+        let mut last_include = thread_render_args.include.clone();
+        let mut glyphs_loaded = initial_glyphs_loaded;
 
         loop {
             // Signal rendering start
             rendering_flag2.store(true, Ordering::Relaxed);
 
             let (current_args, cancel_flag) = { rx_args.borrow_and_update().clone() };
+
+            if current_args
+                .image
+                .as_deref()
+                .map(|p| p.is_empty())
+                .unwrap_or(true)
+            {
+                rendering_flag2.store(false, Ordering::Relaxed);
+                if rx_args.changed().await.is_err() {
+                    break;
+                }
+                continue;
+            }
 
             // Reload image if path changed
             if current_args.image != current_image_path {
@@ -3686,11 +4313,37 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
-            crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
+            let ocr_detections = if effective_args.ocr_text {
+                match crate::ocr::detect_text(&arc_image, &effective_args) {
+                    Ok(detections) => {
+                        crate::ocr::log_detections(&detections, &effective_args);
+                        crate::ocr::choose_text_font_size(
+                            &mut effective_args,
+                            &detections,
+                            arc_image.get_height(),
+                        );
+                        detections
+                    }
+                    Err(e) => {
+                        log::error!("OCR text detection failed: {}", e);
+                        Vec::new()
+                    }
+                }
+            } else {
+                Vec::new()
+            };
+            if !effective_args.ocr_text {
+                crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
+            }
 
             if effective_args.font != last_font
                 || (effective_args.font_size - last_font_size).abs() > ::std::f32::EPSILON
                 || effective_args.blocks != last_blocks
+                || effective_args.exclude_range != last_exclude_range
+                || effective_args.exclude != last_exclude
+                || effective_args.include_range != last_include_range
+                || effective_args.include != last_include
+                || !glyphs_loaded
             {
                 let new_store = font::glyph_store(
                     &effective_args.blocks,
@@ -3711,11 +4364,43 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 last_font = effective_args.font.clone();
                 last_font_size = effective_args.font_size;
                 last_blocks = effective_args.blocks.clone();
+                last_exclude_range = effective_args.exclude_range.clone();
+                last_exclude = effective_args.exclude.clone();
+                last_include_range = effective_args.include_range.clone();
+                last_include = effective_args.include.clone();
+                glyphs_loaded = true;
             }
 
             if fast_glyphs_store.is_none() {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &effective_args));
             }
+
+            if effective_args.ocr_text {
+                crate::ocr::choose_text_render_geometry(
+                    &mut effective_args,
+                    &arc_image,
+                    &arc_glyphs,
+                    &ocr_detections,
+                );
+            }
+
+            let render_image = if effective_args.ocr_text {
+                crate::ocr::remove_detected_text(&arc_image, &effective_args, &ocr_detections)
+            } else {
+                (*arc_image).clone()
+            };
+
+            let ocr_overlays = if effective_args.ocr_text {
+                crate::ocr::detections_to_overlays(
+                    &arc_image,
+                    &render_image,
+                    &effective_args,
+                    &arc_glyphs,
+                    &ocr_detections,
+                )
+            } else {
+                Vec::new()
+            };
 
             // Render!
             let glyphs = fast_glyphs_store.as_ref().unwrap();
@@ -3724,7 +4409,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             let result = crate::render_output(
                 effective_args,
                 &arc_glyphs,
-                (*arc_image).clone(),
+                render_image,
                 glyphs,
                 Some(cancel_flag.clone()),
             );
@@ -3734,7 +4419,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             // Only send if not cancelled (though render output might say cancelled)
             if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                if tx_result.send((result, arc_glyphs.clone())).await.is_err() {
+                if tx_result
+                    .send((result, arc_glyphs.clone(), ocr_overlays))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -3769,7 +4458,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        println!("{:?}", err);
+        log::error!("TUI error: {:?}", err);
     }
     Ok(())
 }
@@ -3778,6 +4467,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         app.render_tick = app.render_tick.wrapping_add(1);
+        app.poll_clipboard_paste();
 
         if let Some(mut rx) = app.rx_optimization.take() {
             while let Ok(update) = rx.try_recv() {
@@ -3796,9 +4486,22 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             app.rx_optimization = Some(rx);
         }
 
-        while let Ok((result, glyphs)) = app.rx_result.try_recv() {
+        while let Ok((result, glyphs, ocr_overlays)) = app.rx_result.try_recv() {
             if result.content == "Cancelled" {
                 continue;
+            }
+            if app.ocr_overlay_count > 0 {
+                let keep = app
+                    .render_args
+                    .overlays
+                    .len()
+                    .saturating_sub(app.ocr_overlay_count);
+                app.render_args.overlays.truncate(keep);
+                app.ocr_overlay_count = 0;
+            }
+            if !ocr_overlays.is_empty() {
+                app.ocr_overlay_count = ocr_overlays.len();
+                app.render_args.overlays.extend(ocr_overlays);
             }
             // Store the raw result (no overlays) and apply overlays as a fast post-process
             let render = match app.render_mode_idx {
@@ -3826,6 +4529,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
 
+            if let Event::Key(key) = &event {
+                if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
+                    app.cancel_render();
+                    app.args_dirty = false;
+                }
+            }
+
             if app.show_unicode_explorer {
                 if let Event::Key(key) = event {
                     if key.kind == KeyEventKind::Press {
@@ -3835,8 +4545,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Up => {
                                 let curr = app.unicode_list_state.selected().unwrap_or(0);
-                                app.unicode_list_state
-                                    .select(Some(curr.saturating_sub(1)));
+                                app.unicode_list_state.select(Some(curr.saturating_sub(1)));
                             }
                             KeyCode::Down => {
                                 let curr = app.unicode_list_state.selected().unwrap_or(0);
@@ -3846,8 +4555,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::PageUp => {
                                 let curr = app.unicode_list_state.selected().unwrap_or(0);
-                                app.unicode_list_state
-                                    .select(Some(curr.saturating_sub(10)));
+                                app.unicode_list_state.select(Some(curr.saturating_sub(10)));
                             }
                             KeyCode::PageDown => {
                                 let curr = app.unicode_list_state.selected().unwrap_or(0);
@@ -3868,7 +4576,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.tree_state = TreeState::new(&app.available_blocks);
 
                                     app.show_unicode_explorer = false;
-                                    log::info!("Added Unicode range: {} (U+{:04X}-U+{:04X})", name, start, end);
+                                    log::info!(
+                                        "Added Unicode range: {} (U+{:04X}-U+{:04X})",
+                                        name,
+                                        start,
+                                        end
+                                    );
                                 }
                             }
 
@@ -4005,9 +4718,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 dialog.focus_on_input = true;
                                             }
                                         } else if dialog.explorer.current().is_dir() {
-                                            let _ = dialog
-                                                .explorer
-                                                .handle(explorer::Input::Right);
+                                            let _ = dialog.explorer.handle(explorer::Input::Right);
                                         }
                                     } else {
                                         dialog.explorer.set_selected_idx(clicked_idx);
@@ -4673,7 +5384,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         };
 
                                                         // Check if clicking near the bottom-right corner for resizing
-                                                        let is_resize_area = cell_x >= ov.x + check_w - 5 && cell_y >= ov.y + check_h - 2;
+                                                        let is_resize_area = cell_x
+                                                            >= ov.x + check_w - 5
+                                                            && cell_y >= ov.y + check_h - 2;
 
                                                         if is_double {
                                                             app.text_selected = Some(idx + 1);
@@ -4686,9 +5399,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             app.last_text_click = None;
                                                         } else if is_resize_area {
                                                             app.text_selected = Some(idx + 1);
-                                                            app.text_drag_mode = TextDragMode::Sizing;
-                                                            app.text_drag_start = Some((ov.x, ov.y));
-                                                            app.last_text_click = Some((now, cell_x, cell_y));
+                                                            app.text_drag_mode =
+                                                                TextDragMode::Sizing;
+                                                            app.text_drag_start =
+                                                                Some((ov.x, ov.y));
+                                                            app.last_text_click =
+                                                                Some((now, cell_x, cell_y));
                                                         } else {
                                                             app.text_selected = Some(idx + 1);
                                                             app.text_drag_mode =
@@ -4880,8 +5596,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     log::info!("Saved glyph config for block: {}", target_key);
                                 }
                                 continue;
-                            }
- else if mouse.column >= app.glyph_add_area.x
+                            } else if mouse.column >= app.glyph_add_area.x
                                 && mouse.column < app.glyph_add_area.x + app.glyph_add_area.width
                                 && mouse.row >= app.glyph_add_area.y
                                 && mouse.row < app.glyph_add_area.y + app.glyph_add_area.height
@@ -5254,7 +5969,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                                 app.reapply_overlays();
                                                             }
                                                         }
-
                                                     }
                                                 }
                                             }
@@ -5626,7 +6340,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Char('g') => app.toggle_tab(0),
                             KeyCode::Char('p') => app.toggle_tab(1),
                             KeyCode::Char('y') => app.toggle_tab(2),
-                            KeyCode::Delete | KeyCode::Backspace if app.current_tab == 2 && app.selected_control == 0 => {
+                            KeyCode::Delete | KeyCode::Backspace
+                                if app.current_tab == 2 && app.selected_control == 0 =>
+                            {
                                 if let Some(node) = app.tree_state.get_selected_node() {
                                     let name = node.full_path.clone();
                                     crate::font::remove_range_from_blocks_config(&name);
@@ -5677,11 +6393,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
                             KeyCode::Esc => {
-                               app.cancel_render();
-                               app.args_dirty = false;
+                                app.cancel_render();
+                                app.args_dirty = false;
 
-                               if app.is_optimizing {
-
+                                if app.is_optimizing {
                                     app.perform_auto_optimize();
                                     continue;
                                 }
@@ -7132,7 +7847,17 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     if let Some(res) = &app.cached_result {
         full_spans.push(Span::styled(
             format!(" Error {:.3}% ", res.score),
-            Style::new().fg(Color::White).bg(ACCENT_DIM).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(Color::White)
+                .bg(ACCENT_DIM)
+                .add_modifier(Modifier::BOLD),
+        ));
+        full_spans.push(Span::raw(" "));
+    }
+    if let Some(status) = &app.clipboard_paste_status {
+        full_spans.push(Span::styled(
+            format!(" {} ", status),
+            Style::new().fg(Color::White).bg(STATUS_BG),
         ));
         full_spans.push(Span::raw(" "));
     }

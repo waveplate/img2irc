@@ -151,9 +151,10 @@ impl ImageEffect {
     /// Get param range (min, max) for slider display
     pub fn param_range(&self) -> Option<(f32, f32)> {
         match self {
-            ImageEffect::Brightness(_) | ImageEffect::Contrast(_) | ImageEffect::Saturation(_) | ImageEffect::Gamma(_)=> {
-                Some((-255.0, 255.0))
-            }
+            ImageEffect::Brightness(_)
+            | ImageEffect::Contrast(_)
+            | ImageEffect::Saturation(_)
+            | ImageEffect::Gamma(_) => Some((-255.0, 255.0)),
             ImageEffect::Hue(_) => Some((0.0, 360.0)),
             ImageEffect::GaussBlur(_) | ImageEffect::LumaBlur(_) => Some((0.0, 20.0)),
             ImageEffect::Pixelize(_) => Some((1.0, 64.0)),

@@ -28,6 +28,8 @@ pub fn calculate_dimensions(
     } else {
         glyphs.float_metrics
     };
+    let cell_aspect = factor_x / factor_y;
+    let image_aspect = (orig_w / orig_h).max(f32::MIN_POSITIVE);
 
     log::info!("factor_x: {}, float_x: {}", factor_x, float_x);
     log::info!("factor_y: {}, float_y: {}", factor_y, float_y);
@@ -39,22 +41,23 @@ pub fn calculate_dimensions(
         (Some(wc), Some(hc)) => (wc as f32 * factor_x, hc as f32 * factor_y),
 
         (Some(wc), None) => {
-            let ch = (wc as f32 * (orig_h / orig_w)) * (float_x / float_y);
+            let ch = wc as f32 * cell_aspect / image_aspect;
             let pw = wc as f32 * factor_x;
             let ph = (ch.round() * factor_y).max(factor_y);
             (pw, ph)
         }
 
         (None, Some(hc)) => {
-            let cw = (hc as f32 * (orig_w / orig_h)) * (float_y / float_x);
+            let cw = hc as f32 * image_aspect / cell_aspect;
             let pw = (cw.round() * factor_x).max(factor_x);
             let ph = hc as f32 * factor_y;
             (pw, ph)
         }
 
         (None, None) => {
-            let ch = (orig_w / float_x * (orig_h / orig_w)) * (float_x / float_y);
-            let pw = (orig_w / factor_x).round() * factor_x;
+            let cols = (orig_w / factor_x).round().max(1.0);
+            let ch = cols * cell_aspect / image_aspect;
+            let pw = cols * factor_x;
             let ph = (ch.round() * factor_y).max(factor_y);
             (pw, ph)
         }

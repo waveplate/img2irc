@@ -1,14 +1,16 @@
+use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use educe::Educe;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, HighlightSpacing, List, ListState, StatefulWidget, Widget, WidgetRef},
+    widgets::{
+        Block, Borders, HighlightSpacing, List, ListState, StatefulWidget, Widget, WidgetRef,
+    },
 };
 use std::sync::Arc;
 use std::{fs::FileType, io::Result, path::PathBuf};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 
 pub type FileFilter = Arc<dyn Fn(&File) -> bool + Send + Sync>;
 
@@ -46,7 +48,10 @@ impl File {
     }
 
     pub fn is_file(&self) -> bool {
-        self.file_type.as_ref().map(|f| f.is_file()).unwrap_or(false)
+        self.file_type
+            .as_ref()
+            .map(|f| f.is_file())
+            .unwrap_or(false)
     }
 
     fn text(&self, theme: &Theme) -> Text<'static> {
@@ -265,10 +270,7 @@ pub enum Input {
 impl From<&Event> for Input {
     fn from(value: &Event) -> Self {
         if let Event::Key(key) = value {
-            if matches!(
-                key.kind,
-                KeyEventKind::Press | KeyEventKind::Repeat
-            ) {
+            if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                 return match key.code {
                     KeyCode::Char('j') | KeyCode::Down => Input::Down,
                     KeyCode::Char('k') | KeyCode::Up => Input::Up,

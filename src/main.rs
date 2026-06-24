@@ -1,9 +1,17 @@
 use img2irc_rs::{args, draw, font};
+use simplelog::{Config, LevelFilter, WriteLogger};
+use std::fs::File;
 use std::process::exit;
 
 #[tokio::main]
 async fn main() {
     let mut args = args::parse_args();
+
+    let _ = WriteLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        File::create("img2irc.log").unwrap(),
+    );
 
     // Load config
     if let Some(config) = img2irc_rs::config::Config::load() {
@@ -105,11 +113,33 @@ async fn main() {
         .await
     {
         Ok(image) => {
-            // 2. Resolve auto font size based on loaded image
-            img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
+            let ocr_detections = if render_args.ocr_text {
+                match img2irc_rs::ocr::detect_text(&image, &render_args) {
+                    Ok(detections) => {
+                        img2irc_rs::ocr::log_detections(&detections, &render_args);
+                        img2irc_rs::ocr::choose_text_font_size(
+                            &mut render_args,
+                            &detections,
+                            image.get_height(),
+                        );
+                        Some(detections)
+                    }
+                    Err(e) => {
+                        log::error!("OCR text detection failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            // 2. Resolve auto font size based on loaded image unless OCR chose it.
+            if !render_args.ocr_text {
+                img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
+            }
 
             // 3. Final glyph store with resolved font size
-            let glyph_store = font::glyph_store(
+            let mut glyph_store = font::glyph_store(
                 &render_args.blocks,
                 &render_args.exclude_range,
                 &render_args.exclude,
@@ -120,6 +150,44 @@ async fn main() {
                 false,
                 None,
             );
+
+            if let Some(detections) = &ocr_detections {
+                img2irc_rs::ocr::choose_text_render_geometry(
+                    &mut render_args,
+                    &image,
+                    &glyph_store,
+                    detections,
+                );
+                glyph_store = font::glyph_store(
+                    &render_args.blocks,
+                    &render_args.exclude_range,
+                    &render_args.exclude,
+                    &render_args.include_range,
+                    render_args.include.as_ref(),
+                    &render_args.font,
+                    render_args.font_size,
+                    false,
+                    None,
+                );
+            }
+
+            let render_image = if let Some(detections) = &ocr_detections {
+                img2irc_rs::ocr::remove_detected_text(&image, &render_args, detections)
+            } else {
+                image.clone()
+            };
+
+            if let Some(detections) = &ocr_detections {
+                let overlays = img2irc_rs::ocr::detections_to_overlays(
+                    &image,
+                    &render_image,
+                    &render_args,
+                    &glyph_store,
+                    detections,
+                );
+                log::info!("Created {} OCR text overlays", overlays.len());
+                render_args.overlays.extend(overlays);
+            }
 
             log::info!("Loaded {} glyphs", glyph_store.glyphs.len());
             log::info!(
@@ -132,8 +200,13 @@ async fn main() {
             let glyphs = draw::prepare_glyphs(&glyph_store, &render_args);
             log::info!("Prepared {} optimized glyphs", glyphs.len());
 
-            let result =
-                img2irc_rs::render_output(render_args.clone(), &glyph_store, image, &glyphs, None);
+            let result = img2irc_rs::render_output(
+                render_args.clone(),
+                &glyph_store,
+                render_image,
+                &glyphs,
+                None,
+            );
 
             img2irc_rs::write_encoded_output(&result.content, &args.encoding);
             if let Some(path) = &args.save {

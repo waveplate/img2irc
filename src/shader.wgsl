@@ -64,7 +64,7 @@ fn nearest_strict_partitioned_hex_colour(target_col: u32, tol: u32) -> u32 {
     let palette_size = arrayLength(&palette);
     
     for (var i: u32 = 0u; i < palette_size; i++) {
-        if (palette_size == 99u && i >= 2u && i <= 15u) {
+        if (palette_size == 99u && i < 16u) {
             continue;
         }
         
@@ -96,7 +96,7 @@ fn nearest_strict_partitioned_hex_colour(target_col: u32, tol: u32) -> u32 {
         // Fallback: nearest_hex_colour_fast
         best_d = 0xFFFFFFFFu;
         for (var i: u32 = 0u; i < palette_size; i++) {
-            if (palette_size == 99u && i >= 2u && i <= 15u) {
+            if (palette_size == 99u && i < 16u) {
                 continue;
             }
             let p = palette[i];

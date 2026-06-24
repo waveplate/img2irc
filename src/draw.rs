@@ -60,16 +60,27 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
         glyphs
             .glyphs
             .iter()
-            .filter(|(ch, _, _)| glyphs.selected.contains(ch))
+            .filter(|(ch, _, _)| {
+                glyphs.selected.contains(ch) && !crate::font::is_emoji_render_candidate(*ch)
+            })
             .collect()
     } else {
         // If not filtering, include everything
-        glyphs.glyphs.iter().collect()
+        glyphs
+            .glyphs
+            .iter()
+            .filter(|(ch, _, _)| !crate::font::is_emoji_render_candidate(*ch))
+            .collect()
     };
 
-    // Fallback: if filtering resulted in no glyphs, use all available glyphs
-    if filtered_glyphs.is_empty() {
-        filtered_glyphs = glyphs.glyphs.iter().collect();
+    // Fallback only when no glyph filters are active. With filters active, an empty
+    // set can be intentional, for example after disabling every glyph in a group.
+    if filtered_glyphs.is_empty() && !is_filtering {
+        filtered_glyphs = glyphs
+            .glyphs
+            .iter()
+            .filter(|(ch, _, _)| !crate::font::is_emoji_render_candidate(*ch))
+            .collect();
     }
 
     filtered_glyphs
@@ -221,6 +232,11 @@ static IRC99_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
 });
 
 #[inline(always)]
+fn should_skip_irc99_match_index(palette_len: usize, idx: usize) -> bool {
+    palette_len == IRC99.len() && idx < 16
+}
+
+#[inline(always)]
 pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     let pr = ((col >> 16) & 0xFF) as i32;
     let pg = ((col >> 8) & 0xFF) as i32;
@@ -242,7 +258,7 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
 
     if let Some(inf) = info {
         for (i, [r, g, b]) in inf.components.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
+            if should_skip_irc99_match_index(palette.len(), i) {
                 continue;
             }
 
@@ -260,7 +276,7 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
         }
     } else {
         for (i, &p) in palette.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
+            if should_skip_irc99_match_index(palette.len(), i) {
                 continue;
             }
 
@@ -303,6 +319,9 @@ pub fn nearest_distinctly_chromatic_hex_colour(
 
     if let Some(inf) = info {
         for (i, [r, g, b]) in inf.components.iter().enumerate() {
+            if should_skip_irc99_match_index(palette.len(), i) {
+                continue;
+            }
             if is_near_grayscale_rgb(*r as u8, *g as u8, *b as u8, tolerance) {
                 continue;
             }
@@ -320,6 +339,9 @@ pub fn nearest_distinctly_chromatic_hex_colour(
         }
     } else {
         for (i, &p) in palette.iter().enumerate() {
+            if should_skip_irc99_match_index(palette.len(), i) {
+                continue;
+            }
             if is_near_grayscale(p, tolerance) {
                 continue;
             }
@@ -359,7 +381,7 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
 
     if let Some(inf) = info {
         for (i, [r, g, b]) in inf.components.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
+            if should_skip_irc99_match_index(palette.len(), i) {
                 continue;
             }
 
@@ -379,7 +401,7 @@ pub fn nearest_strict_partitioned_hex_colour(target: u32, palette: &[u32], tol: 
         }
     } else {
         for (i, &p) in palette.iter().enumerate() {
-            if palette.len() == 99 && (2..16).contains(&i) {
+            if should_skip_irc99_match_index(palette.len(), i) {
                 continue;
             }
 
@@ -568,23 +590,29 @@ fn block_bitmap(
     }
 
     let mut out = Vec::with_capacity(ph / gh);
-    out.extend((0..ph).into_par_iter().step_by(gh).map(|y| {
-        let mut row = Vec::with_capacity(pw / gw);
-        for x in (0..pw).step_by(gw) {
-            let mut block_pixels = Vec::with_capacity(gh);
-            for j in 0..gh {
-                let mut row_pixels = Vec::with_capacity(gw);
-                for i in 0..gw {
-                    row_pixels.push(px_rows[y + j][x + i]);
+    out.extend(
+        (0..ph)
+            .into_par_iter()
+            .step_by(gh)
+            .map(|y| {
+                let mut row = Vec::with_capacity(pw / gw);
+                for x in (0..pw).step_by(gw) {
+                    let mut block_pixels = Vec::with_capacity(gh);
+                    for j in 0..gh {
+                        let mut row_pixels = Vec::with_capacity(gw);
+                        for i in 0..gw {
+                            row_pixels.push(px_rows[y + j][x + i]);
+                        }
+                        block_pixels.push(row_pixels);
+                    }
+                    row.push(AnsiPixelBlock {
+                        pixels: block_pixels,
+                    });
                 }
-                block_pixels.push(row_pixels);
-            }
-            row.push(AnsiPixelBlock {
-                pixels: block_pixels,
-            });
-        }
-        row
-    }).collect::<Vec<_>>());
+                row
+            })
+            .collect::<Vec<_>>(),
+    );
     out
 }
 
@@ -711,14 +739,30 @@ pub fn emit_colourized(
             }
         } else {
             // ANSI / Preview Path: Consolidated escape sequences
-            
+
             // Determine changes relative to the reset/default state on 'first'
-            let fg_changed = if *first { true } else { last_fg.as_ref() != Some(&fg) };
-            let bg_changed = if *first { bg.is_some() } else { last_bg.as_ref() != bg.as_ref() };
+            let fg_changed = if *first {
+                true
+            } else {
+                last_fg.as_ref() != Some(&fg)
+            };
+            let bg_changed = if *first {
+                bg.is_some()
+            } else {
+                last_bg.as_ref() != bg.as_ref()
+            };
             let bold_changed = if *first { bold } else { *last_bold != bold };
-            let italic_changed = if *first { italic } else { *last_italic != italic };
-            let underline_changed = if *first { underline } else { *last_underline != underline };
-            
+            let italic_changed = if *first {
+                italic
+            } else {
+                *last_italic != italic
+            };
+            let underline_changed = if *first {
+                underline
+            } else {
+                *last_underline != underline
+            };
+
             let need_fg = fg_changed && !is_space;
             let need_bg = bg_changed;
             let need_style = bold_changed || italic_changed || underline_changed;
@@ -750,8 +794,21 @@ pub fn emit_colourized(
                 }
 
                 if need_fg {
-                    let [r, g, b] = match fg {
-                        Colour::RGB(rgb) => rgb,
+                    match fg {
+                        Colour::RGB(rgb) => {
+                            if as_preview || render == Render::Ansi24 {
+                                parts.push(format!("38;2;{};{};{}", rgb[0], rgb[1], rgb[2]));
+                            } else {
+                                let col = make_rgb_u32(&rgb);
+                                let idx = if !is_near_grayscale(col, 5) {
+                                    nearest_distinctly_chromatic_hex_colour(col, &ANSI256, 5)
+                                        .unwrap_or_else(|| nearest_hex_colour_fast(col, &ANSI256))
+                                } else {
+                                    nearest_hex_colour_fast(col, &ANSI256)
+                                };
+                                parts.push(format!("38;5;{}", idx));
+                            }
+                        }
                         Colour::Index(i) => {
                             if as_preview || render == Render::Ansi24 {
                                 let pal: &[u32] = if render == Render::Irc {
@@ -759,17 +816,11 @@ pub fn emit_colourized(
                                 } else {
                                     &ANSI256
                                 };
-                                unpack_rgb(pal[i as usize])
+                                let [r, g, b] = unpack_rgb(pal[i as usize]);
+                                parts.push(format!("38;2;{};{};{}", r, g, b));
                             } else {
-                                [0, 0, 0]
+                                parts.push(format!("38;5;{}", i));
                             }
-                        }
-                    };
-                    if as_preview || render == Render::Ansi24 {
-                        parts.push(format!("38;2;{};{};{}", r, g, b));
-                    } else {
-                        if let Colour::Index(i) = fg {
-                            parts.push(format!("38;5;{}", i));
                         }
                     }
                     *last_fg = Some(fg.clone());
@@ -777,8 +828,15 @@ pub fn emit_colourized(
 
                 if need_bg {
                     if let Some(bg_c) = &bg {
-                        let [r, g, b] = match bg_c {
-                            Colour::RGB(rgb) => *rgb,
+                        match bg_c {
+                            Colour::RGB(rgb) => {
+                                if as_preview || render == Render::Ansi24 {
+                                    parts.push(format!("48;2;{};{};{}", rgb[0], rgb[1], rgb[2]));
+                                } else {
+                                    let idx = nearest_hex_colour_fast(make_rgb_u32(rgb), &ANSI256);
+                                    parts.push(format!("48;5;{}", idx));
+                                }
+                            }
                             Colour::Index(i) => {
                                 if as_preview || render == Render::Ansi24 {
                                     let pal: &[u32] = if render == Render::Irc {
@@ -786,17 +844,11 @@ pub fn emit_colourized(
                                     } else {
                                         &ANSI256
                                     };
-                                    unpack_rgb(pal[*i as usize])
+                                    let [r, g, b] = unpack_rgb(pal[*i as usize]);
+                                    parts.push(format!("48;2;{};{};{}", r, g, b));
                                 } else {
-                                    [0, 0, 0]
+                                    parts.push(format!("48;5;{}", i));
                                 }
-                            }
-                        };
-                        if as_preview || render == Render::Ansi24 {
-                            parts.push(format!("48;2;{};{};{}", r, g, b));
-                        } else {
-                            if let Colour::Index(i) = bg_c {
-                                parts.push(format!("48;5;{}", i));
                             }
                         }
                     } else {
@@ -911,6 +963,9 @@ pub fn apply_overlays_to_result(
 
             for ov in overlays {
                 if let Some(opt_c) = get_overlay_at(ov, cx, cy) {
+                    if opt_c.is_none() && ov.bg.is_none() {
+                        continue;
+                    }
                     let ch = opt_c.unwrap_or(' ');
                     ov_char = Some(ch);
                     ov_bold = ov.bold;
@@ -1376,7 +1431,12 @@ fn build_boundary_segments(
     segments
 }
 
-fn segment_intersects_center_cell(segment: &BoundarySegment, patch: &LocalPatch, gw: usize, gh: usize) -> bool {
+fn segment_intersects_center_cell(
+    segment: &BoundarySegment,
+    patch: &LocalPatch,
+    gw: usize,
+    gh: usize,
+) -> bool {
     let x0 = patch.cell_offset_x;
     let y0 = patch.cell_offset_y;
     let x1 = x0 + gw;
@@ -2136,10 +2196,7 @@ fn horizontal_boundary_positions(
     positions
 }
 
-fn seam_discontinuity_score(
-    rows: &[Vec<f32>],
-    allow_step: f32,
-) -> f32 {
+fn seam_discontinuity_score(rows: &[Vec<f32>], allow_step: f32) -> f32 {
     if rows.len() < 2 {
         return 0.0;
     }
@@ -2204,7 +2261,9 @@ fn horizontal_seam_discontinuity_score(
     search_radius: usize,
 ) -> f32 {
     let positions: Vec<Vec<f32>> = (0..gw)
-        .map(|dx| horizontal_boundary_positions(raster, width, height, x0 + dx, seam_y, search_radius))
+        .map(|dx| {
+            horizontal_boundary_positions(raster, width, height, x0 + dx, seam_y, search_radius)
+        })
         .collect();
     seam_discontinuity_score(&positions, DISCONTINUITY_ALLOWED_STEP)
 }
@@ -2233,18 +2292,12 @@ fn cell_discontinuity_score(
         count += 1;
     }
     if cx + 1 < grid_w {
-        total += vertical_seam_discontinuity_score(
-            raster,
-            width,
-            x0 + gw,
-            y0,
-            gh,
-            search_radius,
-        );
+        total += vertical_seam_discontinuity_score(raster, width, x0 + gw, y0, gh, search_radius);
         count += 1;
     }
     if cy > 0 {
-        total += horizontal_seam_discontinuity_score(raster, width, height, x0, y0, gw, search_radius);
+        total +=
+            horizontal_seam_discontinuity_score(raster, width, height, x0, y0, gw, search_radius);
         count += 1;
     }
     if cy + 1 < grid_h {
@@ -2421,12 +2474,13 @@ pub fn render_blocks(
     args: &RenderArgs,
     render: Render,
     glyphs: &[FastGlyph],
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> RenderResult {
     // Redirect to smooth renderer but with smoothing features effectively disabled by the 'args.smooth' flag check inside.
     // However, if args.smooth is false, we need to ensure render_blocks_smooth behaves correctly (it does, assuming I fixed the loop issue).
     // The user wants "quantized the same as is donen when --smooth is used".
     // This implies using the exact same pipeline.
-    render_blocks_smooth(image, args, render, glyphs, None)
+    render_blocks_smooth(image, args, render, glyphs, abort_flag)
 }
 
 #[inline(always)]
@@ -2494,149 +2548,160 @@ pub fn render_blocks_smooth(
 
     let scales = vec![(1.0, 1.0)];
 
-    log::debug!("args.gpu = {}", args.gpu);
+    if args.gpu && !cfg!(feature = "gpu") {
+        log::warn!("--gpu requested, but this binary was built without the `gpu` feature; using CPU renderer");
+    }
+    let use_gpu = cfg!(feature = "gpu") && args.gpu;
+    log::debug!("args.gpu = {}, use_gpu = {}", args.gpu, use_gpu);
     // Parallel Processing
-    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = if args.gpu {
-        let gpu_res = crate::gpu::render_blocks_gpu(
-            image,
-            glyphs,
-            render.clone(),
-            args.grayscale_tolerance,
-            bp as u32,
-            grid_h * grid_w,
-        );
-        let mut results = Vec::with_capacity(grid_h);
-        let mut r_idx = 0;
-        for _y in 0..grid_h {
-            let mut row_data = Vec::with_capacity(grid_w);
-            let mut row_state = Vec::with_capacity(grid_w);
-            for _x in 0..grid_w {
-                let res = &gpu_res[r_idx];
-                r_idx += 1;
+    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = if use_gpu {
+        #[cfg(feature = "gpu")]
+        {
+            let gpu_res = crate::gpu::render_blocks_gpu(
+                image,
+                glyphs,
+                render.clone(),
+                args.grayscale_tolerance,
+                bp as u32,
+                grid_h * grid_w,
+            );
+            let mut results = Vec::with_capacity(grid_h);
+            let mut r_idx = 0;
+            for _y in 0..grid_h {
+                let mut row_data = Vec::with_capacity(grid_w);
+                let mut row_state = Vec::with_capacity(grid_w);
+                for _x in 0..grid_w {
+                    let res = &gpu_res[r_idx];
+                    r_idx += 1;
 
-                let (final_fg, final_bg, fg_obj, bg_obj, alt_fg_obj, alt_bg_obj) =
-                    if render == Render::Ansi24 {
-                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
-                        (
-                            final_fg,
-                            final_bg,
-                            Some(Colour::RGB(final_fg)),
-                            Some(Colour::RGB(final_bg)),
-                            None,
-                            None,
-                        )
-                    } else if render == Render::Irc {
-                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+                    let (final_fg, final_bg, fg_obj, bg_obj, alt_fg_obj, alt_bg_obj) =
+                        if render == Render::Ansi24 {
+                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+                            (
+                                final_fg,
+                                final_bg,
+                                Some(Colour::RGB(final_fg)),
+                                Some(Colour::RGB(final_bg)),
+                                None,
+                                None,
+                            )
+                        } else if render == Render::Irc {
+                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
 
-                        let col_hi = make_rgb_u32(&final_fg);
-                        let col_lo = make_rgb_u32(&final_bg);
-                        let hi_idx = nearest_strict_partitioned_hex_colour(
-                            col_hi,
-                            &IRC99,
-                            args.grayscale_tolerance,
-                        );
-                        let lo_idx = nearest_strict_partitioned_hex_colour(
-                            col_lo,
-                            &IRC99,
-                            args.grayscale_tolerance,
-                        );
+                            let col_hi = make_rgb_u32(&final_fg);
+                            let col_lo = make_rgb_u32(&final_bg);
+                            let hi_idx = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
 
-                        let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
-                        let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
+                            let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
+                            let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
 
-                        (
-                            hi_rgb,
-                            lo_rgb,
-                            Some(Colour::Index(hi_idx)),
-                            Some(Colour::Index(lo_idx)),
-                            None,
-                            None,
-                        )
-                    } else if render == Render::Ansi {
-                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::Index(hi_idx)),
+                                Some(Colour::Index(lo_idx)),
+                                None,
+                                None,
+                            )
+                        } else if render == Render::Ansi {
+                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
 
-                        let col_hi = make_rgb_u32(&final_fg);
-                        let col_lo = make_rgb_u32(&final_bg);
-                        let hi_idx = nearest_strict_partitioned_hex_colour(
-                            col_hi,
-                            &ANSI256,
-                            args.grayscale_tolerance,
-                        );
-                        let lo_idx = nearest_strict_partitioned_hex_colour(
-                            col_lo,
-                            &ANSI256,
-                            args.grayscale_tolerance,
-                        );
+                            let col_hi = make_rgb_u32(&final_fg);
+                            let col_lo = make_rgb_u32(&final_bg);
+                            let hi_idx = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_idx = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
 
-                        let hi_rgb = unpack_rgb(ANSI256[hi_idx as usize]);
-                        let lo_rgb = unpack_rgb(ANSI256[lo_idx as usize]);
+                            let hi_rgb = unpack_rgb(ANSI256[hi_idx as usize]);
+                            let lo_rgb = unpack_rgb(ANSI256[lo_idx as usize]);
 
-                        (
-                            hi_rgb,
-                            lo_rgb,
-                            Some(Colour::Index(hi_idx)),
-                            Some(Colour::Index(lo_idx)),
-                            None,
-                            None,
-                        )
-                    } else {
-                        let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                        let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::Index(hi_idx)),
+                                Some(Colour::Index(lo_idx)),
+                                None,
+                                None,
+                            )
+                        } else {
+                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
+                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
 
-                        let col_hi = make_rgb_u32(&final_fg);
-                        let col_lo = make_rgb_u32(&final_bg);
+                            let col_hi = make_rgb_u32(&final_fg);
+                            let col_lo = make_rgb_u32(&final_bg);
 
-                        let hi_ansi = nearest_strict_partitioned_hex_colour(
-                            col_hi,
-                            &ANSI256,
-                            args.grayscale_tolerance,
-                        );
-                        let lo_ansi = nearest_strict_partitioned_hex_colour(
-                            col_lo,
-                            &ANSI256,
-                            args.grayscale_tolerance,
-                        );
+                            let hi_ansi = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_ansi = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &ANSI256,
+                                args.grayscale_tolerance,
+                            );
 
-                        let hi_irc = nearest_strict_partitioned_hex_colour(
-                            col_hi,
-                            &IRC99,
-                            args.grayscale_tolerance,
-                        );
-                        let lo_irc = nearest_strict_partitioned_hex_colour(
-                            col_lo,
-                            &IRC99,
-                            args.grayscale_tolerance,
-                        );
+                            let hi_irc = nearest_strict_partitioned_hex_colour(
+                                col_hi,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
+                            let lo_irc = nearest_strict_partitioned_hex_colour(
+                                col_lo,
+                                &IRC99,
+                                args.grayscale_tolerance,
+                            );
 
-                        let hi_rgb = unpack_rgb(ANSI256[hi_ansi as usize]);
-                        let lo_rgb = unpack_rgb(ANSI256[lo_ansi as usize]);
+                            let hi_rgb = unpack_rgb(ANSI256[hi_ansi as usize]);
+                            let lo_rgb = unpack_rgb(ANSI256[lo_ansi as usize]);
 
-                        (
-                            hi_rgb,
-                            lo_rgb,
-                            Some(Colour::Index(hi_ansi)),
-                            Some(Colour::Index(lo_ansi)),
-                            Some(Colour::Index(hi_irc)),
-                            Some(Colour::Index(lo_irc)),
-                        )
-                    };
+                            (
+                                hi_rgb,
+                                lo_rgb,
+                                Some(Colour::Index(hi_ansi)),
+                                Some(Colour::Index(lo_ansi)),
+                                Some(Colour::Index(hi_irc)),
+                                Some(Colour::Index(lo_irc)),
+                            )
+                        };
 
-                row_data.push(BlockData {
-                    fg: final_fg,
-                    bg: final_bg,
-                    fg_col: fg_obj,
-                    bg_col: bg_obj,
-                    alt_fg_col: alt_fg_obj,
-                    alt_bg_col: alt_bg_obj,
-                });
-                row_state.push((res.best_glyph as usize, res.best_inv != 0));
+                    row_data.push(BlockData {
+                        fg: final_fg,
+                        bg: final_bg,
+                        fg_col: fg_obj,
+                        bg_col: bg_obj,
+                        alt_fg_col: alt_fg_obj,
+                        alt_bg_col: alt_bg_obj,
+                    });
+                    row_state.push((res.best_glyph as usize, res.best_inv != 0));
+                }
+                results.push((row_data, row_state));
             }
-            results.push((row_data, row_state));
+            results
         }
-        results
+        #[cfg(not(feature = "gpu"))]
+        {
+            unreachable!("use_gpu is false when the `gpu` feature is disabled");
+        }
     } else {
         let shape_cache = std::sync::Arc::new(dashmap::DashMap::<u64, (usize, bool)>::new());
 
@@ -2656,6 +2721,12 @@ pub fn render_blocks_smooth(
                 let mut indices = Vec::with_capacity(bp);
 
                 for blk in block_row {
+                    if let Some(flag) = &abort_flag {
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return (Vec::new(), Vec::new());
+                        }
+                    }
+
                     // 1. Capture Base Pixels
                     original_pixels.clear();
                     for y in 0..gh {
@@ -2739,6 +2810,14 @@ pub fn render_blocks_smooth(
                             let mut best_inv = false;
 
                             for (gi, fglyph) in glyphs.iter().enumerate() {
+                                if gi & 0x3f == 0 {
+                                    if let Some(flag) = &abort_flag {
+                                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                            return (Vec::new(), Vec::new());
+                                        }
+                                    }
+                                }
+
                                 let mut ones_cnt = [0u16; 256];
                                 for &i in &fglyph.ones {
                                     ones_cnt[indices[i] as usize] += 1;
@@ -2813,30 +2892,36 @@ pub fn render_blocks_smooth(
                             let mut ones_rgb = None;
                             for i in 0..bp {
                                 let is_under_ones = fglyph.ones.contains(&i);
-                                let is_target = if !scale_best_inv { is_under_ones } else { !is_under_ones };
+                                let is_target = if !scale_best_inv {
+                                    is_under_ones
+                                } else {
+                                    !is_under_ones
+                                };
                                 if is_target && indices[i] as usize == fgi {
                                     let px = unsafe { pixels.get_unchecked(i) };
                                     ones_rgb = Some([px.r as u8, px.g as u8, px.b as u8]);
                                     break;
                                 }
                             }
-                            scale_best_fg = ones_rgb.unwrap_or_else(|| {
-                                unpack_rgb(palette[fgi.min(palette.len() - 1)])
-                            });
+                            scale_best_fg = ones_rgb
+                                .unwrap_or_else(|| unpack_rgb(palette[fgi.min(palette.len() - 1)]));
 
                             let mut zeros_rgb = None;
                             for i in 0..bp {
                                 let is_under_ones = fglyph.ones.contains(&i);
-                                let is_target = if !scale_best_inv { !is_under_ones } else { is_under_ones };
+                                let is_target = if !scale_best_inv {
+                                    !is_under_ones
+                                } else {
+                                    is_under_ones
+                                };
                                 if is_target && indices[i] as usize == bgi {
                                     let px = unsafe { pixels.get_unchecked(i) };
                                     zeros_rgb = Some([px.r as u8, px.g as u8, px.b as u8]);
                                     break;
                                 }
                             }
-                            scale_best_bg = zeros_rgb.unwrap_or_else(|| {
-                                unpack_rgb(palette[bgi.min(palette.len() - 1)])
-                            });
+                            scale_best_bg = zeros_rgb
+                                .unwrap_or_else(|| unpack_rgb(palette[bgi.min(palette.len() - 1)]));
                         }
 
                         best_overall_glyph = scale_best_glyph;
@@ -3057,7 +3142,15 @@ pub fn render_blocks_smooth(
                 let total_diff: i64 = diff.iter().sum();
                 let mut costs = Vec::with_capacity(glyphs.len() * 2);
 
-                for fglyph in glyphs.iter() {
+                for (gi, fglyph) in glyphs.iter().enumerate() {
+                    if gi & 0x3f == 0 {
+                        if let Some(flag) = &abort_flag {
+                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                return (Vec::new(), Vec::new());
+                            }
+                        }
+                    }
+
                     let mut dot = 0i64;
                     for &i in &fglyph.ones {
                         dot += unsafe { *diff.get_unchecked(i) };
@@ -3125,6 +3218,14 @@ pub fn render_blocks_smooth(
             };
 
             for &curr_idx in &indices {
+                if curr_idx & 0x3f == 0 {
+                    if let Some(flag) = &abort_flag {
+                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return "Cancelled".into();
+                        }
+                    }
+                }
+
                 let cx = curr_idx % grid_w;
                 let cy = curr_idx / grid_w;
                 let (cur_gi, cur_inv) = grid_state[curr_idx];
@@ -3353,7 +3454,8 @@ pub fn render_blocks_smooth(
             .into_iter()
             .map(|score| {
                 if score >= disc_threshold {
-                    let severity = ((score - disc_threshold) / (max_score - disc_threshold)).min(1.0);
+                    let severity =
+                        ((score - disc_threshold) / (max_score - disc_threshold)).min(1.0);
                     let red = (80.0 + 175.0 * severity).min(255.0) as u8;
                     let bg_int = (red / 2).max(30);
                     Some(([red, 20, 20], [bg_int, 10, 10]))
@@ -3437,6 +3539,9 @@ pub fn render_blocks_smooth(
             let mut overlay_char = None;
             for ov in &args.overlays {
                 if let Some(opt_c) = get_overlay_at(ov, x as i32, y as i32) {
+                    if opt_c.is_none() && ov.bg.is_none() {
+                        continue;
+                    }
                     text_overlay = Some(ov);
                     overlay_char = opt_c;
                     break;
@@ -3909,6 +4014,9 @@ pub fn render_braille(
 
             for ov in &args.overlays {
                 if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
+                    if opt_c.is_none() && ov.bg.is_none() {
+                        continue;
+                    }
                     if let Some(fg_param) = &ov.fg {
                         final_fg = match fg_param {
                             crate::args::ColorSpec::Index(i) => Colour::Index(*i),
@@ -3967,6 +4075,9 @@ pub fn render_braille(
 
                 for ov in &args.overlays {
                     if let Some(opt_c) = get_overlay_at(ov, (x / 2) as i32, (y / 4) as i32) {
+                        if opt_c.is_none() && ov.bg.is_none() {
+                            continue;
+                        }
                         if let Some(fg_param) = &ov.fg {
                             alt_fg = match fg_param {
                                 crate::args::ColorSpec::Index(i) => Colour::Index(*i),
@@ -4461,8 +4572,7 @@ mod tests {
         let broken_state = vec![(0, false), (2, false)];
 
         let smooth_raster = build_rendered_raster(&grid_data, &smooth_state, &glyphs, 2, 1, gw, gh);
-        let broken_raster =
-            build_rendered_raster(&grid_data, &broken_state, &glyphs, 2, 1, gw, gh);
+        let broken_raster = build_rendered_raster(&grid_data, &broken_state, &glyphs, 2, 1, gw, gh);
 
         let smooth_score = cell_discontinuity_score(0, &smooth_raster, 2, 1, gw, gh);
         let broken_score = cell_discontinuity_score(0, &broken_raster, 2, 1, gw, gh);
@@ -4482,10 +4592,38 @@ mod tests {
         let grid_w = 2;
         let grid_h = 1;
         let raster = vec![
-            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
-            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
-            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
-            [255, 0, 0], [255, 0, 0], [255, 0, 0], [255, 0, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0], [0, 255, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [255, 0, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
+            [0, 255, 0],
         ];
 
         let score = cell_discontinuity_score(0, &raster, grid_w, grid_h, gw, gh);
@@ -4499,13 +4637,51 @@ mod tests {
         let grid_w = 2;
         let grid_h = 1;
         let raster = vec![
-            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0],
-            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0],
-            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255],
-            [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255], [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
+            [255, 255, 255],
+            [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
+            [255, 255, 255],
+            [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
+            [0, 0, 0],
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 255],
         ];
 
         let score = cell_discontinuity_score(0, &raster, grid_w, grid_h, gw, gh);
         assert!(score > 10.0, "score={}", score);
+    }
+
+    #[test]
+    fn irc99_nearest_match_skips_user_definable_base_colours() {
+        assert_eq!(nearest_hex_colour_fast(0x000000, &IRC99), 88);
+        assert_eq!(nearest_hex_colour_fast(0xFFFFFF, &IRC99), 98);
+        assert_eq!(
+            nearest_distinctly_chromatic_hex_colour(0xFF0000, &IRC99, 0),
+            Some(52)
+        );
     }
 }

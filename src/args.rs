@@ -36,8 +36,19 @@ pub enum Render {
     Ansi24,
 }
 
+#[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OcrModelTier {
+    Tiny,
+    Small,
+    Medium,
+}
+
 fn default_discontinuity_threshold() -> f32 {
     0.5
+}
+
+fn default_ocr_max_text_height_ratio() -> f32 {
+    2.5
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +218,31 @@ pub struct RenderArgs {
     pub score: bool,
     pub save: Option<String>,
     pub fft_debug_dir: Option<String>,
+    pub ocr_text: bool,
+    pub ocr_min_confidence: f32,
+    pub ocr_min_ascii_ratio: f32,
+    pub ocr_model_tier: OcrModelTier,
+    pub ocr_model_cache: Option<String>,
+    pub ocr_det_model: Option<String>,
+    pub ocr_cls_model: Option<String>,
+    pub ocr_rec_model: Option<String>,
+    pub ocr_dict: Option<String>,
+    #[serde(default)]
+    pub ocr_textline_orientation: bool,
+    #[serde(default)]
+    pub ocr_most_angle: bool,
+    #[serde(default)]
+    pub ocr_doc_orientation: bool,
+    pub ocr_doc_orientation_model: Option<String>,
+    #[serde(default)]
+    pub ocr_doc_unwarping: bool,
+    pub ocr_threads: usize,
+    pub ocr_max_side_len: u32,
+    #[serde(default = "default_ocr_max_text_height_ratio")]
+    pub ocr_max_text_height_ratio: f32,
+    pub ocr_box_score_threshold: f32,
+    pub ocr_box_threshold: f32,
+    pub ocr_unclip_ratio: f32,
     pub pipeline: Vec<crate::pipeline::ImageEffect>,
     #[serde(default)]
     pub overlays: Vec<TextOverlay>,
@@ -239,7 +275,7 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub tui: bool,
 
-    /// enable gpu acceleration
+    /// enable gpu acceleration (requires building with --features gpu)
     #[arg(long, default_value_t = false)]
     pub gpu: bool,
 
@@ -349,7 +385,7 @@ pub struct Args {
     pub font_size: Param,
 
     /// tolerance for considering a colour grayscale (0-255)
-    #[arg(long, default_value = "0")]
+    #[arg(long, default_value = "32")]
     pub grayscale_tolerance: Param,
 
     // Iteratable params
@@ -638,6 +674,86 @@ pub struct Args {
     /// write exact FFT input windows and fix artifacts into this directory
     #[arg(long = "debug-dir", visible_alias = "fft-debug-dir")]
     pub fft_debug_dir: Option<String>,
+
+    /// detect readable text with PaddleOCR and overlay it as normal text
+    #[arg(long = "ocr-text", default_value_t = false)]
+    pub ocr_text: bool,
+
+    /// minimum OCR confidence for text overlays
+    #[arg(long = "ocr-min-confidence", default_value_t = 0.0)]
+    pub ocr_min_confidence: f32,
+
+    /// minimum printable ASCII ratio for OCR text overlays
+    #[arg(long = "ocr-min-ascii-ratio", default_value_t = 0.7)]
+    pub ocr_min_ascii_ratio: f32,
+
+    /// PP-OCRv6 model tier to use
+    #[arg(long = "ocr-model-tier", value_enum, default_value_t = OcrModelTier::Tiny)]
+    pub ocr_model_tier: OcrModelTier,
+
+    /// directory for downloaded PP-OCR models
+    #[arg(long = "ocr-model-cache")]
+    pub ocr_model_cache: Option<String>,
+
+    /// explicit PP-OCR detection ONNX path
+    #[arg(long = "ocr-det-model")]
+    pub ocr_det_model: Option<String>,
+
+    /// explicit PP-OCR text-line orientation classifier ONNX path
+    #[arg(long = "ocr-cls-model")]
+    pub ocr_cls_model: Option<String>,
+
+    /// explicit PP-OCR recognition ONNX path
+    #[arg(long = "ocr-rec-model")]
+    pub ocr_rec_model: Option<String>,
+
+    /// explicit PP-OCR dictionary path
+    #[arg(long = "ocr-dict")]
+    pub ocr_dict: Option<String>,
+
+    /// classify and correct per-line text orientation, matching PaddleOCR use_textline_orientation=True
+    #[arg(long = "ocr-textline-orientation", default_value_t = false, action = clap::ArgAction::Set)]
+    pub ocr_textline_orientation: bool,
+
+    /// force all text lines to the majority 0/180-degree orientation
+    #[arg(long = "ocr-most-angle", default_value_t = false)]
+    pub ocr_most_angle: bool,
+
+    /// classify whole-page orientation before OCR
+    #[arg(long = "ocr-doc-orientation", default_value_t = false)]
+    pub ocr_doc_orientation: bool,
+
+    /// explicit PP-OCR document orientation classifier ONNX path
+    #[arg(long = "ocr-doc-orientation-model")]
+    pub ocr_doc_orientation_model: Option<String>,
+
+    /// enable document unwarping stage if supported by the OCR backend
+    #[arg(long = "ocr-doc-unwarping", default_value_t = false)]
+    pub ocr_doc_unwarping: bool,
+
+    /// OCR inference worker threads
+    #[arg(long = "ocr-threads", default_value_t = 4)]
+    pub ocr_threads: usize,
+
+    /// maximum side length for OCR detection preprocessing
+    #[arg(long = "ocr-max-side-len", default_value_t = 3000)]
+    pub ocr_max_side_len: u32,
+
+    /// skip OCR overlay/removal for text taller than this multiple of normal OCR line height; 0 disables
+    #[arg(long = "ocr-max-text-height-ratio", default_value_t = 2.5)]
+    pub ocr_max_text_height_ratio: f32,
+
+    /// PP-OCR text-box score threshold
+    #[arg(long = "ocr-box-score-threshold", default_value_t = 0.6)]
+    pub ocr_box_score_threshold: f32,
+
+    /// PP-OCR box binarization threshold
+    #[arg(long = "ocr-box-threshold", default_value_t = 0.2)]
+    pub ocr_box_threshold: f32,
+
+    /// PP-OCR detected-box unclip ratio
+    #[arg(long = "ocr-unclip-ratio", default_value_t = 1.6)]
+    pub ocr_unclip_ratio: f32,
 }
 
 pub fn parse_args() -> Args {

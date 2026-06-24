@@ -141,7 +141,7 @@ fn get_fallback_font_paths(ch: char) -> Vec<String> {
         return paths.clone();
     }
 
-    // Use -s to get a sorted list of all matching fonts. 
+    // Use -s to get a sorted list of all matching fonts.
     let output = Command::new("fc-match")
         .arg("-s")
         .arg("-f")
@@ -159,7 +159,8 @@ fn get_fallback_font_paths(ch: char) -> Vec<String> {
                 if !path.is_empty() && !results.contains(&path) {
                     results.push(path);
                 }
-                if results.len() >= 8 { // Increased limit to find more potential matches
+                if results.len() >= 8 {
+                    // Increased limit to find more potential matches
                     break;
                 }
             }
@@ -223,7 +224,44 @@ fn is_graphical_emoji(ch: char) -> bool {
     (cp >= 0x1F900 && cp <= 0x1F9FF) || // Misc Symbols and Arrows
     (cp >= 0x1FA70 && cp <= 0x1FAFF) || // Symbols and Pictographs Extended-A
     (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc Symbols (some are emojis)
-    (cp >= 0x2700 && cp <= 0x27BF)      // Dingbats
+    (cp >= 0x2700 && cp <= 0x27BF) // Dingbats
+}
+
+pub fn is_emoji_render_candidate(ch: char) -> bool {
+    if is_graphical_emoji(ch) {
+        return true;
+    }
+
+    let cp = ch as u32;
+    matches!(
+        cp,
+        0x00A9
+            | 0x00AE
+            | 0x203C
+            | 0x2049
+            | 0x2122
+            | 0x2139
+            | 0x2328
+            | 0x23CF
+            | 0x24C2
+            | 0x25B6
+            | 0x25C0
+            | 0x3030
+            | 0x303D
+            | 0x3297
+            | 0x3299
+    ) || (0x2194..=0x21AA).contains(&cp)
+        || (0x231A..=0x231B).contains(&cp)
+        || (0x23E9..=0x23F3).contains(&cp)
+        || (0x23F8..=0x23FA).contains(&cp)
+        || (0x25AA..=0x25AB).contains(&cp)
+        || (0x25FB..=0x25FE).contains(&cp)
+        || (0x2934..=0x2935).contains(&cp)
+        || (0x2B05..=0x2B07).contains(&cp)
+        || (0x2B1B..=0x2B1C).contains(&cp)
+        || cp == 0x2B50
+        || cp == 0x2B55
+        || (0x1F000..=0x1FAFF).contains(&cp)
 }
 
 pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
@@ -266,10 +304,13 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
         toml::from_str(&toml_str).expect("Invalid TOML");
 
     let mut entry = toml::map::Map::new();
-    entry.insert("ranges".to_string(), Value::Array(vec![Value::Array(vec![
-        Value::Integer(start as i64),
-        Value::Integer(end as i64)
-    ])]));
+    entry.insert(
+        "ranges".to_string(),
+        Value::Array(vec![Value::Array(vec![
+            Value::Integer(start as i64),
+            Value::Integer(end as i64),
+        ])]),
+    );
 
     // Automatically exclude graphical emojis
     let mut exclude = Vec::new();
@@ -286,21 +327,24 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
 
     raw_config.insert(name.to_string(), Value::Table(entry));
 
-    let mut new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
-    
+    let mut new_toml =
+        toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+
     // Post-process to ensure hex format without quotes where it looks like a Unicode point
     // This is a heuristic: replace large integers or specific ranges with 0xHEX
     // Actually, TOML doesn't distinguish hex/dec in the Value enum.
     // We'll use a regex to replace integers that are likely Unicode points or specifically requested.
     let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
-    new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
-        let val: i64 = caps[2].parse().unwrap();
-        if val > 127 {
-            format!("{}0x{:04X}", &caps[1], val)
-        } else {
-            caps[0].to_string()
-        }
-    }).to_string();
+    new_toml = re
+        .replace_all(&new_toml, |caps: &regex::Captures| {
+            let val: i64 = caps[2].parse().unwrap();
+            if val > 127 {
+                format!("{}0x{:04X}", &caps[1], val)
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .to_string();
 
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
@@ -345,17 +389,20 @@ pub fn remove_range_from_blocks_config(name: &str) {
         toml::from_str(&toml_str).expect("Invalid TOML");
 
     if raw_config.remove(name).is_some() {
-        let mut new_toml = toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
-        
+        let mut new_toml =
+            toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+
         let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
-        new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
-            let val: i64 = caps[2].parse().unwrap();
-            if val > 127 {
-                format!("{}0x{:04X}", &caps[1], val)
-            } else {
-                caps[0].to_string()
-            }
-        }).to_string();
+        new_toml = re
+            .replace_all(&new_toml, |caps: &regex::Captures| {
+                let val: i64 = caps[2].parse().unwrap();
+                if val > 127 {
+                    format!("{}0x{:04X}", &caps[1], val)
+                } else {
+                    caps[0].to_string()
+                }
+            })
+            .to_string();
 
         fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
     }
@@ -426,16 +473,18 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
 
     let mut new_toml =
         toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
-    
+
     let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
-    new_toml = re.replace_all(&new_toml, |caps: &regex::Captures| {
-        let val: i64 = caps[2].parse().unwrap();
-        if val > 127 {
-            format!("{}0x{:04X}", &caps[1], val)
-        } else {
-            caps[0].to_string()
-        }
-    }).to_string();
+    new_toml = re
+        .replace_all(&new_toml, |caps: &regex::Captures| {
+            let val: i64 = caps[2].parse().unwrap();
+            if val > 127 {
+                format!("{}0x{:04X}", &caps[1], val)
+            } else {
+                caps[0].to_string()
+            }
+        })
+        .to_string();
 
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
@@ -549,7 +598,12 @@ glyphs = [32]
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
             save_path = Some(Path::new(&config_home).join("img2irc").join("blocks.toml"));
         } else if let Ok(home) = env::var("HOME") {
-            save_path = Some(Path::new(&home).join(".config").join("img2irc").join("blocks.toml"));
+            save_path = Some(
+                Path::new(&home)
+                    .join(".config")
+                    .join("img2irc")
+                    .join("blocks.toml"),
+            );
         }
 
         if let Some(p) = save_path {
@@ -1098,7 +1152,9 @@ pub fn glyph_store(
         if let Some(codes) = config_groups.get(*block_name) {
             for &code in codes {
                 if let Some(ch) = char::from_u32(code) {
-                    metric_chars.push(ch);
+                    if !is_emoji_render_candidate(ch) {
+                        metric_chars.push(ch);
+                    }
                 }
             }
         }
@@ -1132,7 +1188,9 @@ pub fn glyph_store(
             let mut block_chars = Vec::new();
             for &code in codes {
                 if let Some(ch) = char::from_u32(code) {
-                    block_chars.push(ch);
+                    if !is_emoji_render_candidate(ch) {
+                        block_chars.push(ch);
+                    }
                 }
             }
             if !block_chars.is_empty() {
@@ -1191,6 +1249,7 @@ pub fn glyph_store(
     for &ch in exclude_chars {
         selected_chars.remove(&ch);
     }
+    selected_chars.retain(|&ch| !is_emoji_render_candidate(ch));
 
     GlyphStore {
         glyphs: all_glyphs
