@@ -117,8 +117,8 @@ async fn main() {
                 match img2irc_rs::ocr::detect_text(&image, &render_args) {
                     Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
-                        if detections.is_empty() {
-                            log::info!("No text detected via OCR. Falling back to standard render.");
+                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, image.get_width(), image.get_height()) {
+                            log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             render_args.ocr = false;
                             None
                         } else {

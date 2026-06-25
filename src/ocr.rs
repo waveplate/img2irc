@@ -213,78 +213,85 @@ pub fn choose_text_render_geometry(
     let min_w = args.min_width.unwrap_or(20);
     let max_w = args.max_width.unwrap_or(100);
 
-    if args.width.is_some() || args.height.is_some() {
-        log::warn!(
-            "--ocr currently derives output width/height from detected text; ignoring explicit width={:?} height={:?}",
-            args.width,
-            args.height
-        );
-    }
+    let (cols, rows) = match (args.width, args.height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, rows_for_cols(w)),
+        (None, Some(h)) => (cols_for_rows(h), h),
+        (None, None) => {
+            if let Some((cols, rows, char_pitch, line_pitch)) =
+                infer_text_grid_geometry(source, args, glyphs, detections)
+            {
+                let clamped_cols = cols.clamp(min_w, max_w);
+                let clamped_rows = if clamped_cols != cols {
+                    rows_for_cols(clamped_cols)
+                } else {
+                    rows
+                };
+                log::info!(
+                    "OCR-inferred text grid: {clamped_cols}x{clamped_rows} cells (char_pitch={:.2}px line_pitch={:.2}px input_aspect={:.4} output_aspect={:.4})",
+                    char_pitch,
+                    line_pitch,
+                    image_aspect,
+                    (clamped_cols as f32 * gw) / (clamped_rows as f32 * gh)
+                );
+                args.width = Some(clamped_cols);
+                args.height = Some(clamped_rows);
+                return;
+            }
 
-    if let Some((cols, rows, char_pitch, line_pitch)) =
-        infer_text_grid_geometry(source, args, glyphs, detections)
-    {
-        let clamped_cols = cols.clamp(min_w, max_w);
-        let clamped_rows = if clamped_cols != cols {
-            rows_for_cols(clamped_cols)
-        } else {
-            rows
-        };
+            let mut min_cols = 1u32;
+            let mut min_rows = 1u32;
 
-        args.width = Some(clamped_cols);
-        args.height = Some(clamped_rows);
-        let output_aspect = (clamped_cols as f32 * gw) / (clamped_rows as f32 * gh);
-        log::info!(
-            "OCR-inferred text grid: {clamped_cols}x{clamped_rows} cells (char_pitch={:.2}px line_pitch={:.2}px input_aspect={:.4} output_aspect={:.4})",
-            char_pitch,
-            line_pitch,
-            image_aspect,
-            output_aspect
-        );
-        return;
-    }
+            for det in renderable_detections(detections, args, source.get_width(), source.get_height()) {
+                let Some((min_x, min_y, _max_x, max_y)) =
+                    polygon_bounds(&det.polygon, source.get_width(), source.get_height())
+                else {
+                    continue;
+                };
+                let text_cols = det.text.chars().count().max(1) as u32;
+                let text_rows = (((max_y - min_y).max(1) as f32 / gh).ceil().max(1.0)) as u32;
+                let left_frac = (min_x as f32 / image_w).clamp(0.0, 0.98);
+                let top_frac = (min_y as f32 / image_h).clamp(0.0, 0.98);
+                min_cols = min_cols.max(((text_cols + 1) as f32 / (1.0 - left_frac)).ceil() as u32);
+                min_rows = min_rows.max(((text_rows + 1) as f32 / (1.0 - top_frac)).ceil() as u32);
+            }
 
-    let mut min_cols = 1u32;
-    let mut min_rows = 1u32;
+            if min_cols == 1 && min_rows == 1 {
+                min_cols = 80;
+            }
 
-    for det in renderable_detections(detections, args, source.get_width(), source.get_height()) {
-        let Some((min_x, min_y, _max_x, max_y)) =
-            polygon_bounds(&det.polygon, source.get_width(), source.get_height())
-        else {
-            continue;
-        };
-        let text_cols = det.text.chars().count().max(1) as u32;
-        let text_rows = (((max_y - min_y).max(1) as f32 / gh).ceil().max(1.0)) as u32;
-        let left_frac = (min_x as f32 / image_w).clamp(0.0, 0.98);
-        let top_frac = (min_y as f32 / image_h).clamp(0.0, 0.98);
-        min_cols = min_cols.max(((text_cols + 1) as f32 / (1.0 - left_frac)).ceil() as u32);
-        min_rows = min_rows.max(((text_rows + 1) as f32 / (1.0 - top_frac)).ceil() as u32);
-    }
+            let mut cols = min_cols;
+            let mut rows = min_rows.max(rows_for_cols(cols));
+            cols = cols.max(cols_for_rows(rows));
+            rows = rows.max(rows_for_cols(cols));
 
-    if min_cols == 1 && min_rows == 1 {
-        min_cols = args.width.unwrap_or(80).max(1);
-    }
-
-    let mut cols = min_cols;
-    let mut rows = min_rows.max(rows_for_cols(cols));
-    cols = cols.max(cols_for_rows(rows));
-    rows = rows.max(rows_for_cols(cols));
-
-    let clamped_cols = cols.clamp(min_w, max_w);
-    let clamped_rows = if clamped_cols != cols {
-        rows_for_cols(clamped_cols)
-    } else {
-        rows
+            let clamped_cols = cols.clamp(min_w, max_w);
+            let clamped_rows = if clamped_cols != cols {
+                rows_for_cols(clamped_cols)
+            } else {
+                rows
+            };
+            (clamped_cols, clamped_rows)
+        }
     };
 
-    args.width = Some(clamped_cols);
-    args.height = Some(clamped_rows);
-    let output_aspect = (clamped_cols as f32 * gw) / (clamped_rows as f32 * gh);
+    args.width = Some(cols);
+    args.height = Some(rows);
+    let output_aspect = (cols as f32 * gw) / (rows as f32 * gh);
     log::info!(
-        "OCR-derived output size: {clamped_cols}x{clamped_rows} cells (input_aspect={:.4}, output_aspect={:.4})",
+        "OCR-derived output size: {cols}x{rows} cells (input_aspect={:.4}, output_aspect={:.4})",
         image_aspect,
         output_aspect
     );
+}
+
+pub fn has_renderable_detections(
+    detections: &[OcrDetection],
+    args: &RenderArgs,
+    image_w: u32,
+    image_h: u32,
+) -> bool {
+    !renderable_detections(detections, args, image_w, image_h).is_empty()
 }
 
 pub fn choose_text_font_size(args: &mut RenderArgs, detections: &[OcrDetection], image_h: u32) {

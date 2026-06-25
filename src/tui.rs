@@ -4317,8 +4317,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 match crate::ocr::detect_text(&arc_image, &effective_args) {
                     Ok(detections) => {
                         crate::ocr::log_detections(&detections, &effective_args);
-                        if detections.is_empty() {
-                            log::info!("No text detected via OCR. Falling back to standard render.");
+                        if !crate::ocr::has_renderable_detections(&detections, &effective_args, arc_image.get_width(), arc_image.get_height()) {
+                            log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
                             Vec::new()
                         } else {
