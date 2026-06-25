@@ -243,6 +243,10 @@ pub struct RenderArgs {
     pub ocr_box_score_threshold: f32,
     pub ocr_box_threshold: f32,
     pub ocr_unclip_ratio: f32,
+    #[serde(default)]
+    pub min_width: Option<u32>,
+    #[serde(default)]
+    pub max_width: Option<u32>,
     pub pipeline: Vec<crate::pipeline::ImageEffect>,
     #[serde(default)]
     pub overlays: Vec<TextOverlay>,
@@ -754,6 +758,14 @@ pub struct Args {
     /// PP-OCR detected-box unclip ratio
     #[arg(long = "ocr-unclip-ratio", default_value_t = 1.6)]
     pub ocr_unclip_ratio: f32,
+
+    /// minimum width in columns for auto-resized grids (OCR, etc.)
+    #[arg(long = "min-width")]
+    pub min_width: Option<u32>,
+
+    /// maximum width in columns for auto-resized grids (OCR, etc.)
+    #[arg(long = "max-width")]
+    pub max_width: Option<u32>,
 }
 
 pub fn parse_args() -> Args {

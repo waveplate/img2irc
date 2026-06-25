@@ -4317,12 +4317,18 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 match crate::ocr::detect_text(&arc_image, &effective_args) {
                     Ok(detections) => {
                         crate::ocr::log_detections(&detections, &effective_args);
-                        crate::ocr::choose_text_font_size(
-                            &mut effective_args,
-                            &detections,
-                            arc_image.get_height(),
-                        );
-                        detections
+                        if detections.is_empty() {
+                            log::info!("No text detected via OCR. Falling back to standard render.");
+                            effective_args.ocr = false;
+                            Vec::new()
+                        } else {
+                            crate::ocr::choose_text_font_size(
+                                &mut effective_args,
+                                &detections,
+                                arc_image.get_height(),
+                            );
+                            detections
+                        }
                     }
                     Err(e) => {
                         log::error!("OCR text detection failed: {}", e);

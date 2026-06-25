@@ -117,12 +117,18 @@ async fn main() {
                 match img2irc_rs::ocr::detect_text(&image, &render_args) {
                     Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
-                        img2irc_rs::ocr::choose_text_font_size(
-                            &mut render_args,
-                            &detections,
-                            image.get_height(),
-                        );
-                        Some(detections)
+                        if detections.is_empty() {
+                            log::info!("No text detected via OCR. Falling back to standard render.");
+                            render_args.ocr = false;
+                            None
+                        } else {
+                            img2irc_rs::ocr::choose_text_font_size(
+                                &mut render_args,
+                                &detections,
+                                image.get_height(),
+                            );
+                            Some(detections)
+                        }
                     }
                     Err(e) => {
                         log::error!("OCR text detection failed: {}", e);

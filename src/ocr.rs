@@ -198,9 +198,24 @@ pub fn choose_text_render_geometry(
     let gh = gh.max(1) as f32;
     let image_aspect = image_w / image_h;
 
+    let cell_aspect = gw / gh;
+    let rows_for_cols = |cols: u32| -> u32 {
+        ((cols as f32 * cell_aspect / image_aspect).round())
+            .max(1.0)
+            .ceil() as u32
+    };
+    let cols_for_rows = |rows: u32| -> u32 {
+        ((rows as f32 * image_aspect / cell_aspect).round())
+            .max(1.0)
+            .ceil() as u32
+    };
+
+    let min_w = args.min_width.unwrap_or(20);
+    let max_w = args.max_width.unwrap_or(100);
+
     if args.width.is_some() || args.height.is_some() {
         log::warn!(
-            "--ocr-text currently derives output width/height from detected text; ignoring explicit width={:?} height={:?}",
+            "--ocr currently derives output width/height from detected text; ignoring explicit width={:?} height={:?}",
             args.width,
             args.height
         );
@@ -209,11 +224,18 @@ pub fn choose_text_render_geometry(
     if let Some((cols, rows, char_pitch, line_pitch)) =
         infer_text_grid_geometry(source, args, glyphs, detections)
     {
-        args.width = Some(cols);
-        args.height = Some(rows);
-        let output_aspect = (cols as f32 * gw) / (rows as f32 * gh);
+        let clamped_cols = cols.clamp(min_w, max_w);
+        let clamped_rows = if clamped_cols != cols {
+            rows_for_cols(clamped_cols)
+        } else {
+            rows
+        };
+
+        args.width = Some(clamped_cols);
+        args.height = Some(clamped_rows);
+        let output_aspect = (clamped_cols as f32 * gw) / (clamped_rows as f32 * gh);
         log::info!(
-            "OCR-inferred text grid: {cols}x{rows} cells (char_pitch={:.2}px line_pitch={:.2}px input_aspect={:.4} output_aspect={:.4})",
+            "OCR-inferred text grid: {clamped_cols}x{clamped_rows} cells (char_pitch={:.2}px line_pitch={:.2}px input_aspect={:.4} output_aspect={:.4})",
             char_pitch,
             line_pitch,
             image_aspect,
@@ -243,28 +265,23 @@ pub fn choose_text_render_geometry(
         min_cols = args.width.unwrap_or(80).max(1);
     }
 
-    let cell_aspect = gw / gh;
-    let rows_for_cols = |cols: u32| -> u32 {
-        ((cols as f32 * cell_aspect / image_aspect).round())
-            .max(1.0)
-            .ceil() as u32
-    };
-    let cols_for_rows = |rows: u32| -> u32 {
-        ((rows as f32 * image_aspect / cell_aspect).round())
-            .max(1.0)
-            .ceil() as u32
-    };
-
     let mut cols = min_cols;
     let mut rows = min_rows.max(rows_for_cols(cols));
     cols = cols.max(cols_for_rows(rows));
     rows = rows.max(rows_for_cols(cols));
 
-    args.width = Some(cols);
-    args.height = Some(rows);
-    let output_aspect = (cols as f32 * gw) / (rows as f32 * gh);
+    let clamped_cols = cols.clamp(min_w, max_w);
+    let clamped_rows = if clamped_cols != cols {
+        rows_for_cols(clamped_cols)
+    } else {
+        rows
+    };
+
+    args.width = Some(clamped_cols);
+    args.height = Some(clamped_rows);
+    let output_aspect = (clamped_cols as f32 * gw) / (clamped_rows as f32 * gh);
     log::info!(
-        "OCR-derived output size: {cols}x{rows} cells (input_aspect={:.4}, output_aspect={:.4})",
+        "OCR-derived output size: {clamped_cols}x{clamped_rows} cells (input_aspect={:.4}, output_aspect={:.4})",
         image_aspect,
         output_aspect
     );
@@ -462,38 +479,40 @@ fn overlay_line_rows(
     let mut sorted = boxes;
     sorted.sort_by(|a, b| a.center_y().total_cmp(&b.center_y()));
 
-    let mut clusters: Vec<(f32, usize, f32)> = Vec::new();
+    let mut clusters: Vec<(f32, usize, f32, f32)> = Vec::new(); // (sum_of_centers, count, min_y, max_y)
     for b in sorted {
         let center = b.center_y();
-        if let Some((sum, count, min_y)) = clusters.last_mut() {
+        if let Some((sum, count, min_y, max_y)) = clusters.last_mut() {
             let mean = *sum / *count as f32;
             if (center - mean).abs() <= threshold {
                 *sum += center;
                 *count += 1;
                 *min_y = min_y.min(b.y0);
+                *max_y = max_y.max(b.y1);
                 continue;
             }
         }
-        clusters.push((center, 1, b.y0));
+        clusters.push((center, 1, b.y0, b.y1));
     }
 
     let image_h = source.get_height().max(1) as f32;
 
-    // Segment clusters into groups of consecutive lines
-    let mut groups: Vec<Vec<(f32, f32)>> = Vec::new();
-    let threshold_group = median_height * 1.8;
+    // Segment clusters into groups of consecutive lines based on overlap or proximity of their bounding boxes
+    let mut groups: Vec<Vec<(f32, f32, f32)>> = Vec::new(); // each group is a Vec of (center, min_y, max_y)
+    let threshold_gap = median_height * 0.25;
 
-    for (sum, count, min_y) in clusters {
+    for (sum, count, min_y, max_y) in clusters {
         let center = sum / count as f32;
         if let Some(last_group) = groups.last_mut() {
-            if let Some(&(last_center, _)) = last_group.last() {
-                if center - last_center <= threshold_group {
-                    last_group.push((center, min_y));
+            if let Some(&(_, _, last_max_y)) = last_group.last() {
+                // If the top of the current line is very close to or overlaps with the bottom of the previous line
+                if min_y - last_max_y <= threshold_gap {
+                    last_group.push((center, min_y, max_y));
                     continue;
                 }
             }
         }
-        groups.push(vec![(center, min_y)]);
+        groups.push(vec![(center, min_y, max_y)]);
     }
 
     // Map each group's lines to rows, centering around the middle line
@@ -501,7 +520,7 @@ fn overlay_line_rows(
     for group in groups {
         let n = group.len();
         if n == 1 {
-            let (center, _) = group[0];
+            let (center, _, _) = group[0];
             let row = ((center / image_h) * grid_h as f32).floor() as i32;
             rows_to_adjust.push((center, row));
         } else {
@@ -515,7 +534,7 @@ fn overlay_line_rows(
             let c_m = group[m].0;
             let row_m = ((c_m / image_h) * grid_h as f32).floor() as i32;
 
-            for (idx, &(center, _)) in group.iter().enumerate() {
+            for (idx, &(center, _, _)) in group.iter().enumerate() {
                 let row = row_m + (idx as i32 - m as i32) * s;
                 rows_to_adjust.push((center, row));
             }

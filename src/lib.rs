@@ -229,6 +229,9 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_box_threshold: args.ocr_box_threshold,
         ocr_unclip_ratio: args.ocr_unclip_ratio,
 
+        min_width: args.min_width,
+        max_width: args.max_width,
+
         score: args.score,
         pipeline: Vec::new(),
         overlays: Vec::new(),
