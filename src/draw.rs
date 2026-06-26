@@ -231,6 +231,79 @@ static IRC99_INFO: Lazy<PaletteInfo> = Lazy::new(|| PaletteInfo {
     is_chromatic: IRC99.iter().map(|&p| !is_near_grayscale(p, 0)).collect(),
 });
 
+#[derive(Clone, Copy, Debug)]
+pub struct Oklab {
+    pub l: f32,
+    pub a: f32,
+    pub b: f32,
+}
+
+#[inline]
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+pub fn rgb_to_oklab(rgb: [u8; 3]) -> Oklab {
+    let r = srgb_to_linear(rgb[0] as f32 / 255.0);
+    let g = srgb_to_linear(rgb[1] as f32 / 255.0);
+    let b = srgb_to_linear(rgb[2] as f32 / 255.0);
+
+    let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+    let m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969617 * b;
+    let s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+
+    let l_ = l.cbrt();
+    let m_ = m.cbrt();
+    let s_ = s.cbrt();
+
+    Oklab {
+        l: 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+        a: 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+        b: 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+    }
+}
+
+#[inline]
+pub fn oklab_distance(c1: Oklab, c2: Oklab) -> f32 {
+    let dl = c1.l - c2.l;
+    let da = c1.a - c2.a;
+    let db = c1.b - c2.b;
+    (dl * dl + da * da + db * db).sqrt()
+}
+
+struct OklabPalette {
+    entries: Vec<Oklab>,
+    is_chromatic: Vec<bool>,
+}
+
+impl OklabPalette {
+    fn new(palette: &[u32], is_chromatic: &[bool]) -> Self {
+        let entries = palette
+            .iter()
+            .map(|&p| {
+                let [r, g, b] = unpack_rgb(p);
+                rgb_to_oklab([r, g, b])
+            })
+            .collect();
+        OklabPalette {
+            entries,
+            is_chromatic: is_chromatic.to_vec(),
+        }
+    }
+}
+
+static ANSI256_OKLAB: Lazy<OklabPalette> = Lazy::new(|| {
+    OklabPalette::new(&ANSI256, &ANSI256_INFO.is_chromatic)
+});
+
+static IRC99_OKLAB: Lazy<OklabPalette> = Lazy::new(|| {
+    OklabPalette::new(&IRC99, &IRC99_INFO.is_chromatic)
+});
+
 #[inline(always)]
 fn should_skip_irc99_match_index(palette_len: usize, idx: usize) -> bool {
     palette_len == IRC99.len() && idx < 16
@@ -458,6 +531,140 @@ pub fn is_near_grayscale(col: u32, tolerance: u8) -> bool {
     max_val.saturating_sub(min_val) <= tolerance
 }
 
+fn find_nearest_gray_and_color_oklab(
+    pixel_oklab: Oklab,
+    oklab_palette: &OklabPalette,
+    palette_len: usize,
+) -> (f32, f32) {
+    let mut min_gray_dist = f32::MAX;
+    let mut min_color_dist = f32::MAX;
+
+    for (i, &entry_oklab) in oklab_palette.entries.iter().enumerate() {
+        if should_skip_irc99_match_index(palette_len, i) {
+            continue;
+        }
+        let dist = oklab_distance(pixel_oklab, entry_oklab);
+        if oklab_palette.is_chromatic[i] {
+            if dist < min_color_dist {
+                min_color_dist = dist;
+            }
+        } else {
+            if dist < min_gray_dist {
+                min_gray_dist = dist;
+            }
+        }
+    }
+    (min_gray_dist, min_color_dist)
+}
+
+fn compute_spatial_grayscale_classification(
+    src: &Vec<Vec<u32>>,
+    oklab_palette: &OklabPalette,
+    palette_len: usize,
+    tolerance: u8,
+) -> Vec<Vec<bool>> {
+    let height = src.len();
+    if height == 0 {
+        return Vec::new();
+    }
+    let width = src[0].len();
+    if width == 0 {
+        return vec![Vec::new(); height];
+    }
+
+    let mut oklab_grid = vec![vec![Oklab { l: 0.0, a: 0.0, b: 0.0 }; width]; height];
+    for y in 0..height {
+        for x in 0..width {
+            let [r, g, b] = unpack_rgb(src[y][x]);
+            oklab_grid[y][x] = rgb_to_oklab([r, g, b]);
+        }
+    }
+
+    let high_threshold = (tolerance as f32 / 32.0) * 0.03;
+    
+    let mut classification = vec![vec![None; width]; height];
+    let mut d_gray = vec![vec![0.0f32; width]; height];
+    let mut d_color = vec![vec![0.0f32; width]; height];
+
+    for y in 0..height {
+        for x in 0..width {
+            let (dg, dc) = find_nearest_gray_and_color_oklab(
+                oklab_grid[y][x],
+                oklab_palette,
+                palette_len,
+            );
+            d_gray[y][x] = dg;
+            d_color[y][x] = dc;
+
+            if dc - dg > high_threshold {
+                classification[y][x] = Some(false);
+            } else if dg - dc > high_threshold {
+                classification[y][x] = Some(true);
+            } else {
+                classification[y][x] = None;
+            }
+        }
+    }
+
+    let mut visited = vec![vec![false; width]; height];
+    let similarity_threshold = 0.02f32;
+    let mut result = vec![vec![false; width]; height];
+
+    for y in 0..height {
+        for x in 0..width {
+            if let Some(is_chromatic) = classification[y][x] {
+                result[y][x] = is_chromatic;
+                continue;
+            }
+
+            if visited[y][x] {
+                continue;
+            }
+
+            let mut component = Vec::new();
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back((y, x));
+            visited[y][x] = true;
+
+            while let Some((cy, cx)) = queue.pop_front() {
+                component.push((cy, cx));
+
+                let neighbors = [
+                    (cy.wrapping_sub(1), cx),
+                    (cy + 1, cx),
+                    (cy, cx.wrapping_sub(1)),
+                    (cy, cx + 1),
+                ];
+
+                for &(ny, nx) in &neighbors {
+                    if ny < height && nx < width {
+                        if classification[ny][nx].is_none() && !visited[ny][nx] {
+                            if oklab_distance(oklab_grid[cy][cx], oklab_grid[ny][nx]) < similarity_threshold {
+                                visited[ny][nx] = true;
+                                queue.push_back((ny, nx));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut sum_d_gray = 0.0f32;
+            let mut sum_d_color = 0.0f32;
+            for &(cy, cx) in &component {
+                sum_d_gray += d_gray[cy][cx];
+                sum_d_color += d_color[cy][cx];
+            }
+
+            let is_chromatic = sum_d_color < sum_d_gray;
+            for &(cy, cx) in &component {
+                result[cy][cx] = is_chromatic;
+            }
+        }
+    }
+
+    result
+}
+
 #[derive(Debug, Clone)]
 pub struct AnsiImage {
     pub bitmap: Vec<Vec<u32>>,
@@ -472,6 +679,8 @@ pub struct AnsiPixel {
     pub irc_std: u8,
     pub ansi_ng: u8,
     pub irc_ng: u8,
+    pub ansi_distinct: bool,
+    pub irc_distinct: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -488,6 +697,17 @@ pub enum Colour {
 impl AnsiPixel {
     #[inline]
     pub fn new(px: &u32, tolerance: u8) -> Self {
+        let distinct = !is_near_grayscale(*px, tolerance);
+        Self::new_with_distinct(px, tolerance, distinct, distinct)
+    }
+
+    #[inline]
+    pub fn new_with_distinct(
+        px: &u32,
+        tolerance: u8,
+        ansi_distinct: bool,
+        irc_distinct: bool,
+    ) -> Self {
         if let Some(entry) = COLOR_CACHE.get(px) {
             let (a, i, an, in_) = *entry;
             return AnsiPixel {
@@ -496,6 +716,8 @@ impl AnsiPixel {
                 irc_std: i,
                 ansi_ng: an,
                 irc_ng: in_,
+                ansi_distinct,
+                irc_distinct,
             };
         }
 
@@ -505,13 +727,11 @@ impl AnsiPixel {
         let mut ansi_ng_val = ansi_std_val;
         let mut irc_ng_val = irc_std_val;
 
-        if !is_near_grayscale(*px, tolerance) {
-            if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &ANSI256, tolerance) {
-                ansi_ng_val = idx;
-            }
-            if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &IRC99, tolerance) {
-                irc_ng_val = idx;
-            }
+        if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &ANSI256, tolerance) {
+            ansi_ng_val = idx;
+        }
+        if let Some(idx) = nearest_distinctly_chromatic_hex_colour(*px, &IRC99, tolerance) {
+            irc_ng_val = idx;
         }
 
         COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
@@ -521,6 +741,8 @@ impl AnsiPixel {
             irc_std: irc_std_val,
             ansi_ng: ansi_ng_val,
             irc_ng: irc_ng_val,
+            ansi_distinct,
+            irc_distinct,
         }
     }
 }
@@ -563,9 +785,25 @@ fn block_bitmap(
         return Vec::new();
     }
 
+    let ansi_distinct_map = compute_spatial_grayscale_classification(src, &ANSI256_OKLAB, ANSI256.len(), tolerance);
+    let irc_distinct_map = compute_spatial_grayscale_classification(src, &IRC99_OKLAB, IRC99.len(), tolerance);
+
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
         .par_iter()
-        .map(|row| row.iter().map(|px| AnsiPixel::new(px, tolerance)).collect())
+        .enumerate()
+        .map(|(y, row)| {
+            row.iter()
+                .enumerate()
+                .map(|(x, px)| {
+                    AnsiPixel::new_with_distinct(
+                        px,
+                        tolerance,
+                        ansi_distinct_map[y][x],
+                        irc_distinct_map[y][x],
+                    )
+                })
+                .collect()
+        })
         .collect();
 
     let ph = px_rows.len().div_ceil(gh) * gh;
@@ -4157,14 +4395,13 @@ pub fn render_braille(
 }
 
 fn pick_colour(pixel: &AnsiPixel, r: Render, args: &RenderArgs) -> Colour {
-    let distinct = !is_near_grayscale(pixel.orig, args.grayscale_tolerance);
     match r {
-        Render::Ansi => Colour::Index(if args.nograyscale && distinct {
+        Render::Ansi => Colour::Index(if args.nograyscale && pixel.ansi_distinct {
             pixel.ansi_ng
         } else {
             pixel.ansi_std
         }),
-        Render::Irc => Colour::Index(if args.nograyscale && distinct {
+        Render::Irc => Colour::Index(if args.nograyscale && pixel.irc_distinct {
             pixel.irc_ng
         } else {
             pixel.irc_std
