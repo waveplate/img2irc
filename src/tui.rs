@@ -6973,7 +6973,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
         if app.args_dirty {
             if let Some(last) = app.last_args_change {
-                if last.elapsed() >= std::time::Duration::from_millis(500) {
+                if last.elapsed() >= std::time::Duration::from_millis(50) {
                     app.flush_render_args();
                 }
             }
