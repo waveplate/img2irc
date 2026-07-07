@@ -4227,7 +4227,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             &render_args.include_range,
             render_args.include.as_ref(),
             &render_args.font,
-            render_args.font_size,
+            if (render_args.font_size - 0.0).abs() < f32::EPSILON {
+                24.0
+            } else {
+                render_args.font_size
+            },
             true,
             None,
         )

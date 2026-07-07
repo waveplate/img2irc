@@ -325,18 +325,24 @@ pub fn resolve_auto_font_size(
     _glyphs: &font::GlyphStore,
 ) {
     if (args.font_size - 0.0).abs() < f32::EPSILON {
-        let font_ratio = 0.5;
         let img_w = image.get_width() as f32;
         let target_char_w = args.width.unwrap_or(80) as f32;
 
         let target_gw = img_w / target_char_w;
-        let target_gh = target_gw / font_ratio;
+        let (advance_unscaled, height_unscaled) = font::query_font_metrics(&args.font);
+
+        let target_gh = if advance_unscaled > 0.0 {
+            target_gw * height_unscaled / advance_unscaled
+        } else {
+            target_gw / 0.5
+        };
 
         args.font_size = target_gh.round().clamp(6.0, 256.0);
         log::info!(
-            "Auto-calculated font size: {} (based on ratio {:.3})",
+            "Auto-calculated font size: {} (based on unscaled advance {} and height {})",
             args.font_size,
-            font_ratio
+            advance_unscaled,
+            height_unscaled
         );
     }
 }
