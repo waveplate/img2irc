@@ -918,6 +918,8 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
     let (
         cell_width,
         cell_height,
+        advance,
+        line_height,
         mut bounds_min_x,
         mut bounds_max_x,
         mut bounds_min_y,
@@ -935,6 +937,8 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         (
             cell_width,
             cell_height,
+            advance,
+            line_height,
             0.0f32,
             advance_unscaled,
             main_font.descent_unscaled(),
@@ -980,8 +984,8 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         cell_height,
         ascender,
         descender,
-        float_width: cell_width as f32,
-        float_height: cell_height as f32,
+        float_width: advance,
+        float_height: line_height,
         bounds_min_x,
         bounds_max_x,
         bounds_min_y,

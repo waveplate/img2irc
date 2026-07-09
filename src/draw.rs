@@ -813,9 +813,7 @@ fn block_bitmap(
         let i = compute_spatial_grayscale_classification(src, &IRC99_OKLAB, IRC99.len(), tolerance);
         (a, i)
     } else {
-        let height = src.len();
-        let width = src.first().map_or(0, |r| r.len());
-        (vec![vec![false; width]; height], vec![vec![false; width]; height])
+        (Vec::new(), Vec::new())
     };
 
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
@@ -825,11 +823,16 @@ fn block_bitmap(
             row.iter()
                 .enumerate()
                 .map(|(x, px)| {
+                    let (ansi_distinct, irc_distinct) = if nograyscale {
+                        (ansi_distinct_map[y][x], irc_distinct_map[y][x])
+                    } else {
+                        (false, false)
+                    };
                     AnsiPixel::new_with_distinct(
                         px,
                         tolerance,
-                        ansi_distinct_map[y][x],
-                        irc_distinct_map[y][x],
+                        ansi_distinct,
+                        irc_distinct,
                     )
                 })
                 .collect()
