@@ -275,6 +275,14 @@ pub fn oklab_distance(c1: Oklab, c2: Oklab) -> f32 {
     (dl * dl + da * da + db * db).sqrt()
 }
 
+#[inline]
+pub fn oklab_distance_squared(c1: Oklab, c2: Oklab) -> f32 {
+    let dl = c1.l - c2.l;
+    let da = c1.a - c2.a;
+    let db = c1.b - c2.b;
+    dl * dl + da * da + db * db
+}
+
 struct OklabPalette {
     entries: Vec<Oklab>,
     is_chromatic: Vec<bool>,
@@ -536,25 +544,25 @@ fn find_nearest_gray_and_color_oklab(
     oklab_palette: &OklabPalette,
     palette_len: usize,
 ) -> (f32, f32) {
-    let mut min_gray_dist = f32::MAX;
-    let mut min_color_dist = f32::MAX;
+    let mut min_gray_dist_sq = f32::MAX;
+    let mut min_color_dist_sq = f32::MAX;
 
     for (i, &entry_oklab) in oklab_palette.entries.iter().enumerate() {
         if should_skip_irc99_match_index(palette_len, i) {
             continue;
         }
-        let dist = oklab_distance(pixel_oklab, entry_oklab);
+        let dist_sq = oklab_distance_squared(pixel_oklab, entry_oklab);
         if oklab_palette.is_chromatic[i] {
-            if dist < min_color_dist {
-                min_color_dist = dist;
+            if dist_sq < min_color_dist_sq {
+                min_color_dist_sq = dist_sq;
             }
         } else {
-            if dist < min_gray_dist {
-                min_gray_dist = dist;
+            if dist_sq < min_gray_dist_sq {
+                min_gray_dist_sq = dist_sq;
             }
         }
     }
-    (min_gray_dist, min_color_dist)
+    (min_gray_dist_sq.sqrt(), min_color_dist_sq.sqrt())
 }
 
 fn compute_spatial_grayscale_classification(
@@ -572,42 +580,56 @@ fn compute_spatial_grayscale_classification(
         return vec![Vec::new(); height];
     }
 
-    let mut oklab_grid = vec![vec![Oklab { l: 0.0, a: 0.0, b: 0.0 }; width]; height];
-    for y in 0..height {
-        for x in 0..width {
-            let [r, g, b] = unpack_rgb(src[y][x]);
-            oklab_grid[y][x] = rgb_to_oklab([r, g, b]);
-        }
-    }
-
     let high_threshold = (tolerance as f32 / 32.0) * 0.03;
-    
-    let mut classification = vec![vec![None; width]; height];
-    let mut d_gray = vec![vec![0.0f32; width]; height];
-    let mut d_color = vec![vec![0.0f32; width]; height];
 
-    for y in 0..height {
-        for x in 0..width {
-            let (dg, dc) = find_nearest_gray_and_color_oklab(
-                oklab_grid[y][x],
-                oklab_palette,
-                palette_len,
-            );
-            d_gray[y][x] = dg;
-            d_color[y][x] = dc;
+    let row_data: Vec<(Vec<Oklab>, Vec<f32>, Vec<f32>, Vec<Option<bool>>)> = (0..height)
+        .into_par_iter()
+        .map(|y| {
+            let mut oklabs = Vec::with_capacity(width);
+            let mut dg_row = Vec::with_capacity(width);
+            let mut dc_row = Vec::with_capacity(width);
+            let mut class_row = Vec::with_capacity(width);
 
-            if dc - dg > high_threshold {
-                classification[y][x] = Some(false);
-            } else if dg - dc > high_threshold {
-                classification[y][x] = Some(true);
-            } else {
-                classification[y][x] = None;
+            for x in 0..width {
+                let [r, g, b] = unpack_rgb(src[y][x]);
+                let oklab = rgb_to_oklab([r, g, b]);
+                let (dg, dc) = find_nearest_gray_and_color_oklab(
+                    oklab,
+                    oklab_palette,
+                    palette_len,
+                );
+
+                let class = if dc - dg > high_threshold {
+                    Some(false)
+                } else if dg - dc > high_threshold {
+                    Some(true)
+                } else {
+                    None
+                };
+
+                oklabs.push(oklab);
+                dg_row.push(dg);
+                dc_row.push(dc);
+                class_row.push(class);
             }
-        }
+            (oklabs, dg_row, dc_row, class_row)
+        })
+        .collect();
+
+    let mut oklab_grid = Vec::with_capacity(height);
+    let mut d_gray = Vec::with_capacity(height);
+    let mut d_color = Vec::with_capacity(height);
+    let mut classification = Vec::with_capacity(height);
+
+    for (oklabs, dg, dc, class) in row_data {
+        oklab_grid.push(oklabs);
+        d_gray.push(dg);
+        d_color.push(dc);
+        classification.push(class);
     }
 
     let mut visited = vec![vec![false; width]; height];
-    let similarity_threshold = 0.02f32;
+    let similarity_threshold_sq = 0.0004f32; // 0.02 * 0.02
     let mut result = vec![vec![false; width]; height];
 
     for y in 0..height {
@@ -639,7 +661,7 @@ fn compute_spatial_grayscale_classification(
                 for &(ny, nx) in &neighbors {
                     if ny < height && nx < width {
                         if classification[ny][nx].is_none() && !visited[ny][nx] {
-                            if oklab_distance(oklab_grid[cy][cx], oklab_grid[ny][nx]) < similarity_threshold {
+                            if oklab_distance_squared(oklab_grid[cy][cx], oklab_grid[ny][nx]) < similarity_threshold_sq {
                                 visited[ny][nx] = true;
                                 queue.push_back((ny, nx));
                             }
