@@ -2845,6 +2845,11 @@ fn canonical_shape_hash(indices: &[u8]) -> u64 {
     hasher.finish()
 }
 
+thread_local! {
+    static THREAD_SHAPE_CACHE: std::cell::RefCell<std::collections::HashMap<u64, (usize, bool)>> =
+        std::cell::RefCell::new(std::collections::HashMap::with_capacity(8192));
+}
+
 pub fn render_blocks_smooth(
     image: &AnsiImage,
     args: &RenderArgs,
@@ -3026,7 +3031,7 @@ pub fn render_blocks_smooth(
             unreachable!("use_gpu is false when the `gpu` feature is disabled");
         }
     } else {
-        let shape_cache = std::sync::Arc::new(dashmap::DashMap::<u64, (usize, bool)>::new());
+
 
         image
             .block
@@ -3126,11 +3131,20 @@ pub fn render_blocks_smooth(
 
                         let shape_hash = canonical_shape_hash(&indices);
 
-                        let cached = shape_cache.get(&shape_hash).map(|entry| *entry);
+                        let cached = THREAD_SHAPE_CACHE.with(|cache_cell| {
+                            cache_cell.borrow().get(&shape_hash).copied()
+                        });
 
                         let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
                             c
                         } else {
+                            let mut unique_block_colors = Vec::with_capacity(8);
+                            for idx in 0..256 {
+                                if base_cnt[idx] > 0 {
+                                    unique_block_colors.push(idx);
+                                }
+                            }
+
                             let mut best_cost = u64::MAX;
                             let mut best_glyph = 0;
                             let mut best_inv = false;
@@ -3149,9 +3163,16 @@ pub fn render_blocks_smooth(
                                     ones_cnt[indices[i] as usize] += 1;
                                 }
 
-                                let (_, ones_mode_count) = last_max_index_u16(&ones_cnt);
+                                let mut ones_mode_count = 0u16;
+                                for &idx in &unique_block_colors {
+                                    let count = ones_cnt[idx];
+                                    if count >= ones_mode_count {
+                                        ones_mode_count = count;
+                                    }
+                                }
+
                                 let mut zeros_mode_count = 0u16;
-                                for idx in 0..256 {
+                                for &idx in &unique_block_colors {
                                     let count = base_cnt[idx] - ones_cnt[idx];
                                     if count >= zeros_mode_count {
                                         zeros_mode_count = count;
@@ -3167,6 +3188,9 @@ pub fn render_blocks_smooth(
                                     best_cost = cost_normal;
                                     best_glyph = gi;
                                     best_inv = false;
+                                    if best_cost == 0 {
+                                        break;
+                                    }
                                 }
 
                                 let cost_inverted = (zeros_len - zeros_mode_count as u64)
@@ -3175,10 +3199,15 @@ pub fn render_blocks_smooth(
                                     best_cost = cost_inverted;
                                     best_glyph = gi;
                                     best_inv = true;
+                                    if best_cost == 0 {
+                                        break;
+                                    }
                                 }
                             }
 
-                            shape_cache.insert(shape_hash, (best_glyph, best_inv));
+                            THREAD_SHAPE_CACHE.with(|cache_cell| {
+                                cache_cell.borrow_mut().insert(shape_hash, (best_glyph, best_inv));
+                            });
                             (best_glyph, best_inv)
                         };
 
