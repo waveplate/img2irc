@@ -770,7 +770,7 @@ impl AnsiPixel {
 }
 
 impl AnsiImage {
-    pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8) -> Self {
+    pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8, nograyscale: bool) -> Self {
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
         let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
@@ -785,7 +785,7 @@ impl AnsiImage {
             }
         }
 
-        let block = block_bitmap(&bitmap, &glyphs, tolerance);
+        let block = block_bitmap(&bitmap, &glyphs, tolerance, nograyscale);
         AnsiImage {
             bitmap,
             block,
@@ -798,6 +798,7 @@ fn block_bitmap(
     src: &Vec<Vec<u32>>,
     glyphs: &GlyphStore,
     tolerance: u8,
+    nograyscale: bool,
 ) -> Vec<Vec<AnsiPixelBlock>> {
     if glyphs.glyphs.is_empty() {
         return Vec::new();
@@ -807,8 +808,15 @@ fn block_bitmap(
         return Vec::new();
     }
 
-    let ansi_distinct_map = compute_spatial_grayscale_classification(src, &ANSI256_OKLAB, ANSI256.len(), tolerance);
-    let irc_distinct_map = compute_spatial_grayscale_classification(src, &IRC99_OKLAB, IRC99.len(), tolerance);
+    let (ansi_distinct_map, irc_distinct_map) = if nograyscale {
+        let a = compute_spatial_grayscale_classification(src, &ANSI256_OKLAB, ANSI256.len(), tolerance);
+        let i = compute_spatial_grayscale_classification(src, &IRC99_OKLAB, IRC99.len(), tolerance);
+        (a, i)
+    } else {
+        let height = src.len();
+        let width = src.first().map_or(0, |r| r.len());
+        (vec![vec![false; width]; height], vec![vec![false; width]; height])
+    };
 
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
         .par_iter()

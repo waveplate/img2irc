@@ -256,7 +256,7 @@ pub fn prepare_canvas(
         let _ = photon_rs::native::save_image(image.clone(), path);
     }
 
-    let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance);
+    let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance, args.nograyscale);
 
     let luma_canvas = if args.braille {
         let image_luma = effects::apply_luma_effects(args, glyphs, image);
@@ -264,6 +264,7 @@ pub fn prepare_canvas(
             image_luma,
             glyphs.clone(),
             args.grayscale_tolerance,
+            args.nograyscale,
         ))
     } else {
         None
