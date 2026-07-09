@@ -7,9 +7,12 @@ use std::process::exit;
 async fn main() {
     let mut args = args::parse_args();
 
+    let log_config = simplelog::ConfigBuilder::new()
+        .set_time_format_rfc3339()
+        .build();
     let _ = WriteLogger::init(
         LevelFilter::Info,
-        Config::default(),
+        log_config,
         File::create("img2irc.log").unwrap(),
     );
 

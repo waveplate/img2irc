@@ -1263,14 +1263,6 @@ pub fn glyph_store(
     }
 }
 
-pub fn query_font_metrics(fonts: &[String]) -> (f32, f32) {
-    let ctx = FontContext::new(fonts, 24.0);
-    let main_font = ctx.get_main_font();
-    let height_unscaled = main_font.height_unscaled();
-    let advance_unscaled = measure_reference_advance_unscaled(&*main_font);
-    (advance_unscaled, height_unscaled)
-}
-
 pub fn list_ranges() -> String {
     let (groups, _) = load_blocks_config();
     let mut sorted_groups: Vec<_> = groups.iter().collect();

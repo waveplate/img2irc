@@ -323,27 +323,27 @@ pub fn render_from_canvas(
 pub fn resolve_auto_font_size(
     args: &mut RenderArgs,
     image: &PhotonImage,
-    _glyphs: &font::GlyphStore,
+    glyphs: &font::GlyphStore,
 ) {
     if (args.font_size - 0.0).abs() < f32::EPSILON {
         let img_w = image.get_width() as f32;
         let target_char_w = args.width.unwrap_or(80) as f32;
 
         let target_gw = img_w / target_char_w;
-        let (advance_unscaled, height_unscaled) = font::query_font_metrics(&args.font);
+        let (w, h) = glyphs.float_metrics;
 
-        let target_gh = if advance_unscaled > 0.0 {
-            target_gw * height_unscaled / advance_unscaled
+        let target_gh = if w > 1.0 && h > 1.0 {
+            target_gw * h / w
         } else {
             target_gw / 0.5
         };
 
         args.font_size = target_gh.round().clamp(6.0, 256.0);
         log::info!(
-            "Auto-calculated font size: {} (based on unscaled advance {} and height {})",
+            "Auto-calculated font size: {} (based on loaded metrics width {} and height {})",
             args.font_size,
-            advance_unscaled,
-            height_unscaled
+            w,
+            h
         );
     }
 }
@@ -444,44 +444,50 @@ pub async fn load_image_from_url_or_path(
         Err(_) => std::fs::read(image)?,
     };
 
-    // Try detecting SVG
-    let opt = resvg::usvg::Options::default();
-    let mut fontdb = resvg::usvg::fontdb::Database::new();
-    fontdb.load_system_fonts(); // Load system fonts to support text in SVGs
+    let is_svg_potential = bytes.starts_with(b"<svg")
+        || bytes.starts_with(b"<?xml")
+        || (bytes.len() > 10 && std::str::from_utf8(&bytes[0..10.min(bytes.len())]).map_or(false, |s| s.trim_start().starts_with('<')));
 
-    if let Ok(tree) = resvg::usvg::Tree::from_data(&bytes, &opt, &fontdb) {
-        let size = tree.size();
-        let (w, h) = effects::calculate_dimensions(args, glyphs, size.width(), size.height());
+    if is_svg_potential {
+        // Try detecting SVG
+        let opt = resvg::usvg::Options::default();
+        let mut fontdb = resvg::usvg::fontdb::Database::new();
+        fontdb.load_system_fonts(); // Load system fonts to support text in SVGs
 
-        log::info!("Detected SVG. Rendering at {}x{}", w, h);
+        if let Ok(tree) = resvg::usvg::Tree::from_data(&bytes, &opt, &fontdb) {
+            let size = tree.size();
+            let (w, h) = effects::calculate_dimensions(args, glyphs, size.width(), size.height());
 
-        let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or("Failed to create SVG pixmap")?;
-        let render_ts =
-            tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
+            log::info!("Detected SVG. Rendering at {}x{}", w, h);
 
-        resvg::render(&tree, render_ts, &mut pixmap.as_mut());
+            let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or("Failed to create SVG pixmap")?;
+            let render_ts =
+                tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
 
-        // Convert RGBA buffer to PhotonImage
-        // tiny-skia uses premultiplied alpha. We might need to demultiply if strict correctness is required, but for
-        // terminal output, it's often negligible. However, let's demultiply to be safe for effects.
-        let mut data = pixmap.data().to_vec();
-        for chunk in data.chunks_mut(4) {
-            let a = chunk[3];
-            if a > 0 && a < 255 {
-                let scale = 255.0 / a as f32;
-                chunk[0] = (chunk[0] as f32 * scale).min(255.0) as u8;
-                chunk[1] = (chunk[1] as f32 * scale).min(255.0) as u8;
-                chunk[2] = (chunk[2] as f32 * scale).min(255.0) as u8;
+            resvg::render(&tree, render_ts, &mut pixmap.as_mut());
+
+            // Convert RGBA buffer to PhotonImage
+            // tiny-skia uses premultiplied alpha. We might need to demultiply if strict correctness is required, but for
+            // terminal output, it's often negligible. However, let's demultiply to be safe for effects.
+            let mut data = pixmap.data().to_vec();
+            for chunk in data.chunks_mut(4) {
+                let a = chunk[3];
+                if a > 0 && a < 255 {
+                    let scale = 255.0 / a as f32;
+                    chunk[0] = (chunk[0] as f32 * scale).min(255.0) as u8;
+                    chunk[1] = (chunk[1] as f32 * scale).min(255.0) as u8;
+                    chunk[2] = (chunk[2] as f32 * scale).min(255.0) as u8;
+                }
             }
-        }
 
-        Ok(PhotonImage::new(data, w, h))
-    } else {
-        // Fallback to standard image loading
-        let image_data = Cursor::new(bytes);
-        match photon_rs::native::open_image_from_bytes(image_data.into_inner().as_ref()) {
-            Ok(image) => Ok(image),
-            Err(e) => Err(Box::new(e)),
+            return Ok(PhotonImage::new(data, w, h));
         }
+    }
+
+    // Fallback to standard image loading
+    let image_data = Cursor::new(bytes);
+    match photon_rs::native::open_image_from_bytes(image_data.into_inner().as_ref()) {
+        Ok(image) => Ok(image),
+        Err(e) => Err(Box::new(e)),
     }
 }

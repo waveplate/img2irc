@@ -4174,9 +4174,12 @@ fn render_button(buf: &mut Buffer, area: Rect, label: &str, selected: bool, stat
 // ── Main Entry Point ─────────────────────────────────────────────────────────
 pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     // Initialize logging to file
+    let log_config = simplelog::ConfigBuilder::new()
+        .set_time_format_rfc3339()
+        .build();
     let _ = WriteLogger::init(
         LevelFilter::Info,
-        Config::default(),
+        log_config,
         OpenOptions::new()
             .create(true)
             .append(true)
