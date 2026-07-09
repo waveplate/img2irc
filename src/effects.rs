@@ -3,9 +3,49 @@ use crate::font::GlyphStore;
 use image::Rgba;
 use imageproc::geometric_transformations::rotate_about_center;
 use imageproc::geometric_transformations::Interpolation;
+use once_cell::sync::Lazy;
 use photon_rs::transform::{crop, fliph, flipv, resize, SamplingFilter};
 use photon_rs::PhotonImage;
 use photon_rs::{channels, colour_spaces, conv, effects, filters, monochrome, noise};
+use std::hash::Hash;
+use std::sync::Mutex;
+
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct GeometryKey {
+    src_hash: u64,
+    width: Option<u32>,
+    height: Option<u32>,
+    scale: Option<(u32, u32)>,
+    crop: Option<(u32, u32, u32, u32)>,
+    trim: Option<(u32, u32, u32, u32)>,
+    fliph: bool,
+    flipv: bool,
+    rotate: u32,
+    filter: args::SamplingFilter,
+    font: Vec<String>,
+    font_size: u32,
+    blocks: Vec<String>,
+    exclude: Vec<char>,
+    exclude_range: Vec<String>,
+    include: Option<String>,
+    include_range: Vec<String>,
+    braille: bool,
+}
+
+fn hash_image(img: &PhotonImage) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    img.get_width().hash(&mut hasher);
+    img.get_height().hash(&mut hasher);
+    let raw = img.get_raw_pixels();
+    raw.len().hash(&mut hasher);
+    let sample_len = 1024.min(raw.len());
+    raw[0..sample_len].hash(&mut hasher);
+    hasher.finish()
+}
+
+static RESIZED_CACHE: Lazy<Mutex<Option<(GeometryKey, PhotonImage)>>> =
+    Lazy::new(|| Mutex::new(None));
 
 pub fn calculate_dimensions(
     args: &args::RenderArgs,
@@ -101,57 +141,97 @@ pub fn apply_effects(
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
 ) -> PhotonImage {
-    if let Some((top, right, bottom, left)) = args.trim {
-        let w = photon_image.get_width();
-        let h = photon_image.get_height();
-        if left + right < w && top + bottom < h {
-            // crop takes x1, y1, x2, y2 (coordinates)
-            photon_image = crop(&photon_image, left, top, w - right, h - bottom);
-        }
-    }
+    let src_hash = hash_image(&photon_image);
 
-    let (width, height) = calculate_dimensions(
-        args,
-        glyphs,
-        photon_image.get_width() as f32,
-        photon_image.get_height() as f32,
-    );
-
-    if args.fliph {
-        fliph(&mut photon_image);
-    }
-
-    if args.flipv {
-        flipv(&mut photon_image);
-    }
-
-    let filter = match args.filter {
-        args::SamplingFilter::Nearest => SamplingFilter::Nearest,
-        args::SamplingFilter::Triangle => SamplingFilter::Triangle,
-        args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
-        args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
-        args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
+    let geometry_key = GeometryKey {
+        src_hash,
+        width: args.width,
+        height: args.height,
+        scale: args.scale.map(|(sx, sy)| (sx.to_bits(), sy.to_bits())),
+        crop: args.crop,
+        trim: args.trim,
+        fliph: args.fliph,
+        flipv: args.flipv,
+        rotate: args.rotate.to_bits(),
+        filter: args.filter,
+        font: args.font.clone(),
+        font_size: args.font_size.to_bits(),
+        blocks: args.blocks.clone(),
+        exclude: args.exclude.clone(),
+        exclude_range: args.exclude_range.clone(),
+        include: args.include.clone(),
+        include_range: args.include_range.clone(),
+        braille: args.braille,
     };
 
-    let mut photon_image = resize(&photon_image, width, height, filter);
+    let mut cache = RESIZED_CACHE.lock().unwrap();
+    let mut base_image = if let Some((ref key, ref img)) = *cache {
+        if key == &geometry_key {
+            Some(img.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    if args.rotate != 0.00 {
-        let angle_radians = args.rotate.to_radians();
-        let image_buffer = image::ImageBuffer::from_raw(
-            photon_image.get_width(),
-            photon_image.get_height(),
-            photon_image.get_raw_pixels(),
-        )
-        .unwrap();
-        let rotated = rotate_about_center(
-            &image_buffer,
-            angle_radians,
-            Interpolation::Bilinear,
-            Rgba([0, 0, 0, 0]), // Fill empty space with transparency
+    if base_image.is_none() {
+        if let Some((top, right, bottom, left)) = args.trim {
+            let w = photon_image.get_width();
+            let h = photon_image.get_height();
+            if left + right < w && top + bottom < h {
+                photon_image = crop(&photon_image, left, top, w - right, h - bottom);
+            }
+        }
+
+        let (width, height) = calculate_dimensions(
+            args,
+            glyphs,
+            photon_image.get_width() as f32,
+            photon_image.get_height() as f32,
         );
-        let rotated_buffer = rotated.into_raw();
-        photon_image = PhotonImage::new(rotated_buffer, width, height);
+
+        if args.fliph {
+            fliph(&mut photon_image);
+        }
+
+        if args.flipv {
+            flipv(&mut photon_image);
+        }
+
+        let filter = match args.filter {
+            args::SamplingFilter::Nearest => SamplingFilter::Nearest,
+            args::SamplingFilter::Triangle => SamplingFilter::Triangle,
+            args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
+            args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
+            args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
+        };
+
+        let mut resized = resize(&photon_image, width, height, filter);
+
+        if args.rotate != 0.00 {
+            let angle_radians = args.rotate.to_radians();
+            let image_buffer = image::ImageBuffer::from_raw(
+                resized.get_width(),
+                resized.get_height(),
+                resized.get_raw_pixels(),
+            )
+            .unwrap();
+            let rotated = rotate_about_center(
+                &image_buffer,
+                angle_radians,
+                Interpolation::Bilinear,
+                Rgba([0, 0, 0, 0]),
+            );
+            let rotated_buffer = rotated.into_raw();
+            resized = PhotonImage::new(rotated_buffer, width, height);
+        }
+
+        *cache = Some((geometry_key, resized.clone()));
+        base_image = Some(resized);
     }
+
+    let mut photon_image = base_image.unwrap();
 
     type ColourFunc = fn(&mut PhotonImage, &str, f32);
 

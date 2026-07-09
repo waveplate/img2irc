@@ -40,8 +40,10 @@ pub struct FastGlyph {
 pub struct PrePixel {
     pub r: u64,
     pub g: u64,
-    b: u64,
+    pub b: u64,
     pub sq: u64,
+    pub ansi_part: u8,
+    pub irc_part: u8,
 }
 
 pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> {
@@ -195,7 +197,7 @@ const POSITIONS: [(usize, usize, u32); 8] = [
     (1, 3, 0x80),
 ];
 
-static COLOR_CACHE: Lazy<dashmap::DashMap<u32, (u8, u8, u8, u8)>> =
+static COLOR_CACHE: Lazy<dashmap::DashMap<u32, (u8, u8, u8, u8, u8, u8)>> =
     Lazy::new(|| dashmap::DashMap::with_capacity(8_192));
 
 struct PaletteInfo {
@@ -701,6 +703,8 @@ pub struct AnsiPixel {
     pub irc_std: u8,
     pub ansi_ng: u8,
     pub irc_ng: u8,
+    pub ansi_part: u8,
+    pub irc_part: u8,
     pub ansi_distinct: bool,
     pub irc_distinct: bool,
 }
@@ -731,13 +735,15 @@ impl AnsiPixel {
         irc_distinct: bool,
     ) -> Self {
         if let Some(entry) = COLOR_CACHE.get(px) {
-            let (a, i, an, in_) = *entry;
+            let (a, i, an, in_, ap, ip) = *entry;
             return AnsiPixel {
                 orig: *px,
                 ansi_std: a,
                 irc_std: i,
                 ansi_ng: an,
                 irc_ng: in_,
+                ansi_part: ap,
+                irc_part: ip,
                 ansi_distinct,
                 irc_distinct,
             };
@@ -756,13 +762,18 @@ impl AnsiPixel {
             irc_ng_val = idx;
         }
 
-        COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val));
+        let ansi_part_val = nearest_strict_partitioned_hex_colour(*px, &ANSI256, tolerance);
+        let irc_part_val = nearest_strict_partitioned_hex_colour(*px, &IRC99, tolerance);
+
+        COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val));
         AnsiPixel {
             orig: *px,
             ansi_std: ansi_std_val,
             irc_std: irc_std_val,
             ansi_ng: ansi_ng_val,
             irc_ng: irc_ng_val,
+            ansi_part: ansi_part_val,
+            irc_part: irc_part_val,
             ansi_distinct,
             irc_distinct,
         }
@@ -771,6 +782,7 @@ impl AnsiPixel {
 
 impl AnsiImage {
     pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8, nograyscale: bool) -> Self {
+        COLOR_CACHE.clear();
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
         let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
@@ -816,6 +828,40 @@ fn block_bitmap(
         (Vec::new(), Vec::new())
     };
 
+    // Find all unique pixels in the src image to minimize map lookup overhead
+    let mut flat_pixels: Vec<u32> = src.iter().flat_map(|row| row.iter().copied()).collect();
+    flat_pixels.sort_unstable();
+    flat_pixels.dedup();
+
+    // Map unique pixels to their cached colors
+    let unique_mappings: std::collections::HashMap<u32, (u8, u8, u8, u8, u8, u8)> = flat_pixels
+        .par_iter()
+        .map(|&px| {
+            if let Some(entry) = COLOR_CACHE.get(&px) {
+                (px, *entry)
+            } else {
+                let ansi_std_val = nearest_hex_colour_fast(px, &ANSI256);
+                let irc_std_val = nearest_hex_colour_fast(px, &IRC99);
+
+                let mut ansi_ng_val = ansi_std_val;
+                let mut irc_ng_val = irc_std_val;
+
+                if let Some(idx) = nearest_distinctly_chromatic_hex_colour(px, &ANSI256, tolerance) {
+                    ansi_ng_val = idx;
+                }
+                if let Some(idx) = nearest_distinctly_chromatic_hex_colour(px, &IRC99, tolerance) {
+                    irc_ng_val = idx;
+                }
+
+                let ansi_part_val = nearest_strict_partitioned_hex_colour(px, &ANSI256, tolerance);
+                let irc_part_val = nearest_strict_partitioned_hex_colour(px, &IRC99, tolerance);
+
+                COLOR_CACHE.insert(px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val));
+                (px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val))
+            }
+        })
+        .collect();
+
     let mut px_rows: Vec<Vec<AnsiPixel>> = src
         .par_iter()
         .enumerate()
@@ -828,12 +874,18 @@ fn block_bitmap(
                     } else {
                         (false, false)
                     };
-                    AnsiPixel::new_with_distinct(
-                        px,
-                        tolerance,
+                    let (a, i, an, in_, ap, ip) = unique_mappings.get(px).copied().unwrap();
+                    AnsiPixel {
+                        orig: *px,
+                        ansi_std: a,
+                        irc_std: i,
+                        ansi_ng: an,
+                        irc_ng: in_,
+                        ansi_part: ap,
+                        irc_part: ip,
                         ansi_distinct,
                         irc_distinct,
-                    )
+                    }
                 })
                 .collect()
         })
@@ -3002,8 +3054,8 @@ pub fn render_blocks_smooth(
                     original_pixels.clear();
                     for y in 0..gh {
                         for x in 0..gw {
-                            let px_orig = blk.pixels[y][x].orig;
-                            let rgb = unpack_rgb(px_orig);
+                            let px = &blk.pixels[y][x];
+                            let rgb = unpack_rgb(px.orig);
                             let p = PrePixel {
                                 r: rgb[0] as u64,
                                 g: rgb[1] as u64,
@@ -3011,6 +3063,8 @@ pub fn render_blocks_smooth(
                                 sq: (rgb[0] as u64).pow(2)
                                     + (rgb[1] as u64).pow(2)
                                     + (rgb[2] as u64).pow(2),
+                                ansi_part: px.ansi_part,
+                                irc_part: px.irc_part,
                             };
                             original_pixels.push(p);
                         }
@@ -3042,13 +3096,15 @@ pub fn render_blocks_smooth(
                         let mut block_sum_b = 0u64;
                         let mut block_sum_sq = 0u64;
 
-                        let palette: &[u32] = if args.as_preview {
-                            &IRC99
+                        let is_ansi = if args.as_preview {
+                            false
                         } else {
-                            match render {
-                                Render::Ansi | Render::Ansi24 => &ANSI256,
-                                _ => &IRC99,
-                            }
+                            matches!(render, Render::Ansi | Render::Ansi24)
+                        };
+                        let palette: &[u32] = if is_ansi {
+                            &ANSI256
+                        } else {
+                            &IRC99
                         };
                         let mut base_cnt = [0u16; 256];
                         indices.clear();
@@ -3059,12 +3115,11 @@ pub fn render_blocks_smooth(
                             block_sum_b += p.b;
                             block_sum_sq += p.sq;
 
-                            let rgb_u32 = ((p.r as u32) << 16) | ((p.g as u32) << 8) | p.b as u32;
-                            let idx = nearest_strict_partitioned_hex_colour(
-                                rgb_u32,
-                                palette,
-                                args.grayscale_tolerance,
-                            );
+                            let idx = if is_ansi {
+                                p.ansi_part
+                            } else {
+                                p.irc_part
+                            };
                             base_cnt[idx as usize] += 1;
                             indices.push(idx);
                         }
@@ -3380,6 +3435,8 @@ pub fn render_blocks_smooth(
                     sq: (data.fg[0] as u64).pow(2)
                         + (data.fg[1] as u64).pow(2)
                         + (data.fg[2] as u64).pow(2),
+                    ansi_part: 0,
+                    irc_part: 0,
                 };
                 let bg_p = PrePixel {
                     r: data.bg[0] as u64,
@@ -3388,6 +3445,8 @@ pub fn render_blocks_smooth(
                     sq: (data.bg[0] as u64).pow(2)
                         + (data.bg[1] as u64).pow(2)
                         + (data.bg[2] as u64).pow(2),
+                    ansi_part: 0,
+                    irc_part: 0,
                 };
 
                 let mut base_cost = 0u64;
@@ -4559,6 +4618,8 @@ fn get_transformed_block_pixels_into(
                 g,
                 b,
                 sq: r * r + g * g + b * b,
+                ansi_part: p00.ansi_part,
+                irc_part: p00.irc_part,
             });
         }
     }

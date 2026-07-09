@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(clap::ValueEnum, Clone, Debug, Serialize, Deserialize)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SamplingFilter {
     Nearest,
     Triangle,
