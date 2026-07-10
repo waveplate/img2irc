@@ -3138,16 +3138,23 @@ pub fn render_blocks_smooth(
                         let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
                             c
                         } else {
-                            let mut unique_block_colors = Vec::with_capacity(8);
+                            let mut unique_block_colors = [0u8; 32];
+                            let mut num_unique_colors = 0usize;
                             for idx in 0..256 {
                                 if base_cnt[idx] > 0 {
-                                    unique_block_colors.push(idx);
+                                    if num_unique_colors < 32 {
+                                        unique_block_colors[num_unique_colors] = idx as u8;
+                                        num_unique_colors += 1;
+                                    }
                                 }
                             }
+                            let active_colors = &unique_block_colors[0..num_unique_colors];
 
                             let mut best_cost = u64::MAX;
                             let mut best_glyph = 0;
                             let mut best_inv = false;
+
+                            let mut ones_cnt = [0u16; 256];
 
                             for (gi, fglyph) in glyphs.iter().enumerate() {
                                 if gi & 0x3f == 0 {
@@ -3158,22 +3165,21 @@ pub fn render_blocks_smooth(
                                     }
                                 }
 
-                                let mut ones_cnt = [0u16; 256];
                                 for &i in &fglyph.ones {
                                     ones_cnt[indices[i] as usize] += 1;
                                 }
 
                                 let mut ones_mode_count = 0u16;
-                                for &idx in &unique_block_colors {
-                                    let count = ones_cnt[idx];
+                                for &idx in active_colors {
+                                    let count = ones_cnt[idx as usize];
                                     if count >= ones_mode_count {
                                         ones_mode_count = count;
                                     }
                                 }
 
                                 let mut zeros_mode_count = 0u16;
-                                for &idx in &unique_block_colors {
-                                    let count = base_cnt[idx] - ones_cnt[idx];
+                                for &idx in active_colors {
+                                    let count = base_cnt[idx as usize] - ones_cnt[idx as usize];
                                     if count >= zeros_mode_count {
                                         zeros_mode_count = count;
                                     }
@@ -3188,9 +3194,6 @@ pub fn render_blocks_smooth(
                                     best_cost = cost_normal;
                                     best_glyph = gi;
                                     best_inv = false;
-                                    if best_cost == 0 {
-                                        break;
-                                    }
                                 }
 
                                 let cost_inverted = (zeros_len - zeros_mode_count as u64)
@@ -3199,9 +3202,15 @@ pub fn render_blocks_smooth(
                                     best_cost = cost_inverted;
                                     best_glyph = gi;
                                     best_inv = true;
-                                    if best_cost == 0 {
-                                        break;
-                                    }
+                                }
+
+                                // Reset only the modified ones_cnt bins for the next iteration
+                                for &idx in active_colors {
+                                    ones_cnt[idx as usize] = 0;
+                                }
+
+                                if best_cost == 0 {
+                                    break;
                                 }
                             }
 

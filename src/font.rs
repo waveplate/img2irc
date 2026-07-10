@@ -107,6 +107,9 @@ impl FontContext {
 }
 
 static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
+    if atty::is(atty::Stream::Stderr) {
+        eprintln!("Scanning system fonts (this may take a moment)...");
+    }
     let mut db = Database::new();
     db.load_system_fonts();
     Mutex::new(db)
