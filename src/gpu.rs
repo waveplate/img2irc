@@ -264,10 +264,10 @@ pub fn render_blocks_gpu(
     };
 
     let (
-        glyphs_buf,
-        ones_buf,
-        palette_buf,
-        meta_buf,
+        _glyphs_buf,
+        _ones_buf,
+        _palette_buf,
+        _meta_buf,
         results_buf,
         blocks_buf,
         staging_buf,
