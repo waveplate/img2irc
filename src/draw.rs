@@ -3232,7 +3232,7 @@ pub fn render_blocks_smooth(
                             cache_cell.borrow().get(&shape_hash).copied()
                         });
 
-                        let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached {
+                        let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached.filter(|&(gi, _)| gi < glyphs.len()) {
                             c
                         } else {
                             let mut unique_block_colors = [0u8; 32];
