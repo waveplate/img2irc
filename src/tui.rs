@@ -932,6 +932,7 @@ struct AutoOptimizeState {
     focused_idx: usize,
     optimize_shortest_longest_line: bool,
     batch_size: u32,
+    randomize: bool,
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -1397,6 +1398,7 @@ pub(crate) struct App {
     auto_optimize_state: Option<AutoOptimizeState>,
     saved_auto_optimize_inputs: Vec<String>,
     saved_auto_optimize_shortest_longest_line: bool,
+    saved_auto_optimize_randomize: bool,
     auto_optimize_cancel: Option<Arc<AtomicBool>>,
     general_pane_width: u16,
     pipeline_pane_width: u16,
@@ -2029,6 +2031,7 @@ impl App {
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
             saved_auto_optimize_shortest_longest_line: false,
+            saved_auto_optimize_randomize: false,
             auto_optimize_cancel: None,
             general_pane_width: GENERAL_PANE_WIDTH,
             pipeline_pane_width: PIPELINE_PANE_WIDTH,
@@ -2627,11 +2630,15 @@ impl App {
         }
 
         let mut inputs = Vec::new();
-        for i in 0..16 {
-            let mut ta = if self.saved_auto_optimize_inputs.len() == 16 {
+        for i in 0..24 {
+            let mut ta = if self.saved_auto_optimize_inputs.len() == 24 {
                 TextArea::new(vec![self.saved_auto_optimize_inputs[i].clone()])
             } else {
-                TextArea::default()
+                if i % 3 == 2 {
+                    TextArea::new(vec!["1".to_string()])
+                } else {
+                    TextArea::default()
+                }
             };
             inputs.push(ta);
         }
@@ -2641,6 +2648,7 @@ impl App {
             focused_idx: 0,
             optimize_shortest_longest_line: self.saved_auto_optimize_shortest_longest_line,
             batch_size: self.render_args.auto_optimize_batch_size,
+            randomize: self.saved_auto_optimize_randomize,
         });
         self.input_mode = InputMode::AutoOptimize;
     }
@@ -2658,60 +2666,76 @@ impl App {
         let state = self.auto_optimize_state.take().unwrap();
 
         let optimize_shortest_longest_line = state.optimize_shortest_longest_line;
+        let randomize = state.randomize;
 
-        fn parse_range_i32(s_min: &str, s_max: &str, current: i32) -> Vec<i32> {
+        fn parse_range_i32(s_min: &str, s_max: &str, s_step: &str, current: i32) -> Vec<i32> {
             let p0 = s_min.trim().parse().unwrap_or(current);
             let p1 = if s_max.trim().is_empty() {
                 p0
             } else {
                 s_max.trim().parse().unwrap_or(p0)
             };
+            let step = s_step.trim().parse::<i32>().unwrap_or(1).max(1);
             let min = p0.min(p1);
             let max = p0.max(p1);
-            (min..=max).collect()
+            let mut result = Vec::new();
+            let mut curr = min;
+            while curr <= max {
+                result.push(curr);
+                curr += step;
+            }
+            result
         }
 
         let ws = parse_range_i32(
             state.inputs[0].lines()[0].as_str(),
             state.inputs[1].lines()[0].as_str(),
+            state.inputs[2].lines()[0].as_str(),
             self.width,
         );
         let ct = parse_range_i32(
-            state.inputs[2].lines()[0].as_str(),
             state.inputs[3].lines()[0].as_str(),
+            state.inputs[4].lines()[0].as_str(),
+            state.inputs[5].lines()[0].as_str(),
             self.trim_top,
         );
         let cr = parse_range_i32(
-            state.inputs[4].lines()[0].as_str(),
-            state.inputs[5].lines()[0].as_str(),
+            state.inputs[6].lines()[0].as_str(),
+            state.inputs[7].lines()[0].as_str(),
+            state.inputs[8].lines()[0].as_str(),
             self.trim_right,
         );
         let cb = parse_range_i32(
-            state.inputs[6].lines()[0].as_str(),
-            state.inputs[7].lines()[0].as_str(),
+            state.inputs[9].lines()[0].as_str(),
+            state.inputs[10].lines()[0].as_str(),
+            state.inputs[11].lines()[0].as_str(),
             self.trim_bottom,
         );
         let cl = parse_range_i32(
-            state.inputs[8].lines()[0].as_str(),
-            state.inputs[9].lines()[0].as_str(),
+            state.inputs[12].lines()[0].as_str(),
+            state.inputs[13].lines()[0].as_str(),
+            state.inputs[14].lines()[0].as_str(),
             self.trim_left,
         );
         let fs: Vec<f32> = parse_range_i32(
-            state.inputs[10].lines()[0].as_str(),
-            state.inputs[11].lines()[0].as_str(),
+            state.inputs[15].lines()[0].as_str(),
+            state.inputs[16].lines()[0].as_str(),
+            state.inputs[17].lines()[0].as_str(),
             self.font_size.round() as i32,
         )
         .into_iter()
         .map(|x| x as f32)
         .collect();
         let sx = parse_range_i32(
-            state.inputs[12].lines()[0].as_str(),
-            state.inputs[13].lines()[0].as_str(),
+            state.inputs[18].lines()[0].as_str(),
+            state.inputs[19].lines()[0].as_str(),
+            state.inputs[20].lines()[0].as_str(),
             self.scalex,
         );
         let sy = parse_range_i32(
-            state.inputs[14].lines()[0].as_str(),
-            state.inputs[15].lines()[0].as_str(),
+            state.inputs[21].lines()[0].as_str(),
+            state.inputs[22].lines()[0].as_str(),
+            state.inputs[23].lines()[0].as_str(),
             self.scaley,
         );
 
@@ -2726,6 +2750,7 @@ impl App {
         self.saved_auto_optimize_inputs =
             state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
         self.saved_auto_optimize_shortest_longest_line = optimize_shortest_longest_line;
+        self.saved_auto_optimize_randomize = randomize;
 
         self.is_optimizing = true;
         self.optimization_progress = format!("Starting... ({} perms)", total_perms);
@@ -2826,10 +2851,19 @@ impl App {
                     return;
                 }
 
+                struct Perm {
+                    w: i32,
+                    t: i32,
+                    r: i32,
+                    b: i32,
+                    l: i32,
+                    f: f32,
+                    x: i32,
+                    y: i32,
+                }
+
+                let mut perms = Vec::with_capacity(total_perms);
                 for &w in &ws {
-                    if tx_clone.is_closed() || cancel_clone.load(Ordering::Relaxed) {
-                        break;
-                    }
                     for &t in &ct {
                         for &r in &cr {
                             for &b in &cb {
@@ -2837,76 +2871,70 @@ impl App {
                                     for &f in &fs {
                                         for &x in &sx {
                                             for &y in &sy {
-                                                if tx_clone.is_closed()
-                                                    || cancel_clone.load(Ordering::Relaxed)
-                                                {
-                                                    aborted = true;
-                                                    break;
-                                                }
-                                                let mut a = args.clone();
-                                                a.width = Some(w as u32);
-                                                a.trim =
-                                                    Some((t as u32, r as u32, b as u32, l as u32));
-                                                a.font_size = f;
-                                                a.scale =
-                                                    Some((x as f32 / 100.0, y as f32 / 100.0));
-
-                                                let permit = semaphore
-                                                    .clone()
-                                                    .acquire_owned()
-                                                    .await
-                                                    .unwrap();
-                                                let img = img_clone.clone();
-                                                let (gs, fg) = fg_map.get(&f.to_bits()).unwrap().clone();
-                                                let rtx = res_tx.clone();
-                                                let cancel_inner = cancel_clone.clone();
-                                                tokio::task::spawn_blocking(move || {
-                                                    let result = crate::render_output(
-                                                        a.clone(),
-                                                        &gs,
-                                                        img,
-                                                        &fg,
-                                                        Some(cancel_inner),
-                                                    );
-                                                    if result.content != "Cancelled" {
-                                                        let score =
-                                                            if optimize_shortest_longest_line {
-                                                                result.longest_line_bytes as f64
-                                                            } else {
-                                                                result.score
-                                                            };
-                                                        let _ = rtx.blocking_send((a, score));
-                                                    }
-                                                    drop(permit);
-                                                });
-                                            }
-                                            if aborted {
-                                                break;
+                                                perms.push(Perm { w, t, r, b, l, f, x, y });
                                             }
                                         }
-                                        if aborted {
-                                            break;
-                                        }
-                                    }
-                                    if aborted {
-                                        break;
                                     }
                                 }
-                                if aborted {
-                                    break;
-                                }
                             }
-                            if aborted {
-                                break;
-                            }
-                        }
-                        if aborted {
-                            break;
                         }
                     }
-                    if aborted {
+                }
+
+                if randomize {
+                    let mut seed = 123456789u64;
+                    let mut xorshift = || {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        seed
+                    };
+
+                    let n = perms.len();
+                    for i in (1..n).rev() {
+                        let j = (xorshift() as usize) % (i + 1);
+                        perms.swap(i, j);
+                    }
+                }
+
+                for p in perms {
+                    if tx_clone.is_closed() || cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                        aborted = true;
                         break;
                     }
+                    let mut a = args.clone();
+                    a.width = Some(p.w as u32);
+                    a.trim = Some((p.t as u32, p.r as u32, p.b as u32, p.l as u32));
+                    a.font_size = p.f;
+                    a.scale = Some((p.x as f32 / 100.0, p.y as f32 / 100.0));
+
+                    let permit = semaphore
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .unwrap();
+                    let img = img_clone.clone();
+                    let (gs, fg) = fg_map.get(&p.f.to_bits()).unwrap().clone();
+                    let rtx = res_tx.clone();
+                    let cancel_inner = cancel_clone.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let result = crate::render_output(
+                            a.clone(),
+                            &gs,
+                            img,
+                            &fg,
+                            Some(cancel_inner),
+                        );
+                        if result.content != "Cancelled" {
+                            let score = if optimize_shortest_longest_line {
+                                result.longest_line_bytes as f64
+                            } else {
+                                result.score
+                            };
+                            let _ = rtx.blocking_send((a, score));
+                        }
+                        drop(permit);
+                    });
                 }
             });
 
@@ -4938,42 +4966,51 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.start_auto_optimization();
                                 }
                                 KeyCode::Up => {
-                                    if state.focused_idx == 16 {
-                                        state.focused_idx = 14;
-                                    } else if state.focused_idx == 17 {
-                                        state.focused_idx = 16;
-                                    } else if state.focused_idx >= 2 {
-                                        state.focused_idx -= 2;
+                                    if state.focused_idx == 24 {
+                                        state.focused_idx = 21;
+                                    } else if state.focused_idx == 25 {
+                                        state.focused_idx = 22;
+                                    } else if state.focused_idx == 26 {
+                                        state.focused_idx = 24;
+                                    } else if state.focused_idx >= 3 {
+                                        state.focused_idx -= 3;
                                     } else {
-                                        state.focused_idx = 17;
+                                        state.focused_idx = 26;
                                     }
                                 }
                                 KeyCode::Down => {
-                                    if state.focused_idx == 16 {
-                                        state.focused_idx = 17;
-                                    } else if state.focused_idx == 17 {
+                                    if state.focused_idx == 24 || state.focused_idx == 25 {
+                                        state.focused_idx = 26;
+                                    } else if state.focused_idx == 26 {
                                         state.focused_idx = 0;
-                                    } else if state.focused_idx < 14 {
-                                        state.focused_idx += 2;
+                                    } else if state.focused_idx < 21 {
+                                        state.focused_idx += 3;
                                     } else {
-                                        state.focused_idx = 16;
+                                        let col = state.focused_idx % 3;
+                                        if col == 0 {
+                                            state.focused_idx = 24;
+                                        } else if col == 1 {
+                                            state.focused_idx = 25;
+                                        } else {
+                                            state.focused_idx = 26;
+                                        }
                                     }
                                 }
                                 KeyCode::Left => {
-                                    if state.focused_idx == 17 {
+                                    if state.focused_idx == 26 {
                                         state.batch_size =
                                             state.batch_size.saturating_sub(1).max(1);
                                     } else if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
-                                        state.focused_idx = 17;
+                                        state.focused_idx = 26;
                                     }
                                 }
                                 KeyCode::Right => {
-                                    if state.focused_idx == 17 {
+                                    if state.focused_idx == 26 {
                                         state.batch_size =
                                             state.batch_size.saturating_add(1).min(100);
-                                    } else if state.focused_idx < 17 {
+                                    } else if state.focused_idx < 26 {
                                         state.focused_idx += 1;
                                     } else {
                                         state.focused_idx = 0;
@@ -4983,32 +5020,35 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if state.focused_idx > 0 {
                                         state.focused_idx -= 1;
                                     } else {
-                                        state.focused_idx = 17;
+                                        state.focused_idx = 26;
                                     }
                                 }
                                 KeyCode::Tab => {
-                                    if state.focused_idx < 17 {
+                                    if state.focused_idx < 26 {
                                         state.focused_idx += 1;
                                     } else {
                                         state.focused_idx = 0;
                                     }
                                 }
-                                KeyCode::Char(' ') if state.focused_idx == 16 => {
+                                KeyCode::Char(' ') if state.focused_idx == 24 => {
                                     state.optimize_shortest_longest_line =
                                         !state.optimize_shortest_longest_line;
                                 }
+                                KeyCode::Char(' ') if state.focused_idx == 25 => {
+                                    state.randomize = !state.randomize;
+                                }
                                 KeyCode::Char('-') | KeyCode::Char('_')
-                                    if state.focused_idx == 17 =>
+                                    if state.focused_idx == 26 =>
                                 {
                                     state.batch_size = state.batch_size.saturating_sub(1).max(1);
                                 }
                                 KeyCode::Char('+') | KeyCode::Char('=')
-                                    if state.focused_idx == 17 =>
+                                    if state.focused_idx == 26 =>
                                 {
                                     state.batch_size = state.batch_size.saturating_add(1).min(100);
                                 }
                                 _ => {
-                                    if state.focused_idx < 16 {
+                                    if state.focused_idx < 24 {
                                         state.inputs[state.focused_idx].input(key);
                                     }
                                 }

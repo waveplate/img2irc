@@ -248,18 +248,24 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
 
         for i in 0..8 {
             let row_area = rows[i];
-            let cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(row_area);
+            let cols = Layout::horizontal([
+                Constraint::Percentage(33),
+                Constraint::Percentage(33),
+                Constraint::Percentage(34),
+            ])
+            .split(row_area);
 
             let title = titles.get(i).unwrap_or(&"");
 
-            for j in 0..2 {
-                let idx = i * 2 + j;
+            for j in 0..3 {
+                let idx = i * 3 + j;
                 let input = &mut state.inputs[idx];
                 let sub_title = if j == 0 {
                     format!("{} (Min)", title)
-                } else {
+                } else if j == 1 {
                     format!("{} (Max)", title)
+                } else {
+                    format!("{} (Step)", title)
                 };
 
                 if idx == state.focused_idx {
@@ -283,26 +289,46 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
             }
         }
 
-        // Render checkbox
+        // Render checkboxes side-by-side
         let cb_area = rows[8];
-        let cb_text = if state.optimize_shortest_longest_line {
+        let cb_cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(cb_area);
+
+        // Checkbox 1
+        let cb1_text = if state.optimize_shortest_longest_line {
             "[x] Optimize for shortest longest line"
         } else {
             "[ ] Optimize for shortest longest line"
         };
-        let cb_style = if state.focused_idx == 16 {
+        let cb1_style = if state.focused_idx == 24 {
             Style::default().fg(ACCENT)
         } else {
             Style::default()
         };
-        let cb_paragraph = Paragraph::new(cb_text)
-            .style(cb_style)
+        let cb1_paragraph = Paragraph::new(cb1_text)
+            .style(cb1_style)
             .alignment(Alignment::Center);
-        f.render_widget(cb_paragraph, cb_area);
+        f.render_widget(cb1_paragraph, cb_cols[0]);
+
+        // Checkbox 2
+        let cb2_text = if state.randomize {
+            "[x] Randomize"
+        } else {
+            "[ ] Randomize"
+        };
+        let cb2_style = if state.focused_idx == 25 {
+            Style::default().fg(ACCENT)
+        } else {
+            Style::default()
+        };
+        let cb2_paragraph = Paragraph::new(cb2_text)
+            .style(cb2_style)
+            .alignment(Alignment::Center);
+        f.render_widget(cb2_paragraph, cb_cols[1]);
 
         // Render slider for batch size
         let slider_area = rows[9];
-        let slider_style = if state.focused_idx == 17 {
+        let slider_style = if state.focused_idx == 26 {
             Style::default().fg(ACCENT)
         } else {
             Style::default().fg(Color::Gray)
