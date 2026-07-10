@@ -81,7 +81,7 @@ const EIGHTH_BLOCKS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", 
 #[derive(Debug)]
 enum OptimizationUpdate {
     Progress(String),
-    BestResult(RenderArgs),
+    BestResult(RenderArgs, f64),
     Finished,
 }
 
@@ -1395,6 +1395,7 @@ pub(crate) struct App {
     eyedropper_color: Option<(u8, u8, u8)>,
     is_optimizing: bool,
     optimization_progress: String,
+    optimization_best_score: Option<f64>,
     auto_optimize_state: Option<AutoOptimizeState>,
     saved_auto_optimize_inputs: Vec<String>,
     saved_auto_optimize_shortest_longest_line: bool,
@@ -2027,6 +2028,7 @@ impl App {
             eyedropper_color: None,
             is_optimizing: false,
             optimization_progress: String::new(),
+            optimization_best_score: None,
             rx_optimization: None,
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
@@ -2753,6 +2755,7 @@ impl App {
         self.saved_auto_optimize_randomize = randomize;
 
         self.is_optimizing = true;
+        self.optimization_best_score = None;
         self.optimization_progress = format!("Starting... ({} perms)", total_perms);
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -2946,7 +2949,7 @@ impl App {
                     best_score = score;
                     best_args = a;
                     let _ = tx
-                        .send(OptimizationUpdate::BestResult(best_args.clone()))
+                        .send(OptimizationUpdate::BestResult(best_args.clone(), best_score))
                         .await;
                 }
 
@@ -2968,7 +2971,7 @@ impl App {
             }
 
             best_args.score = original_score;
-            let _ = tx.send(OptimizationUpdate::BestResult(best_args)).await;
+            let _ = tx.send(OptimizationUpdate::BestResult(best_args, best_score)).await;
             let _ = tx.send(OptimizationUpdate::Finished).await;
         });
     }
@@ -4520,13 +4523,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             while let Ok(update) = rx.try_recv() {
                 match update {
                     OptimizationUpdate::Progress(p) => app.optimization_progress = p,
-                    OptimizationUpdate::BestResult(args) => {
+                    OptimizationUpdate::BestResult(args, score) => {
                         app.apply_settings(&args);
-                        app.mark_args_dirty();
+                        app.optimization_best_score = Some(score);
+                        // Don't mark_args_dirty here — avoid triggering
+                        // stale re-renders that overwrite the score display.
+                        // A single final render is triggered on Finished.
                     }
                     OptimizationUpdate::Finished => {
                         app.is_optimizing = false;
                         app.optimization_progress = "Finished".to_string();
+                        // Now trigger one clean render with the best settings
+                        app.mark_args_dirty();
                     }
                 }
             }
@@ -7904,8 +7912,13 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     let mut full_spans = vec![];
     if let Some(res) = &app.cached_result {
+        let display_score = if app.is_optimizing {
+            app.optimization_best_score.unwrap_or(res.score)
+        } else {
+            res.score
+        };
         full_spans.push(Span::styled(
-            format!(" Error {:.3}% ", res.score),
+            format!(" Error {:.3}% ", display_score),
             Style::new()
                 .fg(Color::White)
                 .bg(ACCENT_DIM)

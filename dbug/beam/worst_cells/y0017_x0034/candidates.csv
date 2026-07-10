@@ -1,0 +1,5 @@
+rank,variant_index,glyph_index,char_codepoint,char,inverted,selected_final,selected_initial,unary_cost,local_cost,local_norm,reference_cost,reference_norm,role_cost,style_cost,fill_cost,orientation_cost,file
+0,33,16,9615,"\u{258f}",1,0,0,1.229805,74,0.158273,13,0.038462,0.000000,0.598718,0.218935,0.042158,cand_00_g0016_u00123_i1.png
+1,122,61,129896,"\u{1fb68}",0,0,0,1.423963,66,0.129496,55,0.162722,0.000000,0.758876,0.124260,0.042158,cand_01_g0061_u00142_i0.png
+2,21,10,9609,"\u{2589}",1,1,0,1.488397,160,0.467626,103,0.304734,0.000000,0.471795,0.473373,0.042158,cand_02_g0010_u00149_i1.png
+3,29,14,9613,"\u{258d}",1,0,1,1.968484,30,0.000000,13,0.038462,0.450000,0.671795,0.011834,0.042158,cand_03_g0014_u00197_i1.png

@@ -1,0 +1,8 @@
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-unknown-linux-musl-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+AR_x86_64_unknown_linux_musl = "x86_64-unknown-linux-musl-ar"
+CC_x86_64_unknown_linux_musl = "x86_64-unknown-linux-musl-gcc"
+CXX_x86_64_unknown_linux_musl = "x86_64-unknown-linux-musl-g++"
