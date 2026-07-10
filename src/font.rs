@@ -765,15 +765,151 @@ glyphs = [32]
     (resolved_groups, all_chars)
 }
 
+/// Generate a bitmap procedurally for Unicode Block Elements (U+2580–U+259F).
+/// Terminals render these mathematically rather than from font outlines, because
+/// font outlines often extend beyond the em-square causing identical clipped
+/// bitmaps at small sizes.  Returns `None` for non-block characters.
+fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
+    let code = ch as u32;
+    if code < 0x2580 || code > 0x259F {
+        return None;
+    }
+
+    let mut cell = vec![vec![0u8; w]; h];
+
+    // Helper: fill a rectangular region
+    let fill = |cell: &mut Vec<Vec<u8>>, y0: usize, y1: usize, x0: usize, x1: usize| {
+        for y in y0..y1.min(h) {
+            for x in x0..x1.min(w) {
+                cell[y][x] = 1;
+            }
+        }
+    };
+
+    match code {
+        // ▀ UPPER HALF BLOCK
+        0x2580 => fill(&mut cell, 0, h / 2, 0, w),
+        // ▁ LOWER ONE EIGHTH BLOCK
+        0x2581 => fill(&mut cell, h - h / 8, h, 0, w),
+        // ▂ LOWER ONE QUARTER BLOCK
+        0x2582 => fill(&mut cell, h - h / 4, h, 0, w),
+        // ▃ LOWER THREE EIGHTHS BLOCK
+        0x2583 => fill(&mut cell, h - (h * 3 / 8), h, 0, w),
+        // ▄ LOWER HALF BLOCK
+        0x2584 => fill(&mut cell, h / 2, h, 0, w),
+        // ▅ LOWER FIVE EIGHTHS BLOCK
+        0x2585 => fill(&mut cell, h - (h * 5 / 8), h, 0, w),
+        // ▆ LOWER THREE QUARTERS BLOCK
+        0x2586 => fill(&mut cell, h - (h * 3 / 4), h, 0, w),
+        // ▇ LOWER SEVEN EIGHTHS BLOCK
+        0x2587 => fill(&mut cell, h - (h * 7 / 8), h, 0, w),
+        // █ FULL BLOCK
+        0x2588 => fill(&mut cell, 0, h, 0, w),
+        // ▉ LEFT SEVEN EIGHTHS BLOCK
+        0x2589 => fill(&mut cell, 0, h, 0, w * 7 / 8),
+        // ▊ LEFT THREE QUARTERS BLOCK
+        0x258A => fill(&mut cell, 0, h, 0, w * 3 / 4),
+        // ▋ LEFT FIVE EIGHTHS BLOCK
+        0x258B => fill(&mut cell, 0, h, 0, w * 5 / 8),
+        // ▌ LEFT HALF BLOCK
+        0x258C => fill(&mut cell, 0, h, 0, w / 2),
+        // ▍ LEFT THREE EIGHTHS BLOCK
+        0x258D => fill(&mut cell, 0, h, 0, w * 3 / 8),
+        // ▎ LEFT ONE QUARTER BLOCK
+        0x258E => fill(&mut cell, 0, h, 0, w / 4),
+        // ▏ LEFT ONE EIGHTH BLOCK
+        0x258F => fill(&mut cell, 0, h, 0, w / 8),
+        // ▐ RIGHT HALF BLOCK
+        0x2590 => fill(&mut cell, 0, h, w / 2, w),
+        // ░ LIGHT SHADE (25% coverage — checkerboard)
+        0x2591 => {
+            for y in 0..h {
+                for x in 0..w {
+                    if (x + y) % 4 == 0 { cell[y][x] = 1; }
+                }
+            }
+        }
+        // ▒ MEDIUM SHADE (50% coverage — checkerboard)
+        0x2592 => {
+            for y in 0..h {
+                for x in 0..w {
+                    if (x + y) % 2 == 0 { cell[y][x] = 1; }
+                }
+            }
+        }
+        // ▓ DARK SHADE (75% coverage — inverse checkerboard)
+        0x2593 => {
+            for y in 0..h {
+                for x in 0..w {
+                    if (x + y) % 4 != 0 { cell[y][x] = 1; }
+                }
+            }
+        }
+        // ▔ UPPER ONE EIGHTH BLOCK
+        0x2594 => fill(&mut cell, 0, h / 8, 0, w),
+        // ▕ RIGHT ONE EIGHTH BLOCK
+        0x2595 => fill(&mut cell, 0, h, w - w / 8, w),
+        // ▖ QUADRANT LOWER LEFT
+        0x2596 => fill(&mut cell, h / 2, h, 0, w / 2),
+        // ▗ QUADRANT LOWER RIGHT
+        0x2597 => fill(&mut cell, h / 2, h, w / 2, w),
+        // ▘ QUADRANT UPPER LEFT
+        0x2598 => fill(&mut cell, 0, h / 2, 0, w / 2),
+        // ▙ QUADRANT UPPER LEFT AND LOWER LEFT AND LOWER RIGHT
+        0x2599 => {
+            fill(&mut cell, 0, h / 2, 0, w / 2);
+            fill(&mut cell, h / 2, h, 0, w);
+        }
+        // ▚ QUADRANT UPPER LEFT AND LOWER RIGHT
+        0x259A => {
+            fill(&mut cell, 0, h / 2, 0, w / 2);
+            fill(&mut cell, h / 2, h, w / 2, w);
+        }
+        // ▛ QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER LEFT
+        0x259B => {
+            fill(&mut cell, 0, h / 2, 0, w);
+            fill(&mut cell, h / 2, h, 0, w / 2);
+        }
+        // ▜ QUADRANT UPPER LEFT AND UPPER RIGHT AND LOWER RIGHT
+        0x259C => {
+            fill(&mut cell, 0, h / 2, 0, w);
+            fill(&mut cell, h / 2, h, w / 2, w);
+        }
+        // ▝ QUADRANT UPPER RIGHT
+        0x259D => fill(&mut cell, 0, h / 2, w / 2, w),
+        // ▞ QUADRANT UPPER RIGHT AND LOWER LEFT
+        0x259E => {
+            fill(&mut cell, 0, h / 2, w / 2, w);
+            fill(&mut cell, h / 2, h, 0, w / 2);
+        }
+        // ▟ QUADRANT UPPER RIGHT AND LOWER LEFT AND LOWER RIGHT
+        0x259F => {
+            fill(&mut cell, 0, h / 2, w / 2, w);
+            fill(&mut cell, h / 2, h, 0, w);
+        }
+        _ => return None,
+    }
+
+    Some(cell)
+}
+
 fn render_glyph_from_font(font: &FontVec, ch: char, metrics: &CachedMetrics) -> GlyphBitmap {
     let cell_width = metrics.cell_width.max(1);
     let cell_height = metrics.cell_height.max(1);
+
+    // Block elements (U+2580–U+259F): render procedurally, matching terminal
+    // behavior.  Terminals draw these mathematically rather than from font
+    // outlines because font outlines for block chars often extend beyond the
+    // em-square and produce incorrect bitmaps at small pixel sizes.
+    if let Some(bitmap) = procedural_block_bitmap(ch, cell_width, cell_height) {
+        return bitmap;
+    }
+
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
 
     // Use font_size as PxScale — this is the em-square scale, exactly what
     // terminals use.  float_height includes the line_gap and would over-scale
-    // glyphs, causing block characters to overflow the cell and get clipped
-    // to identical bitmaps.
+    // glyphs, causing characters to overflow the cell and get clipped.
     let scale = PxScale {
         x: metrics.font_size,
         y: metrics.font_size,
@@ -931,7 +1067,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v9".hash(&mut hasher);
+    "v10".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -944,7 +1080,7 @@ fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -
 
 fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMetrics) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v9".hash(&mut hasher);
+    "v10".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
