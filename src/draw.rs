@@ -1921,21 +1921,43 @@ fn local_patch_boundary_complexity_score(
             }
 
             if relevant {
+                let mut min_x = usize::MAX;
+                let mut min_y = usize::MAX;
+                let mut max_x = 0usize;
+                let mut max_y = 0usize;
+
                 scratch.vertices.clear();
+
                 let temp_component = scratch.component.clone();
                 for &seg_idx in &temp_component {
                     let segment = scratch.segments[seg_idx];
-                    scratch.vertices.push(segment.start);
-                    scratch.vertices.push(segment.end);
+
+                    min_x = min_x.min(segment.start.0).min(segment.end.0);
+                    min_y = min_y.min(segment.start.1).min(segment.end.1);
+                    max_x = max_x.max(segment.start.0).max(segment.end.0);
+                    max_y = max_y.max(segment.start.1).max(segment.end.1);
+
+                    let v1 = segment.start.1 * width_stride + segment.start.0;
+                    if scratch.degrees[v1] == 1 {
+                        scratch.vertices.push(segment.start);
+                    }
+                    let v2 = segment.end.1 * width_stride + segment.end.0;
+                    if scratch.degrees[v2] == 1 {
+                        scratch.vertices.push(segment.end);
+                    }
                 }
-                
+
                 scratch.vertices.sort_unstable();
                 scratch.vertices.dedup();
 
-                let span = component_endpoint_span(&scratch.vertices);
-                let complexity = scratch.component.len() as f32;
-                let penalty = span * complexity;
-                total_penalty += penalty;
+                let length = scratch.component.len() as f32;
+                let baseline = if scratch.vertices.len() >= 2 {
+                    component_endpoint_span(&scratch.vertices).max(1.0)
+                } else {
+                    (max_x.saturating_sub(min_x) + max_y.saturating_sub(min_y)).max(1) as f32
+                };
+
+                total_penalty += (length - baseline).max(0.0);
                 counted_components += 1;
             }
         }
@@ -1949,7 +1971,7 @@ fn local_patch_boundary_complexity_score(
         if counted_components == 0 {
             0.0
         } else {
-            total_penalty / counted_components as f32
+            (100.0 * total_penalty / (counted_components as f32 * (gw + gh).max(1) as f32)).min(100.0)
         }
     });
 
