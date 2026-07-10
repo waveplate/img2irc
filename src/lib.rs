@@ -260,12 +260,13 @@ pub fn prepare_canvas(
 
     let luma_canvas = if args.braille {
         let image_luma = effects::apply_luma_effects(args, glyphs, image);
-        Some(draw::AnsiImage::new(
+        let canvas_luma = draw::AnsiImage::new(
             image_luma,
             glyphs.clone(),
             args.grayscale_tolerance,
             args.nograyscale,
-        ))
+        );
+        Some(canvas_luma)
     } else {
         None
     };
@@ -547,10 +548,12 @@ mod tests {
         let duration2 = start2.elapsed();
         println!("Warm render took: {:?}", duration2);
 
-        // Run 3 (Warm)
+        // Run 3 (Warm, different contrast)
+        let mut render_args_contrast = render_args.clone();
+        render_args_contrast.contrast = 0.5;
         let start3 = std::time::Instant::now();
-        let _res3 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let _res3 = crate::render_output(render_args_contrast, &initial_glyph_store, image.clone(), &glyphs, None);
         let duration3 = start3.elapsed();
-        println!("Warm render 2 took: {:?}", duration3);
+        println!("Warm render (diff contrast) took: {:?}", duration3);
     }
 }

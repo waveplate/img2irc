@@ -34,6 +34,7 @@ pub struct FastGlyph {
     pub exit_bottom_inv: f32,
     pub exit_left_inv: f32,
     pub exit_right_inv: f32,
+    pub mask: u128,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -161,6 +162,13 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
             let exit_left_inv = compute_exit(&left, 0);
             let exit_right_inv = compute_exit(&right, 0);
 
+            let mut mask = 0u128;
+            for &idx in &ones_indices {
+                if idx < 128 {
+                    mask |= 1u128 << idx;
+                }
+            }
+
             FastGlyph {
                 ch: *ch,
                 bitmap,
@@ -181,6 +189,7 @@ pub fn prepare_glyphs(glyphs: &GlyphStore, args: &RenderArgs) -> Vec<FastGlyph> 
                 exit_bottom_inv,
                 exit_left_inv,
                 exit_right_inv,
+                mask,
             }
         })
         .collect()
@@ -3220,63 +3229,117 @@ pub fn render_blocks_smooth(
                             let mut best_glyph = 0;
                             let mut best_inv = false;
 
-                            let mut ones_cnt = [0u16; 256];
+                            if num_unique_colors <= 1 {
+                                best_glyph = 0;
+                                best_inv = false;
+                                best_cost = 0;
+                            } else if bp <= 128 {
+                                let mut color_masks = [0u128; 256];
+                                for (i, &color_idx) in indices.iter().enumerate() {
+                                    if i < 128 {
+                                        color_masks[color_idx as usize] |= 1u128 << i;
+                                    }
+                                }
 
-                            for (gi, fglyph) in glyphs.iter().enumerate() {
-                                if gi & 0x3f == 0 {
-                                    if let Some(flag) = &abort_flag {
-                                        if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                            return (Vec::new(), Vec::new());
+                                for (gi, fglyph) in glyphs.iter().enumerate() {
+                                    if gi & 0x3f == 0 {
+                                        if let Some(flag) = &abort_flag {
+                                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                                return (Vec::new(), Vec::new());
+                                            }
                                         }
                                     }
-                                }
 
-                                for &i in &fglyph.ones {
-                                    ones_cnt[indices[i] as usize] += 1;
-                                }
+                                    let mut ones_mode_count = 0u16;
+                                    let mut zeros_mode_count = 0u16;
+                                    for &idx in active_colors {
+                                        let c_ones = (color_masks[idx as usize] & fglyph.mask).count_ones() as u16;
+                                        if c_ones > ones_mode_count {
+                                            ones_mode_count = c_ones;
+                                        }
+                                        let c_zeros = base_cnt[idx as usize] - c_ones;
+                                        if c_zeros > zeros_mode_count {
+                                            zeros_mode_count = c_zeros;
+                                        }
+                                    }
 
-                                let mut ones_mode_count = 0u16;
-                                for &idx in active_colors {
-                                    let count = ones_cnt[idx as usize];
-                                    if count >= ones_mode_count {
-                                        ones_mode_count = count;
+                                    let ones_len = fglyph.ones.len() as u64;
+                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
+
+                                    let cost_normal = (ones_len - ones_mode_count as u64)
+                                        + (zeros_len - zeros_mode_count as u64);
+                                    if cost_normal < best_cost {
+                                        best_cost = cost_normal;
+                                        best_glyph = gi;
+                                        best_inv = false;
+                                    }
+
+                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                        + (ones_len - ones_mode_count as u64);
+                                    if cost_inverted < best_cost {
+                                        best_cost = cost_inverted;
+                                        best_glyph = gi;
+                                        best_inv = true;
+                                    }
+
+                                    if best_cost == 0 {
+                                        break;
                                     }
                                 }
-
-                                let mut zeros_mode_count = 0u16;
-                                for &idx in active_colors {
-                                    let count = base_cnt[idx as usize] - ones_cnt[idx as usize];
-                                    if count >= zeros_mode_count {
-                                        zeros_mode_count = count;
+                            } else {
+                                let mut ones_cnt = [0u16; 256];
+                                for (gi, fglyph) in glyphs.iter().enumerate() {
+                                    if gi & 0x3f == 0 {
+                                        if let Some(flag) = &abort_flag {
+                                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                                return (Vec::new(), Vec::new());
+                                            }
+                                        }
                                     }
-                                }
 
-                                let ones_len = fglyph.ones.len() as u64;
-                                let zeros_len = (bp - fglyph.ones.len()) as u64;
+                                    for &i in &fglyph.ones {
+                                        ones_cnt[indices[i] as usize] += 1;
+                                    }
 
-                                let cost_normal = (ones_len - ones_mode_count as u64)
-                                    + (zeros_len - zeros_mode_count as u64);
-                                if cost_normal < best_cost {
-                                    best_cost = cost_normal;
-                                    best_glyph = gi;
-                                    best_inv = false;
-                                }
+                                    let mut ones_mode_count = 0u16;
+                                    let mut zeros_mode_count = 0u16;
+                                    for &idx in active_colors {
+                                        let count = ones_cnt[idx as usize];
+                                        if count > ones_mode_count {
+                                            ones_mode_count = count;
+                                        }
+                                        let count_zeros = base_cnt[idx as usize] - count;
+                                        if count_zeros > zeros_mode_count {
+                                            zeros_mode_count = count_zeros;
+                                        }
+                                    }
 
-                                let cost_inverted = (zeros_len - zeros_mode_count as u64)
-                                    + (ones_len - ones_mode_count as u64);
-                                if cost_inverted < best_cost {
-                                    best_cost = cost_inverted;
-                                    best_glyph = gi;
-                                    best_inv = true;
-                                }
+                                    let ones_len = fglyph.ones.len() as u64;
+                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
 
-                                // Reset only the modified ones_cnt bins for the next iteration
-                                for &idx in active_colors {
-                                    ones_cnt[idx as usize] = 0;
-                                }
+                                    let cost_normal = (ones_len - ones_mode_count as u64)
+                                        + (zeros_len - zeros_mode_count as u64);
+                                    if cost_normal < best_cost {
+                                        best_cost = cost_normal;
+                                        best_glyph = gi;
+                                        best_inv = false;
+                                    }
 
-                                if best_cost == 0 {
-                                    break;
+                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                        + (ones_len - ones_mode_count as u64);
+                                    if cost_inverted < best_cost {
+                                        best_cost = cost_inverted;
+                                        best_glyph = gi;
+                                        best_inv = true;
+                                    }
+
+                                    for &idx in active_colors {
+                                        ones_cnt[idx as usize] = 0;
+                                    }
+
+                                    if best_cost == 0 {
+                                        break;
+                                    }
                                 }
                             }
 

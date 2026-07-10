@@ -136,6 +136,53 @@ pub fn calculate_dimensions(
     (out_w, out_h)
 }
 
+fn fast_crop_and_nearest_resize(
+    img: &PhotonImage,
+    crop_coords: Option<(u32, u32, u32, u32)>, // (top, right, bottom, left)
+    dest_w: u32,
+    dest_h: u32,
+    fliph: bool,
+    flipv: bool,
+) -> PhotonImage {
+    let raw_w = img.get_width();
+    let raw_h = img.get_height();
+    let raw = img.get_raw_pixels();
+
+    let (left, top, src_w, src_h) = if let Some((crop_top, crop_right, crop_bottom, crop_left)) = crop_coords {
+        let l = crop_left.min(raw_w);
+        let t = crop_top.min(raw_h);
+        let r = crop_right.min(raw_w - l);
+        let b = crop_bottom.min(raw_h - t);
+        (l, t, raw_w - l - r, raw_h - t - b)
+    } else {
+        (0, 0, raw_w, raw_h)
+    };
+
+    let mut dest_pixels = vec![0u8; (dest_w * dest_h * 4) as usize];
+
+    if src_w == 0 || src_h == 0 {
+        return PhotonImage::new(dest_pixels, dest_w, dest_h);
+    }
+
+    for y in 0..dest_h {
+        let mapped_y = if flipv { dest_h - 1 - y } else { y };
+        let src_y = top + (mapped_y * src_h) / dest_h;
+        let src_row_offset = (src_y * raw_w * 4) as usize;
+        let dest_row_offset = (y * dest_w * 4) as usize;
+
+        for x in 0..dest_w {
+            let mapped_x = if fliph { dest_w - 1 - x } else { x };
+            let src_x = left + (mapped_x * src_w) / dest_w;
+            let src_idx = src_row_offset + (src_x * 4) as usize;
+            let dest_idx = dest_row_offset + (x * 4) as usize;
+
+            dest_pixels[dest_idx..dest_idx + 4].copy_from_slice(&raw[src_idx..src_idx + 4]);
+        }
+    }
+
+    PhotonImage::new(dest_pixels, dest_w, dest_h)
+}
+
 pub fn apply_effects(
     args: &args::RenderArgs,
     glyphs: &GlyphStore,
@@ -176,44 +223,85 @@ pub fn apply_effects(
     };
 
     if base_image.is_none() {
-        if let Some((top, right, bottom, left)) = args.trim {
-            let w = photon_image.get_width();
-            let h = photon_image.get_height();
-            if left + right < w && top + bottom < h {
-                photon_image = crop(&photon_image, left, top, w - right, h - bottom);
+        let mut resized = if args.filter == args::SamplingFilter::Nearest {
+            let (width, height) = calculate_dimensions(
+                args,
+                glyphs,
+                if let Some((top, right, bottom, left)) = args.trim {
+                    let w = photon_image.get_width();
+                    let h = photon_image.get_height();
+                    if left + right < w && top + bottom < h {
+                        (w - right - left) as f32
+                    } else {
+                        w as f32
+                    }
+                } else {
+                    photon_image.get_width() as f32
+                },
+                if let Some((top, right, bottom, left)) = args.trim {
+                    let w = photon_image.get_width();
+                    let h = photon_image.get_height();
+                    if left + right < w && top + bottom < h {
+                        (h - bottom - top) as f32
+                    } else {
+                        h as f32
+                    }
+                } else {
+                    photon_image.get_height() as f32
+                },
+            );
+
+            fast_crop_and_nearest_resize(
+                &photon_image,
+                args.trim,
+                width,
+                height,
+                args.fliph,
+                args.flipv,
+            )
+        } else {
+            if let Some((top, right, bottom, left)) = args.trim {
+                let w = photon_image.get_width();
+                let h = photon_image.get_height();
+                if left + right < w && top + bottom < h {
+                    photon_image = crop(&photon_image, left, top, w - right, h - bottom);
+                }
             }
-        }
 
-        let (width, height) = calculate_dimensions(
-            args,
-            glyphs,
-            photon_image.get_width() as f32,
-            photon_image.get_height() as f32,
-        );
+            let (width, height) = calculate_dimensions(
+                args,
+                glyphs,
+                photon_image.get_width() as f32,
+                photon_image.get_height() as f32,
+            );
 
-        if args.fliph {
-            fliph(&mut photon_image);
-        }
+            if args.fliph {
+                fliph(&mut photon_image);
+            }
 
-        if args.flipv {
-            flipv(&mut photon_image);
-        }
+            if args.flipv {
+                flipv(&mut photon_image);
+            }
 
-        let filter = match args.filter {
-            args::SamplingFilter::Nearest => SamplingFilter::Nearest,
-            args::SamplingFilter::Triangle => SamplingFilter::Triangle,
-            args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
-            args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
-            args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
+            let filter = match args.filter {
+                args::SamplingFilter::Nearest => SamplingFilter::Nearest,
+                args::SamplingFilter::Triangle => SamplingFilter::Triangle,
+                args::SamplingFilter::CatmullRom => SamplingFilter::CatmullRom,
+                args::SamplingFilter::Gaussian => SamplingFilter::Gaussian,
+                args::SamplingFilter::Lanczos3 => SamplingFilter::Lanczos3,
+            };
+
+            resize(&photon_image, width, height, filter)
         };
 
-        let mut resized = resize(&photon_image, width, height, filter);
+        let width = resized.get_width();
+        let height = resized.get_height();
 
         if args.rotate != 0.00 {
             let angle_radians = args.rotate.to_radians();
             let image_buffer = image::ImageBuffer::from_raw(
-                resized.get_width(),
-                resized.get_height(),
+                width,
+                height,
                 resized.get_raw_pixels(),
             )
             .unwrap();
