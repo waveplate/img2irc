@@ -14,7 +14,7 @@ struct GpuBlockPixel {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Pod, Zeroable, Hash)]
 struct GpuGlyph {
     ones_starts: u32,
     ones_len: u32,
@@ -51,6 +51,29 @@ pub struct GpuState {
 }
 
 static GPU_CONTEXT: std::sync::OnceLock<GpuState> = std::sync::OnceLock::new();
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CacheKey {
+    glyphs_hash: u64,
+    render_mode: Render,
+    tolerance: u8,
+    bp: u32,
+}
+
+struct CachedGpuBuffers {
+    key: CacheKey,
+    glyphs_buf: std::sync::Arc<wgpu::Buffer>,
+    ones_buf: std::sync::Arc<wgpu::Buffer>,
+    palette_buf: std::sync::Arc<wgpu::Buffer>,
+    meta_buf: std::sync::Arc<wgpu::Buffer>,
+    results_buf: std::sync::Arc<wgpu::Buffer>,
+    blocks_buf: std::sync::Arc<wgpu::Buffer>,
+    staging_buf: std::sync::Arc<wgpu::Buffer>,
+    bind_group: std::sync::Arc<wgpu::BindGroup>,
+    max_blocks_per_batch: usize,
+}
+
+static GPU_CACHE: std::sync::Mutex<Option<CachedGpuBuffers>> = std::sync::Mutex::new(None);
 
 pub fn render_blocks_gpu(
     image: &crate::draw::AnsiImage,
@@ -214,118 +237,192 @@ pub fn render_blocks_gpu(
         });
     }
 
-    let palette = match render_mode {
-        Render::Ansi => &ANSI256[..],
-        Render::Irc => &IRC99[..],
-        Render::Ansi24 => &ANSI256[..],
+    let glyphs_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        gpu_glyphs.hash(&mut hasher);
+        gpu_ones.len().hash(&mut hasher);
+        hasher.finish()
     };
 
-    let mode_val = match render_mode {
-        Render::Ansi => 0,
-        Render::Irc => 1,
-        Render::Ansi24 => 2,
-    };
-
-    let meta = GpuMetadata {
+    let key = CacheKey {
+        glyphs_hash,
+        render_mode: render_mode.clone(),
+        tolerance,
         bp,
-        num_glyphs: glyphs.len() as u32,
-        render_mode: mode_val,
-        tolerance: tolerance as u32,
     };
 
-    use wgpu::util::DeviceExt;
-
-    let glyphs_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Glyphs Buffer"),
-        contents: bytemuck::cast_slice(&gpu_glyphs),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let ones_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Glyph Ones Buffer"),
-        contents: bytemuck::cast_slice(&gpu_ones),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    // WebGL fallback if empty palette
-    let pal = if palette.is_empty() {
-        vec![0u32]
+    let mut cache_guard = GPU_CACHE.lock().unwrap();
+    let cached = if let Some(ref c) = *cache_guard {
+        if c.key == key {
+            Some(c)
+        } else {
+            None
+        }
     } else {
-        palette.to_vec()
+        None
     };
-    let palette_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Palette Buffer"),
-        contents: bytemuck::cast_slice(&pal),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
 
-    let meta_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Metadata Buffer"),
-        contents: bytemuck::cast_slice(&[meta]),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let (
+        glyphs_buf,
+        ones_buf,
+        palette_buf,
+        meta_buf,
+        results_buf,
+        blocks_buf,
+        staging_buf,
+        bind_group,
+        max_blocks_per_batch,
+    ) = if let Some(c) = cached {
+        (
+            c.glyphs_buf.clone(),
+            c.ones_buf.clone(),
+            c.palette_buf.clone(),
+            c.meta_buf.clone(),
+            c.results_buf.clone(),
+            c.blocks_buf.clone(),
+            c.staging_buf.clone(),
+            c.bind_group.clone(),
+            c.max_blocks_per_batch,
+        )
+    } else {
+        let palette = match render_mode {
+            Render::Ansi => &ANSI256[..],
+            Render::Irc => &IRC99[..],
+            Render::Ansi24 => &ANSI256[..],
+        };
 
-    // Maximum blocks per batch. Reduced to 4 Million pixels to avoid potential limit issues.
-    let max_pixels_per_batch = 4_000_000;
-    let max_blocks_per_batch = (max_pixels_per_batch / bp as usize).max(1);
+        let mode_val = match render_mode {
+            Render::Ansi => 0,
+            Render::Irc => 1,
+            Render::Ansi24 => 2,
+        };
+
+        let meta = GpuMetadata {
+            bp,
+            num_glyphs: glyphs.len() as u32,
+            render_mode: mode_val,
+            tolerance: tolerance as u32,
+        };
+
+        use wgpu::util::DeviceExt;
+
+        let glyphs_buf = std::sync::Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Glyphs Buffer"),
+            contents: bytemuck::cast_slice(&gpu_glyphs),
+            usage: wgpu::BufferUsages::STORAGE,
+        }));
+
+        let ones_buf = std::sync::Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Glyph Ones Buffer"),
+            contents: bytemuck::cast_slice(&gpu_ones),
+            usage: wgpu::BufferUsages::STORAGE,
+        }));
+
+        let pal = if palette.is_empty() {
+            vec![0u32]
+        } else {
+            palette.to_vec()
+        };
+        let palette_buf = std::sync::Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Palette Buffer"),
+            contents: bytemuck::cast_slice(&pal),
+            usage: wgpu::BufferUsages::STORAGE,
+        }));
+
+        let meta_buf = std::sync::Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Metadata Buffer"),
+            contents: bytemuck::cast_slice(&[meta]),
+            usage: wgpu::BufferUsages::UNIFORM,
+        }));
+
+        let max_pixels_per_batch = 4_000_000;
+        let max_blocks_per_batch = (max_pixels_per_batch / bp as usize).max(1);
+
+        let max_results_size = (max_blocks_per_batch as u64) * std::mem::size_of::<GpuResult>() as u64;
+        let results_buf = std::sync::Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Results Buffer"),
+            size: max_results_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        }));
+
+        let blocks_buf_size =
+            (max_blocks_per_batch as u64) * bp as u64 * std::mem::size_of::<GpuBlockPixel>() as u64;
+        let blocks_buf = std::sync::Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Blocks Buffer"),
+            size: blocks_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+
+        let staging_buf = std::sync::Arc::new(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Staging Buffer"),
+            size: max_results_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+
+        let bind_group = std::sync::Arc::new(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: blocks_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: glyphs_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: ones_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: palette_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: meta_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: results_buf.as_entire_binding(),
+                },
+            ],
+        }));
+
+        let new_cached = CachedGpuBuffers {
+            key,
+            glyphs_buf: glyphs_buf.clone(),
+            ones_buf: ones_buf.clone(),
+            palette_buf: palette_buf.clone(),
+            meta_buf: meta_buf.clone(),
+            results_buf: results_buf.clone(),
+            blocks_buf: blocks_buf.clone(),
+            staging_buf: staging_buf.clone(),
+            bind_group: bind_group.clone(),
+            max_blocks_per_batch,
+        };
+        *cache_guard = Some(new_cached);
+
+        (
+            glyphs_buf,
+            ones_buf,
+            palette_buf,
+            meta_buf,
+            results_buf,
+            blocks_buf,
+            staging_buf,
+            bind_group,
+            max_blocks_per_batch,
+        )
+    };
+    drop(cache_guard);
 
     let mut final_results = Vec::with_capacity(total_blocks);
-
-    // We prepare a reusable Results Buffer scaled to max_blocks_per_batch
-    let max_results_size = (max_blocks_per_batch as u64) * std::mem::size_of::<GpuResult>() as u64;
-    let results_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Results Buffer"),
-        size: max_results_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-
-    let blocks_buf_size =
-        (max_blocks_per_batch as u64) * bp as u64 * std::mem::size_of::<GpuBlockPixel>() as u64;
-    let blocks_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Blocks Buffer"),
-        size: blocks_buf_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Staging Buffer"),
-        size: max_results_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: blocks_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: glyphs_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: ones_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: palette_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: meta_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: results_buf.as_entire_binding(),
-            },
-        ],
-    });
 
     let t_total = std::time::Instant::now();
     let mut t_prep = std::time::Instant::now();

@@ -514,6 +514,7 @@ mod tests {
             "40",
             "--font-size",
             "13",
+            "--gpu",
             "inputs/lisa.png",
         ]);
         let render_args = crate::args_to_render_args(&args);
