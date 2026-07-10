@@ -555,5 +555,13 @@ mod tests {
         let _res3 = crate::render_output(render_args_contrast, &initial_glyph_store, image.clone(), &glyphs, None);
         let duration3 = start3.elapsed();
         println!("Warm render (diff contrast) took: {:?}", duration3);
+
+        // Run 4 (Warm, different crop)
+        let mut render_args_crop = render_args.clone();
+        render_args_crop.trim = Some((2, 2, 2, 2));
+        let start4 = std::time::Instant::now();
+        let _res4 = crate::render_output(render_args_crop, &initial_glyph_store, image.clone(), &glyphs, None);
+        let duration4 = start4.elapsed();
+        println!("Warm render (diff crop) took: {:?}", duration4);
     }
 }

@@ -4854,6 +4854,7 @@ mod tests {
             exit_bottom_inv: -1.0,
             exit_left_inv: -1.0,
             exit_right_inv: -1.0,
+            mask: 0,
         }
     }
 
