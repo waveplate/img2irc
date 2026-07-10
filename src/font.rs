@@ -1,4 +1,3 @@
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use fontdb::{Database, Family, Query, Source};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -12,6 +11,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use toml::Value;
 use unicode_width::UnicodeWidthChar;
+
+use swash::FontRef;
+use swash::scale::{ScaleContext, Render, Source as SwashSource};
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -44,9 +46,13 @@ struct CachedBlock {
     glyphs: Vec<(char, GlyphBitmap, String)>,
 }
 
+pub struct SystemFont {
+    pub bytes: Vec<u8>,
+}
+
 struct FontContext {
-    user_faces: HashMap<String, Arc<FontVec>>,
-    fallback_faces: HashMap<String, Arc<FontVec>>,
+    user_faces: HashMap<String, Arc<SystemFont>>,
+    fallback_faces: HashMap<String, Arc<SystemFont>>,
     font_paths: Vec<String>,
     missing_chars: HashSet<char>,
     font_size: f32,
@@ -67,11 +73,12 @@ impl FontContext {
         for font_name in &fonts_to_load {
             if let Some(path) = find_font_path(font_name) {
                 if let Ok(data) = fs::read(&path) {
-                    if let Ok(font) = FontVec::try_from_vec(data) {
-                        if is_monospace_font(&font) {
+                    if let Some(_) = FontRef::from_index(&data, 0) {
+                        let sys_font = SystemFont { bytes: data };
+                        if is_monospace_font(&sys_font) {
                             log::info!("Loaded font: {}", path);
                             font_paths.push(path.clone());
-                            user_faces.insert(path, Arc::new(font));
+                            user_faces.insert(path, Arc::new(sys_font));
                         } else {
                             log::info!("Warning: Font '{}' is not monospace, skipping.", font_name);
                         }
@@ -95,7 +102,7 @@ impl FontContext {
         }
     }
 
-    fn get_main_font(&self) -> Arc<FontVec> {
+    fn get_main_font(&self) -> Arc<SystemFont> {
         // Return the first successfully loaded user face
         // We iterate font_paths to preserve priority order
         for path in &self.font_paths {
@@ -893,56 +900,70 @@ fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> 
     Some(cell)
 }
 
-fn render_glyph_from_font(font: &FontVec, ch: char, metrics: &CachedMetrics) -> GlyphBitmap {
+thread_local! {
+    static SCALE_CONTEXT: std::cell::RefCell<swash::scale::ScaleContext> =
+        std::cell::RefCell::new(swash::scale::ScaleContext::new());
+}
+
+fn render_glyph_from_font(font: &SystemFont, ch: char, metrics: &CachedMetrics) -> GlyphBitmap {
     let cell_width = metrics.cell_width.max(1);
     let cell_height = metrics.cell_height.max(1);
 
-    // Block elements (U+2580–U+259F): render procedurally, matching terminal
-    // behavior.  Terminals draw these mathematically rather than from font
-    // outlines because font outlines for block chars often extend beyond the
-    // em-square and produce incorrect bitmaps at small pixel sizes.
+    // Block elements (U+2580–U+259F): render procedurally, matching terminal behavior.
     if let Some(bitmap) = procedural_block_bitmap(ch, cell_width, cell_height) {
         return bitmap;
     }
 
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
 
-    // Use font_size as PxScale — this is the em-square scale, exactly what
-    // terminals use.  float_height includes the line_gap and would over-scale
-    // glyphs, causing characters to overflow the cell and get clipped.
-    let scale = PxScale {
-        x: metrics.font_size,
-        y: metrics.font_size,
-    };
-    let scaled_font = font.as_scaled(scale);
+    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let gid = font_ref.charmap().map(ch);
+    if gid == 0 {
+        return cell;
+    }
 
-    // Baseline position: use the main font's pixel ascent so that ALL glyphs
-    // (including fallback-font glyphs) share a consistent baseline, just like
-    // terminals do.
-    let ascent_px = metrics.main_ascent_px;
-
-    // Horizontal offset: center the glyph within the cell using its advance
-    // width, just like a terminal does for monospace glyphs.
-    let glyph_id = font.glyph_id(ch);
-    let glyph_advance = scaled_font.h_advance(glyph_id);
-    let x_offset = (cell_width as f32 - glyph_advance) / 2.0;
-
-    let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(x_offset, ascent_px));
-
-    if let Some(outlined) = font.outline_glyph(glyph) {
-        let bounds = outlined.px_bounds();
-        let base_x = bounds.min.x.floor() as i32;
-        let base_y = bounds.min.y.floor() as i32;
-        outlined.draw(|x, y, coverage| {
-            if coverage > 0.5 {
-                let px = base_x + x as i32;
-                let py = base_y + y as i32;
-                if px >= 0 && px < cell_width as i32 && py >= 0 && py < cell_height as i32 {
-                    cell[py as usize][px as usize] = 1;
+    SCALE_CONTEXT.with(|ctx_cell| {
+        let mut ctx = ctx_cell.borrow_mut();
+        let mut scaler = ctx.builder(font_ref)
+            .size(metrics.font_size)
+            .hint(false)
+            .build();
+        
+        if let Some(image) = Render::new(&[SwashSource::Outline]).render(&mut scaler, gid) {
+            let baseline_y = metrics.main_ascent_px.round() as i32;
+            let start_y = baseline_y - image.placement.top;
+            
+            let font_metrics = font_ref.metrics(&[]);
+            let units_per_em = font_metrics.units_per_em as f32;
+            let scale_factor = metrics.font_size / units_per_em;
+            
+            let glyph_metrics = font_ref.glyph_metrics(&[]);
+            let advance_px = glyph_metrics.advance_width(gid) * scale_factor;
+            let x_origin = (cell_width as f32 - advance_px) / 2.0;
+            let start_x = (x_origin.round() as i32) + image.placement.left;
+            
+            let w = image.placement.width as usize;
+            let h = image.placement.height as usize;
+            
+            for y in 0..h {
+                let cell_y = start_y + y as i32;
+                if cell_y >= 0 && cell_y < cell_height as i32 {
+                    for x in 0..w {
+                        let cell_x = start_x + x as i32;
+                        if cell_x >= 0 && cell_x < cell_width as i32 {
+                            let idx = y * w + x;
+                            if idx < image.data.len() {
+                                if image.data[idx] > 127 {
+                                    cell[cell_y as usize][cell_x as usize] = 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        });
-    }
+        }
+    });
+
     cell
 }
 
@@ -964,63 +985,64 @@ fn cache_dir() -> PathBuf {
     }
 }
 
-fn measure_reference_advance_unscaled(font: &FontVec) -> f32 {
-    let glyph_id = font.glyph_id('X');
-    let mut advance = font.h_advance_unscaled(glyph_id);
+fn measure_reference_advance_unscaled(font: &SystemFont) -> f32 {
+    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let charmap = font_ref.charmap();
+    let glyph_metrics = font_ref.glyph_metrics(&[]);
+    
+    let mut gid = charmap.map('X');
+    let mut advance = glyph_metrics.advance_width(gid);
     if advance == 0.0 {
-        let glyph_id = font.glyph_id('0');
-        advance = font.h_advance_unscaled(glyph_id);
+        gid = charmap.map('0');
+        advance = glyph_metrics.advance_width(gid);
     }
     if advance == 0.0 {
-        advance = font.height_unscaled() * 0.6;
+        let metrics = font_ref.metrics(&[]);
+        advance = metrics.units_per_em as f32 * 0.6;
     }
     advance.max(1.0)
 }
 
-pub fn is_monospace_font(font: &FontVec) -> bool {
-    let scale = PxScale::from(24.0); // Use a fixed scale for checking
-    let scaled = font.as_scaled(scale);
-
+pub fn is_monospace_font(font: &SystemFont) -> bool {
+    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let charmap = font_ref.charmap();
+    let glyph_metrics = font_ref.glyph_metrics(&[]);
+    
     let chars_to_check = ['X', 'i', 'W', 'M', '.', '|'];
-    let mut advances: Vec<f32> = Vec::new();
-    for ch in &chars_to_check {
-        let gid = font.glyph_id(*ch);
-        if gid.0 != 0 {
-            let adv = scaled.h_advance(gid);
+    let mut advances = Vec::new();
+    for &ch in &chars_to_check {
+        let gid = charmap.map(ch);
+        if gid != 0 {
+            let adv = glyph_metrics.advance_width(gid);
             if adv > 0.0 {
                 advances.push(adv);
             }
         }
     }
     if advances.len() < 2 {
-        // If we can't find enough ASCII characters to check (e.g. symbol-only font),
-        // we assume it is monospaced or at least usable.
         return true;
     }
-    // All advances should be the same for monospace
     let first = advances[0];
-    // Relaxed threshold to 1.0 to allow for slight variations in "monospaced" fonts
-    advances.iter().all(|a| (a - first).abs() < 1.0)
+    advances.iter().all(|&a| (a - first).abs() < 1.0)
 }
 
 fn is_renderable_char(ch: char) -> bool {
     if ch.is_control() {
         return false;
     }
-    // Allow width 1 and 2. Some symbols might be reported as 2 but we still want to try rendering them.
-    // Also some chars might return None for width but are still renderable.
     let w = ch.width().unwrap_or(1);
     w >= 1 && w <= 2
 }
 
-fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec>, String)> {
+fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemFont>, String)> {
     if ctx.missing_chars.contains(&ch) {
         return None;
     }
 
     for path in &ctx.font_paths {
         if let Some(font) = ctx.user_faces.get(path) {
-            if font.glyph_id(ch).0 != 0 {
+            let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+            if font_ref.charmap().map(ch) != 0 {
                 let font_name = Path::new(path)
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
@@ -1034,23 +1056,20 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec
     for path in paths {
         if !ctx.fallback_faces.contains_key(&path) {
             if let Ok(data) = fs::read(&path) {
-                match FontVec::try_from_vec(data) {
-                    Ok(font) => {
-                        if is_monospace_font(&font) {
-                            log::info!("Adding fallback font: {}", path);
-                            ctx.fallback_faces.insert(path.clone(), Arc::new(font));
-                        } else {
-                            log::debug!("Fallback font {} is not monospace, skipping", path);
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to load font {}: {:?}", path, e);
+                if let Some(_) = FontRef::from_index(&data, 0) {
+                    let sys_font = SystemFont { bytes: data };
+                    if is_monospace_font(&sys_font) {
+                        log::info!("Adding fallback font: {}", path);
+                        ctx.fallback_faces.insert(path.clone(), Arc::new(sys_font));
+                    } else {
+                        log::debug!("Fallback font {} is not monospace, skipping", path);
                     }
                 }
             }
         }
         if let Some(font) = ctx.fallback_faces.get(&path) {
-            if font.glyph_id(ch).0 != 0 {
+            let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+            if font_ref.charmap().map(ch) != 0 {
                 let font_name = Path::new(&path)
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
@@ -1067,7 +1086,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v10".hash(&mut hasher);
+    "v11".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1080,7 +1099,7 @@ fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -
 
 fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMetrics) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v10".hash(&mut hasher);
+    "v11".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1112,73 +1131,41 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         }
     }
 
-    let (
-        cell_width,
-        cell_height,
-        advance,
-        line_height,
-        main_ascent_px,
-        mut bounds_min_x,
-        mut bounds_max_x,
-        mut bounds_min_y,
-        mut bounds_max_y,
-    ) = {
-        let main_font = ctx.get_main_font();
-        let scale = PxScale::from(ctx.font_size);
-        let scaled_font = main_font.as_scaled(scale);
-        let line_height = (scaled_font.height() + scaled_font.line_gap()).max(1.0);
-        let cell_height = line_height.ceil() as usize;
-        let advance_unscaled = measure_reference_advance_unscaled(&*main_font);
-        let advance = (ctx.font_size * advance_unscaled / main_font.height_unscaled()).max(1.0);
-        let cell_width = advance.round().max(1.0) as usize;
-        // Main font's pixel ascent at font_size scale — used as the baseline
-        // for ALL glyphs (including fallback fonts), matching terminal behavior.
-        let main_ascent_px = scaled_font.ascent();
+    let main_font = ctx.get_main_font();
+    let font_ref = FontRef::from_index(&main_font.bytes, 0).unwrap();
+    let metrics = font_ref.metrics(&[]);
 
-        (
-            cell_width,
-            cell_height,
-            advance,
-            line_height,
-            main_ascent_px,
-            0.0f32,
-            advance_unscaled,
-            main_font.descent_unscaled(),
-            main_font.ascent_unscaled(),
-        )
-    };
+    let units_per_em = metrics.units_per_em as f32;
+    let font_size = ctx.font_size;
+    let scale_factor = font_size / units_per_em;
 
-    for &ch in &metric_chars {
-        if !is_renderable_char(ch) {
-            continue;
-        }
-        if let Some((font, _)) = resolve_font_for_char(ctx, ch) {
-            if let Some(outline) = font.outline(font.glyph_id(ch)) {
-                let glyph_min_x = outline.bounds.min.x.min(outline.bounds.max.x);
-                let glyph_max_x = outline.bounds.min.x.max(outline.bounds.max.x);
-                let glyph_min_y = outline.bounds.min.y.min(outline.bounds.max.y);
-                let glyph_max_y = outline.bounds.min.y.max(outline.bounds.max.y);
-                bounds_min_x = bounds_min_x.min(glyph_min_x);
-                bounds_max_x = bounds_max_x.max(glyph_max_x);
-                bounds_min_y = bounds_min_y.min(glyph_min_y);
-                bounds_max_y = bounds_max_y.max(glyph_max_y);
-            }
-        }
-    }
+    let ascent = metrics.ascent as f32 * scale_factor;
+    let descent = metrics.descent as f32 * scale_factor;
+    let leading = metrics.leading as f32 * scale_factor;
 
-    let bounds_width = (bounds_max_x - bounds_min_x).max(1.0);
-    let bounds_height = (bounds_max_y - bounds_min_y).max(1.0);
+    let line_height = ascent + descent + leading;
+    let cell_height = line_height.ceil() as usize;
+
+    let advance_unscaled = measure_reference_advance_unscaled(&*main_font);
+    let advance = advance_unscaled * scale_factor;
+    let cell_width = advance.round().max(1.0) as usize;
+
+    let main_ascent_px = ascent;
+
+    let bounds_min_x = 0.0f32;
+    let bounds_max_x = advance_unscaled;
+    let bounds_min_y = -(metrics.descent as f32);
+    let bounds_max_y = metrics.ascent as f32;
+
     let ascender = bounds_max_y.ceil() as i32;
     let descender = bounds_min_y.floor() as i32;
 
     log::info!(
-        "Metrics (glyph box): Ascender={}, Descender={}, Height={}, Width={}, BoundsW={:.2}, BoundsH={:.2}",
+        "Metrics (glyph box): Ascender={}, Descender={}, Height={}, Width={}",
         ascender,
         descender,
         cell_height,
-        cell_width,
-        bounds_width,
-        bounds_height
+        cell_width
     );
 
     let metrics = CachedMetrics {

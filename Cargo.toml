@@ -42,6 +42,7 @@ atty = "0.2.14"
 once_cell = "1.21.3"
 fontdb = "0.16"
 ab_glyph = "0.2"
+swash = "0.1.19"
 libz-sys = { version = "1", features = ["static"] }
 toml = "0.8"
 serde = { version = "1.0.228", features = ["derive"] }
