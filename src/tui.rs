@@ -2789,7 +2789,7 @@ impl App {
 
             tokio::spawn(async move {
                 let mut aborted = false;
-                let mut gs_map = std::collections::HashMap::new();
+                let mut fg_map = std::collections::HashMap::new();
                 for &f in &fs {
                     if tx_clone.is_closed()
                         || cancel_clone.load(std::sync::atomic::Ordering::Relaxed)
@@ -2797,8 +2797,8 @@ impl App {
                         aborted = true;
                         break;
                     }
-                    if (f - args.font_size).abs() < std::f32::EPSILON {
-                        gs_map.insert(f.to_bits(), gs_clone.clone());
+                    let gs = if (f - args.font_size).abs() < std::f32::EPSILON {
+                        gs_clone.clone()
                     } else {
                         let new_store = crate::font::glyph_store(
                             &args.blocks,
@@ -2811,8 +2811,10 @@ impl App {
                             false,
                             Some(cancel_clone.clone()),
                         );
-                        gs_map.insert(f.to_bits(), std::sync::Arc::new(new_store));
-                    }
+                        std::sync::Arc::new(new_store)
+                    };
+                    let fg = crate::draw::prepare_glyphs(&gs, &args);
+                    fg_map.insert(f.to_bits(), (gs, std::sync::Arc::new(fg)));
                 }
 
                 if aborted {
@@ -2850,11 +2852,10 @@ impl App {
                                                     .await
                                                     .unwrap();
                                                 let img = img_clone.clone();
-                                                let gs = gs_map.get(&f.to_bits()).unwrap().clone();
+                                                let (gs, fg) = fg_map.get(&f.to_bits()).unwrap().clone();
                                                 let rtx = res_tx.clone();
                                                 let cancel_inner = cancel_clone.clone();
                                                 tokio::task::spawn_blocking(move || {
-                                                    let fg = crate::draw::prepare_glyphs(&gs, &a);
                                                     let result = crate::render_output(
                                                         a.clone(),
                                                         &gs,
