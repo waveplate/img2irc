@@ -2774,11 +2774,16 @@ impl App {
             let mut best_args = args.clone();
             let mut curr = 0;
 
-            let num_threads = std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1);
-            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_threads));
-            let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(num_threads * 2);
+            let use_gpu = cfg!(feature = "gpu") && args.gpu;
+            let concurrency = if use_gpu {
+                1
+            } else {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1)
+            };
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+            let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(concurrency * 2);
 
             let args_len = total_perms;
             let tx_clone = tx.clone();
