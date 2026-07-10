@@ -780,9 +780,14 @@ impl AnsiPixel {
     }
 }
 
+static LAST_TOLERANCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
 impl AnsiImage {
     pub fn new(img: PhotonImage, glyphs: GlyphStore, tolerance: u8, nograyscale: bool) -> Self {
-        COLOR_CACHE.clear();
+        let last_tol = LAST_TOLERANCE.swap(tolerance, std::sync::atomic::Ordering::Relaxed);
+        if last_tol != tolerance {
+            COLOR_CACHE.clear();
+        }
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
         let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
@@ -1783,6 +1788,68 @@ fn component_endpoint_span(vertices: &[(usize, usize)]) -> f32 {
     best as f32
 }
 
+fn build_boundary_segments_into(
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+    segments: &mut Vec<BoundarySegment>,
+) {
+    if width >= 2 {
+        for y in 0..height {
+            let row = y * width;
+            for x in 1..width {
+                if raster_boundary_strength(pixels[row + x - 1], pixels[row + x])
+                    >= DISCONTINUITY_EDGE_THRESHOLD
+                {
+                    segments.push(BoundarySegment {
+                        start: (x, y),
+                        end: (x, y + 1),
+                    });
+                }
+            }
+        }
+    }
+
+    if height >= 2 {
+        for y in 1..height {
+            for x in 0..width {
+                if raster_boundary_strength(pixels[(y - 1) * width + x], pixels[y * width + x])
+                    >= DISCONTINUITY_EDGE_THRESHOLD
+                {
+                    segments.push(BoundarySegment {
+                        start: (x, y),
+                        end: (x + 1, y),
+                    });
+                }
+            }
+        }
+    }
+}
+
+struct DiscontinuityScratch {
+    segments: Vec<BoundarySegment>,
+    edges: Vec<[u16; 4]>,
+    degrees: Vec<u8>,
+    modified_vertices: Vec<usize>,
+    visited: Vec<bool>,
+    queue: std::collections::VecDeque<usize>,
+    component: Vec<usize>,
+    vertices: Vec<(usize, usize)>,
+}
+
+thread_local! {
+    static DIS_SCRATCH: std::cell::RefCell<DiscontinuityScratch> = std::cell::RefCell::new(DiscontinuityScratch {
+        segments: Vec::with_capacity(128),
+        edges: Vec::new(),
+        degrees: Vec::new(),
+        modified_vertices: Vec::with_capacity(128),
+        visited: Vec::with_capacity(128),
+        queue: std::collections::VecDeque::with_capacity(64),
+        component: Vec::with_capacity(64),
+        vertices: Vec::with_capacity(64),
+    });
+}
+
 fn local_patch_boundary_complexity_score(
     raster: &[[u8; 3]],
     cell_x: usize,
@@ -1792,96 +1859,134 @@ fn local_patch_boundary_complexity_score(
     gw: usize,
     gh: usize,
 ) -> f32 {
-    use std::collections::{HashMap, VecDeque};
-
     let patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
-    let segments = build_boundary_segments(&patch.pixels, patch.width, patch.height);
-    if segments.is_empty() {
-        return 0.0;
-    }
-
-    let mut endpoint_map: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-    for (idx, segment) in segments.iter().enumerate() {
-        endpoint_map.entry(segment.start).or_default().push(idx);
-        endpoint_map.entry(segment.end).or_default().push(idx);
-    }
-
-    let mut visited = vec![false; segments.len()];
-    let mut total_penalty = 0.0f32;
-    let mut counted_components = 0u32;
-
-    for start_idx in 0..segments.len() {
-        if visited[start_idx] {
-            continue;
+    
+    let result = DIS_SCRATCH.with(|scratch_cell| {
+        let mut scratch = scratch_cell.borrow_mut();
+        
+        scratch.segments.clear();
+        build_boundary_segments_into(&patch.pixels, patch.width, patch.height, &mut scratch.segments);
+        if scratch.segments.is_empty() {
+            return 0.0;
         }
 
-        let mut queue = VecDeque::from([start_idx]);
-        let mut component = Vec::new();
-        let mut relevant = false;
+        let num_vertices = (patch.height + 2) * (patch.width + 2);
+        if scratch.edges.len() < num_vertices {
+            scratch.edges.resize(num_vertices, [u16::MAX; 4]);
+            scratch.degrees.resize(num_vertices, 0);
+        }
 
-        while let Some(seg_idx) = queue.pop_front() {
-            if visited[seg_idx] {
-                continue;
+        scratch.modified_vertices.clear();
+        let width_stride = patch.width + 2;
+        
+        let temp_segments = scratch.segments.clone();
+        for (idx, segment) in temp_segments.iter().enumerate() {
+            let seg_idx = idx as u16;
+            
+            let v1 = segment.start.1 * width_stride + segment.start.0;
+            let deg1 = scratch.degrees[v1] as usize;
+            if deg1 < 4 {
+                scratch.edges[v1][deg1] = seg_idx;
+                scratch.degrees[v1] += 1;
+                if deg1 == 0 {
+                    scratch.modified_vertices.push(v1);
+                }
             }
-            visited[seg_idx] = true;
-            let segment = segments[seg_idx];
-            relevant |= segment_intersects_center_cell(&segment, &patch, gw, gh);
-            component.push(seg_idx);
 
-            for endpoint in [segment.start, segment.end] {
-                if let Some(neighbors) = endpoint_map.get(&endpoint) {
-                    for &next_idx in neighbors {
-                        if !visited[next_idx] {
-                            queue.push_back(next_idx);
-                        }
-                    }
+            let v2 = segment.end.1 * width_stride + segment.end.0;
+            let deg2 = scratch.degrees[v2] as usize;
+            if deg2 < 4 {
+                scratch.edges[v2][deg2] = seg_idx;
+                scratch.degrees[v2] += 1;
+                if deg2 == 0 {
+                    scratch.modified_vertices.push(v2);
                 }
             }
         }
 
-        if !relevant {
-            continue;
-        }
+        let segments_len = scratch.segments.len();
+        scratch.visited.clear();
+        scratch.visited.resize(segments_len, false);
 
-        counted_components += 1;
-        let mut degree_map: HashMap<(usize, usize), usize> = HashMap::new();
-        let mut min_x = usize::MAX;
-        let mut min_y = usize::MAX;
-        let mut max_x = 0usize;
-        let mut max_y = 0usize;
+        let mut total_penalty = 0.0f32;
+        let mut counted_components = 0u32;
 
-        for &seg_idx in &component {
-            let segment = segments[seg_idx];
-            for endpoint in [segment.start, segment.end] {
-                *degree_map.entry(endpoint).or_insert(0) += 1;
-                min_x = min_x.min(endpoint.0);
-                min_y = min_y.min(endpoint.1);
-                max_x = max_x.max(endpoint.0);
-                max_y = max_y.max(endpoint.1);
+        for start_idx in 0..segments_len {
+            if scratch.visited[start_idx] {
+                continue;
+            }
+
+            scratch.queue.clear();
+            scratch.queue.push_back(start_idx);
+            
+            scratch.component.clear();
+            let mut relevant = false;
+
+            while let Some(seg_idx) = scratch.queue.pop_front() {
+                if scratch.visited[seg_idx] {
+                    continue;
+                }
+                scratch.visited[seg_idx] = true;
+                let segment = scratch.segments[seg_idx];
+                relevant |= segment_intersects_center_cell(&segment, &patch, gw, gh);
+                scratch.component.push(seg_idx);
+
+                let v1 = segment.start.1 * width_stride + segment.start.0;
+                let deg1 = scratch.degrees[v1] as usize;
+                for i in 0..deg1 {
+                    let next_seg = scratch.edges[v1][i] as usize;
+                    if !scratch.visited[next_seg] {
+                        scratch.queue.push_back(next_seg);
+                    }
+                }
+
+                let v2 = segment.end.1 * width_stride + segment.end.0;
+                let deg2 = scratch.degrees[v2] as usize;
+                for i in 0..deg2 {
+                    let next_seg = scratch.edges[v2][i] as usize;
+                    if !scratch.visited[next_seg] {
+                        scratch.queue.push_back(next_seg);
+                    }
+                }
+            }
+
+            if relevant {
+                scratch.vertices.clear();
+                let temp_component = scratch.component.clone();
+                for &seg_idx in &temp_component {
+                    let segment = scratch.segments[seg_idx];
+                    scratch.vertices.push(segment.start);
+                    scratch.vertices.push(segment.end);
+                }
+                
+                scratch.vertices.sort_unstable();
+                scratch.vertices.dedup();
+
+                let span = component_endpoint_span(&scratch.vertices);
+                let complexity = scratch.component.len() as f32;
+                let penalty = span * complexity;
+                total_penalty += penalty;
+                counted_components += 1;
             }
         }
 
-        let endpoints: Vec<(usize, usize)> = degree_map
-            .iter()
-            .filter_map(|(&pt, &deg)| (deg == 1).then_some(pt))
-            .collect();
+        let temp_modified_vertices = scratch.modified_vertices.clone();
+        for &v in &temp_modified_vertices {
+            scratch.edges[v] = [u16::MAX; 4];
+            scratch.degrees[v] = 0;
+        }
 
-        let length = component.len() as f32;
-        let baseline = if endpoints.len() >= 2 {
-            component_endpoint_span(&endpoints).max(1.0)
+        if counted_components == 0 {
+            0.0
         } else {
-            (max_x.saturating_sub(min_x) + max_y.saturating_sub(min_y)).max(1) as f32
-        };
+            total_penalty / counted_components as f32
+        }
+    });
 
-        total_penalty += (length - baseline).max(0.0);
-    }
-
-    if counted_components == 0 {
-        0.0
-    } else {
-        (100.0 * total_penalty / (counted_components as f32 * (gw + gh).max(1) as f32)).min(100.0)
-    }
+    result
 }
+
+
 
 fn save_rgb_pixels_as_png(
     path: &Path,

@@ -491,3 +491,66 @@ pub async fn load_image_from_url_or_path(
         Err(e) => Err(Box::new(e)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[tokio::test]
+    async fn test_consecutive_renders_performance() {
+        let img_path = "inputs/lisa.png";
+        if !std::path::Path::new(img_path).exists() {
+            return;
+        }
+        let font_path = "/usr/share/fonts/OTF/CascadiaMono-Regular.otf";
+        if !std::path::Path::new(font_path).exists() {
+            return;
+        }
+
+        let args = crate::args::Args::parse_from(&[
+            "img2irc",
+            "--width",
+            "40",
+            "--font-size",
+            "13",
+            "inputs/lisa.png",
+        ]);
+        let render_args = crate::args_to_render_args(&args);
+
+        let initial_glyph_store = crate::font::glyph_store(
+            &render_args.blocks,
+            &render_args.exclude_range,
+            &render_args.exclude,
+            &render_args.include_range,
+            render_args.include.as_ref(),
+            &render_args.font,
+            render_args.font_size,
+            false,
+            None,
+        );
+
+        let image = crate::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store)
+            .await
+            .unwrap();
+
+        let glyphs = crate::draw::prepare_glyphs(&initial_glyph_store, &render_args);
+
+        // Run 1 (Cold)
+        let start1 = std::time::Instant::now();
+        let _res1 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let duration1 = start1.elapsed();
+        println!("Cold render took: {:?}", duration1);
+
+        // Run 2 (Warm)
+        let start2 = std::time::Instant::now();
+        let _res2 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let duration2 = start2.elapsed();
+        println!("Warm render took: {:?}", duration2);
+
+        // Run 3 (Warm)
+        let start3 = std::time::Instant::now();
+        let _res3 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let duration3 = start3.elapsed();
+        println!("Warm render 2 took: {:?}", duration3);
+    }
+}
