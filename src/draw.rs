@@ -1718,46 +1718,7 @@ fn local_patch_frequency_score(patch_pixels: &[[u8; 3]], width: usize, height: u
     spectral_high_frequency_score(patch_pixels, width, height)
 }
 
-fn build_boundary_segments(
-    pixels: &[[u8; 3]],
-    width: usize,
-    height: usize,
-) -> Vec<BoundarySegment> {
-    let mut segments = Vec::new();
 
-    if width >= 2 {
-        for y in 0..height {
-            let row = y * width;
-            for x in 1..width {
-                if raster_boundary_strength(pixels[row + x - 1], pixels[row + x])
-                    >= DISCONTINUITY_EDGE_THRESHOLD
-                {
-                    segments.push(BoundarySegment {
-                        start: (x, y),
-                        end: (x, y + 1),
-                    });
-                }
-            }
-        }
-    }
-
-    if height >= 2 {
-        for y in 1..height {
-            for x in 0..width {
-                if raster_boundary_strength(pixels[(y - 1) * width + x], pixels[y * width + x])
-                    >= DISCONTINUITY_EDGE_THRESHOLD
-                {
-                    segments.push(BoundarySegment {
-                        start: (x, y),
-                        end: (x + 1, y),
-                    });
-                }
-            }
-        }
-    }
-
-    segments
-}
 
 fn segment_intersects_center_cell(
     segment: &BoundarySegment,
