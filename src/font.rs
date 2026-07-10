@@ -106,6 +106,44 @@ impl FontContext {
     }
 }
 
+fn get_font_cache_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()?;
+    Some(Path::new(&home).join(".img2irc_font_cache.json"))
+}
+
+fn read_cached_font_path(font_name: &str) -> Option<String> {
+    let path = get_font_cache_path()?;
+    if !path.is_file() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    let cache: HashMap<String, String> = serde_json::from_str(&content).ok()?;
+    let cached_path = cache.get(font_name)?;
+    if Path::new(cached_path).is_file() {
+        Some(cached_path.clone())
+    } else {
+        None
+    }
+}
+
+fn write_cached_font_path(font_name: &str, font_path: &str) {
+    if let Some(path) = get_font_cache_path() {
+        let mut cache = if path.is_file() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                serde_json::from_str(&content).unwrap_or_default()
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+        cache.insert(font_name.to_string(), font_path.to_string());
+        if let Ok(content) = serde_json::to_string_pretty(&cache) {
+            let _ = fs::write(&path, content);
+        }
+    }
+}
+
 static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
     if atty::is(atty::Stream::Stderr) {
         eprintln!("Scanning system fonts (this may take a moment)...");
@@ -121,19 +159,28 @@ fn find_font_path(font_name: &str) -> Option<String> {
         return Some(direct_path.to_string_lossy().to_string());
     }
 
+    if let Some(cached_path) = read_cached_font_path(font_name) {
+        return Some(cached_path);
+    }
+
     let db = DB.lock().unwrap();
     let query = Query {
         families: &[Family::Name(font_name)],
         ..Default::default()
     };
-    db.query(&query).and_then(|id| {
+    let resolved = db.query(&query).and_then(|id| {
         let (src, _) = db.face_source(id)?;
         if let Source::File(path) = src {
             Some(path.to_string_lossy().to_string())
         } else {
             None
         }
-    })
+    });
+
+    if let Some(ref path) = resolved {
+        write_cached_font_path(font_name, path);
+    }
+    resolved
 }
 
 static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Vec<String>>>> =
