@@ -31,6 +31,8 @@ struct CachedMetrics {
     descender: i32,
     float_width: f32,
     float_height: f32,
+    font_size: f32,
+    main_ascent_px: f32,
     bounds_min_x: f32,
     bounds_max_x: f32,
     bounds_min_y: f32,
@@ -768,19 +770,28 @@ fn render_glyph_from_font(font: &FontVec, ch: char, metrics: &CachedMetrics) -> 
     let cell_height = metrics.cell_height.max(1);
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
 
-    let height_unscaled = font.height_unscaled().max(1.0);
-    let glyph_box_width = (metrics.bounds_max_x - metrics.bounds_min_x).max(1.0);
-    let glyph_box_height = (metrics.bounds_max_y - metrics.bounds_min_y).max(1.0);
+    // Use font_size as PxScale — this is the em-square scale, exactly what
+    // terminals use.  float_height includes the line_gap and would over-scale
+    // glyphs, causing block characters to overflow the cell and get clipped
+    // to identical bitmaps.
     let scale = PxScale {
-        x: cell_width as f32 * height_unscaled / glyph_box_width,
-        y: cell_height as f32 * height_unscaled / glyph_box_height,
+        x: metrics.font_size,
+        y: metrics.font_size,
     };
     let scaled_font = font.as_scaled(scale);
-    let x_offset = -metrics.bounds_min_x * scaled_font.h_scale_factor();
-    let y_offset = metrics.bounds_max_y * scaled_font.v_scale_factor();
-    let glyph = font
-        .glyph_id(ch)
-        .with_scale_and_position(scale, ab_glyph::point(x_offset, y_offset));
+
+    // Baseline position: use the main font's pixel ascent so that ALL glyphs
+    // (including fallback-font glyphs) share a consistent baseline, just like
+    // terminals do.
+    let ascent_px = metrics.main_ascent_px;
+
+    // Horizontal offset: center the glyph within the cell using its advance
+    // width, just like a terminal does for monospace glyphs.
+    let glyph_id = font.glyph_id(ch);
+    let glyph_advance = scaled_font.h_advance(glyph_id);
+    let x_offset = (cell_width as f32 - glyph_advance) / 2.0;
+
+    let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(x_offset, ascent_px));
 
     if let Some(outlined) = font.outline_glyph(glyph) {
         let bounds = outlined.px_bounds();
@@ -920,7 +931,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<FontVec
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v7".hash(&mut hasher);
+    "v9".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -933,7 +944,7 @@ fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -
 
 fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMetrics) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v7".hash(&mut hasher);
+    "v9".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -970,6 +981,7 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         cell_height,
         advance,
         line_height,
+        main_ascent_px,
         mut bounds_min_x,
         mut bounds_max_x,
         mut bounds_min_y,
@@ -983,12 +995,16 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         let advance_unscaled = measure_reference_advance_unscaled(&*main_font);
         let advance = (ctx.font_size * advance_unscaled / main_font.height_unscaled()).max(1.0);
         let cell_width = advance.round().max(1.0) as usize;
+        // Main font's pixel ascent at font_size scale — used as the baseline
+        // for ALL glyphs (including fallback fonts), matching terminal behavior.
+        let main_ascent_px = scaled_font.ascent();
 
         (
             cell_width,
             cell_height,
             advance,
             line_height,
+            main_ascent_px,
             0.0f32,
             advance_unscaled,
             main_font.descent_unscaled(),
@@ -1036,6 +1052,8 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
         descender,
         float_width: advance,
         float_height: line_height,
+        font_size: ctx.font_size,
+        main_ascent_px,
         bounds_min_x,
         bounds_max_x,
         bounds_min_y,
