@@ -118,6 +118,16 @@ enum ControlId {
     HighlightDisc,
     DiscThreshold,
     FixDisc,
+    ScoreFix,
+    ScoreFixCandidates,
+    ScoreFixNeighborhoodGuard,
+    ContourBendingWeight,
+    ContourEndpointWeight,
+    ContourJunctionWeight,
+    ContourFragmentWeight,
+    ContourFidelityWeight,
+    ContourBoundaryWeight,
+    ContourPeakWeight,
     TrimTop,
     TrimRight,
     TrimBottom,
@@ -317,9 +327,91 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
+        id: ControlId::ScoreFix,
+        label: "Score Fix",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::ScoreFixCandidates,
+        label: "Score Fix N",
+        kind: ControlKind::Slider {
+            min: 1,
+            max: 256,
+            default: 12,
+        },
+    },
+    ControlDef {
+        id: ControlId::ScoreFixNeighborhoodGuard,
+        label: "SF Overlap",
+        kind: ControlKind::Toggle { default: true },
+    },
+    ControlDef {
         id: ControlId::ShowAdvanced,
         label: "Advanced",
         kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::ContourBendingWeight,
+        label: "Bend W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 10,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourEndpointWeight,
+        label: "Endpoint W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 10,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourJunctionWeight,
+        label: "Junction W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 20,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourFragmentWeight,
+        label: "Fragment W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 10,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourFidelityWeight,
+        label: "Fidelity W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 1,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourBoundaryWeight,
+        label: "Boundary W",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 1,
+        },
+    },
+    ControlDef {
+        id: ControlId::ContourPeakWeight,
+        label: "Peak Mix",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 10,
+            default: 4,
+        },
     },
     ControlDef {
         id: ControlId::FixDiscPasses,
@@ -1295,6 +1387,16 @@ pub(crate) struct App {
     fix_disc_ref_tolerance_ratio: f32,
     fix_disc_ref_tolerance_pixels: i32,
     fix_disc_pool_size: i32,
+    score_fix: bool,
+    score_fix_candidates: i32,
+    score_fix_neighborhood_guard: bool,
+    contour_bending_weight: i32,
+    contour_endpoint_weight: i32,
+    contour_junction_weight: i32,
+    contour_fragment_weight: i32,
+    contour_fidelity_weight: i32,
+    contour_boundary_weight: i32,
+    contour_peak_weight: i32,
 
     misc3: i32,
     misc4: i32,
@@ -1900,6 +2002,16 @@ impl App {
             fix_disc_ref_tolerance_ratio: render_args.fix_disc_ref_tolerance_ratio,
             fix_disc_ref_tolerance_pixels: render_args.fix_disc_ref_tolerance_pixels as i32,
             fix_disc_pool_size: render_args.fix_disc_pool_size as i32,
+            score_fix: render_args.score_fix,
+            score_fix_candidates: render_args.score_fix_candidates as i32,
+            score_fix_neighborhood_guard: render_args.score_fix_neighborhood_guard,
+            contour_bending_weight: (render_args.contour_bending_weight * 10.0).round() as i32,
+            contour_endpoint_weight: (render_args.contour_endpoint_weight * 10.0).round() as i32,
+            contour_junction_weight: (render_args.contour_junction_weight * 10.0).round() as i32,
+            contour_fragment_weight: (render_args.contour_fragment_weight * 10.0).round() as i32,
+            contour_fidelity_weight: (render_args.contour_fidelity_weight * 10.0).round() as i32,
+            contour_boundary_weight: (render_args.contour_boundary_weight * 10.0).round() as i32,
+            contour_peak_weight: (render_args.contour_peak_weight * 10.0).round() as i32,
 
             misc3: render_args.misc3,
             misc4: render_args.misc4,
@@ -2094,6 +2206,21 @@ impl App {
         self.fix_disc_ref_tolerance_ratio = render_args.fix_disc_ref_tolerance_ratio;
         self.fix_disc_ref_tolerance_pixels = render_args.fix_disc_ref_tolerance_pixels as i32;
         self.fix_disc_pool_size = render_args.fix_disc_pool_size as i32;
+        self.score_fix = render_args.score_fix;
+        self.score_fix_candidates = render_args.score_fix_candidates as i32;
+        self.score_fix_neighborhood_guard = render_args.score_fix_neighborhood_guard;
+        self.contour_bending_weight = (render_args.contour_bending_weight * 10.0).round() as i32;
+        self.contour_endpoint_weight =
+            (render_args.contour_endpoint_weight * 10.0).round() as i32;
+        self.contour_junction_weight =
+            (render_args.contour_junction_weight * 10.0).round() as i32;
+        self.contour_fragment_weight =
+            (render_args.contour_fragment_weight * 10.0).round() as i32;
+        self.contour_fidelity_weight =
+            (render_args.contour_fidelity_weight * 10.0).round() as i32;
+        self.contour_boundary_weight =
+            (render_args.contour_boundary_weight * 10.0).round() as i32;
+        self.contour_peak_weight = (render_args.contour_peak_weight * 10.0).round() as i32;
         self.misc3 = render_args.misc3;
         self.misc4 = render_args.misc4;
         self.misc5 = render_args.misc5;
@@ -2400,6 +2527,16 @@ impl App {
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::DiscThreshold => self.discontinuity_threshold,
             ControlId::FixDisc => self.fix_disc as i32,
+            ControlId::ScoreFix => self.score_fix as i32,
+            ControlId::ScoreFixCandidates => self.score_fix_candidates,
+            ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard as i32,
+            ControlId::ContourBendingWeight => self.contour_bending_weight,
+            ControlId::ContourEndpointWeight => self.contour_endpoint_weight,
+            ControlId::ContourJunctionWeight => self.contour_junction_weight,
+            ControlId::ContourFragmentWeight => self.contour_fragment_weight,
+            ControlId::ContourFidelityWeight => self.contour_fidelity_weight,
+            ControlId::ContourBoundaryWeight => self.contour_boundary_weight,
+            ControlId::ContourPeakWeight => self.contour_peak_weight,
             ControlId::ShowAdvanced => self.show_advanced as i32,
             ControlId::FixDiscPasses => self.fix_disc_passes,
             ControlId::FixDiscRadius => self.fix_disc_shift_radius,
@@ -2490,6 +2627,16 @@ impl App {
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::DiscThreshold => self.discontinuity_threshold = val.max(0),
             ControlId::FixDisc => self.fix_disc = val != 0,
+            ControlId::ScoreFix => self.score_fix = val != 0,
+            ControlId::ScoreFixCandidates => self.score_fix_candidates = val.max(1),
+            ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard = val != 0,
+            ControlId::ContourBendingWeight => self.contour_bending_weight = val.max(0),
+            ControlId::ContourEndpointWeight => self.contour_endpoint_weight = val.max(0),
+            ControlId::ContourJunctionWeight => self.contour_junction_weight = val.max(0),
+            ControlId::ContourFragmentWeight => self.contour_fragment_weight = val.max(0),
+            ControlId::ContourFidelityWeight => self.contour_fidelity_weight = val.max(0),
+            ControlId::ContourBoundaryWeight => self.contour_boundary_weight = val.max(0),
+            ControlId::ContourPeakWeight => self.contour_peak_weight = val.clamp(0, 10),
             ControlId::ShowAdvanced => {
                 self.show_advanced = val != 0;
                 let count = self.tab_controls(0).len();
@@ -2545,6 +2692,13 @@ impl App {
                     ControlId::FixDiscTolRatio,
                     ControlId::FixDiscTolPixels,
                     ControlId::FixDiscPool,
+                    ControlId::ContourBendingWeight,
+                    ControlId::ContourEndpointWeight,
+                    ControlId::ContourJunctionWeight,
+                    ControlId::ContourFragmentWeight,
+                    ControlId::ContourFidelityWeight,
+                    ControlId::ContourBoundaryWeight,
+                    ControlId::ContourPeakWeight,
                 ];
                 for ctrl in GENERAL_CONTROLS {
                     if advanced_ids.contains(&ctrl.id) && !self.show_advanced {
@@ -2874,7 +3028,16 @@ impl App {
                                     for &f in &fs {
                                         for &x in &sx {
                                             for &y in &sy {
-                                                perms.push(Perm { w, t, r, b, l, f, x, y });
+                                                perms.push(Perm {
+                                                    w,
+                                                    t,
+                                                    r,
+                                                    b,
+                                                    l,
+                                                    f,
+                                                    x,
+                                                    y,
+                                                });
                                             }
                                         }
                                     }
@@ -2901,7 +3064,9 @@ impl App {
                 }
 
                 for p in perms {
-                    if tx_clone.is_closed() || cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    if tx_clone.is_closed()
+                        || cancel_clone.load(std::sync::atomic::Ordering::Relaxed)
+                    {
                         aborted = true;
                         break;
                     }
@@ -2911,23 +3076,14 @@ impl App {
                     a.font_size = p.f;
                     a.scale = Some((p.x as f32 / 100.0, p.y as f32 / 100.0));
 
-                    let permit = semaphore
-                        .clone()
-                        .acquire_owned()
-                        .await
-                        .unwrap();
+                    let permit = semaphore.clone().acquire_owned().await.unwrap();
                     let img = img_clone.clone();
                     let (gs, fg) = fg_map.get(&p.f.to_bits()).unwrap().clone();
                     let rtx = res_tx.clone();
                     let cancel_inner = cancel_clone.clone();
                     tokio::task::spawn_blocking(move || {
-                        let result = crate::render_output(
-                            a.clone(),
-                            &gs,
-                            img,
-                            &fg,
-                            Some(cancel_inner),
-                        );
+                        let result =
+                            crate::render_output(a.clone(), &gs, img, &fg, Some(cancel_inner));
                         if result.content != "Cancelled" {
                             let score = if optimize_shortest_longest_line {
                                 result.longest_line_bytes as f64
@@ -2949,7 +3105,10 @@ impl App {
                     best_score = score;
                     best_args = a;
                     let _ = tx
-                        .send(OptimizationUpdate::BestResult(best_args.clone(), best_score))
+                        .send(OptimizationUpdate::BestResult(
+                            best_args.clone(),
+                            best_score,
+                        ))
                         .await;
                 }
 
@@ -2971,7 +3130,9 @@ impl App {
             }
 
             best_args.score = original_score;
-            let _ = tx.send(OptimizationUpdate::BestResult(best_args, best_score)).await;
+            let _ = tx
+                .send(OptimizationUpdate::BestResult(best_args, best_score))
+                .await;
             let _ = tx.send(OptimizationUpdate::Finished).await;
         });
     }
@@ -3030,6 +3191,16 @@ impl App {
         self.render_args.fix_disc_ref_tolerance_ratio = self.fix_disc_ref_tolerance_ratio;
         self.render_args.fix_disc_ref_tolerance_pixels = self.fix_disc_ref_tolerance_pixels as u32;
         self.render_args.fix_disc_pool_size = self.fix_disc_pool_size as u32;
+        self.render_args.score_fix = self.score_fix;
+        self.render_args.score_fix_candidates = self.score_fix_candidates.max(1) as u32;
+        self.render_args.score_fix_neighborhood_guard = self.score_fix_neighborhood_guard;
+        self.render_args.contour_bending_weight = self.contour_bending_weight as f32 / 10.0;
+        self.render_args.contour_endpoint_weight = self.contour_endpoint_weight as f32 / 10.0;
+        self.render_args.contour_junction_weight = self.contour_junction_weight as f32 / 10.0;
+        self.render_args.contour_fragment_weight = self.contour_fragment_weight as f32 / 10.0;
+        self.render_args.contour_fidelity_weight = self.contour_fidelity_weight as f32 / 10.0;
+        self.render_args.contour_boundary_weight = self.contour_boundary_weight as f32 / 10.0;
+        self.render_args.contour_peak_weight = self.contour_peak_weight as f32 / 10.0;
 
         self.render_args.misc3 = self.misc3;
         self.render_args.misc4 = self.misc4;
@@ -4361,7 +4532,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 match crate::ocr::detect_text(&arc_image, &effective_args) {
                     Ok(detections) => {
                         crate::ocr::log_detections(&detections, &effective_args);
-                        if !crate::ocr::has_renderable_detections(&detections, &effective_args, arc_image.get_width(), arc_image.get_height()) {
+                        if !crate::ocr::has_renderable_detections(
+                            &detections,
+                            &effective_args,
+                            arc_image.get_width(),
+                            arc_image.get_height(),
+                        ) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
                             Vec::new()
@@ -5819,15 +5995,25 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             ControlKind::Slider { min, max, .. } => {
                                                 if was_selected {
                                                     let current_value = app.get_control_value(0, i);
-                                                    let display_value =
-                                                        if ctrl.id == ControlId::FontSize {
-                                                            Some(format!(
-                                                                "{:.1}",
-                                                                current_value as f32 / 10.0
-                                                            ))
-                                                        } else {
-                                                            None
-                                                        };
+                                                    let display_value = if matches!(
+                                                        ctrl.id,
+                                                        ControlId::FontSize
+                                                            | ControlId::DiscThreshold
+                                                            | ControlId::ContourBendingWeight
+                                                            | ControlId::ContourEndpointWeight
+                                                            | ControlId::ContourJunctionWeight
+                                                            | ControlId::ContourFragmentWeight
+                                                            | ControlId::ContourFidelityWeight
+                                                            | ControlId::ContourBoundaryWeight
+                                                            | ControlId::ContourPeakWeight
+                                                    ) {
+                                                        Some(format!(
+                                                            "{:.1}",
+                                                            current_value as f32 / 10.0
+                                                        ))
+                                                    } else {
+                                                        None
+                                                    };
                                                     if let Some((bar_x, bar_cells)) =
                                                         slider_bar_layout(
                                                             area,
@@ -6197,15 +6383,25 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             {
                                                 let current_value =
                                                     app.get_control_value(0, visual_idx);
-                                                let display_value =
-                                                    if ctrl.id == ControlId::FontSize {
-                                                        Some(format!(
-                                                            "{:.1}",
-                                                            current_value as f32 / 10.0
-                                                        ))
-                                                    } else {
-                                                        None
-                                                    };
+                                                let display_value = if matches!(
+                                                    ctrl.id,
+                                                    ControlId::FontSize
+                                                        | ControlId::DiscThreshold
+                                                        | ControlId::ContourBendingWeight
+                                                        | ControlId::ContourEndpointWeight
+                                                        | ControlId::ContourJunctionWeight
+                                                        | ControlId::ContourFragmentWeight
+                                                        | ControlId::ContourFidelityWeight
+                                                        | ControlId::ContourBoundaryWeight
+                                                        | ControlId::ContourPeakWeight
+                                                ) {
+                                                    Some(format!(
+                                                        "{:.1}",
+                                                        current_value as f32 / 10.0
+                                                    ))
+                                                } else {
+                                                    None
+                                                };
                                                 if let Some((bar_x, bar_cells)) = slider_bar_layout(
                                                     *area,
                                                     ctrl.label,
@@ -7825,7 +8021,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
         let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
 
         let mut title_right = format!(
-            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Line {} ({} bytes) | Error: {:.3}% ",
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Line {} ({} bytes) | Contour: {:.3} ",
             width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, p_score
         );
 
@@ -7918,7 +8114,7 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             res.score
         };
         full_spans.push(Span::styled(
-            format!(" Error {:.3}% ", display_score),
+            format!(" Contour {:.3} ", display_score),
             Style::new()
                 .fg(Color::White)
                 .bg(ACCENT_DIM)

@@ -140,7 +140,18 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                             .map(|cell| cell.set_char(ch).set_style(style));
                     }
                 } else {
-                    let dv = if ctrl.id == ControlId::FontSize {
+                    let dv = if matches!(
+                        ctrl.id,
+                        ControlId::FontSize
+                            | ControlId::DiscThreshold
+                            | ControlId::ContourBendingWeight
+                            | ControlId::ContourEndpointWeight
+                            | ControlId::ContourJunctionWeight
+                            | ControlId::ContourFragmentWeight
+                            | ControlId::ContourFidelityWeight
+                            | ControlId::ContourBoundaryWeight
+                            | ControlId::ContourPeakWeight
+                    ) {
                         Some(format!("{:.1}", value as f32 / 10.0))
                     } else {
                         None

@@ -315,13 +315,11 @@ impl OklabPalette {
     }
 }
 
-static ANSI256_OKLAB: Lazy<OklabPalette> = Lazy::new(|| {
-    OklabPalette::new(&ANSI256, &ANSI256_INFO.is_chromatic)
-});
+static ANSI256_OKLAB: Lazy<OklabPalette> =
+    Lazy::new(|| OklabPalette::new(&ANSI256, &ANSI256_INFO.is_chromatic));
 
-static IRC99_OKLAB: Lazy<OklabPalette> = Lazy::new(|| {
-    OklabPalette::new(&IRC99, &IRC99_INFO.is_chromatic)
-});
+static IRC99_OKLAB: Lazy<OklabPalette> =
+    Lazy::new(|| OklabPalette::new(&IRC99, &IRC99_INFO.is_chromatic));
 
 #[inline(always)]
 fn should_skip_irc99_match_index(palette_len: usize, idx: usize) -> bool {
@@ -347,7 +345,6 @@ pub fn nearest_hex_colour_fast(col: u32, palette: &[u32]) -> u8 {
     } else {
         None
     };
-
     if let Some(inf) = info {
         for (i, [r, g, b]) in inf.components.iter().enumerate() {
             if should_skip_irc99_match_index(palette.len(), i) {
@@ -604,11 +601,7 @@ fn compute_spatial_grayscale_classification(
             for x in 0..width {
                 let [r, g, b] = unpack_rgb(src[y][x]);
                 let oklab = rgb_to_oklab([r, g, b]);
-                let (dg, dc) = find_nearest_gray_and_color_oklab(
-                    oklab,
-                    oklab_palette,
-                    palette_len,
-                );
+                let (dg, dc) = find_nearest_gray_and_color_oklab(oklab, oklab_palette, palette_len);
 
                 let class = if dc - dg > high_threshold {
                     Some(false)
@@ -672,7 +665,9 @@ fn compute_spatial_grayscale_classification(
                 for &(ny, nx) in &neighbors {
                     if ny < height && nx < width {
                         if classification[ny][nx].is_none() && !visited[ny][nx] {
-                            if oklab_distance_squared(oklab_grid[cy][cx], oklab_grid[ny][nx]) < similarity_threshold_sq {
+                            if oklab_distance_squared(oklab_grid[cy][cx], oklab_grid[ny][nx])
+                                < similarity_threshold_sq
+                            {
                                 visited[ny][nx] = true;
                                 queue.push_back((ny, nx));
                             }
@@ -774,7 +769,17 @@ impl AnsiPixel {
         let ansi_part_val = nearest_strict_partitioned_hex_colour(*px, &ANSI256, tolerance);
         let irc_part_val = nearest_strict_partitioned_hex_colour(*px, &IRC99, tolerance);
 
-        COLOR_CACHE.insert(*px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val));
+        COLOR_CACHE.insert(
+            *px,
+            (
+                ansi_std_val,
+                irc_std_val,
+                ansi_ng_val,
+                irc_ng_val,
+                ansi_part_val,
+                irc_part_val,
+            ),
+        );
         AnsiPixel {
             orig: *px,
             ansi_std: ansi_std_val,
@@ -835,7 +840,8 @@ fn block_bitmap(
     }
 
     let (ansi_distinct_map, irc_distinct_map) = if nograyscale {
-        let a = compute_spatial_grayscale_classification(src, &ANSI256_OKLAB, ANSI256.len(), tolerance);
+        let a =
+            compute_spatial_grayscale_classification(src, &ANSI256_OKLAB, ANSI256.len(), tolerance);
         let i = compute_spatial_grayscale_classification(src, &IRC99_OKLAB, IRC99.len(), tolerance);
         (a, i)
     } else {
@@ -860,7 +866,8 @@ fn block_bitmap(
                 let mut ansi_ng_val = ansi_std_val;
                 let mut irc_ng_val = irc_std_val;
 
-                if let Some(idx) = nearest_distinctly_chromatic_hex_colour(px, &ANSI256, tolerance) {
+                if let Some(idx) = nearest_distinctly_chromatic_hex_colour(px, &ANSI256, tolerance)
+                {
                     ansi_ng_val = idx;
                 }
                 if let Some(idx) = nearest_distinctly_chromatic_hex_colour(px, &IRC99, tolerance) {
@@ -870,8 +877,28 @@ fn block_bitmap(
                 let ansi_part_val = nearest_strict_partitioned_hex_colour(px, &ANSI256, tolerance);
                 let irc_part_val = nearest_strict_partitioned_hex_colour(px, &IRC99, tolerance);
 
-                COLOR_CACHE.insert(px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val));
-                (px, (ansi_std_val, irc_std_val, ansi_ng_val, irc_ng_val, ansi_part_val, irc_part_val))
+                COLOR_CACHE.insert(
+                    px,
+                    (
+                        ansi_std_val,
+                        irc_std_val,
+                        ansi_ng_val,
+                        irc_ng_val,
+                        ansi_part_val,
+                        irc_part_val,
+                    ),
+                );
+                (
+                    px,
+                    (
+                        ansi_std_val,
+                        irc_std_val,
+                        ansi_ng_val,
+                        irc_ng_val,
+                        ansi_part_val,
+                        irc_part_val,
+                    ),
+                )
             }
         })
         .collect();
@@ -1723,11 +1750,33 @@ fn paint_cell_pixels(
     }
 }
 
+fn paint_preview_center_glyph(
+    pixels: &mut [[u8; 3]],
+    width: usize,
+    data: &BlockData,
+    glyph: &FastGlyph,
+    inverted: bool,
+    gw: usize,
+    gh: usize,
+) {
+    let cell_width = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_height = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let offset_x = NEIGHBORHOOD_RADIUS * cell_width;
+    let offset_y = NEIGHBORHOOD_RADIUS * cell_height;
+    for y in 0..cell_height {
+        let source_y = y * gh / cell_height;
+        for x in 0..cell_width {
+            let source_x = x * gw / cell_width;
+            let bit = glyph.bitmap[source_y * gw + source_x] ^ inverted as u8;
+            pixels[(offset_y + y) * width + offset_x + x] =
+                if bit == 1 { data.fg } else { data.bg };
+        }
+    }
+}
+
 fn local_patch_frequency_score(patch_pixels: &[[u8; 3]], width: usize, height: usize) -> f32 {
     spectral_high_frequency_score(patch_pixels, width, height)
 }
-
-
 
 fn segment_intersects_center_cell(
     segment: &BoundarySegment,
@@ -1830,12 +1879,17 @@ fn local_patch_boundary_complexity_score(
     gh: usize,
 ) -> f32 {
     let patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
-    
+
     let result = DIS_SCRATCH.with(|scratch_cell| {
         let mut scratch = scratch_cell.borrow_mut();
-        
+
         scratch.segments.clear();
-        build_boundary_segments_into(&patch.pixels, patch.width, patch.height, &mut scratch.segments);
+        build_boundary_segments_into(
+            &patch.pixels,
+            patch.width,
+            patch.height,
+            &mut scratch.segments,
+        );
         if scratch.segments.is_empty() {
             return 0.0;
         }
@@ -1848,11 +1902,11 @@ fn local_patch_boundary_complexity_score(
 
         scratch.modified_vertices.clear();
         let width_stride = patch.width + 2;
-        
+
         let temp_segments = scratch.segments.clone();
         for (idx, segment) in temp_segments.iter().enumerate() {
             let seg_idx = idx as u16;
-            
+
             let v1 = segment.start.1 * width_stride + segment.start.0;
             let deg1 = scratch.degrees[v1] as usize;
             if deg1 < 4 {
@@ -1888,7 +1942,7 @@ fn local_patch_boundary_complexity_score(
 
             scratch.queue.clear();
             scratch.queue.push_back(start_idx);
-            
+
             scratch.component.clear();
             let mut relevant = false;
 
@@ -1971,14 +2025,13 @@ fn local_patch_boundary_complexity_score(
         if counted_components == 0 {
             0.0
         } else {
-            (100.0 * total_penalty / (counted_components as f32 * (gw + gh).max(1) as f32)).min(100.0)
+            (100.0 * total_penalty / (counted_components as f32 * (gw + gh).max(1) as f32))
+                .min(100.0)
         }
     });
 
     result
 }
-
-
 
 fn save_rgb_pixels_as_png(
     path: &Path,
@@ -2231,6 +2284,121 @@ fn build_rendered_raster(
     raster
 }
 
+fn build_source_raster(
+    image: &AnsiImage,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Vec<[u8; 3]> {
+    let width = grid_w * gw;
+    let mut raster = vec![[0u8; 3]; width * grid_h * gh];
+    for cell_y in 0..grid_h {
+        for cell_x in 0..grid_w {
+            let block = &image.block[cell_y][cell_x];
+            for y in 0..gh {
+                for x in 0..gw {
+                    raster[(cell_y * gh + y) * width + cell_x * gw + x] =
+                        unpack_rgb(block.pixels[y][x].orig);
+                }
+            }
+        }
+    }
+    raster
+}
+
+fn preview_contour_score(
+    source: &[[u8; 3]],
+    output: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    weights: &crate::contour_score::ContourScoreWeights,
+) -> crate::contour_score::ReferenceContourScore {
+    let (source, width, height) =
+        crate::contour_score::normalize_preview_raster(source, grid_w, grid_h, gw, gh);
+    let (output, _, _) =
+        crate::contour_score::normalize_preview_raster(output, grid_w, grid_h, gw, gh);
+    crate::contour_score::score_rgb_against_reference_with_weights(
+        &source,
+        &output,
+        width,
+        height,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        weights,
+    )
+}
+
+fn contour_score_weights(args: &RenderArgs) -> crate::contour_score::ContourScoreWeights {
+    crate::contour_score::ContourScoreWeights {
+        bending: args.contour_bending_weight.max(0.0) as f64,
+        endpoints: args.contour_endpoint_weight.max(0.0) as f64,
+        junctions: args.contour_junction_weight.max(0.0) as f64,
+        fragments: args.contour_fragment_weight.max(0.0) as f64,
+        fidelity: args.contour_fidelity_weight.max(0.0) as f64,
+        boundary_balance: args.contour_boundary_weight.max(0.0) as f64,
+        peak_sensitivity: args.contour_peak_weight.clamp(0.0, 1.0) as f64,
+    }
+}
+
+fn prepare_local_preview_reference(
+    source: &[[u8; 3]],
+    cell_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> crate::contour_score::PreparedReference {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    let source_patch = extract_local_patch(source, cell_x, cell_y, grid_w, grid_h, gw, gh);
+    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+    let (source_preview, width, height) = crate::contour_score::normalize_preview_raster(
+        &source_patch.pixels,
+        patch_cells,
+        patch_cells,
+        gw,
+        gh,
+    );
+    crate::contour_score::prepare_reference(
+        &source_preview,
+        width,
+        height,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+    )
+}
+
+fn score_local_preview_output(
+    reference: &crate::contour_score::PreparedReference,
+    output: &[[u8; 3]],
+    cell_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    weights: &crate::contour_score::ContourScoreWeights,
+) -> f64 {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    let output_patch = extract_local_patch(output, cell_x, cell_y, grid_w, grid_h, gw, gh);
+    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+    let (output_preview, _, _) = crate::contour_score::normalize_preview_raster(
+        &output_patch.pixels,
+        patch_cells,
+        patch_cells,
+        gw,
+        gh,
+    );
+    crate::contour_score::score_rgb_against_prepared_with_weights(
+        reference,
+        &output_preview,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        weights,
+    )
+    .total
+}
+
 fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool, u64)> {
     if pool_size >= costs.len() {
         let mut pool: Vec<(usize, bool, u64)> = costs
@@ -2262,6 +2430,46 @@ fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool,
     }
 
     pool
+}
+
+fn glyph_states_render_identically(
+    a: &FastGlyph,
+    a_inverted: bool,
+    b: &FastGlyph,
+    b_inverted: bool,
+) -> bool {
+    let inversion = (a_inverted ^ b_inverted) as u8;
+    a.bitmap
+        .iter()
+        .zip(&b.bitmap)
+        .all(|(&a_pixel, &b_pixel)| a_pixel == (b_pixel ^ inversion))
+}
+
+fn deduplicate_rendered_candidates(
+    candidates: Vec<(usize, bool, u64)>,
+    glyphs: &[FastGlyph],
+    current: (usize, bool),
+) -> Vec<(usize, bool, u64)> {
+    let mut unique = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if glyph_states_render_identically(
+            &glyphs[candidate.0],
+            candidate.1,
+            &glyphs[current.0],
+            current.1,
+        ) || unique.iter().any(|&(glyph_idx, inverted, _)| {
+            glyph_states_render_identically(
+                &glyphs[candidate.0],
+                candidate.1,
+                &glyphs[glyph_idx],
+                inverted,
+            )
+        }) {
+            continue;
+        }
+        unique.push(candidate);
+    }
+    unique
 }
 
 fn current_cell_frequency_score(
@@ -2942,8 +3150,22 @@ fn canonical_shape_hash(indices: &[u8]) -> u64 {
     hasher.finish()
 }
 
+fn glyph_set_cache_hash(glyphs: &[FastGlyph], gw: usize, gh: usize) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    gw.hash(&mut hasher);
+    gh.hash(&mut hasher);
+    glyphs.len().hash(&mut hasher);
+    for glyph in glyphs {
+        glyph.ch.hash(&mut hasher);
+        glyph.bitmap.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 thread_local! {
-    static THREAD_SHAPE_CACHE: std::cell::RefCell<std::collections::HashMap<u64, (usize, bool)>> =
+    static THREAD_SHAPE_CACHE: std::cell::RefCell<std::collections::HashMap<(u64, u64), (usize, bool)>> =
         std::cell::RefCell::new(std::collections::HashMap::with_capacity(8192));
 }
 
@@ -2961,6 +3183,7 @@ pub fn render_blocks_smooth(
     }
     let (gw, gh) = image.glyphs.metrics;
     let bp = gh * gw;
+    let glyph_cache_hash = glyph_set_cache_hash(glyphs, gw, gh);
 
     // Grid Dimensions
     let grid_h = image.block.len();
@@ -3128,8 +3351,6 @@ pub fn render_blocks_smooth(
             unreachable!("use_gpu is false when the `gpu` feature is disabled");
         }
     } else {
-
-
         image
             .block
             .par_iter()
@@ -3203,11 +3424,7 @@ pub fn render_blocks_smooth(
                         } else {
                             matches!(render, Render::Ansi | Render::Ansi24)
                         };
-                        let palette: &[u32] = if is_ansi {
-                            &ANSI256
-                        } else {
-                            &IRC99
-                        };
+                        let palette: &[u32] = if is_ansi { &ANSI256 } else { &IRC99 };
                         let mut base_cnt = [0u16; 256];
                         indices.clear();
 
@@ -3217,159 +3434,160 @@ pub fn render_blocks_smooth(
                             block_sum_b += p.b;
                             block_sum_sq += p.sq;
 
-                            let idx = if is_ansi {
-                                p.ansi_part
-                            } else {
-                                p.irc_part
-                            };
+                            let idx = if is_ansi { p.ansi_part } else { p.irc_part };
                             base_cnt[idx as usize] += 1;
                             indices.push(idx);
                         }
 
                         let shape_hash = canonical_shape_hash(&indices);
+                        let shape_cache_key = (glyph_cache_hash, shape_hash);
 
-                        let cached = THREAD_SHAPE_CACHE.with(|cache_cell| {
-                            cache_cell.borrow().get(&shape_hash).copied()
-                        });
+                        let cached = THREAD_SHAPE_CACHE
+                            .with(|cache_cell| cache_cell.borrow().get(&shape_cache_key).copied());
 
-                        let (scale_best_glyph, scale_best_inv) = if let Some(c) = cached.filter(|&(gi, _)| gi < glyphs.len()) {
-                            c
-                        } else {
-                            let mut unique_block_colors = [0u8; 32];
-                            let mut num_unique_colors = 0usize;
-                            for idx in 0..256 {
-                                if base_cnt[idx] > 0 {
-                                    if num_unique_colors < 32 {
-                                        unique_block_colors[num_unique_colors] = idx as u8;
-                                        num_unique_colors += 1;
-                                    }
-                                }
-                            }
-                            let active_colors = &unique_block_colors[0..num_unique_colors];
-
-                            let mut best_cost = u64::MAX;
-                            let mut best_glyph = 0;
-                            let mut best_inv = false;
-
-                            if num_unique_colors <= 1 {
-                                best_glyph = 0;
-                                best_inv = false;
-                                best_cost = 0;
-                            } else if bp <= 128 {
-                                let mut color_masks = [0u128; 256];
-                                for (i, &color_idx) in indices.iter().enumerate() {
-                                    if i < 128 {
-                                        color_masks[color_idx as usize] |= 1u128 << i;
-                                    }
-                                }
-
-                                for (gi, fglyph) in glyphs.iter().enumerate() {
-                                    if gi & 0x3f == 0 {
-                                        if let Some(flag) = &abort_flag {
-                                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                                return (Vec::new(), Vec::new());
-                                            }
-                                        }
-                                    }
-
-                                    let mut ones_mode_count = 0u16;
-                                    let mut zeros_mode_count = 0u16;
-                                    for &idx in active_colors {
-                                        let c_ones = (color_masks[idx as usize] & fglyph.mask).count_ones() as u16;
-                                        if c_ones > ones_mode_count {
-                                            ones_mode_count = c_ones;
-                                        }
-                                        let c_zeros = base_cnt[idx as usize] - c_ones;
-                                        if c_zeros > zeros_mode_count {
-                                            zeros_mode_count = c_zeros;
-                                        }
-                                    }
-
-                                    let ones_len = fglyph.ones.len() as u64;
-                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
-
-                                    let cost_normal = (ones_len - ones_mode_count as u64)
-                                        + (zeros_len - zeros_mode_count as u64);
-                                    if cost_normal < best_cost {
-                                        best_cost = cost_normal;
-                                        best_glyph = gi;
-                                        best_inv = false;
-                                    }
-
-                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
-                                        + (ones_len - ones_mode_count as u64);
-                                    if cost_inverted < best_cost {
-                                        best_cost = cost_inverted;
-                                        best_glyph = gi;
-                                        best_inv = true;
-                                    }
-
-                                    if best_cost == 0 {
-                                        break;
-                                    }
-                                }
+                        let (scale_best_glyph, scale_best_inv) =
+                            if let Some(c) = cached.filter(|&(gi, _)| gi < glyphs.len()) {
+                                c
                             } else {
-                                let mut ones_cnt = [0u16; 256];
-                                for (gi, fglyph) in glyphs.iter().enumerate() {
-                                    if gi & 0x3f == 0 {
-                                        if let Some(flag) = &abort_flag {
-                                            if flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                                return (Vec::new(), Vec::new());
-                                            }
+                                let mut unique_block_colors = [0u8; 32];
+                                let mut num_unique_colors = 0usize;
+                                for idx in 0..256 {
+                                    if base_cnt[idx] > 0 {
+                                        if num_unique_colors < 32 {
+                                            unique_block_colors[num_unique_colors] = idx as u8;
+                                            num_unique_colors += 1;
                                         }
-                                    }
-
-                                    for &i in &fglyph.ones {
-                                        ones_cnt[indices[i] as usize] += 1;
-                                    }
-
-                                    let mut ones_mode_count = 0u16;
-                                    let mut zeros_mode_count = 0u16;
-                                    for &idx in active_colors {
-                                        let count = ones_cnt[idx as usize];
-                                        if count > ones_mode_count {
-                                            ones_mode_count = count;
-                                        }
-                                        let count_zeros = base_cnt[idx as usize] - count;
-                                        if count_zeros > zeros_mode_count {
-                                            zeros_mode_count = count_zeros;
-                                        }
-                                    }
-
-                                    let ones_len = fglyph.ones.len() as u64;
-                                    let zeros_len = (bp - fglyph.ones.len()) as u64;
-
-                                    let cost_normal = (ones_len - ones_mode_count as u64)
-                                        + (zeros_len - zeros_mode_count as u64);
-                                    if cost_normal < best_cost {
-                                        best_cost = cost_normal;
-                                        best_glyph = gi;
-                                        best_inv = false;
-                                    }
-
-                                    let cost_inverted = (zeros_len - zeros_mode_count as u64)
-                                        + (ones_len - ones_mode_count as u64);
-                                    if cost_inverted < best_cost {
-                                        best_cost = cost_inverted;
-                                        best_glyph = gi;
-                                        best_inv = true;
-                                    }
-
-                                    for &idx in active_colors {
-                                        ones_cnt[idx as usize] = 0;
-                                    }
-
-                                    if best_cost == 0 {
-                                        break;
                                     }
                                 }
-                            }
+                                let active_colors = &unique_block_colors[0..num_unique_colors];
 
-                            THREAD_SHAPE_CACHE.with(|cache_cell| {
-                                cache_cell.borrow_mut().insert(shape_hash, (best_glyph, best_inv));
-                            });
-                            (best_glyph, best_inv)
-                        };
+                                let mut best_cost = u64::MAX;
+                                let mut best_glyph = 0;
+                                let mut best_inv = false;
+
+                                if num_unique_colors <= 1 {
+                                    best_glyph = 0;
+                                    best_inv = false;
+                                    best_cost = 0;
+                                } else if bp <= 128 {
+                                    let mut color_masks = [0u128; 256];
+                                    for (i, &color_idx) in indices.iter().enumerate() {
+                                        if i < 128 {
+                                            color_masks[color_idx as usize] |= 1u128 << i;
+                                        }
+                                    }
+
+                                    for (gi, fglyph) in glyphs.iter().enumerate() {
+                                        if gi & 0x3f == 0 {
+                                            if let Some(flag) = &abort_flag {
+                                                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                                    return (Vec::new(), Vec::new());
+                                                }
+                                            }
+                                        }
+
+                                        let mut ones_mode_count = 0u16;
+                                        let mut zeros_mode_count = 0u16;
+                                        for &idx in active_colors {
+                                            let c_ones = (color_masks[idx as usize] & fglyph.mask)
+                                                .count_ones()
+                                                as u16;
+                                            if c_ones > ones_mode_count {
+                                                ones_mode_count = c_ones;
+                                            }
+                                            let c_zeros = base_cnt[idx as usize] - c_ones;
+                                            if c_zeros > zeros_mode_count {
+                                                zeros_mode_count = c_zeros;
+                                            }
+                                        }
+
+                                        let ones_len = fglyph.ones.len() as u64;
+                                        let zeros_len = (bp - fglyph.ones.len()) as u64;
+
+                                        let cost_normal = (ones_len - ones_mode_count as u64)
+                                            + (zeros_len - zeros_mode_count as u64);
+                                        if cost_normal < best_cost {
+                                            best_cost = cost_normal;
+                                            best_glyph = gi;
+                                            best_inv = false;
+                                        }
+
+                                        let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                            + (ones_len - ones_mode_count as u64);
+                                        if cost_inverted < best_cost {
+                                            best_cost = cost_inverted;
+                                            best_glyph = gi;
+                                            best_inv = true;
+                                        }
+
+                                        if best_cost == 0 {
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    let mut ones_cnt = [0u16; 256];
+                                    for (gi, fglyph) in glyphs.iter().enumerate() {
+                                        if gi & 0x3f == 0 {
+                                            if let Some(flag) = &abort_flag {
+                                                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                                    return (Vec::new(), Vec::new());
+                                                }
+                                            }
+                                        }
+
+                                        for &i in &fglyph.ones {
+                                            ones_cnt[indices[i] as usize] += 1;
+                                        }
+
+                                        let mut ones_mode_count = 0u16;
+                                        let mut zeros_mode_count = 0u16;
+                                        for &idx in active_colors {
+                                            let count = ones_cnt[idx as usize];
+                                            if count > ones_mode_count {
+                                                ones_mode_count = count;
+                                            }
+                                            let count_zeros = base_cnt[idx as usize] - count;
+                                            if count_zeros > zeros_mode_count {
+                                                zeros_mode_count = count_zeros;
+                                            }
+                                        }
+
+                                        let ones_len = fglyph.ones.len() as u64;
+                                        let zeros_len = (bp - fglyph.ones.len()) as u64;
+
+                                        let cost_normal = (ones_len - ones_mode_count as u64)
+                                            + (zeros_len - zeros_mode_count as u64);
+                                        if cost_normal < best_cost {
+                                            best_cost = cost_normal;
+                                            best_glyph = gi;
+                                            best_inv = false;
+                                        }
+
+                                        let cost_inverted = (zeros_len - zeros_mode_count as u64)
+                                            + (ones_len - ones_mode_count as u64);
+                                        if cost_inverted < best_cost {
+                                            best_cost = cost_inverted;
+                                            best_glyph = gi;
+                                            best_inv = true;
+                                        }
+
+                                        for &idx in active_colors {
+                                            ones_cnt[idx as usize] = 0;
+                                        }
+
+                                        if best_cost == 0 {
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                THREAD_SHAPE_CACHE.with(|cache_cell| {
+                                    cache_cell
+                                        .borrow_mut()
+                                        .insert(shape_cache_key, (best_glyph, best_inv));
+                                });
+                                (best_glyph, best_inv)
+                            };
 
                         let scale_best_fg;
                         let scale_best_bg;
@@ -3584,6 +3802,8 @@ pub fn render_blocks_smooth(
     } else {
         None
     };
+    let source_raster = build_source_raster(image, grid_w, grid_h, gw, gh);
+    let contour_weights = contour_score_weights(args);
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
         if let Err(err) = dump_fft_stage_inputs(root, "initial", raster, grid_w, grid_h, gw, gh) {
@@ -3591,6 +3811,24 @@ pub fn render_blocks_smooth(
         }
     }
 
+    // When the legacy fixer is disabled, Score Fix can identify its target
+    // cells before building candidate costs. This avoids doing glyph work for
+    // the usually much larger set of cells below the discontinuity threshold.
+    let mut score_fix_initial_disc_scores = if args.score_fix && !args.fix_disc {
+        Some(all_cell_discontinuity_scores(
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when score-fix is enabled"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        ))
+    } else {
+        None
+    };
+
+    let needs_candidate_evaluation = args.fix_disc || args.score_fix;
     let quantized_references = if args.fix_disc {
         build_quantized_cell_references(image, &grid_data, grid_w, grid_h, gw, gh)
     } else {
@@ -3603,11 +3841,18 @@ pub fn render_blocks_smooth(
     let (block_glyph_costs, block_glyph_pools): (
         Vec<Vec<u64>>,
         Vec<Vec<(usize, bool, u64, u32, i8, i8)>>,
-    ) = if args.fix_disc {
+    ) = if needs_candidate_evaluation {
         grid_data
             .par_iter()
             .enumerate()
             .map(|(curr_idx, data)| {
+                if score_fix_initial_disc_scores
+                    .as_ref()
+                    .is_some_and(|scores| scores[curr_idx] < args.discontinuity_threshold.max(0.0))
+                {
+                    return (Vec::new(), Vec::new());
+                }
+
                 let x = curr_idx % grid_w;
                 let y = curr_idx / grid_w;
                 let blk = &image.block[y][x];
@@ -3682,23 +3927,25 @@ pub fn render_blocks_smooth(
                     costs.push(c_total_t);
                 }
 
-                let pool = best_candidate_pool_pre(&costs, candidate_pool_size);
-
-                let current_reference = &quantized_references[curr_idx];
-                let pre_pool = pool
-                    .into_iter()
-                    .map(|(gi, inv, internal)| {
-                        let (ref_cost, sx, sy) = best_shifted_reference_match_with_radius(
-                            &current_reference.mask,
-                            &glyphs[gi],
-                            inv,
-                            gw,
-                            gh,
-                            shift_radius,
-                        );
-                        (gi, inv, internal, ref_cost, sx, sy)
-                    })
-                    .collect();
+                let pre_pool = if args.fix_disc {
+                    let pool = best_candidate_pool_pre(&costs, candidate_pool_size);
+                    let current_reference = &quantized_references[curr_idx];
+                    pool.into_iter()
+                        .map(|(gi, inv, internal)| {
+                            let (ref_cost, sx, sy) = best_shifted_reference_match_with_radius(
+                                &current_reference.mask,
+                                &glyphs[gi],
+                                inv,
+                                gw,
+                                gh,
+                                shift_radius,
+                            );
+                            (gi, inv, internal, ref_cost, sx, sy)
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
                 (costs, pre_pool)
             })
@@ -3934,6 +4181,347 @@ pub fn render_blocks_smooth(
         fix_disc_time = Some(t_fix.elapsed());
     }
 
+    if args.score_fix {
+        let raster = rendered_raster
+            .as_mut()
+            .expect("rendered raster should exist when score-fix is enabled");
+        let started = std::time::Instant::now();
+        let pre_score_fix_raster = raster.clone();
+        let pre_score_fix_grid_state = grid_state.clone();
+        let before_global = preview_contour_score(
+            &source_raster,
+            raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            &contour_weights,
+        )
+        .total;
+
+        let threshold = args.discontinuity_threshold.max(0.0);
+        let target_scores = score_fix_initial_disc_scores
+            .take()
+            .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
+        let mut targets = target_scores
+            .into_iter()
+            .enumerate()
+            .filter(|(_, score)| *score >= threshold)
+            .collect::<Vec<_>>();
+        targets.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let target_count = targets.len();
+
+        let candidate_count = args.score_fix_candidates.max(1) as usize;
+        let mut changes = 0usize;
+        let mut rejected = 0usize;
+        let mut candidate_trials = 0usize;
+        let mut duplicate_candidates_skipped = 0usize;
+        let mut local_improvement = 0.0f64;
+        let mut cached_cell_scores = vec![None::<f64>; grid_w * grid_h];
+        let mut reference_needed = vec![false; grid_w * grid_h];
+        for &(target_idx, _) in &targets {
+            if args.score_fix_neighborhood_guard {
+                for affected_idx in
+                    affected_discontinuity_cell_indices(target_idx, grid_w, grid_h)
+                {
+                    reference_needed[affected_idx] = true;
+                }
+            } else {
+                reference_needed[target_idx] = true;
+            }
+        }
+        let mut cached_references = reference_needed
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, needed)| {
+                needed.then(|| {
+                    prepare_local_preview_reference(
+                        &source_raster,
+                        idx,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for (curr_idx, _) in targets {
+            if let Some(flag) = &abort_flag {
+                if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return "Cancelled".into();
+                }
+            }
+            if grid_data[curr_idx].fg == grid_data[curr_idx].bg {
+                continue;
+            }
+
+            let current_choice = grid_state[curr_idx];
+            let cell_x = curr_idx % grid_w;
+            let cell_y = curr_idx / grid_w;
+            let output_patch = extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+            let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+            let (mut output_preview, preview_width, _) =
+                crate::contour_score::normalize_preview_raster(
+                    &output_patch.pixels,
+                    patch_cells,
+                    patch_cells,
+                    gw,
+                    gh,
+                );
+            if cached_references[curr_idx].is_none() {
+                cached_references[curr_idx] = Some(prepare_local_preview_reference(
+                    &source_raster,
+                    curr_idx,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                ));
+            }
+            let prepared_reference = cached_references[curr_idx]
+                .as_ref()
+                .expect("score-fix reference should be cached");
+            let baseline_preview = output_preview.clone();
+            let (current_score_details, prepared_output) =
+                crate::contour_score::score_rgb_and_prepare_output_with_weights(
+                    prepared_reference,
+                    &baseline_preview,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    &contour_weights,
+                );
+            let current_score = current_score_details.total;
+            let mut best_score = current_score;
+            let mut best_choice = current_choice;
+            let candidates_with_duplicates = block_glyph_costs
+                .get(curr_idx)
+                .map(|costs| best_candidate_pool_pre(costs, candidate_count))
+                .unwrap_or_default();
+            let original_candidate_count = candidates_with_duplicates.len();
+            let candidates = deduplicate_rendered_candidates(
+                candidates_with_duplicates,
+                glyphs,
+                current_choice,
+            );
+            candidate_trials += candidates.len();
+            duplicate_candidates_skipped += original_candidate_count - candidates.len();
+
+            if candidates.len() >= 8 {
+                let scored = candidates
+                    .par_iter()
+                    .map(|&(glyph_idx, inverted, _)| {
+                        let candidate = (glyph_idx, inverted);
+                        if candidate == current_choice {
+                            return None;
+                        }
+                        let mut candidate_preview = output_preview.clone();
+                        paint_preview_center_glyph(
+                            &mut candidate_preview,
+                            preview_width,
+                            &grid_data[curr_idx],
+                            &glyphs[glyph_idx],
+                            inverted,
+                            gw,
+                            gh,
+                        );
+                        let score = crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
+                            prepared_reference,
+                            &prepared_output,
+                            &baseline_preview,
+                            &candidate_preview,
+                            NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+                            NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            crate::contour_score::PREVIEW_CELL_HEIGHT,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            &contour_weights,
+                        )
+                        .total;
+                        Some((candidate, score))
+                    })
+                    .collect::<Vec<_>>();
+                for (candidate, score) in scored.into_iter().flatten() {
+                    if score + 1e-9 < best_score {
+                        best_score = score;
+                        best_choice = candidate;
+                    }
+                }
+            } else {
+                for (glyph_idx, inverted, _) in candidates {
+                    let candidate = (glyph_idx, inverted);
+                    if candidate == current_choice {
+                        continue;
+                    }
+                    paint_preview_center_glyph(
+                        &mut output_preview,
+                        preview_width,
+                        &grid_data[curr_idx],
+                        &glyphs[glyph_idx],
+                        inverted,
+                        gw,
+                        gh,
+                    );
+                    let score = crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
+                        prepared_reference,
+                        &prepared_output,
+                        &baseline_preview,
+                        &output_preview,
+                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        crate::contour_score::PREVIEW_CELL_HEIGHT,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        &contour_weights,
+                    )
+                    .total;
+                    paint_preview_center_glyph(
+                        &mut output_preview,
+                        preview_width,
+                        &grid_data[curr_idx],
+                        &glyphs[current_choice.0],
+                        current_choice.1,
+                        gw,
+                        gh,
+                    );
+                    if score + 1e-9 < best_score {
+                        best_score = score;
+                        best_choice = candidate;
+                    }
+                }
+            }
+
+            if best_choice != current_choice {
+                if !args.score_fix_neighborhood_guard {
+                    apply_choice_to_raster(
+                        raster,
+                        &grid_data,
+                        glyphs,
+                        grid_w,
+                        gw,
+                        gh,
+                        curr_idx,
+                        best_choice,
+                    );
+                    grid_state[curr_idx] = best_choice;
+                    local_improvement += current_score - best_score;
+                    changes += 1;
+                    continue;
+                }
+
+                cached_cell_scores[curr_idx] = Some(current_score);
+                let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
+                let mut before_sum = 0.0;
+                for &idx in &affected {
+                    if cached_references[idx].is_none() {
+                        cached_references[idx] = Some(prepare_local_preview_reference(
+                            &source_raster,
+                            idx,
+                            grid_w,
+                            grid_h,
+                            gw,
+                            gh,
+                        ));
+                    }
+                    if cached_cell_scores[idx].is_none() {
+                        let score = score_local_preview_output(
+                            cached_references[idx]
+                                .as_ref()
+                                .expect("score-fix reference should be cached"),
+                            raster,
+                            idx,
+                            grid_w,
+                            grid_h,
+                            gw,
+                            gh,
+                            &contour_weights,
+                        );
+                        cached_cell_scores[idx] = Some(score);
+                    }
+                    before_sum +=
+                        cached_cell_scores[idx].expect("score-fix cell score should be cached");
+                }
+                apply_choice_to_raster(
+                    raster,
+                    &grid_data,
+                    glyphs,
+                    grid_w,
+                    gw,
+                    gh,
+                    curr_idx,
+                    best_choice,
+                );
+                let mut new_scores = Vec::with_capacity(affected.len());
+                for &idx in &affected {
+                    new_scores.push(score_local_preview_output(
+                        cached_references[idx]
+                            .as_ref()
+                            .expect("score-fix reference should be cached"),
+                        raster,
+                        idx,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                        &contour_weights,
+                    ));
+                }
+                let after_sum = new_scores.iter().sum::<f64>();
+                if after_sum + 1e-9 < before_sum {
+                    grid_state[curr_idx] = best_choice;
+                    for (&idx, score) in affected.iter().zip(new_scores) {
+                        cached_cell_scores[idx] = Some(score);
+                    }
+                    local_improvement += before_sum - after_sum;
+                    changes += 1;
+                } else {
+                    apply_choice_to_raster(
+                        raster,
+                        &grid_data,
+                        glyphs,
+                        grid_w,
+                        gw,
+                        gh,
+                        curr_idx,
+                        current_choice,
+                    );
+                    rejected += 1;
+                }
+            }
+        }
+
+        let mut after_global = preview_contour_score(
+            &source_raster,
+            raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            &contour_weights,
+        )
+        .total;
+        let rolled_back = after_global > before_global + 1e-9;
+        if rolled_back {
+            raster.copy_from_slice(&pre_score_fix_raster);
+            grid_state.copy_from_slice(&pre_score_fix_grid_state);
+            after_global = before_global;
+        }
+        log::info!(
+            "score-fix selected {} cells at threshold {:.1}; mode={}; tried {} unique candidates (skipped {} duplicate rasters), kept {} regional improvements, rejected {} neighborhood regressions: local -{:.6}, global {:.6} -> {:.6}, full rollback={} in {:?}",
+            target_count,
+            threshold,
+            if args.score_fix_neighborhood_guard { "overlap-guard" } else { "center-3x3" },
+            candidate_trials,
+            duplicate_candidates_skipped,
+            changes,
+            rejected,
+            local_improvement,
+            before_global,
+            after_global,
+            rolled_back,
+            started.elapsed(),
+        );
+    }
+
     let disc_threshold = args.discontinuity_threshold.max(0.0);
     let t_disc_score = std::time::Instant::now();
     let cell_disc_scores = all_cell_discontinuity_scores(
@@ -3956,6 +4544,41 @@ pub fn render_blocks_smooth(
             .sum::<f32>() as f64
             / cell_disc_scores.len() as f64
     };
+    let contour_score = {
+        let (source_preview, preview_width, preview_height) =
+            crate::contour_score::normalize_preview_raster(&source_raster, grid_w, grid_h, gw, gh);
+        let (output_preview, _, _) = crate::contour_score::normalize_preview_raster(
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring contours"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        );
+        crate::contour_score::score_rgb_against_reference_with_weights(
+            &source_preview,
+            &output_preview,
+            preview_width,
+            preview_height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            &contour_weights,
+        )
+    };
+    log::info!(
+        "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
+        contour_score.total,
+        contour_score.contour.bending,
+        contour_score.contour.endpoints,
+        contour_score.contour.junctions,
+        contour_score.contour.fragments,
+        contour_score.contour.boundary_length,
+    );
+    log::info!(
+        "Contour Reference: fidelity={:.4}, boundary_balance={:.4}",
+        contour_score.fidelity,
+        contour_score.boundary_balance,
+    );
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
         if let Err(err) = dump_fft_stage_inputs(root, "final", raster, grid_w, grid_h, gw, gh) {
@@ -4424,7 +5047,7 @@ pub fn render_blocks_smooth(
         total_pixels: (bp * grid_h * grid_w) as u64,
         dynamic_scaling_count: 0,
         grid: grid_out,
-        score: relative_disc_score,
+        score: contour_score.total,
         longest_line_bytes,
         initial_time,
         fix_disc_time,
@@ -5204,5 +5827,19 @@ mod tests {
             nearest_distinctly_chromatic_hex_colour(0xFF0000, &IRC99, 0),
             Some(52)
         );
+    }
+
+    #[test]
+    fn shape_cache_identity_tracks_glyph_set_content() {
+        let a = make_test_glyph('a', &[0, 1, 0, 1], 2, 2);
+        let b = make_test_glyph('b', &[1, 0, 1, 0], 2, 2);
+        let changed = make_test_glyph('a', &[0, 1, 1, 0], 2, 2);
+        let original = glyph_set_cache_hash(&[a.clone(), b.clone()], 2, 2);
+        assert_ne!(
+            original,
+            glyph_set_cache_hash(&[b.clone(), a.clone()], 2, 2)
+        );
+        assert_ne!(original, glyph_set_cache_hash(&[changed, b.clone()], 2, 2));
+        assert_ne!(original, glyph_set_cache_hash(&[a, b], 1, 4));
     }
 }

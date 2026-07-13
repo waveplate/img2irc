@@ -1,5 +1,6 @@
 pub mod args;
 pub mod config;
+pub mod contour_score;
 pub mod draw;
 pub mod effects;
 pub mod font;
@@ -199,6 +200,16 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         fix_disc_ref_tolerance_ratio: args.fix_disc_ref_tolerance_ratio,
         fix_disc_ref_tolerance_pixels: args.fix_disc_ref_tolerance_pixels,
         fix_disc_pool_size: args.fix_disc_pool_size,
+        score_fix: args.score_fix,
+        score_fix_candidates: args.score_fix_candidates,
+        score_fix_neighborhood_guard: args.score_fix_neighborhood_guard,
+        contour_bending_weight: args.contour_bending_weight,
+        contour_endpoint_weight: args.contour_endpoint_weight,
+        contour_junction_weight: args.contour_junction_weight,
+        contour_fragment_weight: args.contour_fragment_weight,
+        contour_fidelity_weight: args.contour_fidelity_weight,
+        contour_boundary_weight: args.contour_boundary_weight,
+        contour_peak_weight: args.contour_peak_weight,
         misc3: args.misc3,
         misc4: args.misc4,
         misc5: args.misc5,
@@ -256,7 +267,12 @@ pub fn prepare_canvas(
         let _ = photon_rs::native::save_image(image.clone(), path);
     }
 
-    let canvas = draw::AnsiImage::new(image.clone(), glyphs.clone(), args.grayscale_tolerance, args.nograyscale);
+    let canvas = draw::AnsiImage::new(
+        image.clone(),
+        glyphs.clone(),
+        args.grayscale_tolerance,
+        args.nograyscale,
+    );
 
     let luma_canvas = if args.braille {
         let image_luma = effects::apply_luma_effects(args, glyphs, image);
@@ -447,7 +463,9 @@ pub async fn load_image_from_url_or_path(
 
     let is_svg_potential = bytes.starts_with(b"<svg")
         || bytes.starts_with(b"<?xml")
-        || (bytes.len() > 10 && std::str::from_utf8(&bytes[0..10.min(bytes.len())]).map_or(false, |s| s.trim_start().starts_with('<')));
+        || (bytes.len() > 10
+            && std::str::from_utf8(&bytes[0..10.min(bytes.len())])
+                .map_or(false, |s| s.trim_start().starts_with('<')));
 
     if is_svg_potential {
         // Try detecting SVG
@@ -531,21 +549,34 @@ mod tests {
             None,
         );
 
-        let image = crate::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store)
-            .await
-            .unwrap();
+        let image =
+            crate::load_image_from_url_or_path(img_path, &render_args, &initial_glyph_store)
+                .await
+                .unwrap();
 
         let glyphs = crate::draw::prepare_glyphs(&initial_glyph_store, &render_args);
 
         // Run 1 (Cold)
         let start1 = std::time::Instant::now();
-        let _res1 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let _res1 = crate::render_output(
+            render_args.clone(),
+            &initial_glyph_store,
+            image.clone(),
+            &glyphs,
+            None,
+        );
         let duration1 = start1.elapsed();
         println!("Cold render took: {:?}", duration1);
 
         // Run 2 (Warm)
         let start2 = std::time::Instant::now();
-        let _res2 = crate::render_output(render_args.clone(), &initial_glyph_store, image.clone(), &glyphs, None);
+        let _res2 = crate::render_output(
+            render_args.clone(),
+            &initial_glyph_store,
+            image.clone(),
+            &glyphs,
+            None,
+        );
         let duration2 = start2.elapsed();
         println!("Warm render took: {:?}", duration2);
 
@@ -553,7 +584,13 @@ mod tests {
         let mut render_args_contrast = render_args.clone();
         render_args_contrast.contrast = 0.5;
         let start3 = std::time::Instant::now();
-        let _res3 = crate::render_output(render_args_contrast, &initial_glyph_store, image.clone(), &glyphs, None);
+        let _res3 = crate::render_output(
+            render_args_contrast,
+            &initial_glyph_store,
+            image.clone(),
+            &glyphs,
+            None,
+        );
         let duration3 = start3.elapsed();
         println!("Warm render (diff contrast) took: {:?}", duration3);
 
@@ -561,7 +598,13 @@ mod tests {
         let mut render_args_crop = render_args.clone();
         render_args_crop.trim = Some((2, 2, 2, 2));
         let start4 = std::time::Instant::now();
-        let _res4 = crate::render_output(render_args_crop, &initial_glyph_store, image.clone(), &glyphs, None);
+        let _res4 = crate::render_output(
+            render_args_crop,
+            &initial_glyph_store,
+            image.clone(),
+            &glyphs,
+            None,
+        );
         let duration4 = start4.elapsed();
         println!("Warm render (diff crop) took: {:?}", duration4);
     }
