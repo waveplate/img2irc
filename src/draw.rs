@@ -3097,6 +3097,349 @@ fn get_overlay_at(ov: &crate::args::TextOverlay, cx: i32, cy: i32) -> Option<Opt
     }
 }
 
+struct ScoreFixPrefixStats {
+    target_count: usize,
+    candidate_trials: usize,
+    duplicate_candidates_skipped: usize,
+    changes: usize,
+    rejected: usize,
+    prefix_count: usize,
+    best_prefix: usize,
+    initial_score: f64,
+    best_score: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_score_fix_prefix_search(
+    args: &RenderArgs,
+    raster: &mut Vec<[u8; 3]>,
+    grid_state: &mut Vec<(usize, bool)>,
+    grid_data: &[BlockData],
+    glyphs: &[FastGlyph],
+    block_glyph_costs: &[Vec<u64>],
+    target_scores: Vec<f32>,
+    source_raster: &[[u8; 3]],
+    contour_weights: &crate::contour_score::ContourScoreWeights,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<ScoreFixPrefixStats, ()> {
+    let threshold = args.discontinuity_threshold.max(0.0);
+    let mut targets = target_scores
+        .into_iter()
+        .enumerate()
+        .filter(|(_, score)| *score >= threshold)
+        .collect::<Vec<_>>();
+    targets.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let target_count = targets.len();
+
+    let candidate_count = args.score_fix_candidates.max(1) as usize;
+    let baseline_state = grid_state.clone();
+    let mut candidate_lists = vec![Vec::new(); grid_w * grid_h];
+    let mut candidate_trials = 0usize;
+    let mut duplicate_candidates_skipped = 0usize;
+
+    // Freeze target order and complete candidate rankings before changing the
+    // raster. Candidate k must mean the same thing in an N=k and N>k run.
+    // Deduplicate before truncating so N counts actual rendered alternatives,
+    // not the unchanged glyph or duplicate glyph/inversion states.
+    for &(curr_idx, _) in &targets {
+        if grid_data[curr_idx].fg == grid_data[curr_idx].bg {
+            continue;
+        }
+        let current_choice = baseline_state[curr_idx];
+        let Some(costs) = block_glyph_costs.get(curr_idx) else {
+            continue;
+        };
+        let candidates_with_duplicates = best_candidate_pool_pre(costs, costs.len());
+        let original_count = candidates_with_duplicates.len();
+        let mut candidates =
+            deduplicate_rendered_candidates(candidates_with_duplicates, glyphs, current_choice);
+        duplicate_candidates_skipped += original_count.saturating_sub(candidates.len());
+        candidates.truncate(candidate_count.min(candidates.len()));
+        candidate_trials += candidates.len();
+        candidate_lists[curr_idx] = candidates;
+    }
+
+    let prefix_count = candidate_lists
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0);
+    let initial_score = preview_contour_score(
+        source_raster,
+        raster,
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+        contour_weights,
+    )
+    .total;
+    if prefix_count == 0 {
+        return Ok(ScoreFixPrefixStats {
+            target_count,
+            candidate_trials,
+            duplicate_candidates_skipped,
+            changes: 0,
+            rejected: 0,
+            prefix_count: 0,
+            best_prefix: 0,
+            initial_score,
+            best_score: initial_score,
+        });
+    }
+
+    let mut reference_needed = vec![false; grid_w * grid_h];
+    for &(target_idx, _) in &targets {
+        if args.score_fix_neighborhood_guard {
+            for affected_idx in affected_discontinuity_cell_indices(target_idx, grid_w, grid_h) {
+                reference_needed[affected_idx] = true;
+            }
+        } else {
+            reference_needed[target_idx] = true;
+        }
+    }
+    let mut cached_references = reference_needed
+        .into_par_iter()
+        .enumerate()
+        .map(|(idx, needed)| {
+            needed.then(|| {
+                prepare_local_preview_reference(
+                    source_raster,
+                    idx,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut cached_cell_scores = vec![None::<f64>; grid_w * grid_h];
+    let mut best_prefix_raster = raster.clone();
+    let mut best_prefix_state = grid_state.clone();
+    let mut best_prefix_score = f64::INFINITY;
+    let mut best_prefix = 0usize;
+    let mut changes = 0usize;
+    let mut rejected = 0usize;
+
+    for prefix_index in 0..prefix_count {
+        for &(curr_idx, _) in &targets {
+            if abort_flag.is_some_and(|flag| {
+                flag.load(std::sync::atomic::Ordering::Relaxed)
+            }) {
+                return Err(());
+            }
+            let Some(&(glyph_idx, inverted, _)) = candidate_lists[curr_idx].get(prefix_index)
+            else {
+                continue;
+            };
+            let candidate = (glyph_idx, inverted);
+            let current_choice = grid_state[curr_idx];
+            if candidate == current_choice {
+                continue;
+            }
+
+            // N=1 is the enabled baseline, not the unchanged N=0 render. The
+            // first actual alternative is therefore applied unconditionally;
+            // disabling Score Fix remains the way to select N=0.
+            if prefix_index == 0 {
+                apply_choice_to_raster(
+                    raster,
+                    grid_data,
+                    glyphs,
+                    grid_w,
+                    gw,
+                    gh,
+                    curr_idx,
+                    candidate,
+                );
+                grid_state[curr_idx] = candidate;
+                changes += 1;
+                continue;
+            }
+
+            let cell_x = curr_idx % grid_w;
+            let cell_y = curr_idx / grid_w;
+            let output_patch =
+                extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
+            let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+            let (mut output_preview, preview_width, _) =
+                crate::contour_score::normalize_preview_raster(
+                    &output_patch.pixels,
+                    patch_cells,
+                    patch_cells,
+                    gw,
+                    gh,
+                );
+            let prepared_reference = cached_references[curr_idx]
+                .as_ref()
+                .expect("score-fix reference should be cached");
+            let baseline_preview = output_preview.clone();
+            let (current_score_details, prepared_output) =
+                crate::contour_score::score_rgb_and_prepare_output_with_weights(
+                    prepared_reference,
+                    &baseline_preview,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    contour_weights,
+                );
+            paint_preview_center_glyph(
+                &mut output_preview,
+                preview_width,
+                &grid_data[curr_idx],
+                &glyphs[glyph_idx],
+                inverted,
+                gw,
+                gh,
+            );
+            let candidate_score =
+                crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
+                    prepared_reference,
+                    &prepared_output,
+                    &baseline_preview,
+                    &output_preview,
+                    NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+                    NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    crate::contour_score::PREVIEW_CELL_HEIGHT,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    contour_weights,
+                )
+                .total;
+            if candidate_score + 1e-9 >= current_score_details.total {
+                continue;
+            }
+
+            if !args.score_fix_neighborhood_guard {
+                apply_choice_to_raster(
+                    raster,
+                    grid_data,
+                    glyphs,
+                    grid_w,
+                    gw,
+                    gh,
+                    curr_idx,
+                    candidate,
+                );
+                grid_state[curr_idx] = candidate;
+                changes += 1;
+                continue;
+            }
+
+            cached_cell_scores[curr_idx] = Some(current_score_details.total);
+            let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
+            let mut before_sum = 0.0;
+            for &idx in &affected {
+                if cached_references[idx].is_none() {
+                    cached_references[idx] = Some(prepare_local_preview_reference(
+                        source_raster,
+                        idx,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                    ));
+                }
+                if cached_cell_scores[idx].is_none() {
+                    cached_cell_scores[idx] = Some(score_local_preview_output(
+                        cached_references[idx]
+                            .as_ref()
+                            .expect("score-fix reference should be cached"),
+                        raster,
+                        idx,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                        contour_weights,
+                    ));
+                }
+                before_sum +=
+                    cached_cell_scores[idx].expect("score-fix cell score should be cached");
+            }
+            apply_choice_to_raster(
+                raster,
+                grid_data,
+                glyphs,
+                grid_w,
+                gw,
+                gh,
+                curr_idx,
+                candidate,
+            );
+            let mut new_scores = Vec::with_capacity(affected.len());
+            for &idx in &affected {
+                new_scores.push(score_local_preview_output(
+                    cached_references[idx]
+                        .as_ref()
+                        .expect("score-fix reference should be cached"),
+                    raster,
+                    idx,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    contour_weights,
+                ));
+            }
+            let after_sum = new_scores.iter().sum::<f64>();
+            if after_sum + 1e-9 < before_sum {
+                grid_state[curr_idx] = candidate;
+                for (&idx, score) in affected.iter().zip(new_scores) {
+                    cached_cell_scores[idx] = Some(score);
+                }
+                changes += 1;
+            } else {
+                apply_choice_to_raster(
+                    raster,
+                    grid_data,
+                    glyphs,
+                    grid_w,
+                    gw,
+                    gh,
+                    curr_idx,
+                    current_choice,
+                );
+                rejected += 1;
+            }
+        }
+
+        let prefix_score = preview_contour_score(
+            source_raster,
+            raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            contour_weights,
+        )
+        .total;
+        if prefix_index == 0 || prefix_score + 1e-9 < best_prefix_score {
+            best_prefix_score = prefix_score;
+            best_prefix = prefix_index + 1;
+            best_prefix_raster.copy_from_slice(raster);
+            best_prefix_state.copy_from_slice(grid_state);
+        }
+    }
+
+    raster.copy_from_slice(&best_prefix_raster);
+    grid_state.copy_from_slice(&best_prefix_state);
+    Ok(ScoreFixPrefixStats {
+        target_count,
+        candidate_trials,
+        duplicate_candidates_skipped,
+        changes,
+        rejected,
+        prefix_count,
+        best_prefix,
+        initial_score,
+        best_score: best_prefix_score,
+    })
+}
+
 pub fn render_blocks(
     image: &AnsiImage,
     args: &RenderArgs,
@@ -4182,6 +4525,50 @@ pub fn render_blocks_smooth(
     }
 
     if args.score_fix {
+        let raster = rendered_raster
+            .as_mut()
+            .expect("rendered raster should exist when score-fix is enabled");
+        let started = std::time::Instant::now();
+        let target_scores = score_fix_initial_disc_scores
+            .take()
+            .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
+        let stats = match run_score_fix_prefix_search(
+            args,
+            raster,
+            &mut grid_state,
+            &grid_data,
+            glyphs,
+            &block_glyph_costs,
+            target_scores,
+            &source_raster,
+            &contour_weights,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            abort_flag.as_ref(),
+        ) {
+            Ok(stats) => stats,
+            Err(()) => return "Cancelled".into(),
+        };
+        log::info!(
+            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) in {:?}",
+            stats.target_count,
+            stats.candidate_trials,
+            stats.duplicate_candidates_skipped,
+            stats.changes,
+            stats.rejected,
+            stats.prefix_count,
+            stats.best_prefix,
+            stats.best_score,
+            stats.initial_score,
+            started.elapsed(),
+        );
+    }
+
+    // Kept temporarily as a compile-checked reference for the recovered
+    // single-pass implementation. Prefix search above is the active path.
+    if false && args.score_fix {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when score-fix is enabled");
