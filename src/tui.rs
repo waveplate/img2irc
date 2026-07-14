@@ -590,7 +590,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Font Size",
         kind: ControlKind::Slider {
             min: 0,
-            max: 10240,
+            max: 1024,
             default: 0,
         },
     },
@@ -1924,6 +1924,12 @@ impl App {
         if ra_final.blocks.is_empty() {
             ra_final.blocks = available_blocks.clone();
         }
+        let ui_font_size = if render_args.font_size == 0.0 {
+            0.0
+        } else {
+            render_args.font_size.round()
+        };
+        ra_final.font_size = ui_font_size;
 
         App {
             render_args: ra_final,
@@ -2045,7 +2051,7 @@ impl App {
                 .scale
                 .map(|s| (s.1 * 100.0) as i32)
                 .unwrap_or(100),
-            font_size: render_args.font_size,
+            font_size: ui_font_size,
             fonts: list_system_fonts(),
             font_idx: {
                 // Match config font in the system fonts list
@@ -2175,6 +2181,12 @@ impl App {
 
     fn apply_settings(&mut self, render_args: &RenderArgs) {
         self.render_args = render_args.clone();
+        let ui_font_size = if render_args.font_size == 0.0 {
+            0.0
+        } else {
+            render_args.font_size.round()
+        };
+        self.render_args.font_size = ui_font_size;
         self.width = render_args.width.unwrap_or(80) as i32;
         self.ocr = render_args.ocr;
         self.ocr_textline_orientation = render_args.ocr_textline_orientation;
@@ -2249,7 +2261,7 @@ impl App {
             .scale
             .map(|s| (s.1 * 100.0) as i32)
             .unwrap_or(100);
-        self.font_size = render_args.font_size;
+        self.font_size = ui_font_size;
 
         let sys_fonts = list_system_fonts();
         let config_font = render_args.font.first().map(|s| s.as_str()).unwrap_or("");
@@ -2510,7 +2522,7 @@ impl App {
             ControlId::Rotate => self.rotate,
             ControlId::ScaleX => self.scalex,
             ControlId::ScaleY => self.scaley,
-            ControlId::FontSize => (self.font_size * 10.0) as i32,
+            ControlId::FontSize => self.font_size.round() as i32,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
@@ -2610,7 +2622,7 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = val as f32 / 10.0,
+            ControlId::FontSize => self.font_size = val as f32,
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
@@ -5995,25 +6007,27 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             ControlKind::Slider { min, max, .. } => {
                                                 if was_selected {
                                                     let current_value = app.get_control_value(0, i);
-                                                    let display_value = if matches!(
-                                                        ctrl.id,
-                                                        ControlId::FontSize
-                                                            | ControlId::DiscThreshold
-                                                            | ControlId::ContourBendingWeight
-                                                            | ControlId::ContourEndpointWeight
-                                                            | ControlId::ContourJunctionWeight
-                                                            | ControlId::ContourFragmentWeight
-                                                            | ControlId::ContourFidelityWeight
-                                                            | ControlId::ContourBoundaryWeight
-                                                            | ControlId::ContourPeakWeight
-                                                    ) {
-                                                        Some(format!(
-                                                            "{:.1}",
-                                                            current_value as f32 / 10.0
-                                                        ))
-                                                    } else {
-                                                        None
-                                                    };
+                                                    let display_value =
+                                                        if ctrl.id == ControlId::FontSize {
+                                                            Some(current_value.to_string())
+                                                        } else if matches!(
+                                                            ctrl.id,
+                                                            ControlId::DiscThreshold
+                                                                | ControlId::ContourBendingWeight
+                                                                | ControlId::ContourEndpointWeight
+                                                                | ControlId::ContourJunctionWeight
+                                                                | ControlId::ContourFragmentWeight
+                                                                | ControlId::ContourFidelityWeight
+                                                                | ControlId::ContourBoundaryWeight
+                                                                | ControlId::ContourPeakWeight
+                                                        ) {
+                                                            Some(format!(
+                                                                "{:.1}",
+                                                                current_value as f32 / 10.0
+                                                            ))
+                                                        } else {
+                                                            None
+                                                        };
                                                     if let Some((bar_x, bar_cells)) =
                                                         slider_bar_layout(
                                                             area,
@@ -6383,25 +6397,27 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             {
                                                 let current_value =
                                                     app.get_control_value(0, visual_idx);
-                                                let display_value = if matches!(
-                                                    ctrl.id,
-                                                    ControlId::FontSize
-                                                        | ControlId::DiscThreshold
-                                                        | ControlId::ContourBendingWeight
-                                                        | ControlId::ContourEndpointWeight
-                                                        | ControlId::ContourJunctionWeight
-                                                        | ControlId::ContourFragmentWeight
-                                                        | ControlId::ContourFidelityWeight
-                                                        | ControlId::ContourBoundaryWeight
-                                                        | ControlId::ContourPeakWeight
-                                                ) {
-                                                    Some(format!(
-                                                        "{:.1}",
-                                                        current_value as f32 / 10.0
-                                                    ))
-                                                } else {
-                                                    None
-                                                };
+                                                let display_value =
+                                                    if ctrl.id == ControlId::FontSize {
+                                                        Some(current_value.to_string())
+                                                    } else if matches!(
+                                                        ctrl.id,
+                                                        ControlId::DiscThreshold
+                                                            | ControlId::ContourBendingWeight
+                                                            | ControlId::ContourEndpointWeight
+                                                            | ControlId::ContourJunctionWeight
+                                                            | ControlId::ContourFragmentWeight
+                                                            | ControlId::ContourFidelityWeight
+                                                            | ControlId::ContourBoundaryWeight
+                                                            | ControlId::ContourPeakWeight
+                                                    ) {
+                                                        Some(format!(
+                                                            "{:.1}",
+                                                            current_value as f32 / 10.0
+                                                        ))
+                                                    } else {
+                                                        None
+                                                    };
                                                 if let Some((bar_x, bar_cells)) = slider_bar_layout(
                                                     *area,
                                                     ctrl.label,

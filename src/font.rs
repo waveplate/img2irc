@@ -772,12 +772,126 @@ glyphs = [32]
     (resolved_groups, all_chars)
 }
 
-/// Generate a bitmap procedurally for Unicode Block Elements (U+2580–U+259F).
-/// Terminals render these mathematically rather than from font outlines, because
-/// font outlines often extend beyond the em-square causing identical clipped
-/// bitmaps at small sizes.  Returns `None` for non-block characters.
+fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
+    let code = ch as u32;
+    let mut cell = vec![vec![0u8; w]; h];
+
+    // Triangular quarter blocks and their three-quarter complements.
+    if (0x1FB68..=0x1FB6F).contains(&code) {
+        for (y, row) in cell.iter_mut().enumerate() {
+            let py = (y as f64 + 0.5) / h.max(1) as f64;
+            for (x, pixel) in row.iter_mut().enumerate() {
+                let px = (x as f64 + 0.5) / w.max(1) as f64;
+                let left = px <= 0.5 - (py - 0.5).abs();
+                let upper = py <= 0.5 - (px - 0.5).abs();
+                let right = px >= 0.5 + (py - 0.5).abs();
+                let lower = py >= 0.5 + (px - 0.5).abs();
+                let filled = match code {
+                    0x1FB68 => !left,
+                    0x1FB69 => !upper,
+                    0x1FB6A => !right,
+                    0x1FB6B => !lower,
+                    0x1FB6C => left,
+                    0x1FB6D => upper,
+                    0x1FB6E => right,
+                    0x1FB6F => lower,
+                    _ => unreachable!(),
+                };
+                *pixel = filled as u8;
+            }
+        }
+        return Some(cell);
+    }
+
+    // Each remaining glyph is one half-plane bounded by the named diagonal.
+    // Unicode's UPPER/LOWER MIDDLE edge positions use the three-row legacy
+    // graphics grid: one-third and two-thirds of the cell height.
+    type Point = (f64, f64);
+    let lower_left: Point = (0.0, 1.0);
+    let lower_right: Point = (1.0, 1.0);
+    let upper_right: Point = (1.0, 0.0);
+    let upper_left: Point = (0.0, 0.0);
+    let (a, b, filled_anchor): (Point, Point, Point) = match code {
+        0x1FB3C => ((0.0, 0.75), (0.5, 1.0), lower_left),
+        0x1FB3D => ((0.0, 0.75), (1.0, 1.0), lower_left),
+        0x1FB3E => ((0.0, 0.25), (0.5, 1.0), lower_left),
+        0x1FB3F => ((0.0, 0.25), (1.0, 1.0), lower_left),
+        0x1FB40 => ((0.0, 0.0), (0.5, 1.0), lower_left),
+        0x1FB41 => ((0.0, 0.25), (0.5, 0.0), lower_right),
+        0x1FB42 => ((0.0, 0.25), (1.0, 0.0), lower_right),
+        0x1FB43 => ((0.0, 0.75), (0.5, 0.0), lower_right),
+        0x1FB44 => ((0.0, 0.75), (1.0, 0.0), lower_right),
+        0x1FB45 => ((0.0, 1.0), (0.5, 0.0), lower_right),
+        0x1FB46 => ((0.0, 0.75), (1.0, 0.25), lower_right),
+        0x1FB47 => ((0.5, 1.0), (1.0, 0.75), lower_right),
+        0x1FB48 => ((0.0, 1.0), (1.0, 0.75), lower_right),
+        0x1FB49 => ((0.5, 1.0), (1.0, 0.25), lower_right),
+        0x1FB4A => ((0.0, 1.0), (1.0, 0.25), lower_right),
+        0x1FB4B => ((0.5, 1.0), (1.0, 0.0), lower_right),
+        0x1FB4C => ((0.5, 0.0), (1.0, 0.25), lower_left),
+        0x1FB4D => ((0.0, 0.0), (1.0, 0.25), lower_left),
+        0x1FB4E => ((0.5, 0.0), (1.0, 0.75), lower_left),
+        0x1FB4F => ((0.0, 0.0), (1.0, 0.75), lower_left),
+        0x1FB50 => ((0.5, 0.0), (1.0, 1.0), lower_left),
+        0x1FB51 => ((0.0, 0.25), (1.0, 0.75), lower_left),
+        0x1FB52 => ((0.0, 0.75), (0.5, 1.0), upper_right),
+        0x1FB53 => ((0.0, 0.75), (1.0, 1.0), upper_right),
+        0x1FB54 => ((0.0, 0.25), (0.5, 1.0), upper_right),
+        0x1FB55 => ((0.0, 0.25), (1.0, 1.0), upper_right),
+        0x1FB56 => ((0.0, 0.0), (0.5, 1.0), upper_right),
+        0x1FB57 => ((0.0, 0.25), (0.5, 0.0), upper_left),
+        0x1FB58 => ((0.0, 0.25), (1.0, 0.0), upper_left),
+        0x1FB59 => ((0.0, 0.75), (0.5, 0.0), upper_left),
+        0x1FB5A => ((0.0, 0.75), (1.0, 0.0), upper_left),
+        0x1FB5B => ((0.0, 1.0), (0.5, 0.0), upper_left),
+        0x1FB5C => ((0.0, 0.75), (1.0, 0.25), upper_left),
+        0x1FB5D => ((0.5, 1.0), (1.0, 0.75), upper_left),
+        0x1FB5E => ((0.0, 1.0), (1.0, 0.75), upper_left),
+        0x1FB5F => ((0.5, 1.0), (1.0, 0.25), upper_left),
+        0x1FB60 => ((0.0, 1.0), (1.0, 0.25), upper_left),
+        0x1FB61 => ((0.5, 1.0), (1.0, 0.0), upper_left),
+        0x1FB62 => ((0.5, 0.0), (1.0, 0.25), upper_right),
+        0x1FB63 => ((0.0, 0.0), (1.0, 0.25), upper_right),
+        0x1FB64 => ((0.5, 0.0), (1.0, 0.75), upper_right),
+        0x1FB65 => ((0.0, 0.0), (1.0, 0.75), upper_right),
+        0x1FB66 => ((0.5, 0.0), (1.0, 1.0), upper_right),
+        0x1FB67 => ((0.0, 0.25), (1.0, 0.75), upper_right),
+        _ => return None,
+    };
+
+    let legacy_y = |y: f64| {
+        if (y - 0.25).abs() < f64::EPSILON {
+            1.0 / 3.0
+        } else if (y - 0.75).abs() < f64::EPSILON {
+            2.0 / 3.0
+        } else {
+            y
+        }
+    };
+    let a = (a.0, legacy_y(a.1));
+    let b = (b.0, legacy_y(b.1));
+    let cross = |point: Point| {
+        (b.0 - a.0) * (point.1 - a.1) - (b.1 - a.1) * (point.0 - a.0)
+    };
+    let anchor_side = cross(filled_anchor);
+    for (y, row) in cell.iter_mut().enumerate() {
+        let py = (y as f64 + 0.5) / h.max(1) as f64;
+        for (x, pixel) in row.iter_mut().enumerate() {
+            let px = (x as f64 + 0.5) / w.max(1) as f64;
+            *pixel = ((cross((px, py)) * anchor_side) >= 0.0) as u8;
+        }
+    }
+    Some(cell)
+}
+
+/// Generate terminal block geometry procedurally. Font outlines for these
+/// characters can use a fallback font with metrics unrelated to the main
+/// terminal cell, causing clipping and size-dependent shape changes.
 fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
     let code = ch as u32;
+    if (0x1FB3C..=0x1FB6F).contains(&code) {
+        return procedural_legacy_diagonal_bitmap(ch, w, h);
+    }
     if code < 0x2580 || code > 0x259F {
         return None;
     }
@@ -1086,7 +1200,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v11".hash(&mut hasher);
+    "v14".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1097,9 +1211,14 @@ fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -
     format!("{:x}", hasher.finish())
 }
 
-fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMetrics) -> String {
+fn block_hash_context(
+    font_paths: &[String],
+    font_size: f32,
+    metrics: &CachedMetrics,
+    chars: &[char],
+) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v11".hash(&mut hasher);
+    "v14".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1112,6 +1231,12 @@ fn block_hash_context(font_paths: &[String], font_size: f32, metrics: &CachedMet
     metrics.bounds_max_x.to_bits().hash(&mut hasher);
     metrics.bounds_min_y.to_bits().hash(&mut hasher);
     metrics.bounds_max_y.to_bits().hash(&mut hasher);
+    let mut sorted_chars = chars.to_vec();
+    sorted_chars.sort_unstable();
+    sorted_chars.dedup();
+    for ch in sorted_chars {
+        (ch as u32).hash(&mut hasher);
+    }
     format!("{:x}", hasher.finish())
 }
 
@@ -1199,13 +1324,19 @@ fn get_block_glyphs(
     chars: &[char],
     metrics: &CachedMetrics,
 ) -> Vec<(char, GlyphBitmap, String)> {
-    let hash = block_hash_context(&ctx.font_paths, ctx.font_size, metrics);
+    let hash = block_hash_context(&ctx.font_paths, ctx.font_size, metrics, chars);
     let path = cache_dir().join(format!("block_{}_{}.bin", block_name, hash));
 
     if path.exists() {
         if let Ok(data) = fs::read(&path) {
             if let Ok(block) = bincode::deserialize::<CachedBlock>(&data) {
-                return block.glyphs;
+                let dimensions_are_valid = block.glyphs.iter().all(|(_, bitmap, _)| {
+                    bitmap.len() == metrics.cell_height
+                        && bitmap.iter().all(|row| row.len() == metrics.cell_width)
+                });
+                if dimensions_are_valid {
+                    return block.glyphs;
+                }
             }
         }
     }
@@ -1226,8 +1357,16 @@ fn get_block_glyphs(
             continue;
         }
 
-        // 1. Try resolving font (handles user fonts and fallbacks)
-        if let Some((font, font_name)) = resolve_font_for_char(ctx, ch) {
+        // Terminal block geometry must not depend on fallback-font metrics.
+        if let Some(bitmap) = procedural_block_bitmap(
+            ch,
+            metrics.cell_width.max(1),
+            metrics.cell_height.max(1),
+        ) {
+            glyphs.push((ch, bitmap, "Procedural terminal geometry".to_string()));
+            found = true;
+        // Otherwise resolve a font (handles user fonts and fallbacks).
+        } else if let Some((font, font_name)) = resolve_font_for_char(ctx, ch) {
             let bitmap = render_glyph_from_font(&*font, ch, metrics);
             glyphs.push((ch, bitmap, font_name));
             found = true;
