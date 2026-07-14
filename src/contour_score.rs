@@ -373,11 +373,7 @@ fn continuous_bending(graph: &Graph, cell_scale: usize, peak_sensitivity: f64) -
             .collect()
     });
     let scale = cell_scale.max(2);
-    // Include a one-pixel distance so coarse stair-steps remain visible after
-    // every output is normalized to the same terminal preview dimensions.
-    // Longer distances still measure the cell-scale curve rather than merely
-    // optimizing individual raster corners.
-    let distances = [1, scale, scale * 2];
+    let distances = [(scale / 2).max(1), scale, scale * 2];
     let endpoints = graph
         .active_points
         .iter()

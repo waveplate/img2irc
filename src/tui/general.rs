@@ -140,10 +140,11 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                             .map(|cell| cell.set_char(ch).set_style(style));
                     }
                 } else {
-                    let dv = if matches!(
+                    let dv = if ctrl.id == ControlId::FontSize {
+                        Some((value / 10).to_string())
+                    } else if matches!(
                         ctrl.id,
-                        ControlId::FontSize
-                            | ControlId::DiscThreshold
+                        ControlId::DiscThreshold
                             | ControlId::ContourBendingWeight
                             | ControlId::ContourEndpointWeight
                             | ControlId::ContourJunctionWeight

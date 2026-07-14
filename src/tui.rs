@@ -590,7 +590,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Font Size",
         kind: ControlKind::Slider {
             min: 0,
-            max: 1024,
+            max: 10240,
             default: 0,
         },
     },
@@ -2522,7 +2522,7 @@ impl App {
             ControlId::Rotate => self.rotate,
             ControlId::ScaleX => self.scalex,
             ControlId::ScaleY => self.scaley,
-            ControlId::FontSize => self.font_size.round() as i32,
+            ControlId::FontSize => (self.font_size * 10.0).round() as i32,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
@@ -2622,7 +2622,10 @@ impl App {
             ControlId::Rotate => self.rotate = val,
             ControlId::ScaleX => self.scalex = val,
             ControlId::ScaleY => self.scaley = val,
-            ControlId::FontSize => self.font_size = val as f32,
+            // The slider retains its historical tenths-based range so its bar
+            // and persisted values remain compatible, but every applied value
+            // is quantized to a whole point.
+            ControlId::FontSize => self.font_size = (val as f32 / 10.0).round(),
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::GrayTol => self.grayscale_tolerance = val,
@@ -4993,7 +4996,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let controls = app.tab_controls(app.current_tab);
                                     if let Some(ctrl) = controls.get(app.selected_control) {
                                         if let ControlKind::Slider { min, max, .. } = &ctrl.kind {
-                                            let clamped = val.clamp(*min, *max);
+                                            let raw_value = if ctrl.id == ControlId::FontSize {
+                                                val.saturating_mul(10)
+                                            } else {
+                                                val
+                                            };
+                                            let clamped = raw_value.clamp(*min, *max);
                                             let sc = app.selected_control;
                                             set_control_value(&mut app, sc, clamped);
                                         }
@@ -6009,7 +6017,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     let current_value = app.get_control_value(0, i);
                                                     let display_value =
                                                         if ctrl.id == ControlId::FontSize {
-                                                            Some(current_value.to_string())
+                                                            Some((current_value / 10).to_string())
                                                         } else if matches!(
                                                             ctrl.id,
                                                             ControlId::DiscThreshold
@@ -6399,7 +6407,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     app.get_control_value(0, visual_idx);
                                                 let display_value =
                                                     if ctrl.id == ControlId::FontSize {
-                                                        Some(current_value.to_string())
+                                                        Some((current_value / 10).to_string())
                                                     } else if matches!(
                                                         ctrl.id,
                                                         ControlId::DiscThreshold
@@ -6884,12 +6892,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         adjust_selected_pipeline_param(&mut app, delta);
                                     }
                                 } else {
-                                    let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    let ctrl_id = app.get_current_control_id();
+                                    let d = if ctrl_id == ControlId::FontSize {
+                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                            100
+                                        } else {
+                                            10
+                                        }
+                                    } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         10
                                     } else {
                                         1
                                     };
-                                    let ctrl_id = app.get_current_control_id();
                                     if let ControlKind::Slider { .. } =
                                         get_control_def(ctrl_id).kind
                                     {
@@ -6901,8 +6915,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         } else {
                                             app.slider_repeat_count = 0;
                                         }
-                                        let multiplier =
-                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32);
+                                        let multiplier = if ctrl_id == ControlId::FontSize {
+                                            1
+                                        } else {
+                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32)
+                                        };
                                         let applied_delta = -d * multiplier;
                                         app.slider_last_press = Some(now);
                                         adjust_control(&mut app, applied_delta);
@@ -6960,12 +6977,18 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         adjust_selected_pipeline_param(&mut app, delta);
                                     }
                                 } else {
-                                    let d = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                    let ctrl_id = app.get_current_control_id();
+                                    let d = if ctrl_id == ControlId::FontSize {
+                                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                            100
+                                        } else {
+                                            10
+                                        }
+                                    } else if key.modifiers.contains(KeyModifiers::SHIFT) {
                                         10
                                     } else {
                                         1
                                     };
-                                    let ctrl_id = app.get_current_control_id();
                                     if let ControlKind::Slider { .. } =
                                         get_control_def(ctrl_id).kind
                                     {
@@ -6977,8 +7000,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         } else {
                                             app.slider_repeat_count = 0;
                                         }
-                                        let multiplier =
-                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32);
+                                        let multiplier = if ctrl_id == ControlId::FontSize {
+                                            1
+                                        } else {
+                                            2_i32.pow((app.slider_repeat_count / 8).min(6) as u32)
+                                        };
                                         let applied_delta = d * multiplier;
                                         app.slider_last_press = Some(now);
                                         adjust_control(&mut app, applied_delta);
@@ -7210,7 +7236,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(ctrl) = controls.get(app.selected_control) {
                                         if let ControlKind::Slider { .. } = &ctrl.kind {
                                             let current_val = app.get_value(ctrl.id);
-                                            app.value_edit_buffer = current_val.to_string();
+                                            app.value_edit_buffer =
+                                                if ctrl.id == ControlId::FontSize {
+                                                    (current_val / 10).to_string()
+                                                } else {
+                                                    current_val.to_string()
+                                                };
                                             app.input_mode = InputMode::ValueEdit;
                                             continue;
                                         }
