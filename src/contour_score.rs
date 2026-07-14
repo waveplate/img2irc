@@ -111,7 +111,12 @@ struct Graph {
 }
 
 impl Graph {
-    fn from_labels(labels: &[u8], width: usize, height: usize) -> Self {
+    fn from_labels(
+        labels: &[u8],
+        width: usize,
+        height: usize,
+        collect_components: bool,
+    ) -> Self {
         let point_stride = width + 1;
         let point_count = point_stride * (height + 1);
         let mut edges = Vec::new();
@@ -151,29 +156,31 @@ impl Graph {
             }
         }
 
-        let mut visited = vec![false; edges.len()];
         let mut component_lengths = Vec::new();
-        for first in 0..edges.len() {
-            if visited[first] {
-                continue;
-            }
-            let mut queue = VecDeque::from([first]);
-            let mut component_length = 0usize;
-            while let Some(edge_id) = queue.pop_front() {
-                if std::mem::replace(&mut visited[edge_id], true) {
+        if collect_components {
+            let mut visited = vec![false; edges.len()];
+            for first in 0..edges.len() {
+                if visited[first] {
                     continue;
                 }
-                component_length += 1;
-                let (a, b) = edges[edge_id];
-                for point_id in [a, b] {
-                    for &next in &incident[point_id][..degree[point_id] as usize] {
-                        if !visited[next] {
-                            queue.push_back(next);
+                let mut queue = VecDeque::from([first]);
+                let mut component_length = 0usize;
+                while let Some(edge_id) = queue.pop_front() {
+                    if std::mem::replace(&mut visited[edge_id], true) {
+                        continue;
+                    }
+                    component_length += 1;
+                    let (a, b) = edges[edge_id];
+                    for point_id in [a, b] {
+                        for &next in &incident[point_id][..degree[point_id] as usize] {
+                            if !visited[next] {
+                                queue.push_back(next);
+                            }
                         }
                     }
                 }
+                component_lengths.push(component_length);
             }
-            component_lengths.push(component_length);
         }
         Self {
             point_stride,
@@ -325,6 +332,39 @@ fn boundary_length(labels: &[u8], width: usize, height: usize) -> usize {
     length
 }
 
+/// Exact fast path for the common terminal/palette case. With at most eight
+/// distinct colours, dominant-label quantization preserves equality exactly,
+/// so the boundary can be counted without allocating or classifying labels.
+fn pixel_boundary_length(pixels: &[[u8; 3]], width: usize, height: usize) -> usize {
+    let mut colours = Vec::<[u8; 3]>::with_capacity(9);
+    for &pixel in pixels {
+        if !colours.contains(&pixel) {
+            colours.push(pixel);
+            if colours.len() > 8 {
+                let labels = dominant_labels(pixels);
+                return boundary_length(&labels, width, height);
+            }
+        }
+    }
+
+    let mut length = 0usize;
+    for y in 0..height {
+        for x in 1..width {
+            if pixels[y * width + x - 1] != pixels[y * width + x] {
+                length += 1;
+            }
+        }
+    }
+    for y in 1..height {
+        for x in 0..width {
+            if pixels[(y - 1) * width + x] != pixels[y * width + x] {
+                length += 1;
+            }
+        }
+    }
+    length
+}
+
 fn continuous_bending(graph: &Graph, cell_scale: usize, peak_sensitivity: f64) -> f64 {
     static LATTICE_LENGTHS: OnceLock<Vec<f64>> = OnceLock::new();
     let lattice_lengths = LATTICE_LENGTHS.get_or_init(|| {
@@ -350,6 +390,9 @@ fn continuous_bending(graph: &Graph, cell_scale: usize, peak_sensitivity: f64) -
     let mut count = 0usize;
     let mut squared_sum = 0.0;
     let mut fourth_power_sum = 0.0;
+    let peak_sensitivity = peak_sensitivity.clamp(0.0, 1.0);
+    let need_l2 = peak_sensitivity < 1.0;
+    let need_l4 = peak_sensitivity > 0.0;
     for distance_index in 0..distances.len() {
         for (active_index, &center_id) in graph.active_points.iter().enumerate() {
             let a_id = endpoints[active_index][0][distance_index];
@@ -380,17 +423,28 @@ fn continuous_bending(graph: &Graph, cell_scale: usize, peak_sensitivity: f64) -
             let sample = 0.5 * (1.0 + cosine);
             let squared = sample * sample;
             count += 1;
-            squared_sum += squared;
-            fourth_power_sum += squared * squared;
+            if need_l2 {
+                squared_sum += squared;
+            }
+            if need_l4 {
+                fourth_power_sum += squared * squared;
+            }
         }
     }
     if count == 0 {
         return 0.0;
     }
     let count = count as f64;
-    let l2 = (squared_sum / count).sqrt();
-    let l4 = (fourth_power_sum / count).powf(0.25);
-    let peak_sensitivity = peak_sensitivity.clamp(0.0, 1.0);
+    let l2 = if need_l2 {
+        (squared_sum / count).sqrt()
+    } else {
+        0.0
+    };
+    let l4 = if need_l4 {
+        (fourth_power_sum / count).powf(0.25)
+    } else {
+        0.0
+    };
     100.0 * ((1.0 - peak_sensitivity) * l2 + peak_sensitivity * l4)
 }
 
@@ -421,31 +475,58 @@ pub fn score_rgb_with_weights(
     if width == 0 || height == 0 || pixels.len() != width * height {
         return ContourScore::default();
     }
+    let bending_enabled = weights.bending > 0.0;
+    let endpoints_enabled = weights.endpoints > 0.0;
+    let junctions_enabled = weights.junctions > 0.0;
+    let fragments_enabled = weights.fragments > 0.0;
+    if !bending_enabled && !endpoints_enabled && !junctions_enabled && !fragments_enabled {
+        return ContourScore {
+            boundary_length: pixel_boundary_length(pixels, width, height),
+            ..ContourScore::default()
+        };
+    }
+
     let labels = dominant_labels(pixels);
-    let graph = Graph::from_labels(&labels, width, height);
+    let graph = Graph::from_labels(&labels, width, height, fragments_enabled);
     if graph.edges.is_empty() {
         return ContourScore::default();
     }
 
     let length = graph.edges.len() as f64;
-    let endpoints = graph
-        .active_points
-        .iter()
-        .filter(|&&point_id| graph.degree[point_id] == 1)
-        .count() as f64;
-    let junctions = graph
-        .active_points
-        .iter()
-        .filter(|&&point_id| graph.degree[point_id] > 2)
-        .count() as f64;
+    let endpoints = if endpoints_enabled {
+        graph
+            .active_points
+            .iter()
+            .filter(|&&point_id| graph.degree[point_id] == 1)
+            .count() as f64
+    } else {
+        0.0
+    };
+    let junctions = if junctions_enabled {
+        graph
+            .active_points
+            .iter()
+            .filter(|&&point_id| graph.degree[point_id] > 2)
+            .count() as f64
+    } else {
+        0.0
+    };
     let scale = cell_scale.max(1) as f64;
-    let fragments = graph
-        .component_lengths
-        .iter()
-        .map(|&component_length| 1.0 / (1.0 + component_length as f64 / scale))
-        .sum::<f64>();
+    let fragments = if fragments_enabled {
+        graph
+            .component_lengths
+            .iter()
+            .map(|&component_length| 1.0 / (1.0 + component_length as f64 / scale))
+            .sum::<f64>()
+    } else {
+        0.0
+    };
 
-    let bending = continuous_bending(&graph, cell_scale, weights.peak_sensitivity);
+    let bending = if bending_enabled {
+        continuous_bending(&graph, cell_scale, weights.peak_sensitivity)
+    } else {
+        0.0
+    };
     let endpoint_score = 100.0 * endpoints / length;
     let junction_score = 100.0 * junctions / length;
     let fragment_score = 100.0 * fragments / length;
@@ -549,14 +630,21 @@ fn compose_reference_score(
     fidelity_distance_sum: f64,
     weights: &ContourScoreWeights,
 ) -> ReferenceContourScore {
-    let fidelity = fidelity_distance_sum / (reference.width * reference.height).max(1) as f64
-        * 100.0;
-    let reference_length = reference.boundary_length as f64;
-    let output_length = contour.boundary_length as f64;
-    let boundary_balance = 100.0
-        * ((output_length + 1.0) / (reference_length + 1.0))
-            .ln()
-            .abs();
+    let fidelity = if weights.fidelity > 0.0 {
+        fidelity_distance_sum / (reference.width * reference.height).max(1) as f64 * 100.0
+    } else {
+        0.0
+    };
+    let boundary_balance = if weights.boundary_balance > 0.0 {
+        let reference_length = reference.boundary_length as f64;
+        let output_length = contour.boundary_length as f64;
+        100.0
+            * ((output_length + 1.0) / (reference_length + 1.0))
+                .ln()
+                .abs()
+    } else {
+        0.0
+    };
     let total = contour.total
         + weights.fidelity.max(0.0) * fidelity
         + weights.boundary_balance.max(0.0) * boundary_balance;
@@ -598,7 +686,7 @@ pub fn score_rgb_against_reference_with_weights(
     if reference.len() != output.len() || reference.len() != width * height {
         return ReferenceContourScore::default();
     }
-    let prepared = prepare_reference(reference, width, height, cell_scale);
+    let prepared = prepare_reference_with_weights(reference, width, height, cell_scale, weights);
     score_rgb_against_prepared_with_weights(&prepared, output, cell_scale, weights)
 }
 
@@ -608,10 +696,33 @@ pub fn prepare_reference(
     height: usize,
     cell_scale: usize,
 ) -> PreparedReference {
-    let blur_radius = (cell_scale / 4).max(1);
-    let blurred = box_blur(reference, width, height, blur_radius);
-    let labels = dominant_labels(reference);
-    let boundary_length = boundary_length(&labels, width, height);
+    prepare_reference_with_weights(
+        reference,
+        width,
+        height,
+        cell_scale,
+        &ContourScoreWeights::default(),
+    )
+}
+
+pub fn prepare_reference_with_weights(
+    reference: &[[u8; 3]],
+    width: usize,
+    height: usize,
+    cell_scale: usize,
+    weights: &ContourScoreWeights,
+) -> PreparedReference {
+    let blurred = if weights.fidelity > 0.0 {
+        let blur_radius = (cell_scale / 4).max(1);
+        box_blur(reference, width, height, blur_radius)
+    } else {
+        Vec::new()
+    };
+    let boundary_length = if weights.boundary_balance > 0.0 {
+        pixel_boundary_length(reference, width, height)
+    } else {
+        0
+    };
     PreparedReference {
         blurred,
         boundary_length,
@@ -671,21 +782,26 @@ pub fn score_rgb_and_prepare_output_with_weights(
         cell_scale,
         weights,
     );
-    let blur_radius = (cell_scale / 4).max(1);
-    let integral = rgb_integral(output, reference.width, reference.height);
-    let blurred = box_blur_from_integral(
-        output,
-        &integral,
-        reference.width,
-        reference.height,
-        blur_radius,
-    );
-    let fidelity_distance_sum = reference
-        .blurred
-        .iter()
-        .zip(&blurred)
-        .map(|(&a, &b)| normalized_rgb_distance(a, b))
-        .sum::<f64>();
+    let (integral, blurred, fidelity_distance_sum, blur_radius) = if weights.fidelity > 0.0 {
+        let blur_radius = (cell_scale / 4).max(1);
+        let integral = rgb_integral(output, reference.width, reference.height);
+        let blurred = box_blur_from_integral(
+            output,
+            &integral,
+            reference.width,
+            reference.height,
+            blur_radius,
+        );
+        let fidelity_distance_sum = reference
+            .blurred
+            .iter()
+            .zip(&blurred)
+            .map(|(&a, &b)| normalized_rgb_distance(a, b))
+            .sum::<f64>();
+        (integral, blurred, fidelity_distance_sum, blur_radius)
+    } else {
+        (Vec::new(), Vec::new(), 0.0, 0)
+    };
     let score = compose_reference_score(reference, contour, fidelity_distance_sum, weights);
     let prepared = PreparedOutput {
         integral,
@@ -758,6 +874,9 @@ pub fn score_rgb_candidate_against_prepared_with_weights(
         cell_scale,
         weights,
     );
+    if weights.fidelity <= 0.0 {
+        return compose_reference_score(reference, contour, 0.0, weights);
+    }
     let change_x1 = (change_x + change_width).min(reference.width);
     let change_y1 = (change_y + change_height).min(reference.height);
     if change_x >= change_x1 || change_y >= change_y1 {

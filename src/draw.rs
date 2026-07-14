@@ -1750,9 +1750,11 @@ fn paint_cell_pixels(
     }
 }
 
-fn paint_preview_center_glyph(
+fn paint_preview_glyph_at(
     pixels: &mut [[u8; 3]],
     width: usize,
+    offset_x: usize,
+    offset_y: usize,
     data: &BlockData,
     glyph: &FastGlyph,
     inverted: bool,
@@ -1761,8 +1763,6 @@ fn paint_preview_center_glyph(
 ) {
     let cell_width = crate::contour_score::PREVIEW_CELL_WIDTH;
     let cell_height = crate::contour_score::PREVIEW_CELL_HEIGHT;
-    let offset_x = NEIGHBORHOOD_RADIUS * cell_width;
-    let offset_y = NEIGHBORHOOD_RADIUS * cell_height;
     for y in 0..cell_height {
         let source_y = y * gh / cell_height;
         for x in 0..cell_width {
@@ -1772,6 +1772,54 @@ fn paint_preview_center_glyph(
                 if bit == 1 { data.fg } else { data.bg };
         }
     }
+}
+
+fn paint_preview_center_glyph(
+    pixels: &mut [[u8; 3]],
+    width: usize,
+    data: &BlockData,
+    glyph: &FastGlyph,
+    inverted: bool,
+    gw: usize,
+    gh: usize,
+) {
+    paint_preview_glyph_at(
+        pixels,
+        width,
+        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+        data,
+        glyph,
+        inverted,
+        gw,
+        gh,
+    );
+}
+
+fn paint_global_preview_cell(
+    pixels: &mut [[u8; 3]],
+    width: usize,
+    cell_idx: usize,
+    grid_w: usize,
+    data: &BlockData,
+    glyph: &FastGlyph,
+    inverted: bool,
+    gw: usize,
+    gh: usize,
+) {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    paint_preview_glyph_at(
+        pixels,
+        width,
+        cell_x * crate::contour_score::PREVIEW_CELL_WIDTH,
+        cell_y * crate::contour_score::PREVIEW_CELL_HEIGHT,
+        data,
+        glyph,
+        inverted,
+        gw,
+        gh,
+    );
 }
 
 fn local_patch_frequency_score(patch_pixels: &[[u8; 3]], width: usize, height: usize) -> f32 {
@@ -2316,15 +2364,32 @@ fn preview_contour_score(
     gh: usize,
     weights: &crate::contour_score::ContourScoreWeights,
 ) -> crate::contour_score::ReferenceContourScore {
-    let (source, width, height) =
-        crate::contour_score::normalize_preview_raster(source, grid_w, grid_h, gw, gh);
+    let width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let height = grid_h * crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let reference = if weights.fidelity > 0.0 || weights.boundary_balance > 0.0 {
+        let (source, _, _) =
+            crate::contour_score::normalize_preview_raster(source, grid_w, grid_h, gw, gh);
+        crate::contour_score::prepare_reference_with_weights(
+            &source,
+            width,
+            height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            weights,
+        )
+    } else {
+        crate::contour_score::prepare_reference_with_weights(
+            &[],
+            width,
+            height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            weights,
+        )
+    };
     let (output, _, _) =
         crate::contour_score::normalize_preview_raster(output, grid_w, grid_h, gw, gh);
-    crate::contour_score::score_rgb_against_reference_with_weights(
-        &source,
+    crate::contour_score::score_rgb_against_prepared_with_weights(
+        &reference,
         &output,
-        width,
-        height,
         crate::contour_score::PREVIEW_CELL_WIDTH,
         weights,
     )
@@ -2349,23 +2414,36 @@ fn prepare_local_preview_reference(
     grid_h: usize,
     gw: usize,
     gh: usize,
+    weights: &crate::contour_score::ContourScoreWeights,
 ) -> crate::contour_score::PreparedReference {
+    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+    let width = patch_cells * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let height = patch_cells * crate::contour_score::PREVIEW_CELL_HEIGHT;
+    if weights.fidelity <= 0.0 && weights.boundary_balance <= 0.0 {
+        return crate::contour_score::prepare_reference_with_weights(
+            &[],
+            width,
+            height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            weights,
+        );
+    }
     let cell_x = cell_idx % grid_w;
     let cell_y = cell_idx / grid_w;
     let source_patch = extract_local_patch(source, cell_x, cell_y, grid_w, grid_h, gw, gh);
-    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
-    let (source_preview, width, height) = crate::contour_score::normalize_preview_raster(
+    let (source_preview, _, _) = crate::contour_score::normalize_preview_raster(
         &source_patch.pixels,
         patch_cells,
         patch_cells,
         gw,
         gh,
     );
-    crate::contour_score::prepare_reference(
+    crate::contour_score::prepare_reference_with_weights(
         &source_preview,
         width,
         height,
         crate::contour_score::PREVIEW_CELL_WIDTH,
+        weights,
     )
 }
 
@@ -2393,6 +2471,34 @@ fn score_local_preview_output(
     crate::contour_score::score_rgb_against_prepared_with_weights(
         reference,
         &output_preview,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        weights,
+    )
+    .total
+}
+
+fn score_local_normalized_preview_output(
+    reference: &crate::contour_score::PreparedReference,
+    output_preview: &[[u8; 3]],
+    cell_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    weights: &crate::contour_score::ContourScoreWeights,
+) -> f64 {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    let output_patch = extract_local_patch(
+        output_preview,
+        cell_x,
+        cell_y,
+        grid_w,
+        grid_h,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        crate::contour_score::PREVIEW_CELL_HEIGHT,
+    );
+    crate::contour_score::score_rgb_against_prepared_with_weights(
+        reference,
+        &output_patch.pixels,
         crate::contour_score::PREVIEW_CELL_WIDTH,
         weights,
     )
@@ -3168,13 +3274,40 @@ fn run_score_fix_prefix_search(
         .map(Vec::len)
         .max()
         .unwrap_or(0);
-    let initial_score = preview_contour_score(
-        source_raster,
+    let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let preview_height = grid_h * crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let source_preview = if contour_weights.fidelity > 0.0
+        || contour_weights.boundary_balance > 0.0
+    {
+        crate::contour_score::normalize_preview_raster(
+            source_raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        )
+        .0
+    } else {
+        Vec::new()
+    };
+    let global_reference = crate::contour_score::prepare_reference_with_weights(
+        &source_preview,
+        preview_width,
+        preview_height,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        contour_weights,
+    );
+    let (mut global_output_preview, _, _) = crate::contour_score::normalize_preview_raster(
         raster,
         grid_w,
         grid_h,
         gw,
         gh,
+    );
+    let initial_score = crate::contour_score::score_rgb_against_prepared_with_weights(
+        &global_reference,
+        &global_output_preview,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
         contour_weights,
     )
     .total;
@@ -3214,6 +3347,7 @@ fn run_score_fix_prefix_search(
                     grid_h,
                     gw,
                     gh,
+                    contour_weights,
                 )
             })
         })
@@ -3227,6 +3361,7 @@ fn run_score_fix_prefix_search(
     let mut rejected = 0usize;
 
     for prefix_index in 0..prefix_count {
+        let mut prefix_changed = false;
         for &(curr_idx, _) in &targets {
             if abort_flag.is_some_and(|flag| {
                 flag.load(std::sync::atomic::Ordering::Relaxed)
@@ -3258,58 +3393,102 @@ fn run_score_fix_prefix_search(
                     candidate,
                 );
                 grid_state[curr_idx] = candidate;
+                paint_global_preview_cell(
+                    &mut global_output_preview,
+                    preview_width,
+                    curr_idx,
+                    grid_w,
+                    &grid_data[curr_idx],
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    gw,
+                    gh,
+                );
                 changes += 1;
+                prefix_changed = true;
                 continue;
             }
 
             let cell_x = curr_idx % grid_w;
             let cell_y = curr_idx / grid_w;
-            let output_patch =
-                extract_local_patch(raster, cell_x, cell_y, grid_w, grid_h, gw, gh);
-            let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
-            let (mut output_preview, preview_width, _) =
-                crate::contour_score::normalize_preview_raster(
-                    &output_patch.pixels,
-                    patch_cells,
-                    patch_cells,
-                    gw,
-                    gh,
-                );
+            let output_patch = extract_local_patch(
+                &global_output_preview,
+                cell_x,
+                cell_y,
+                grid_w,
+                grid_h,
+                crate::contour_score::PREVIEW_CELL_WIDTH,
+                crate::contour_score::PREVIEW_CELL_HEIGHT,
+            );
+            let mut output_preview = output_patch.pixels;
+            let local_preview_width = output_patch.width;
             let prepared_reference = cached_references[curr_idx]
                 .as_ref()
                 .expect("score-fix reference should be cached");
-            let baseline_preview = output_preview.clone();
-            let (current_score_details, prepared_output) =
-                crate::contour_score::score_rgb_and_prepare_output_with_weights(
-                    prepared_reference,
-                    &baseline_preview,
-                    crate::contour_score::PREVIEW_CELL_WIDTH,
-                    contour_weights,
+            let (current_score, candidate_score) = if contour_weights.fidelity > 0.0 {
+                let baseline_preview = output_preview.clone();
+                let (current_score_details, prepared_output) =
+                    crate::contour_score::score_rgb_and_prepare_output_with_weights(
+                        prepared_reference,
+                        &baseline_preview,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        contour_weights,
+                    );
+                paint_preview_center_glyph(
+                    &mut output_preview,
+                    local_preview_width,
+                    &grid_data[curr_idx],
+                    &glyphs[glyph_idx],
+                    inverted,
+                    gw,
+                    gh,
                 );
-            paint_preview_center_glyph(
-                &mut output_preview,
-                preview_width,
-                &grid_data[curr_idx],
-                &glyphs[glyph_idx],
-                inverted,
-                gw,
-                gh,
-            );
-            let candidate_score =
-                crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
-                    prepared_reference,
-                    &prepared_output,
-                    &baseline_preview,
-                    &output_preview,
-                    NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
-                    NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
-                    crate::contour_score::PREVIEW_CELL_WIDTH,
-                    crate::contour_score::PREVIEW_CELL_HEIGHT,
-                    crate::contour_score::PREVIEW_CELL_WIDTH,
-                    contour_weights,
-                )
-                .total;
-            if candidate_score + 1e-9 >= current_score_details.total {
+                let candidate_score =
+                    crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
+                        prepared_reference,
+                        &prepared_output,
+                        &baseline_preview,
+                        &output_preview,
+                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        crate::contour_score::PREVIEW_CELL_HEIGHT,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        contour_weights,
+                    )
+                    .total;
+                (current_score_details.total, candidate_score)
+            } else {
+                let current_score = cached_cell_scores[curr_idx].unwrap_or_else(|| {
+                    crate::contour_score::score_rgb_against_prepared_with_weights(
+                        prepared_reference,
+                        &output_preview,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        contour_weights,
+                    )
+                    .total
+                });
+                paint_preview_center_glyph(
+                    &mut output_preview,
+                    local_preview_width,
+                    &grid_data[curr_idx],
+                    &glyphs[glyph_idx],
+                    inverted,
+                    gw,
+                    gh,
+                );
+                let candidate_score =
+                    crate::contour_score::score_rgb_against_prepared_with_weights(
+                        prepared_reference,
+                        &output_preview,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        contour_weights,
+                    )
+                    .total;
+                (current_score, candidate_score)
+            };
+            cached_cell_scores[curr_idx] = Some(current_score);
+            if candidate_score + 1e-9 >= current_score {
                 continue;
             }
 
@@ -3325,11 +3504,26 @@ fn run_score_fix_prefix_search(
                     candidate,
                 );
                 grid_state[curr_idx] = candidate;
+                paint_global_preview_cell(
+                    &mut global_output_preview,
+                    preview_width,
+                    curr_idx,
+                    grid_w,
+                    &grid_data[curr_idx],
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    gw,
+                    gh,
+                );
+                for idx in affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h) {
+                    cached_cell_scores[idx] = None;
+                }
+                cached_cell_scores[curr_idx] = Some(candidate_score);
                 changes += 1;
+                prefix_changed = true;
                 continue;
             }
 
-            cached_cell_scores[curr_idx] = Some(current_score_details.total);
             let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
             let mut before_sum = 0.0;
             for &idx in &affected {
@@ -3341,19 +3535,18 @@ fn run_score_fix_prefix_search(
                         grid_h,
                         gw,
                         gh,
+                        contour_weights,
                     ));
                 }
                 if cached_cell_scores[idx].is_none() {
-                    cached_cell_scores[idx] = Some(score_local_preview_output(
+                    cached_cell_scores[idx] = Some(score_local_normalized_preview_output(
                         cached_references[idx]
                             .as_ref()
                             .expect("score-fix reference should be cached"),
-                        raster,
+                        &global_output_preview,
                         idx,
                         grid_w,
                         grid_h,
-                        gw,
-                        gh,
                         contour_weights,
                     ));
                 }
@@ -3370,18 +3563,27 @@ fn run_score_fix_prefix_search(
                 curr_idx,
                 candidate,
             );
+            paint_global_preview_cell(
+                &mut global_output_preview,
+                preview_width,
+                curr_idx,
+                grid_w,
+                &grid_data[curr_idx],
+                &glyphs[candidate.0],
+                candidate.1,
+                gw,
+                gh,
+            );
             let mut new_scores = Vec::with_capacity(affected.len());
             for &idx in &affected {
-                new_scores.push(score_local_preview_output(
+                new_scores.push(score_local_normalized_preview_output(
                     cached_references[idx]
                         .as_ref()
                         .expect("score-fix reference should be cached"),
-                    raster,
+                    &global_output_preview,
                     idx,
                     grid_w,
                     grid_h,
-                    gw,
-                    gh,
                     contour_weights,
                 ));
             }
@@ -3392,6 +3594,7 @@ fn run_score_fix_prefix_search(
                     cached_cell_scores[idx] = Some(score);
                 }
                 changes += 1;
+                prefix_changed = true;
             } else {
                 apply_choice_to_raster(
                     raster,
@@ -3403,17 +3606,31 @@ fn run_score_fix_prefix_search(
                     curr_idx,
                     current_choice,
                 );
+                paint_global_preview_cell(
+                    &mut global_output_preview,
+                    preview_width,
+                    curr_idx,
+                    grid_w,
+                    &grid_data[curr_idx],
+                    &glyphs[current_choice.0],
+                    current_choice.1,
+                    gw,
+                    gh,
+                );
                 rejected += 1;
             }
         }
 
-        let prefix_score = preview_contour_score(
-            source_raster,
-            raster,
-            grid_w,
-            grid_h,
-            gw,
-            gh,
+        // No accepted move means this complete prefix is byte-for-byte the
+        // same as the preceding one, so its already-known global score wins or
+        // loses identically. Avoid an expensive full-image contour trace.
+        if !prefix_changed {
+            continue;
+        }
+        let prefix_score = crate::contour_score::score_rgb_against_prepared_with_weights(
+            &global_reference,
+            &global_output_preview,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
             contour_weights,
         )
         .total;
@@ -4629,6 +4846,7 @@ pub fn render_blocks_smooth(
                         grid_h,
                         gw,
                         gh,
+                        &contour_weights,
                     )
                 })
             })
@@ -4664,6 +4882,7 @@ pub fn render_blocks_smooth(
                     grid_h,
                     gw,
                     gh,
+                    &contour_weights,
                 ));
             }
             let prepared_reference = cached_references[curr_idx]
@@ -4807,6 +5026,7 @@ pub fn render_blocks_smooth(
                             grid_h,
                             gw,
                             gh,
+                            &contour_weights,
                         ));
                     }
                     if cached_cell_scores[idx].is_none() {
@@ -4931,27 +5151,17 @@ pub fn render_blocks_smooth(
             .sum::<f32>() as f64
             / cell_disc_scores.len() as f64
     };
-    let contour_score = {
-        let (source_preview, preview_width, preview_height) =
-            crate::contour_score::normalize_preview_raster(&source_raster, grid_w, grid_h, gw, gh);
-        let (output_preview, _, _) = crate::contour_score::normalize_preview_raster(
-            rendered_raster
-                .as_ref()
-                .expect("rendered raster should exist when scoring contours"),
-            grid_w,
-            grid_h,
-            gw,
-            gh,
-        );
-        crate::contour_score::score_rgb_against_reference_with_weights(
-            &source_preview,
-            &output_preview,
-            preview_width,
-            preview_height,
-            crate::contour_score::PREVIEW_CELL_WIDTH,
-            &contour_weights,
-        )
-    };
+    let contour_score = preview_contour_score(
+        &source_raster,
+        rendered_raster
+            .as_ref()
+            .expect("rendered raster should exist when scoring contours"),
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+        &contour_weights,
+    );
     log::info!(
         "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
         contour_score.total,
