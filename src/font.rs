@@ -276,14 +276,16 @@ struct BlockEntry {
 
 fn is_graphical_emoji(ch: char) -> bool {
     let cp = ch as u32;
-    // Common emoji ranges
+    let is_misc_symbol = (0x2600..=0x26FF).contains(&cp) || (0x2700..=0x27BF).contains(&cp);
+    // Miscellaneous Symbols and Dingbats contain many ordinary text glyphs
+    // (for example U+266A ♪). Only treat their terminal-wide members as
+    // graphical emoji; the explicit emoji list below handles known exceptions.
     (cp >= 0x1F300 && cp <= 0x1F64F) || // Misc Symbols and Pictographs, Emoticons
     (cp >= 0x1F680 && cp <= 0x1F6FF) || // Transport and Map
     (cp >= 0x1F700 && cp <= 0x1F77F) || // Alchemical Symbols
     (cp >= 0x1F900 && cp <= 0x1F9FF) || // Misc Symbols and Arrows
     (cp >= 0x1FA70 && cp <= 0x1FAFF) || // Symbols and Pictographs Extended-A
-    (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc Symbols (some are emojis)
-    (cp >= 0x2700 && cp <= 0x27BF) // Dingbats
+    (is_misc_symbol && ch.width().unwrap_or(1) > 1)
 }
 
 pub fn is_emoji_render_candidate(ch: char) -> bool {

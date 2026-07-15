@@ -78,7 +78,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .map(|&code| {
                     let ch = char::from_u32(code).unwrap_or('?');
                     let is_excluded = app.render_args.exclude.contains(&ch);
-                    let marker = if is_excluded { "☐ " } else { "☑ " };
+                    let marker = if is_excluded { "☐ " } else { "🗹 " };
                     ListItem::new(format!("{}{} U+{:04X}", marker, ch, code))
                 })
                 .collect();
@@ -227,7 +227,7 @@ pub(crate) fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             // Check if selected in render_args
             let name = &node.full_path;
             if app.render_args.blocks.contains(name) {
-                "☑ "
+                "🗹 "
             } else {
                 "☐ "
             }
@@ -265,27 +265,104 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
     f.render_widget(block, area);
 
     if let Some(bitmap) = found_bitmap {
-        let mut text = ratatui::text::Text::default();
-        for row in bitmap {
-            let mut line = Line::from(vec![]);
-            for &pixel in row {
-                if pixel > 0 {
-                    line.spans
-                        .push(Span::styled("██", Style::new().fg(Color::Cyan)));
-                } else {
-                    // eye friendly distinct background color
-                    line.spans
-                        .push(Span::styled("░░", Style::new().fg(Color::Rgb(60, 60, 80))));
-                }
-            }
-            text.lines.push(line);
+        let lines = sextant_preview_lines(bitmap, inner.width as usize, inner.height as usize);
+        if lines.is_empty() {
+            return;
         }
-        let p = Paragraph::new(text);
-        f.render_widget(p, inner);
+        let preview_height = lines.len().min(inner.height as usize) as u16;
+        let preview_area = Rect::new(
+            inner.x,
+            inner.y + inner.height.saturating_sub(preview_height) / 2,
+            inner.width,
+            preview_height,
+        );
+        let style = Style::new().fg(Color::Cyan).bg(SURFACE);
+        let text = Text::from(
+            lines
+                .into_iter()
+                .map(|line| Line::from(Span::styled(line, style)))
+                .collect::<Vec<_>>(),
+        );
+        f.render_widget(Paragraph::new(text).alignment(Alignment::Center), preview_area);
     } else {
-        // Not in current store, maybe need to reload or it's just missing
-        let p = Paragraph::new("Glyph not in current store.\nPress Space in left panel to reload.")
-            .alignment(Alignment::Center);
+        let p = Paragraph::new(
+            "No bitmap was rendered for this glyph.\nIt may be unsupported by the selected and fallback fonts.",
+        )
+        .alignment(Alignment::Center);
         f.render_widget(p, inner);
     }
+}
+
+/// Convert one 2x3 binary patch to the corresponding Unicode sextant. Unicode
+/// reuses older block elements for the two half blocks and the full block.
+fn sextant_char(mask: u8) -> char {
+    match mask & 0x3f {
+        0 => ' ',
+        0b01_01_01 => '▌',
+        0b10_10_10 => '▐',
+        0b11_11_11 => '█',
+        mask => {
+            let omitted_before = u32::from(mask > 0b01_01_01) + u32::from(mask > 0b10_10_10);
+            char::from_u32(0x1FB00 + mask as u32 - 1 - omitted_before).unwrap_or(' ')
+        }
+    }
+}
+
+/// Scale the glyph to the preview pane, then pack six binary pixels into each
+/// terminal cell. Nearest-neighbour scaling preserves the actual cached mask.
+fn sextant_preview_lines(
+    bitmap: &[Vec<u8>],
+    max_cell_width: usize,
+    max_cell_height: usize,
+) -> Vec<String> {
+    let source_height = bitmap.len();
+    let source_width = bitmap.iter().map(Vec::len).max().unwrap_or(0);
+    if source_width == 0 || source_height == 0 || max_cell_width == 0 || max_cell_height == 0 {
+        return Vec::new();
+    }
+
+    let max_pixel_width = max_cell_width.saturating_mul(2);
+    let max_pixel_height = max_cell_height.saturating_mul(3);
+    let scale = (max_pixel_width as f64 / source_width as f64)
+        .min(max_pixel_height as f64 / source_height as f64);
+    let scaled_width = ((source_width as f64 * scale).floor() as usize)
+        .clamp(1, max_pixel_width);
+    let scaled_height = ((source_height as f64 * scale).floor() as usize)
+        .clamp(1, max_pixel_height);
+    let cell_width = (scaled_width + 1) / 2;
+    let cell_height = (scaled_height + 2) / 3;
+    let mut lines = Vec::with_capacity(cell_height);
+
+    for cell_y in 0..cell_height {
+        let mut line = String::with_capacity(cell_width * 4);
+        for cell_x in 0..cell_width {
+            let mut mask = 0u8;
+            for sub_y in 0..3 {
+                let scaled_y = cell_y * 3 + sub_y;
+                if scaled_y >= scaled_height {
+                    continue;
+                }
+                let source_y = scaled_y * source_height / scaled_height;
+                for sub_x in 0..2 {
+                    let scaled_x = cell_x * 2 + sub_x;
+                    if scaled_x >= scaled_width {
+                        continue;
+                    }
+                    let source_x = scaled_x * source_width / scaled_width;
+                    if bitmap
+                        .get(source_y)
+                        .and_then(|row| row.get(source_x))
+                        .copied()
+                        .unwrap_or(0)
+                        > 0
+                    {
+                        mask |= 1 << (sub_y * 2 + sub_x);
+                    }
+                }
+            }
+            line.push(sextant_char(mask));
+        }
+        lines.push(line);
+    }
+    lines
 }
