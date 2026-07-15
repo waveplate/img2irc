@@ -3263,13 +3263,6 @@ fn run_score_fix_prefix_search(
         let original_count = candidates_with_duplicates.len();
         let mut candidates =
             deduplicate_rendered_candidates(candidates_with_duplicates, glyphs, current_choice);
-        // A solid mask has no internal contour, so a contour-only objective can
-        // mistake erasing the local boundary for perfect smoothness. It also
-        // carries no geometric choice beyond the cell's existing FG/BG colour.
-        candidates.retain(|(glyph_idx, _, _)| {
-            let glyph = &glyphs[*glyph_idx];
-            !glyph.ones.is_empty() && !glyph.zeros.is_empty()
-        });
         duplicate_candidates_skipped += original_count.saturating_sub(candidates.len());
         candidates.truncate(candidate_count.min(candidates.len()));
         candidate_trials += candidates.len();
@@ -4911,15 +4904,11 @@ pub fn render_blocks_smooth(
                 .map(|costs| best_candidate_pool_pre(costs, candidate_count))
                 .unwrap_or_default();
             let original_candidate_count = candidates_with_duplicates.len();
-            let mut candidates = deduplicate_rendered_candidates(
+            let candidates = deduplicate_rendered_candidates(
                 candidates_with_duplicates,
                 glyphs,
                 current_choice,
             );
-            candidates.retain(|(glyph_idx, _, _)| {
-                let glyph = &glyphs[*glyph_idx];
-                !glyph.ones.is_empty() && !glyph.zeros.is_empty()
-            });
             candidate_trials += candidates.len();
             duplicate_candidates_skipped += original_candidate_count - candidates.len();
 

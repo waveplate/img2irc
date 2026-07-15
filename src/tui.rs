@@ -1261,7 +1261,8 @@ impl App {
     }
 
     fn toggle_glyph_selection(&mut self) {
-        let (config_groups, _) = crate::font::load_blocks_config();
+        let (config_groups, _) = crate::font::load_blocks_config_unfiltered();
+        let (enabled_groups, _) = crate::font::load_blocks_config();
         if let Some(node) = self.tree_state.get_selected_node() {
             let target_key = if !node.full_path.is_empty() {
                 &node.full_path
@@ -1273,7 +1274,28 @@ impl App {
                 if let Some(idx) = self.glyph_list_state.selected() {
                     if let Some(&code) = codes.get(idx) {
                         if let Some(ch) = char::from_u32(code) {
-                            if let Some(pos) =
+                            let is_saved_excluded = enabled_groups
+                                .get(target_key)
+                                .is_none_or(|enabled| !enabled.contains(&code));
+                            if is_saved_excluded {
+                                // A persisted exclusion is absent from the render
+                                // group itself, so remove it from the saved block
+                                // before asking the renderer to enable the glyph.
+                                let remaining = codes
+                                    .iter()
+                                    .filter(|&&candidate| {
+                                        candidate != code
+                                            && enabled_groups
+                                                .get(target_key)
+                                                .is_none_or(|enabled| {
+                                                    !enabled.contains(&candidate)
+                                                })
+                                    })
+                                    .filter_map(|&candidate| char::from_u32(candidate))
+                                    .collect::<Vec<_>>();
+                                crate::font::save_blocks_config(target_key, &remaining);
+                                self.render_args.exclude.retain(|&candidate| candidate != ch);
+                            } else if let Some(pos) =
                                 self.render_args.exclude.iter().position(|&x| x == ch)
                             {
                                 self.render_args.exclude.remove(pos);
@@ -1286,6 +1308,30 @@ impl App {
                 }
             }
         }
+    }
+
+    fn save_selected_glyph_config(&self) -> Option<String> {
+        let node = self.tree_state.get_selected_node()?;
+        let target_key = if !node.full_path.is_empty() {
+            node.full_path.clone()
+        } else {
+            node.name.clone()
+        };
+        let (all_groups, _) = crate::font::load_blocks_config_unfiltered();
+        let (enabled_groups, _) = crate::font::load_blocks_config();
+        let codes = all_groups.get(&target_key)?;
+        let enabled = enabled_groups.get(&target_key);
+        let exclusions = codes
+            .iter()
+            .filter_map(|&code| char::from_u32(code).map(|ch| (code, ch)))
+            .filter(|(code, ch)| {
+                self.render_args.exclude.contains(ch)
+                    || enabled.is_none_or(|enabled| !enabled.contains(code))
+            })
+            .map(|(_, ch)| ch)
+            .collect::<Vec<_>>();
+        crate::font::save_blocks_config(&target_key, &exclusions);
+        Some(target_key)
     }
 
     fn collect_leaves(node: &TreeNode, leaves: &mut Vec<String>) {
@@ -5846,16 +5892,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             {
                                 app.current_tab = 2;
                                 app.selected_control = 2;
-                                if let Some(node) = app.tree_state.get_selected_node() {
-                                    let target_key = if !node.full_path.is_empty() {
-                                        &node.full_path
-                                    } else {
-                                        &node.name
-                                    };
-                                    crate::font::save_blocks_config(
-                                        target_key,
-                                        &app.render_args.exclude,
-                                    );
+                                if let Some(target_key) = app.save_selected_glyph_config() {
                                     log::info!("Saved glyph config for block: {}", target_key);
                                 }
                                 continue;
@@ -7020,16 +7057,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.selected_control == 1 {
                                         app.toggle_glyph_selection();
                                     } else if app.selected_control == 2 {
-                                        if let Some(node) = app.tree_state.get_selected_node() {
-                                            let target_key = if !node.full_path.is_empty() {
-                                                &node.full_path
-                                            } else {
-                                                &node.name
-                                            };
-                                            crate::font::save_blocks_config(
-                                                target_key,
-                                                &app.render_args.exclude,
-                                            );
+                                        if let Some(target_key) =
+                                            app.save_selected_glyph_config()
+                                        {
                                             log::info!(
                                                 "Saved glyph config for block: {}",
                                                 target_key
@@ -7058,16 +7088,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     } else if app.selected_control == 1 {
                                         app.toggle_glyph_selection();
                                     } else if app.selected_control == 2 {
-                                        if let Some(node) = app.tree_state.get_selected_node() {
-                                            let target_key = if !node.full_path.is_empty() {
-                                                &node.full_path
-                                            } else {
-                                                &node.name
-                                            };
-                                            crate::font::save_blocks_config(
-                                                target_key,
-                                                &app.render_args.exclude,
-                                            );
+                                        if let Some(target_key) =
+                                            app.save_selected_glyph_config()
+                                        {
                                             log::info!(
                                                 "Saved glyph config for block: {}",
                                                 target_key

@@ -509,7 +509,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
         toml::from_str(&toml_str).expect("Invalid TOML");
 
     // Load full config to know which characters belong to which block
-    let (config_groups, _) = load_blocks_config();
+    let (config_groups, _) = load_blocks_config_unfiltered();
     let block_codes = config_groups.get(block_name).expect("Block not found");
 
     // Filter global exclude list to only those in the current block
@@ -550,7 +550,9 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
 
-pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+fn load_blocks_config_impl(
+    apply_exclusions: bool,
+) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
         let path = Path::new(&config_dir).join("blocks.toml");
@@ -723,6 +725,7 @@ glyphs = [32]
         blocks: &HashMap<String, BlockEntry>,
         resolved: &mut HashMap<String, Vec<u32>>,
         visited: &mut HashSet<String>,
+        apply_exclusions: bool,
     ) -> Vec<u32> {
         if let Some(res) = resolved.get(name) {
             return res.clone();
@@ -746,12 +749,20 @@ glyphs = [32]
             }
             if let Some(inc) = &entry.include {
                 for other in inc {
-                    glyphs.extend(resolve_block(other, blocks, resolved, visited));
+                    glyphs.extend(resolve_block(
+                        other,
+                        blocks,
+                        resolved,
+                        visited,
+                        apply_exclusions,
+                    ));
                 }
             }
-            if let Some(exc) = &entry.exclude {
-                let exc_set: HashSet<_> = exc.iter().map(|h| h.to_u32()).collect();
-                glyphs.retain(|g| !exc_set.contains(g));
+            if apply_exclusions {
+                if let Some(exc) = &entry.exclude {
+                    let exc_set: HashSet<_> = exc.iter().map(|h| h.to_u32()).collect();
+                    glyphs.retain(|g| !exc_set.contains(g));
+                }
             }
         }
 
@@ -763,7 +774,13 @@ glyphs = [32]
 
     for name in blocks.keys() {
         let mut visited = HashSet::new();
-        let glyphs = resolve_block(name, &blocks, &mut resolved_groups, &mut visited);
+        let glyphs = resolve_block(
+            name,
+            &blocks,
+            &mut resolved_groups,
+            &mut visited,
+            apply_exclusions,
+        );
         for &code in &glyphs {
             if let Some(ch) = char::from_u32(code) {
                 all_chars.insert(ch);
@@ -774,6 +791,18 @@ glyphs = [32]
     (resolved_groups, all_chars)
 }
 
+/// Resolve the glyphs currently enabled by each block's saved exclusions.
+pub fn load_blocks_config() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+    load_blocks_config_impl(true)
+}
+
+/// Resolve complete block membership for browsing and bitmap caching. Saved
+/// exclusions remain members here so the UI can display and re-enable them.
+pub fn load_blocks_config_unfiltered() -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+    load_blocks_config_impl(false)
+}
+
+#[allow(dead_code)]
 fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
     let code = ch as u32;
     let mut cell = vec![vec![0u8; w]; h];
@@ -891,9 +920,6 @@ fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<Gly
 /// terminal cell, causing clipping and size-dependent shape changes.
 fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
     let code = ch as u32;
-    if (0x1FB3C..=0x1FB6F).contains(&code) {
-        return procedural_legacy_diagonal_bitmap(ch, w, h);
-    }
     if code < 0x2580 || code > 0x259F {
         return None;
     }
@@ -1202,7 +1228,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v14".hash(&mut hasher);
+    "v15".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1220,7 +1246,7 @@ fn block_hash_context(
     chars: &[char],
 ) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v14".hash(&mut hasher);
+    "v15".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1415,6 +1441,7 @@ pub fn glyph_store(
 ) -> GlyphStore {
     let mut ctx = FontContext::new(fonts, font_size);
     let (config_groups, _) = load_blocks_config();
+    let (all_config_groups, _) = load_blocks_config_unfiltered();
 
     // Determine which blocks to load
     let mut blocks_to_load = HashSet::new();
@@ -1424,7 +1451,7 @@ pub fn glyph_store(
     for name in blocks {
         let name_lc = name.to_lowercase();
         let mut matched = false;
-        for key in config_groups.keys() {
+        for key in all_config_groups.keys() {
             let key_lc = key.to_lowercase();
             if key_lc == name_lc || key_lc.starts_with(&format!("{}.", name_lc)) {
                 blocks_to_select.insert(key.clone());
@@ -1442,11 +1469,11 @@ pub fn glyph_store(
         // If no blocks specified and not loading all, load ALL known blocks (legacy behavior?)
         // Wait, if blocks is empty, args.blocks is empty.
         // Old behavior: "If no blocks specified, load ALL known blocks from config"
-        blocks_to_load.extend(config_groups.keys().cloned());
-        blocks_to_select.extend(config_groups.keys().cloned());
+        blocks_to_load.extend(all_config_groups.keys().cloned());
+        blocks_to_select.extend(all_config_groups.keys().cloned());
     } else if load_all {
         // Load all, but only select specified
-        blocks_to_load.extend(config_groups.keys().cloned());
+        blocks_to_load.extend(all_config_groups.keys().cloned());
     }
 
     // Iterating sorted blocks for consistent logging/order
@@ -1485,7 +1512,7 @@ pub fn glyph_store(
 
     let mut metric_chars = Vec::new();
     for block_name in &sorted_blocks {
-        if let Some(codes) = config_groups.get(*block_name) {
+        if let Some(codes) = all_config_groups.get(*block_name) {
             for &code in codes {
                 if let Some(ch) = char::from_u32(code) {
                     if !is_emoji_render_candidate(ch) {
@@ -1520,7 +1547,7 @@ pub fn glyph_store(
             }
         }
 
-        if let Some(codes) = config_groups.get(block_name) {
+        if let Some(codes) = all_config_groups.get(block_name) {
             let mut block_chars = Vec::new();
             for &code in codes {
                 if let Some(ch) = char::from_u32(code) {
@@ -1534,10 +1561,13 @@ pub fn glyph_store(
                 groups_out.insert(block_name.clone(), block_chars.clone());
 
                 let is_selected = blocks_to_select.contains(block_name);
+                let enabled_codes = config_groups.get(block_name);
 
                 for (ch, bitmap, font_name) in glyphs {
                     all_glyphs.insert(ch, (bitmap, font_name));
-                    if is_selected {
+                    if is_selected
+                        && enabled_codes.is_some_and(|codes| codes.contains(&(ch as u32)))
+                    {
                         selected_chars.insert(ch);
                     }
                 }

@@ -56,7 +56,8 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
         });
 
     if let Some(node) = app.tree_state.get_selected_node() {
-        let (config_groups, _) = crate::font::load_blocks_config();
+        let (config_groups, _) = crate::font::load_blocks_config_unfiltered();
+        let (enabled_groups, _) = crate::font::load_blocks_config();
 
         let target_key = if !node.full_path.is_empty() {
             &node.full_path
@@ -77,7 +78,10 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .iter()
                 .map(|&code| {
                     let ch = char::from_u32(code).unwrap_or('?');
-                    let is_excluded = app.render_args.exclude.contains(&ch);
+                    let is_saved_excluded = enabled_groups
+                        .get(target_key)
+                        .is_none_or(|enabled| !enabled.contains(&code));
+                    let is_excluded = is_saved_excluded || app.render_args.exclude.contains(&ch);
                     let marker = if is_excluded { "☐ " } else { "🗹 " };
                     ListItem::new(format!("{}{} U+{:04X}", marker, ch, code))
                 })
