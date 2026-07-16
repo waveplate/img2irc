@@ -51,6 +51,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_score_fix_orderings() -> u32 {
+    1
+}
+
 fn default_contour_weight() -> f32 {
     1.0
 }
@@ -230,6 +234,8 @@ pub struct RenderArgs {
     pub fix_disc_pool_size: u32,
     pub score_fix: bool,
     pub score_fix_candidates: u32,
+    #[serde(default = "default_score_fix_orderings")]
+    pub score_fix_orderings: u32,
     #[serde(default = "default_true")]
     pub score_fix_neighborhood_guard: bool,
     #[serde(default = "default_contour_weight")]
@@ -694,6 +700,14 @@ pub struct Args {
     /// number of source-matching glyph states tried by score-fix
     #[arg(long = "score-fix-candidates", default_value = "12")]
     pub score_fix_candidates: u32,
+
+    /// number of independent cell-ordering strategies tried by score-fix
+    #[arg(
+        long = "score-fix-orderings",
+        default_value = "1",
+        value_parser = clap::value_parser!(u32).range(1..=5)
+    )]
+    pub score_fix_orderings: u32,
 
     /// validate a score-fix change against every overlapping 3x3 neighborhood
     #[arg(

@@ -3963,7 +3963,104 @@ fn apply_score_fix_band_commit(
 }
 
 #[derive(Clone, Copy, Debug)]
+enum ScoreFixOrdering {
+    WorstFirst,
+    SpiralIn,
+    SpiralOut,
+    AlternatingForward,
+    AlternatingReverse,
+}
+
+impl ScoreFixOrdering {
+    // Keep worst-first first and only append strategies: SF Orders=k is a
+    // strict superset of SF Orders=k-1, so increasing it cannot discard the
+    // previously selected result.
+    const ALL: [Self; 5] = [
+        Self::WorstFirst,
+        Self::SpiralIn,
+        Self::SpiralOut,
+        Self::AlternatingForward,
+        Self::AlternatingReverse,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::WorstFirst => "worst-first",
+            Self::SpiralIn => "spiral-in",
+            Self::SpiralOut => "spiral-out",
+            Self::AlternatingForward => "alternating-forward",
+            Self::AlternatingReverse => "alternating-reverse",
+        }
+    }
+}
+
+fn score_fix_spiral_ranks(grid_w: usize, grid_h: usize) -> Vec<usize> {
+    let mut ranks = vec![0usize; grid_w * grid_h];
+    let mut rank = 0usize;
+    let (mut left, mut top) = (0usize, 0usize);
+    let (mut right, mut bottom) = (grid_w - 1, grid_h - 1);
+    while left <= right && top <= bottom {
+        for x in left..=right {
+            ranks[top * grid_w + x] = rank;
+            rank += 1;
+        }
+        if top == bottom {
+            break;
+        }
+        for y in top + 1..=bottom {
+            ranks[y * grid_w + right] = rank;
+            rank += 1;
+        }
+        if left == right {
+            break;
+        }
+        for x in (left..right).rev() {
+            ranks[bottom * grid_w + x] = rank;
+            rank += 1;
+        }
+        for y in (top + 1..bottom).rev() {
+            ranks[y * grid_w + left] = rank;
+            rank += 1;
+        }
+        left += 1;
+        right -= 1;
+        top += 1;
+        bottom -= 1;
+    }
+    ranks
+}
+
+fn score_fix_order_priority(
+    ordering: ScoreFixOrdering,
+    spiral_ranks: &[usize],
+    cell_idx: usize,
+    prefix_index: usize,
+    cell_count: usize,
+) -> usize {
+    match ordering {
+        ScoreFixOrdering::WorstFirst => 0,
+        ScoreFixOrdering::SpiralIn => cell_count - spiral_ranks[cell_idx],
+        ScoreFixOrdering::SpiralOut => spiral_ranks[cell_idx] + 1,
+        ScoreFixOrdering::AlternatingForward => {
+            if prefix_index % 2 == 0 {
+                cell_count - cell_idx
+            } else {
+                cell_idx + 1
+            }
+        }
+        ScoreFixOrdering::AlternatingReverse => {
+            if prefix_index % 2 == 0 {
+                cell_idx + 1
+            } else {
+                cell_count - cell_idx
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 struct ScoreFixPriorityEntry {
+    order_priority: usize,
     score: f32,
     cell_idx: usize,
     version: u32,
@@ -3971,7 +4068,8 @@ struct ScoreFixPriorityEntry {
 
 impl PartialEq for ScoreFixPriorityEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.score.total_cmp(&other.score).is_eq()
+        self.order_priority == other.order_priority
+            && self.score.total_cmp(&other.score).is_eq()
             && self.cell_idx == other.cell_idx
             && self.version == other.version
     }
@@ -3987,8 +4085,9 @@ impl PartialOrd for ScoreFixPriorityEntry {
 
 impl Ord for ScoreFixPriorityEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score
-            .total_cmp(&other.score)
+        self.order_priority
+            .cmp(&other.order_priority)
+            .then_with(|| self.score.total_cmp(&other.score))
             // Resolve equal scores in stable row-major order.
             .then_with(|| other.cell_idx.cmp(&self.cell_idx))
             .then_with(|| self.version.cmp(&other.version))
@@ -4010,6 +4109,8 @@ fn refresh_score_fix_priorities(
     priority_scores: &mut [f32],
     priority_versions: &mut [u32],
     queue: &mut BinaryHeap<ScoreFixPriorityEntry>,
+    ordering: ScoreFixOrdering,
+    spiral_ranks: &[usize],
 ) -> usize {
     let mut refreshed = 0usize;
     for idx in affected_discontinuity_cell_indices(changed_idx, grid_w, grid_h) {
@@ -4022,6 +4123,13 @@ fn refresh_score_fix_priorities(
         refreshed += 1;
         if !processed[idx] && score >= threshold {
             queue.push(ScoreFixPriorityEntry {
+                order_priority: score_fix_order_priority(
+                    ordering,
+                    spiral_ranks,
+                    idx,
+                    prefix_index,
+                    grid_w * grid_h,
+                ),
                 score,
                 cell_idx: idx,
                 version: priority_versions[idx],
@@ -4034,6 +4142,7 @@ fn refresh_score_fix_priorities(
 #[allow(clippy::too_many_arguments)]
 fn run_score_fix_prefix_search(
     args: &RenderArgs,
+    ordering: ScoreFixOrdering,
     raster: &mut Vec<[u8; 3]>,
     grid_state: &mut Vec<(usize, bool)>,
     grid_data: &[BlockData],
@@ -4048,6 +4157,7 @@ fn run_score_fix_prefix_search(
     gh: usize,
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ScoreFixPrefixStats, ()> {
+    let spiral_ranks = score_fix_spiral_ranks(grid_w, grid_h);
     let threshold = args.discontinuity_threshold.max(0.0);
     let mut targets = target_scores
         .into_iter()
@@ -4233,6 +4343,13 @@ fn run_score_fix_prefix_search(
             let score = priority_scores[cell_idx];
             if candidate_lists[cell_idx].get(prefix_index).is_some() && score >= threshold {
                 priority_queue.push(ScoreFixPriorityEntry {
+                    order_priority: score_fix_order_priority(
+                        ordering,
+                        &spiral_ranks,
+                        cell_idx,
+                        prefix_index,
+                        grid_w * grid_h,
+                    ),
                     score,
                     cell_idx,
                     version: 0,
@@ -4320,6 +4437,8 @@ fn run_score_fix_prefix_search(
                     &mut priority_scores,
                     &mut priority_versions,
                     &mut priority_queue,
+                    ordering,
+                    &spiral_ranks,
                 );
                 continue;
             }
@@ -4477,6 +4596,8 @@ fn run_score_fix_prefix_search(
                     &mut priority_scores,
                     &mut priority_versions,
                     &mut priority_queue,
+                    ordering,
+                    &spiral_ranks,
                 );
                 continue;
             }
@@ -4653,6 +4774,8 @@ fn run_score_fix_prefix_search(
                     &mut priority_scores,
                     &mut priority_versions,
                     &mut priority_queue,
+                    ordering,
+                    &spiral_ranks,
                 );
             } else {
                 if band_candidate.is_none() {
@@ -5822,27 +5945,62 @@ pub fn render_blocks_smooth(
         let target_scores = score_fix_initial_disc_scores
             .take()
             .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
-        let stats = match run_score_fix_prefix_search(
-            args,
-            raster,
-            &mut grid_state,
-            &grid_data,
-            glyphs,
-            &block_glyph_costs,
-            target_scores,
-            &source_raster,
-            &contour_weights,
-            grid_w,
-            grid_h,
-            gw,
-            gh,
-            abort_flag.as_ref(),
-        ) {
-            Ok(stats) => stats,
-            Err(()) => return "Cancelled".into(),
-        };
+        let baseline_raster = raster.clone();
+        let baseline_state = grid_state.clone();
+        let ordering_count = (args.score_fix_orderings as usize).clamp(1, ScoreFixOrdering::ALL.len());
+        let trial_results = ScoreFixOrdering::ALL[..ordering_count]
+            .par_iter()
+            .map(|&ordering| {
+                let mut trial_raster = baseline_raster.clone();
+                let mut trial_state = baseline_state.clone();
+                let stats = run_score_fix_prefix_search(
+                    args,
+                    ordering,
+                    &mut trial_raster,
+                    &mut trial_state,
+                    &grid_data,
+                    glyphs,
+                    &block_glyph_costs,
+                    target_scores.clone(),
+                    &source_raster,
+                    &contour_weights,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    abort_flag.as_ref(),
+                )?;
+                Ok((ordering, stats, trial_raster, trial_state))
+            })
+            .collect::<Vec<Result<_, ()>>>();
+        let mut trials = Vec::with_capacity(trial_results.len());
+        for result in trial_results {
+            match result {
+                Ok(trial) => trials.push(trial),
+                Err(()) => return "Cancelled".into(),
+            }
+        }
+        let mut best_trial_idx = 0usize;
+        for idx in 1..trials.len() {
+            if trials[idx].1.best_score + 1e-9 < trials[best_trial_idx].1.best_score {
+                best_trial_idx = idx;
+            }
+        }
+        let order_scores = trials
+            .iter()
+            .map(|(ordering, stats, _, _)| {
+                format!("{}={:.6}", ordering.name(), stats.best_score)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let selected_ordering = trials[best_trial_idx].0;
+        let (_, stats, best_raster, best_state) = trials.swap_remove(best_trial_idx);
+        raster.copy_from_slice(&best_raster);
+        grid_state.copy_from_slice(&best_state);
         log::info!(
-            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
+            "score-fix ordering search [{}] selected {}; selected {} cells, tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
+            order_scores,
+            selected_ordering.name(),
             stats.target_count,
             stats.candidate_trials,
             stats.duplicate_candidates_skipped,
@@ -7663,5 +7821,19 @@ mod tests {
             .boundary_length;
             assert_eq!(painted_length, exact_length, "center={center_idx}");
         }
+    }
+
+    #[test]
+    fn score_fix_spiral_ranks_visit_every_cell_once() {
+        for (grid_w, grid_h) in [(1, 1), (1, 5), (5, 1), (2, 2), (4, 3), (5, 4)] {
+            let ranks = score_fix_spiral_ranks(grid_w, grid_h);
+            let mut sorted = ranks.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..grid_w * grid_h).collect::<Vec<_>>());
+        }
+        assert_eq!(
+            score_fix_spiral_ranks(3, 3),
+            vec![0, 1, 2, 7, 8, 3, 6, 5, 4]
+        );
     }
 }
