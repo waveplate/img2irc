@@ -48,7 +48,7 @@ use ratatui::{
 use ratatui_image::{
     picker::Picker, protocol::StatefulProtocol, Resize, ResizeEncodeRender, StatefulImage,
 };
-use ratatui_textarea::TextArea;
+use ratatui_textarea::{CursorMove, TextArea};
 use simplelog::*;
 use std::fs::OpenOptions;
 use std::process::Command;
@@ -1033,10 +1033,113 @@ struct SplitterArea {
 
 struct AutoOptimizeState {
     inputs: Vec<TextArea<'static>>,
+    enabled_rows: [bool; 8],
     focused_idx: usize,
     optimize_shortest_longest_line: bool,
     batch_size: u32,
     randomize: bool,
+    input_areas: [Rect; 24],
+    row_toggle_areas: [Rect; 8],
+    shortest_line_area: Rect,
+    randomize_area: Rect,
+    batch_size_area: Rect,
+    start_area: Rect,
+    cancel_area: Rect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AutoOptimizeMouseAction {
+    None,
+    Start,
+    Cancel,
+}
+
+fn adjust_auto_optimize_input(
+    state: &mut AutoOptimizeState,
+    input_idx: usize,
+    delta: i32,
+    current_values: &[i32; 8],
+) {
+    let row = input_idx / 3;
+    let column = input_idx % 3;
+    let fallback = if column == 2 { 1 } else { current_values[row] };
+    let current = state.inputs[input_idx]
+        .lines()
+        .first()
+        .and_then(|line| line.trim().parse::<i32>().ok())
+        .unwrap_or(fallback);
+    let minimum = if column == 2 {
+        1
+    } else {
+        match row {
+            0 | 5 => 1,
+            1..=4 => 0,
+            _ => 1,
+        }
+    };
+    let value = current.saturating_add(delta).max(minimum);
+    let mut input = TextArea::new(vec![value.to_string()]);
+    input.move_cursor(CursorMove::End);
+    state.inputs[input_idx] = input;
+    state.focused_idx = input_idx;
+}
+
+fn handle_auto_optimize_mouse(
+    state: &mut AutoOptimizeState,
+    mouse: crossterm::event::MouseEvent,
+    current_values: &[i32; 8],
+) -> AutoOptimizeMouseAction {
+    let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let hovered_input = state.input_areas.iter().position(|area| area.contains(pos));
+    let hovered_toggle = state
+        .row_toggle_areas
+        .iter()
+        .position(|area| area.contains(pos));
+
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(row) = hovered_toggle {
+                state.enabled_rows[row] = !state.enabled_rows[row];
+            } else if let Some(input_idx) = hovered_input {
+                state.focused_idx = input_idx;
+            } else if state.shortest_line_area.contains(pos) {
+                state.optimize_shortest_longest_line = !state.optimize_shortest_longest_line;
+                state.focused_idx = 24;
+            } else if state.randomize_area.contains(pos) {
+                state.randomize = !state.randomize;
+                state.focused_idx = 25;
+            } else if state.batch_size_area.contains(pos) {
+                state.focused_idx = 26;
+            } else if state.start_area.contains(pos) {
+                return AutoOptimizeMouseAction::Start;
+            } else if state.cancel_area.contains(pos) {
+                return AutoOptimizeMouseAction::Cancel;
+            }
+        }
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            let magnitude = if mouse.modifiers.contains(KeyModifiers::SHIFT) {
+                10
+            } else {
+                1
+            };
+            let delta = if mouse.kind == MouseEventKind::ScrollUp {
+                magnitude
+            } else {
+                -magnitude
+            };
+            if let Some(input_idx) = hovered_input {
+                adjust_auto_optimize_input(state, input_idx, delta, current_values);
+            } else if state.batch_size_area.contains(pos) {
+                state.focused_idx = 26;
+                state.batch_size = state
+                    .batch_size
+                    .saturating_add_signed(delta)
+                    .clamp(1, 100);
+            }
+        }
+        _ => {}
+    }
+    AutoOptimizeMouseAction::None
 }
 struct ExplorerDialog {
     explorer: FileExplorer,
@@ -1610,6 +1713,7 @@ pub(crate) struct App {
     optimization_best_score: Option<f64>,
     auto_optimize_state: Option<AutoOptimizeState>,
     saved_auto_optimize_inputs: Vec<String>,
+    saved_auto_optimize_enabled_rows: [bool; 8],
     saved_auto_optimize_shortest_longest_line: bool,
     saved_auto_optimize_randomize: bool,
     auto_optimize_cancel: Option<Arc<AtomicBool>>,
@@ -2264,6 +2368,7 @@ impl App {
             rx_optimization: None,
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
+            saved_auto_optimize_enabled_rows: [true; 8],
             saved_auto_optimize_shortest_longest_line: false,
             saved_auto_optimize_randomize: false,
             auto_optimize_cancel: None,
@@ -3023,10 +3128,18 @@ impl App {
 
         self.auto_optimize_state = Some(AutoOptimizeState {
             inputs,
+            enabled_rows: self.saved_auto_optimize_enabled_rows,
             focused_idx: 0,
             optimize_shortest_longest_line: self.saved_auto_optimize_shortest_longest_line,
             batch_size: self.render_args.auto_optimize_batch_size,
             randomize: self.saved_auto_optimize_randomize,
+            input_areas: [Rect::default(); 24],
+            row_toggle_areas: [Rect::default(); 8],
+            shortest_line_area: Rect::default(),
+            randomize_area: Rect::default(),
+            batch_size_area: Rect::default(),
+            start_area: Rect::default(),
+            cancel_area: Rect::default(),
         });
         self.input_mode = InputMode::AutoOptimize;
     }
@@ -3065,57 +3178,39 @@ impl App {
             result
         }
 
-        let ws = parse_range_i32(
-            state.inputs[0].lines()[0].as_str(),
-            state.inputs[1].lines()[0].as_str(),
-            state.inputs[2].lines()[0].as_str(),
-            self.width,
-        );
-        let ct = parse_range_i32(
-            state.inputs[3].lines()[0].as_str(),
-            state.inputs[4].lines()[0].as_str(),
-            state.inputs[5].lines()[0].as_str(),
-            self.trim_top,
-        );
-        let cr = parse_range_i32(
-            state.inputs[6].lines()[0].as_str(),
-            state.inputs[7].lines()[0].as_str(),
-            state.inputs[8].lines()[0].as_str(),
-            self.trim_right,
-        );
-        let cb = parse_range_i32(
-            state.inputs[9].lines()[0].as_str(),
-            state.inputs[10].lines()[0].as_str(),
-            state.inputs[11].lines()[0].as_str(),
-            self.trim_bottom,
-        );
-        let cl = parse_range_i32(
-            state.inputs[12].lines()[0].as_str(),
-            state.inputs[13].lines()[0].as_str(),
-            state.inputs[14].lines()[0].as_str(),
-            self.trim_left,
-        );
-        let fs: Vec<f32> = parse_range_i32(
-            state.inputs[15].lines()[0].as_str(),
-            state.inputs[16].lines()[0].as_str(),
-            state.inputs[17].lines()[0].as_str(),
+        fn parse_enabled_range_i32(
+            enabled: bool,
+            inputs: &[TextArea<'static>],
+            offset: usize,
+            current: i32,
+        ) -> Vec<i32> {
+            if !enabled {
+                return vec![current];
+            }
+            parse_range_i32(
+                inputs[offset].lines()[0].as_str(),
+                inputs[offset + 1].lines()[0].as_str(),
+                inputs[offset + 2].lines()[0].as_str(),
+                current,
+            )
+        }
+
+        let ws = parse_enabled_range_i32(state.enabled_rows[0], &state.inputs, 0, self.width);
+        let ct = parse_enabled_range_i32(state.enabled_rows[1], &state.inputs, 3, self.trim_top);
+        let cr = parse_enabled_range_i32(state.enabled_rows[2], &state.inputs, 6, self.trim_right);
+        let cb = parse_enabled_range_i32(state.enabled_rows[3], &state.inputs, 9, self.trim_bottom);
+        let cl = parse_enabled_range_i32(state.enabled_rows[4], &state.inputs, 12, self.trim_left);
+        let fs: Vec<f32> = parse_enabled_range_i32(
+            state.enabled_rows[5],
+            &state.inputs,
+            15,
             self.font_size.round() as i32,
         )
         .into_iter()
         .map(|x| x as f32)
         .collect();
-        let sx = parse_range_i32(
-            state.inputs[18].lines()[0].as_str(),
-            state.inputs[19].lines()[0].as_str(),
-            state.inputs[20].lines()[0].as_str(),
-            self.scalex,
-        );
-        let sy = parse_range_i32(
-            state.inputs[21].lines()[0].as_str(),
-            state.inputs[22].lines()[0].as_str(),
-            state.inputs[23].lines()[0].as_str(),
-            self.scaley,
-        );
+        let sx = parse_enabled_range_i32(state.enabled_rows[6], &state.inputs, 18, self.scalex);
+        let sy = parse_enabled_range_i32(state.enabled_rows[7], &state.inputs, 21, self.scaley);
 
         let total_perms =
             ws.len() * ct.len() * cr.len() * cb.len() * cl.len() * fs.len() * sx.len() * sy.len();
@@ -3127,6 +3222,7 @@ impl App {
 
         self.saved_auto_optimize_inputs =
             state.inputs.iter().map(|i| i.lines()[0].clone()).collect();
+        self.saved_auto_optimize_enabled_rows = state.enabled_rows;
         self.saved_auto_optimize_shortest_longest_line = optimize_shortest_longest_line;
         self.saved_auto_optimize_randomize = randomize;
 
@@ -5413,16 +5509,16 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
             // --- Auto Optimize Mode ---
             if app.input_mode == InputMode::AutoOptimize {
-                if let Event::Key(key) = event {
-                    if key.kind == KeyEventKind::Press {
-                        if let Some(state) = &mut app.auto_optimize_state {
+                let mut action = AutoOptimizeMouseAction::None;
+                match event {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        if let Some(state) = app.auto_optimize_state.as_mut() {
                             match key.code {
                                 KeyCode::Esc => {
-                                    app.input_mode = InputMode::Normal;
+                                    action = AutoOptimizeMouseAction::Cancel;
                                 }
                                 KeyCode::Enter => {
-                                    app.input_mode = InputMode::Normal;
-                                    app.start_auto_optimization();
+                                    action = AutoOptimizeMouseAction::Start;
                                 }
                                 KeyCode::Up => {
                                     if state.focused_idx == 24 {
@@ -5496,6 +5592,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 KeyCode::Char(' ') if state.focused_idx == 25 => {
                                     state.randomize = !state.randomize;
                                 }
+                                KeyCode::Char(' ')
+                                    if state.focused_idx < 24
+                                        && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    let row = state.focused_idx / 3;
+                                    state.enabled_rows[row] = !state.enabled_rows[row];
+                                }
                                 KeyCode::Char('-') | KeyCode::Char('_')
                                     if state.focused_idx == 26 =>
                                 {
@@ -5514,6 +5617,32 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        let current_values = [
+                            app.width,
+                            app.trim_top,
+                            app.trim_right,
+                            app.trim_bottom,
+                            app.trim_left,
+                            app.font_size.round() as i32,
+                            app.scalex,
+                            app.scaley,
+                        ];
+                        if let Some(state) = app.auto_optimize_state.as_mut() {
+                            action = handle_auto_optimize_mouse(state, mouse, &current_values);
+                        }
+                    }
+                    _ => {}
+                }
+                match action {
+                    AutoOptimizeMouseAction::Start => {
+                        app.input_mode = InputMode::Normal;
+                        app.start_auto_optimization();
+                    }
+                    AutoOptimizeMouseAction::Cancel => {
+                        app.input_mode = InputMode::Normal;
+                    }
+                    AutoOptimizeMouseAction::None => {}
                 }
                 continue;
             }
@@ -7796,20 +7925,14 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     }
 
     if app.input_mode == InputMode::AutoOptimize {
-        let vert = Layout::vertical([
-            Constraint::Percentage(20),
-            Constraint::Length(34),
-            Constraint::Percentage(20),
-        ])
-        .split(area);
-        let horiz = Layout::horizontal([
-            Constraint::Percentage(20),
-            Constraint::Length(60),
-            Constraint::Percentage(20),
-        ])
-        .split(vert[1]);
-
-        let overlay_area = horiz[1];
+        let dialog_width = 84.min(area.width.saturating_sub(2));
+        let dialog_height = 37.min(area.height.saturating_sub(2));
+        let overlay_area = Rect::new(
+            area.x + area.width.saturating_sub(dialog_width) / 2,
+            area.y + area.height.saturating_sub(dialog_height) / 2,
+            dialog_width,
+            dialog_height,
+        );
         f.render_widget(Clear, overlay_area);
         render_auto_optimize_dialog(f, app, overlay_area);
     } else if app.is_optimizing {

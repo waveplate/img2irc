@@ -241,15 +241,16 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
     if let Some(state) = &mut app.auto_optimize_state {
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Auto Optimize (Enter: start, Esc: cancel) ")
+            .title(" Auto Optimize (wheel: adjust, Shift+wheel: 10) ")
             .style(Style::default().fg(Color::Yellow));
 
         let inner_area = block.inner(area);
         f.render_widget(Clear, area);
         f.render_widget(block, area);
 
-        // 8 rows of inputs + 1 row for checkbox + 1 row for slider
+        // Eight parameter rows, two option rows, and one action row.
         let mut constraints = vec![Constraint::Length(3); 8];
+        constraints.push(Constraint::Length(3));
         constraints.push(Constraint::Length(3));
         constraints.push(Constraint::Length(3));
         let rows = Layout::vertical(constraints).split(inner_area);
@@ -268,27 +269,44 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
         for i in 0..8 {
             let row_area = rows[i];
             let cols = Layout::horizontal([
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-                Constraint::Percentage(34),
+                Constraint::Length(5),
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(1, 3),
             ])
             .split(row_area);
 
             let title = titles.get(i).unwrap_or(&"");
+            let enabled = state.enabled_rows[i];
+            state.row_toggle_areas[i] = cols[0];
+            let toggle_text = if enabled { "🗹" } else { "☐" };
+            let toggle_style = if enabled {
+                Style::default().fg(TOGGLE_ON)
+            } else {
+                Style::default().fg(TEXT_DIM)
+            };
+            let toggle_area = Rect::new(cols[0].x, cols[0].y + 1, cols[0].width, 1);
+            f.render_widget(
+                Paragraph::new(toggle_text)
+                    .style(toggle_style)
+                    .alignment(Alignment::Center),
+                toggle_area,
+            );
 
             for j in 0..3 {
                 let idx = i * 3 + j;
                 let input = &mut state.inputs[idx];
+                state.input_areas[idx] = cols[j + 1];
                 let sub_title = if j == 0 {
-                    format!("{} (Min)", title)
+                    format!("{} Min", title)
                 } else if j == 1 {
-                    format!("{} (Max)", title)
+                    format!("{} Max", title)
                 } else {
-                    format!("{} (Step)", title)
+                    format!("{} Step", title)
                 };
 
                 if idx == state.focused_idx {
-                    input.set_style(Style::default().fg(ACCENT));
+                    input.set_style(Style::default().fg(if enabled { ACCENT } else { TEXT_DIM }));
                     input.set_block(
                         Block::default()
                             .borders(Borders::ALL)
@@ -296,15 +314,15 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
                             .border_style(Style::default().fg(ACCENT)),
                     );
                 } else {
-                    input.set_style(Style::default());
+                    input.set_style(Style::default().fg(if enabled { TEXT } else { TEXT_DIM }));
                     input.set_block(
                         Block::default()
                             .borders(Borders::ALL)
                             .title(sub_title)
-                            .border_style(Style::default()),
+                            .border_style(Style::default().fg(if enabled { BORDER } else { TEXT_DIM })),
                     );
                 }
-                f.render_widget(&*input, cols[j]);
+                f.render_widget(&*input, cols[j + 1]);
             }
         }
 
@@ -312,12 +330,14 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
         let cb_area = rows[8];
         let cb_cols = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(cb_area);
+        state.shortest_line_area = cb_cols[0];
+        state.randomize_area = cb_cols[1];
 
         // Checkbox 1
         let cb1_text = if state.optimize_shortest_longest_line {
-            "[x] Optimize for shortest longest line"
+            "🗹 Optimize for shortest longest line"
         } else {
-            "[ ] Optimize for shortest longest line"
+            "☐ Optimize for shortest longest line"
         };
         let cb1_style = if state.focused_idx == 24 {
             Style::default().fg(ACCENT)
@@ -331,9 +351,9 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
 
         // Checkbox 2
         let cb2_text = if state.randomize {
-            "[x] Randomize"
+            "🗹 Randomize"
         } else {
-            "[ ] Randomize"
+            "☐ Randomize"
         };
         let cb2_style = if state.focused_idx == 25 {
             Style::default().fg(ACCENT)
@@ -345,17 +365,42 @@ pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App,
             .alignment(Alignment::Center);
         f.render_widget(cb2_paragraph, cb_cols[1]);
 
-        // Render slider for batch size
+        // Render batch-size control. It is mouse-wheel adjustable anywhere in
+        // this row, as well as through the existing keyboard controls.
         let slider_area = rows[9];
+        state.batch_size_area = slider_area;
         let slider_style = if state.focused_idx == 26 {
             Style::default().fg(ACCENT)
         } else {
             Style::default().fg(Color::Gray)
         };
-        let slider_text = format!("Batch Size: {} (< / > to adjust)", state.batch_size);
+        let slider_text = format!("Batch Size: {}  (wheel or ←/→)", state.batch_size);
         let slider_p = Paragraph::new(slider_text)
             .style(slider_style)
             .alignment(Alignment::Center);
         f.render_widget(slider_p, slider_area);
+
+        // Explicit mouse actions; Enter and Escape remain available.
+        let action_cols = Layout::horizontal([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(rows[10]);
+        state.start_area = action_cols[0];
+        state.cancel_area = action_cols[1];
+        f.render_widget(
+            Paragraph::new("Start (Enter)")
+                .block(Block::default().borders(Borders::ALL))
+                .style(Style::default().fg(TOGGLE_ON))
+                .alignment(Alignment::Center),
+            action_cols[0],
+        );
+        f.render_widget(
+            Paragraph::new("Cancel (Esc)")
+                .block(Block::default().borders(Borders::ALL))
+                .style(Style::default().fg(Color::Red))
+                .alignment(Alignment::Center),
+            action_cols[1],
+        );
     }
 }
