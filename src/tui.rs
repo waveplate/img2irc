@@ -2815,6 +2815,84 @@ impl App {
         self.last_args_change = Some(Instant::now());
     }
 
+    fn matching_font_indices(&self) -> Vec<usize> {
+        let query = self.font_search.trim().to_lowercase();
+        self.fonts
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, font)| {
+                (query.is_empty() || font.to_lowercase().contains(&query)).then_some(idx)
+            })
+            .collect()
+    }
+
+    fn sync_font_picker_selection(&mut self) {
+        let matches = self.matching_font_indices();
+        let selected = if matches.is_empty() {
+            None
+        } else if self.font_search.trim().is_empty() {
+            Some(
+                matches
+                    .iter()
+                    .position(|&idx| idx == self.font_idx)
+                    .unwrap_or(0),
+            )
+        } else {
+            let query = self.font_search.trim();
+            Some(
+                matches
+                    .iter()
+                    .position(|&idx| self.fonts[idx].eq_ignore_ascii_case(query))
+                    .unwrap_or(0),
+            )
+        };
+        self.font_list_state.select(selected);
+    }
+
+    fn open_font_picker(&mut self) {
+        if self.show_font_picker {
+            return;
+        }
+        self.show_font_picker = true;
+        self.font_search.clear();
+        self.sync_font_picker_selection();
+    }
+
+    fn move_font_picker_selection(&mut self, delta: i32) {
+        let count = self.matching_font_indices().len();
+        if count == 0 {
+            self.font_list_state.select(None);
+            return;
+        }
+        let current = self.font_list_state.selected().unwrap_or(0).min(count - 1);
+        let next = (current as i32 + delta).clamp(0, count as i32 - 1) as usize;
+        self.font_list_state.select(Some(next));
+    }
+
+    fn commit_font_picker(&mut self) {
+        let matches = self.matching_font_indices();
+        let Some(selected) = self.font_list_state.selected() else {
+            return;
+        };
+        let Some(&font_idx) = matches.get(selected) else {
+            return;
+        };
+
+        let changed = self.font_idx != font_idx;
+        self.font_idx = font_idx;
+        self.show_font_picker = false;
+        self.font_search.clear();
+        if changed {
+            self.mark_args_dirty();
+        }
+    }
+
+    fn cancel_font_picker(&mut self) {
+        self.show_font_picker = false;
+        self.font_search.clear();
+        self.font_list_state.select(None);
+    }
+
     /// Re-apply text overlays to the cached base render result.
     /// This is O(grid_cells) — safe to call on every keypress without triggering a re-render.
     fn reapply_overlays(&mut self) {
@@ -4821,6 +4899,53 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
 
+            if app.show_font_picker {
+                match &event {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                        KeyCode::Esc => app.cancel_font_picker(),
+                        KeyCode::Enter => app.commit_font_picker(),
+                        KeyCode::Up => app.move_font_picker_selection(-1),
+                        KeyCode::Down => app.move_font_picker_selection(1),
+                        KeyCode::PageUp => app.move_font_picker_selection(-10),
+                        KeyCode::PageDown => app.move_font_picker_selection(10),
+                        KeyCode::Home => {
+                            app.font_list_state.select(
+                                (!app.matching_font_indices().is_empty()).then_some(0),
+                            );
+                        }
+                        KeyCode::End => {
+                            let count = app.matching_font_indices().len();
+                            app.font_list_state.select(count.checked_sub(1));
+                        }
+                        KeyCode::Backspace => {
+                            app.font_search.pop();
+                            app.sync_font_picker_selection();
+                        }
+                        KeyCode::Char('u')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            app.font_search.clear();
+                            app.sync_font_picker_selection();
+                        }
+                        KeyCode::Char(c)
+                            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            app.font_search.push(c);
+                            app.sync_font_picker_selection();
+                        }
+                        _ => {}
+                    },
+                    Event::Mouse(mouse) => match mouse.kind {
+                        MouseEventKind::ScrollUp => app.move_font_picker_selection(-1),
+                        MouseEventKind::ScrollDown => app.move_font_picker_selection(1),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+                continue;
+            }
+
             if let Event::Key(key) = &event {
                 if key.kind == KeyEventKind::Press && key.code == KeyCode::Esc {
                     app.cancel_render();
@@ -5923,9 +6048,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     {
                                         let ctrl_id = app.get_current_control_id();
                                         if ctrl_id == ControlId::Font {
-                                            app.font_idx = i;
+                                            app.open_font_picker();
+                                            app.font_list_state.select(Some(i));
+                                        } else {
+                                            app.mark_args_dirty();
                                         }
-                                        app.mark_args_dirty();
                                         continue;
                                     }
                                 }
@@ -6108,6 +6235,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             ControlKind::EyedropperWidget => {}
                                             ControlKind::FontSelector => {
                                                 app.selected_control = i;
+                                                if was_selected {
+                                                    app.open_font_picker();
+                                                }
                                             }
                                             ControlKind::Action => toggle_control(&mut app),
                                         }
@@ -6552,6 +6682,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 }
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
+                        if app.current_tab == 0
+                            && app.get_current_control_id() == ControlId::Font
+                        {
+                            if let KeyCode::Char(c) = key.code {
+                                if c != ' '
+                                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && !key.modifiers.contains(KeyModifiers::ALT)
+                                {
+                                    app.open_font_picker();
+                                    app.font_search.push(c);
+                                    app.sync_font_picker_selection();
+                                    continue;
+                                }
+                            }
+                        }
                         if app.current_tab == 3 {
                             if let Some(sel) = app.text_selected {
                                 if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7324,15 +7469,9 @@ fn adjust_control(app: &mut App, delta: i32) {
             }
         }
         ControlKind::FontSelector => {
-            let val = app.get_value(id);
-            let count = app.fonts.len() as i32;
-            if count > 0 {
-                if delta > 0 {
-                    app.set_value(id, (val + 1) % count);
-                } else {
-                    app.set_value(id, (val + count - 1) % count);
-                }
-            }
+            app.open_font_picker();
+            app.move_font_picker_selection(delta.signum());
+            return;
         }
         ControlKind::Toggle { .. } => {
             // Toggles don't adjust by delta normally, but let's toggle if delta != 0
@@ -7387,9 +7526,8 @@ fn toggle_control(app: &mut App) {
             app.set_value(id, (val + 1) % options.len() as i32);
         }
         ControlKind::FontSelector => {
-            if !app.fonts.is_empty() {
-                app.font_idx = (app.font_idx + 1) % app.fonts.len();
-            }
+            app.open_font_picker();
+            return;
         }
         ControlKind::Action => {
             if id == ControlId::AutoOptimize {
@@ -7523,10 +7661,10 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // ── Font Picker Overlay ──
     if app.show_font_picker {
         let output_area = app.output_area;
-        let height = (output_area.height / 2).max(5);
+        let height = (output_area.height / 2).max(5).min(output_area.height);
         let area = Rect::new(
             output_area.x,
-            output_area.y + output_area.height - height,
+            output_area.y + output_area.height.saturating_sub(height),
             output_area.width,
             height,
         );
@@ -7534,9 +7672,12 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         f.render_widget(Clear, area);
 
         let title = if app.font_search.is_empty() {
-            " Select Font ".to_string()
+            " Font: type to filter, Enter to apply, Esc to cancel ".to_string()
         } else {
-            format!(" Select Font (Search: {}) ", app.font_search)
+            format!(
+                " Font: {} (Enter to apply, Esc to cancel) ",
+                app.font_search
+            )
         };
 
         let block = Block::default()
@@ -7545,19 +7686,19 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             .style(Style::new().bg(SURFACE));
 
         // List
-        let query = app.font_search.to_lowercase();
-        let items: Vec<ListItem> = app
-            .fonts
+        let matching_indices = app.matching_font_indices();
+        let items: Vec<ListItem> = matching_indices
             .iter()
-            .enumerate()
-            .filter(|(_, f)| f.to_lowercase().contains(&query))
-            .map(|(i, f)| {
-                let _is_selected = app.font_idx == i; // Visual check? No, font_list_state handles selection.
-                                                      // But we want to indicate the *current* font too?
-                                                      // The list allows picking a NEW font.
-                ListItem::new(f.as_str()).style(Style::new().fg(TEXT))
+            .map(|&idx| {
+                let suffix = if idx == app.font_idx { "  (current)" } else { "" };
+                ListItem::new(format!("{}{}", app.fonts[idx], suffix))
+                    .style(Style::new().fg(TEXT))
             })
             .collect();
+
+        if matching_indices.is_empty() {
+            app.font_list_state.select(None);
+        }
 
         let list = List::new(items)
             .block(block)
