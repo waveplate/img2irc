@@ -236,6 +236,8 @@ pub struct RenderArgs {
     pub score_fix_candidates: u32,
     #[serde(default = "default_score_fix_orderings")]
     pub score_fix_orderings: u32,
+    #[serde(default)]
+    pub score_fix_geometry_first: bool,
     #[serde(default = "default_true")]
     pub score_fix_neighborhood_guard: bool,
     #[serde(default = "default_contour_weight")]
@@ -708,6 +710,10 @@ pub struct Args {
         value_parser = clap::value_parser!(u32).range(1..=5)
     )]
     pub score_fix_orderings: u32,
+
+    /// choose glyphs by output geometry, using the source only as a fidelity constraint
+    #[arg(long = "score-fix-geometry-first", default_value_t = false)]
+    pub score_fix_geometry_first: bool,
 
     /// validate a score-fix change against every overlapping 3x3 neighborhood
     #[arg(

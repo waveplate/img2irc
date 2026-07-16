@@ -121,6 +121,7 @@ enum ControlId {
     ScoreFix,
     ScoreFixCandidates,
     ScoreFixOrderings,
+    ScoreFixGeometryFirst,
     ScoreFixNeighborhoodGuard,
     ContourBendingWeight,
     ContourEndpointWeight,
@@ -349,6 +350,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 5,
             default: 1,
         },
+    },
+    ControlDef {
+        id: ControlId::ScoreFixGeometryFirst,
+        label: "SF Geometry",
+        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::ScoreFixNeighborhoodGuard,
@@ -1600,6 +1606,7 @@ pub(crate) struct App {
     score_fix: bool,
     score_fix_candidates: i32,
     score_fix_orderings: i32,
+    score_fix_geometry_first: bool,
     score_fix_neighborhood_guard: bool,
     contour_bending_weight: i32,
     contour_endpoint_weight: i32,
@@ -2226,6 +2233,7 @@ impl App {
             score_fix: render_args.score_fix,
             score_fix_candidates: render_args.score_fix_candidates as i32,
             score_fix_orderings: render_args.score_fix_orderings as i32,
+            score_fix_geometry_first: render_args.score_fix_geometry_first,
             score_fix_neighborhood_guard: render_args.score_fix_neighborhood_guard,
             contour_bending_weight: (render_args.contour_bending_weight * 10.0).round() as i32,
             contour_endpoint_weight: (render_args.contour_endpoint_weight * 10.0).round() as i32,
@@ -2440,6 +2448,7 @@ impl App {
         self.score_fix = render_args.score_fix;
         self.score_fix_candidates = render_args.score_fix_candidates as i32;
         self.score_fix_orderings = render_args.score_fix_orderings as i32;
+        self.score_fix_geometry_first = render_args.score_fix_geometry_first;
         self.score_fix_neighborhood_guard = render_args.score_fix_neighborhood_guard;
         self.contour_bending_weight = (render_args.contour_bending_weight * 10.0).round() as i32;
         self.contour_endpoint_weight =
@@ -2774,6 +2783,7 @@ impl App {
             ControlId::ScoreFix => self.score_fix as i32,
             ControlId::ScoreFixCandidates => self.score_fix_candidates,
             ControlId::ScoreFixOrderings => self.score_fix_orderings,
+            ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first as i32,
             ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard as i32,
             ControlId::ContourBendingWeight => self.contour_bending_weight,
             ControlId::ContourEndpointWeight => self.contour_endpoint_weight,
@@ -2878,6 +2888,7 @@ impl App {
             ControlId::ScoreFix => self.score_fix = val != 0,
             ControlId::ScoreFixCandidates => self.score_fix_candidates = val.max(1),
             ControlId::ScoreFixOrderings => self.score_fix_orderings = val.clamp(1, 5),
+            ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first = val != 0,
             ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard = val != 0,
             ControlId::ContourBendingWeight => self.contour_bending_weight = val.max(0),
             ControlId::ContourEndpointWeight => self.contour_endpoint_weight = val.max(0),
@@ -3512,6 +3523,7 @@ impl App {
         self.render_args.score_fix = self.score_fix;
         self.render_args.score_fix_candidates = self.score_fix_candidates.max(1) as u32;
         self.render_args.score_fix_orderings = self.score_fix_orderings.clamp(1, 5) as u32;
+        self.render_args.score_fix_geometry_first = self.score_fix_geometry_first;
         self.render_args.score_fix_neighborhood_guard = self.score_fix_neighborhood_guard;
         self.render_args.contour_bending_weight = self.contour_bending_weight as f32 / 10.0;
         self.render_args.contour_endpoint_weight = self.contour_endpoint_weight as f32 / 10.0;

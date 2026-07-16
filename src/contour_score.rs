@@ -15,6 +15,9 @@ pub struct ContourScore {
     pub junctions: f64,
     pub fragments: f64,
     pub boundary_length: usize,
+    pub endpoint_count: usize,
+    pub junction_count: usize,
+    pub component_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -541,6 +544,9 @@ pub fn score_rgb_with_weights(
         junctions: junction_score,
         fragments: fragment_score,
         boundary_length: graph.edges.len(),
+        endpoint_count: endpoints as usize,
+        junction_count: junctions as usize,
+        component_count: graph.component_lengths.len(),
     }
 }
 
@@ -1001,6 +1007,23 @@ mod tests {
             exact.total < missing.total,
             "exact={exact:?} missing={missing:?}"
         );
+    }
+
+    #[test]
+    fn raw_topology_counts_distinguish_new_islands() {
+        let one_island = raster(16, 16, |x, y| (3..7).contains(&x) && (3..7).contains(&y));
+        let two_islands = raster(16, 16, |x, y| {
+            ((2..5).contains(&x) && (2..5).contains(&y))
+                || ((10..13).contains(&x) && (10..13).contains(&y))
+        });
+        let one = score_rgb(&one_island, 16, 16, 8);
+        let two = score_rgb(&two_islands, 16, 16, 8);
+        assert_eq!(one.component_count, 1);
+        assert_eq!(two.component_count, 2);
+        assert_eq!(one.endpoint_count, 0);
+        assert_eq!(two.endpoint_count, 0);
+        assert_eq!(one.junction_count, 0);
+        assert_eq!(two.junction_count, 0);
     }
 
     #[test]

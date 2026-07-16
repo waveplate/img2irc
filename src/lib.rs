@@ -203,6 +203,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         score_fix: args.score_fix,
         score_fix_candidates: args.score_fix_candidates,
         score_fix_orderings: args.score_fix_orderings,
+        score_fix_geometry_first: args.score_fix_geometry_first,
         score_fix_neighborhood_guard: args.score_fix_neighborhood_guard,
         contour_bending_weight: args.contour_bending_weight,
         contour_endpoint_weight: args.contour_endpoint_weight,

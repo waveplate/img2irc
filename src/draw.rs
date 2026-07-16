@@ -2505,6 +2505,33 @@ fn score_local_normalized_preview_output(
     .total
 }
 
+fn score_local_normalized_preview_details(
+    reference: &crate::contour_score::PreparedReference,
+    output_preview: &[[u8; 3]],
+    cell_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    weights: &crate::contour_score::ContourScoreWeights,
+) -> crate::contour_score::ReferenceContourScore {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    let output_patch = extract_local_patch(
+        output_preview,
+        cell_x,
+        cell_y,
+        grid_w,
+        grid_h,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        crate::contour_score::PREVIEW_CELL_HEIGHT,
+    );
+    crate::contour_score::score_rgb_against_prepared_with_weights(
+        reference,
+        &output_patch.pixels,
+        crate::contour_score::PREVIEW_CELL_WIDTH,
+        weights,
+    )
+}
+
 fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool, u64)> {
     if pool_size >= costs.len() {
         let mut pool: Vec<(usize, bool, u64)> = costs
@@ -4094,6 +4121,390 @@ impl Ord for ScoreFixPriorityEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct GeometryScoreFixStats {
+    target_count: usize,
+    distinct_states: usize,
+    candidate_evaluations: usize,
+    changes: usize,
+    initial_bending: f64,
+    final_bending: f64,
+}
+
+struct GeometryCandidateEvaluation {
+    choice: (usize, bool),
+    affected_scores: Vec<crate::contour_score::ReferenceContourScore>,
+    bending_sum: f64,
+    fidelity_sum: f64,
+}
+
+fn geometry_score_fix_weights() -> crate::contour_score::ContourScoreWeights {
+    crate::contour_score::ContourScoreWeights {
+        bending: 1.0,
+        endpoints: 1.0,
+        junctions: 1.0,
+        fragments: 1.0,
+        fidelity: 1.0,
+        boundary_balance: 0.0,
+        // The geometry-first path is explicitly concerned with the worst
+        // local changes in direction, rather than average curvature alone.
+        peak_sensitivity: 1.0,
+    }
+}
+
+fn geometry_score_fix_fidelity_allowance() -> f64 {
+    let patch_width = (NEIGHBORHOOD_RADIUS * 2 + 1)
+        * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let patch_height = (NEIGHBORHOOD_RADIUS * 2 + 1)
+        * crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let one_preview_edge = crate::contour_score::PREVIEW_CELL_WIDTH
+        .max(crate::contour_score::PREVIEW_CELL_HEIGHT);
+    100.0 * one_preview_edge as f64 / (patch_width * patch_height) as f64
+}
+
+fn geometry_score_fix_patch_is_safe(
+    candidate: &crate::contour_score::ReferenceContourScore,
+    baseline: &crate::contour_score::ReferenceContourScore,
+    fidelity_allowance: f64,
+) -> bool {
+    let candidate_contour = &candidate.contour;
+    let baseline_contour = &baseline.contour;
+    candidate_contour.endpoint_count == baseline_contour.endpoint_count
+        && candidate_contour.junction_count == baseline_contour.junction_count
+        && candidate_contour.component_count == baseline_contour.component_count
+        && candidate.fidelity <= baseline.fidelity + fidelity_allowance + 1e-9
+}
+
+fn distinct_nonuniform_glyph_states(glyphs: &[FastGlyph]) -> Vec<(usize, bool)> {
+    let mut states = Vec::with_capacity(glyphs.len() * 2);
+    for (glyph_idx, glyph) in glyphs.iter().enumerate() {
+        if glyph.bitmap.is_empty()
+            || glyph
+                .bitmap
+                .iter()
+                .all(|&pixel| pixel == glyph.bitmap[0])
+        {
+            continue;
+        }
+        for inverted in [false, true] {
+            if states.iter().any(|&(existing_idx, existing_inverted)| {
+                glyph_states_render_identically(
+                    glyph,
+                    inverted,
+                    &glyphs[existing_idx],
+                    existing_inverted,
+                )
+            }) {
+                continue;
+            }
+            states.push((glyph_idx, inverted));
+        }
+    }
+    states
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_geometry_candidate_in_patch(
+    patch: &mut LocalPatch,
+    patch_center_idx: usize,
+    changed_idx: usize,
+    grid_data: &[BlockData],
+    glyphs: &[FastGlyph],
+    candidate: (usize, bool),
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) {
+    let center_x = patch_center_idx % grid_w;
+    let center_y = patch_center_idx / grid_w;
+    let changed_x = changed_idx % grid_w;
+    let changed_y = changed_idx / grid_w;
+    let patch_cells = NEIGHBORHOOD_RADIUS * 2 + 1;
+    for patch_y in 0..patch_cells {
+        let source_y = center_y
+            .saturating_add(patch_y)
+            .saturating_sub(NEIGHBORHOOD_RADIUS)
+            .min(grid_h - 1);
+        for patch_x in 0..patch_cells {
+            let source_x = center_x
+                .saturating_add(patch_x)
+                .saturating_sub(NEIGHBORHOOD_RADIUS)
+                .min(grid_w - 1);
+            if source_x == changed_x && source_y == changed_y {
+                paint_preview_glyph_at(
+                    &mut patch.pixels,
+                    patch.width,
+                    patch_x * crate::contour_score::PREVIEW_CELL_WIDTH,
+                    patch_y * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                    &grid_data[changed_idx],
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    gw,
+                    gh,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_geometry_score_fix(
+    args: &RenderArgs,
+    raster: &mut Vec<[u8; 3]>,
+    grid_state: &mut Vec<(usize, bool)>,
+    grid_data: &[BlockData],
+    glyphs: &[FastGlyph],
+    target_scores: Vec<f32>,
+    source_raster: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<GeometryScoreFixStats, ()> {
+    let weights = geometry_score_fix_weights();
+    let fidelity_allowance = geometry_score_fix_fidelity_allowance();
+    let threshold = args.discontinuity_threshold.max(0.0);
+    let cell_count = grid_w * grid_h;
+    let mut target_mask = vec![false; cell_count];
+    let mut priority_scores = vec![f32::NEG_INFINITY; cell_count];
+    let mut queue = BinaryHeap::new();
+    for (cell_idx, score) in target_scores.into_iter().enumerate() {
+        if score >= threshold && grid_data[cell_idx].fg != grid_data[cell_idx].bg {
+            target_mask[cell_idx] = true;
+            priority_scores[cell_idx] = score;
+            queue.push(ScoreFixPriorityEntry {
+                order_priority: 0,
+                score,
+                cell_idx,
+                version: 0,
+            });
+        }
+    }
+    let target_count = target_mask.iter().filter(|&&target| target).count();
+    let distinct_states = distinct_nonuniform_glyph_states(glyphs);
+    let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let (mut output_preview, _, _) = crate::contour_score::normalize_preview_raster(
+        raster,
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+    );
+
+    let references = (0..cell_count)
+        .into_par_iter()
+        .map(|cell_idx| {
+            prepare_local_preview_reference(
+                source_raster,
+                cell_idx,
+                grid_w,
+                grid_h,
+                gw,
+                gh,
+                &weights,
+            )
+        })
+        .collect::<Vec<_>>();
+    let baseline_scores = (0..cell_count)
+        .into_par_iter()
+        .map(|cell_idx| {
+            score_local_normalized_preview_details(
+                &references[cell_idx],
+                &output_preview,
+                cell_idx,
+                grid_w,
+                grid_h,
+                &weights,
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut current_scores = baseline_scores.clone();
+    let initial_bending = current_scores
+        .iter()
+        .map(|score| score.contour.bending)
+        .sum::<f64>();
+    let mut global_bending = initial_bending;
+    let mut versions = vec![0u32; cell_count];
+    let mut candidate_evaluations = 0usize;
+    let mut changes = 0usize;
+
+    while let Some(entry) = queue.pop() {
+        let curr_idx = entry.cell_idx;
+        if entry.version != versions[curr_idx]
+            || !target_mask[curr_idx]
+            || entry.score < threshold
+        {
+            continue;
+        }
+        if abort_flag.is_some_and(|flag| {
+            flag.load(std::sync::atomic::Ordering::Relaxed)
+        }) {
+            return Err(());
+        }
+
+        let current_choice = grid_state[curr_idx];
+        let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
+        let current_bending_sum = affected
+            .iter()
+            .map(|&idx| current_scores[idx].contour.bending)
+            .sum::<f64>();
+        let patches = affected
+            .iter()
+            .map(|&idx| {
+                (
+                    idx,
+                    extract_local_patch(
+                        &output_preview,
+                        idx % grid_w,
+                        idx / grid_w,
+                        grid_w,
+                        grid_h,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        crate::contour_score::PREVIEW_CELL_HEIGHT,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let evaluations = distinct_states
+            .par_iter()
+            .filter_map(|&candidate| {
+                if glyph_states_render_identically(
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    &glyphs[current_choice.0],
+                    current_choice.1,
+                ) {
+                    return None;
+                }
+                let mut affected_scores = Vec::with_capacity(affected.len());
+                let mut bending_sum = 0.0;
+                let mut fidelity_sum = 0.0;
+                for (affected_idx, baseline_patch) in &patches {
+                    let mut candidate_patch = baseline_patch.clone();
+                    paint_geometry_candidate_in_patch(
+                        &mut candidate_patch,
+                        *affected_idx,
+                        curr_idx,
+                        grid_data,
+                        glyphs,
+                        candidate,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                    );
+                    let score = crate::contour_score::score_rgb_against_prepared_with_weights(
+                        &references[*affected_idx],
+                        &candidate_patch.pixels,
+                        crate::contour_score::PREVIEW_CELL_WIDTH,
+                        &weights,
+                    );
+                    // Do not trade a new snag in one overlapping window for
+                    // a larger improvement elsewhere. At least one window
+                    // must improve (checked by the aggregate below), while
+                    // every other affected view is monotonically non-worse.
+                    if !geometry_score_fix_patch_is_safe(
+                        &score,
+                        &baseline_scores[*affected_idx],
+                        fidelity_allowance,
+                    )
+                        || score.contour.bending
+                            > current_scores[*affected_idx].contour.bending + 1e-9
+                    {
+                        return None;
+                    }
+                    bending_sum += score.contour.bending;
+                    fidelity_sum += score.fidelity;
+                    affected_scores.push(score);
+                }
+                if bending_sum + 1e-9 >= current_bending_sum {
+                    return None;
+                }
+                Some(GeometryCandidateEvaluation {
+                    choice: candidate,
+                    affected_scores,
+                    bending_sum,
+                    fidelity_sum,
+                })
+            })
+            .collect::<Vec<_>>();
+        candidate_evaluations += distinct_states.len().saturating_sub(1);
+        let best = evaluations.into_iter().min_by(|a, b| {
+            a.bending_sum
+                .total_cmp(&b.bending_sum)
+                .then_with(|| a.fidelity_sum.total_cmp(&b.fidelity_sum))
+                .then_with(|| a.choice.cmp(&b.choice))
+        });
+        let Some(best) = best else {
+            continue;
+        };
+
+        global_bending += best.bending_sum - current_bending_sum;
+        grid_state[curr_idx] = best.choice;
+        apply_choice_to_raster(
+            raster,
+            grid_data,
+            glyphs,
+            grid_w,
+            gw,
+            gh,
+            curr_idx,
+            best.choice,
+        );
+        paint_global_preview_cell(
+            &mut output_preview,
+            preview_width,
+            curr_idx,
+            grid_w,
+            &grid_data[curr_idx],
+            &glyphs[best.choice.0],
+            best.choice.1,
+            gw,
+            gh,
+        );
+        for (&affected_idx, score) in affected.iter().zip(best.affected_scores) {
+            current_scores[affected_idx] = score;
+        }
+        changes += 1;
+
+        for affected_idx in affected {
+            if !target_mask[affected_idx] {
+                continue;
+            }
+            let score = cell_discontinuity_score(
+                affected_idx,
+                raster,
+                grid_w,
+                grid_h,
+                gw,
+                gh,
+            );
+            priority_scores[affected_idx] = score;
+            versions[affected_idx] = versions[affected_idx].wrapping_add(1);
+            if score >= threshold {
+                queue.push(ScoreFixPriorityEntry {
+                    order_priority: 0,
+                    score,
+                    cell_idx: affected_idx,
+                    version: versions[affected_idx],
+                });
+            }
+        }
+    }
+
+    Ok(GeometryScoreFixStats {
+        target_count,
+        distinct_states: distinct_states.len(),
+        candidate_evaluations,
+        changes,
+        initial_bending,
+        final_bending: global_bending,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn refresh_score_fix_priorities(
     changed_idx: usize,
@@ -5592,7 +6003,8 @@ pub fn render_blocks_smooth(
         None
     };
 
-    let needs_candidate_evaluation = args.fix_disc || args.score_fix;
+    let needs_candidate_evaluation =
+        args.fix_disc || (args.score_fix && !args.score_fix_geometry_first);
     let quantized_references = if args.fix_disc {
         build_quantized_cell_references(image, &grid_data, grid_w, grid_h, gw, gh)
     } else {
@@ -5945,7 +6357,44 @@ pub fn render_blocks_smooth(
         fix_disc_time = Some(t_fix.elapsed());
     }
 
-    if args.score_fix {
+    if args.score_fix && args.score_fix_geometry_first {
+        let raster = rendered_raster
+            .as_mut()
+            .expect("rendered raster should exist when score-fix is enabled");
+        let started = std::time::Instant::now();
+        let target_scores = score_fix_initial_disc_scores
+            .take()
+            .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
+        let stats = match run_geometry_score_fix(
+            args,
+            raster,
+            &mut grid_state,
+            &grid_data,
+            glyphs,
+            target_scores,
+            &source_raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            abort_flag.as_ref(),
+        ) {
+            Ok(stats) => stats,
+            Err(()) => return "Cancelled".into(),
+        };
+        log::info!(
+            "geometry-first score-fix selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} topology-preserving changes, and reduced overlapping-patch bending from {:.6} to {:.6} in {:?}",
+            stats.target_count,
+            stats.distinct_states,
+            stats.candidate_evaluations,
+            stats.changes,
+            stats.initial_bending,
+            stats.final_bending,
+            started.elapsed(),
+        );
+    }
+
+    if args.score_fix && !args.score_fix_geometry_first {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when score-fix is enabled");
@@ -7843,5 +8292,14 @@ mod tests {
             score_fix_spiral_ranks(3, 3),
             vec![0, 1, 2, 7, 8, 3, 6, 5, 4]
         );
+    }
+
+    #[test]
+    fn geometry_state_pool_removes_uniform_and_render_duplicate_states() {
+        let diagonal = make_test_glyph('a', &[1, 0, 0, 1], 2, 2);
+        let complement = make_test_glyph('b', &[0, 1, 1, 0], 2, 2);
+        let uniform = make_test_glyph('c', &[1, 1, 1, 1], 2, 2);
+        let states = distinct_nonuniform_glyph_states(&[diagonal, complement, uniform]);
+        assert_eq!(states, vec![(0, false), (0, true)]);
     }
 }
