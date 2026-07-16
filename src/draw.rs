@@ -4128,15 +4128,6 @@ fn run_score_fix_prefix_search(
         gw,
         gh,
     );
-    let global_reference = band_cache.is_none().then(|| {
-        crate::contour_score::prepare_reference_with_weights(
-            &source_preview,
-            preview_width,
-            preview_height,
-            crate::contour_score::PREVIEW_CELL_WIDTH,
-            contour_weights,
-        )
-    });
     let mut band_cache = prepare_score_fix_band_cache(
         &source_preview,
         &global_output_preview,
@@ -4148,6 +4139,15 @@ fn run_score_fix_prefix_search(
         gw,
         gh,
     );
+    let global_reference = band_cache.is_none().then(|| {
+        crate::contour_score::prepare_reference_with_weights(
+            &source_preview,
+            preview_width,
+            preview_height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            contour_weights,
+        )
+    });
     let initial_score = if let Some(cache) = band_cache.as_ref() {
         score_fix_band_score(
             cache.global_reference_length,
