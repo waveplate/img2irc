@@ -1,10 +1,10 @@
 use super::*;
 
 pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let max_tree = area.height.saturating_sub(12).max(5);
+    let max_tree = area.height.saturating_sub(14).max(5);
     app.glyph_tree_height = app.glyph_tree_height.clamp(5, max_tree);
-    let max_list = area.height.saturating_sub(app.glyph_tree_height + 7).max(5);
-    app.glyph_list_height = app.glyph_list_height.clamp(5, max_list);
+    let max_list = area.height.saturating_sub(app.glyph_tree_height + 7).max(7);
+    app.glyph_list_height = app.glyph_list_height.clamp(7, max_list);
 
     let chunks = Layout::vertical([
         Constraint::Length(app.glyph_tree_height),
@@ -68,7 +68,8 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
         if let Some(codes) = config_groups.get(target_key) {
             let glyph_chunks = Layout::vertical([
                 Constraint::Min(0),
-                Constraint::Length(3), // Save button
+                Constraint::Length(3), // Selection buttons
+                Constraint::Length(3), // Save/add buttons
             ])
             .split(chunks[2]);
 
@@ -98,27 +99,58 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .highlight_symbol("▸ ");
             f.render_stateful_widget(list, glyph_chunks[0], &mut app.glyph_list_state);
 
-            // Buttons at bottom
-            let btn_chunks =
+            // Bulk selection buttons above the persistent config actions.
+            let select_chunks =
                 Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
                     .split(glyph_chunks[1]);
+            let action_chunks =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(glyph_chunks[2]);
 
-            app.glyph_save_area = btn_chunks[0];
-            app.glyph_add_area = btn_chunks[1];
+            app.glyph_select_all_area = select_chunks[0];
+            app.glyph_select_none_area = select_chunks[1];
+            app.glyph_save_area = action_chunks[0];
+            app.glyph_add_area = action_chunks[1];
 
-            let save_focused = app.selected_control == 2;
-            let add_focused = app.selected_control == 3;
+            let select_all_focused = app.selected_control == 2;
+            let select_none_focused = app.selected_control == 3;
+            let save_focused = app.selected_control == 4;
+            let add_focused = app.selected_control == 5;
 
-            let save_style = if save_focused {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(TEXT)
+            let button_style = |focused| {
+                if focused {
+                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(TEXT)
+                }
             };
-            let add_style = if add_focused {
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(TEXT)
-            };
+
+            let select_all_style = button_style(select_all_focused);
+            let select_none_style = button_style(select_none_focused);
+            let save_style = button_style(save_focused);
+            let add_style = button_style(add_focused);
+
+            let select_all_btn = Paragraph::new(" Select All ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(ratatui::symbols::border::ROUNDED)
+                        .border_style(select_all_style),
+                )
+                .alignment(Alignment::Center)
+                .style(select_all_style);
+            f.render_widget(select_all_btn, select_chunks[0]);
+
+            let select_none_btn = Paragraph::new(" Select None ")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_set(ratatui::symbols::border::ROUNDED)
+                        .border_style(select_none_style),
+                )
+                .alignment(Alignment::Center)
+                .style(select_none_style);
+            f.render_widget(select_none_btn, select_chunks[1]);
 
             let save_btn = Paragraph::new(" Save Glyph Config ")
                 .block(
@@ -129,7 +161,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 )
                 .alignment(Alignment::Center)
                 .style(save_style);
-            f.render_widget(save_btn, btn_chunks[0]);
+            f.render_widget(save_btn, action_chunks[0]);
 
             let add_btn = Paragraph::new(" Add Range ")
                 .block(
@@ -140,7 +172,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 )
                 .alignment(Alignment::Center)
                 .style(add_style);
-            f.render_widget(add_btn, btn_chunks[1]);
+            f.render_widget(add_btn, action_chunks[1]);
 
             // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);

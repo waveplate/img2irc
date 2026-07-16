@@ -997,6 +997,8 @@ enum FocusTarget {
     Pipeline,
     GlyphTree,
     GlyphList,
+    GlyphSelectAll,
+    GlyphSelectNone,
     GlyphSave,
     GlyphAdd,
     Text,
@@ -1310,6 +1312,54 @@ impl App {
         }
     }
 
+    fn set_all_glyphs_selected(&mut self, selected: bool) {
+        let (config_groups, _) = crate::font::load_blocks_config_unfiltered();
+        let Some(node) = self.tree_state.get_selected_node() else {
+            return;
+        };
+        let target_key = if !node.full_path.is_empty() {
+            node.full_path.clone()
+        } else {
+            node.name.clone()
+        };
+        let Some(codes) = config_groups.get(&target_key) else {
+            return;
+        };
+
+        if selected {
+            // Persisted exclusions are absent from the enabled block itself, so
+            // selecting everything must restore that block as well as clearing
+            // transient exclusions.
+            crate::font::save_blocks_config(&target_key, &[]);
+            self.render_args.exclude.retain(|ch| {
+                !codes.contains(&(*ch as u32))
+            });
+        } else {
+            for ch in codes.iter().filter_map(|&code| char::from_u32(code)) {
+                if !self.render_args.exclude.contains(&ch) {
+                    self.render_args.exclude.push(ch);
+                }
+            }
+        }
+        self.mark_args_dirty();
+    }
+
+    fn activate_selected_glyph_control(&mut self) {
+        match self.selected_control {
+            0 => self.toggle_tree_selection(),
+            1 => self.toggle_glyph_selection(),
+            2 => self.set_all_glyphs_selected(true),
+            3 => self.set_all_glyphs_selected(false),
+            4 => {
+                if let Some(target_key) = self.save_selected_glyph_config() {
+                    log::info!("Saved glyph config for block: {}", target_key);
+                }
+            }
+            5 => self.show_unicode_explorer = true,
+            _ => {}
+        }
+    }
+
     fn save_selected_glyph_config(&self) -> Option<String> {
         let node = self.tree_state.get_selected_node()?;
         let target_key = if !node.full_path.is_empty() {
@@ -1527,6 +1577,8 @@ pub(crate) struct App {
     glyphs_area: Rect,
     tree_area: Rect,
     glyph_list_area: Rect,
+    glyph_select_all_area: Rect,
+    glyph_select_none_area: Rect,
     glyph_save_area: Rect,
     glyph_add_area: Rect,
     explorer_area: Rect,
@@ -2184,6 +2236,8 @@ impl App {
             glyphs_area: Rect::default(),
             tree_area: Rect::default(),
             glyph_list_area: Rect::default(),
+            glyph_select_all_area: Rect::default(),
+            glyph_select_none_area: Rect::default(),
             glyph_save_area: Rect::default(),
             glyph_add_area: Rect::default(),
             explorer_area: Rect::default(),
@@ -2401,6 +2455,8 @@ impl App {
             2 => vec![
                 FocusTarget::GlyphTree,
                 FocusTarget::GlyphList,
+                FocusTarget::GlyphSelectAll,
+                FocusTarget::GlyphSelectNone,
                 FocusTarget::GlyphSave,
                 FocusTarget::GlyphAdd,
             ],
@@ -2416,8 +2472,10 @@ impl App {
             2 => Some(match self.selected_control {
                 0 => FocusTarget::GlyphTree,
                 1 => FocusTarget::GlyphList,
-                2 => FocusTarget::GlyphSave,
-                3 => FocusTarget::GlyphAdd,
+                2 => FocusTarget::GlyphSelectAll,
+                3 => FocusTarget::GlyphSelectNone,
+                4 => FocusTarget::GlyphSave,
+                5 => FocusTarget::GlyphAdd,
                 _ => FocusTarget::GlyphTree,
             }),
             3 => Some(FocusTarget::Text),
@@ -2442,13 +2500,21 @@ impl App {
                 self.current_tab = 2;
                 self.selected_control = 1;
             }
-            FocusTarget::GlyphSave => {
+            FocusTarget::GlyphSelectAll => {
                 self.current_tab = 2;
                 self.selected_control = 2;
             }
-            FocusTarget::GlyphAdd => {
+            FocusTarget::GlyphSelectNone => {
                 self.current_tab = 2;
                 self.selected_control = 3;
+            }
+            FocusTarget::GlyphSave => {
+                self.current_tab = 2;
+                self.selected_control = 4;
+            }
+            FocusTarget::GlyphAdd => {
+                self.current_tab = 2;
+                self.selected_control = 5;
             }
             FocusTarget::Text => {
                 self.current_tab = 3;
@@ -6012,13 +6078,36 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let row = (mouse.row - app.glyph_list_area.y) as usize;
                                 app.glyph_list_state.select(Some(row));
                                 continue;
+                            } else if mouse.column >= app.glyph_select_all_area.x
+                                && mouse.column
+                                    < app.glyph_select_all_area.x + app.glyph_select_all_area.width
+                                && mouse.row >= app.glyph_select_all_area.y
+                                && mouse.row
+                                    < app.glyph_select_all_area.y + app.glyph_select_all_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 2;
+                                app.set_all_glyphs_selected(true);
+                                continue;
+                            } else if mouse.column >= app.glyph_select_none_area.x
+                                && mouse.column
+                                    < app.glyph_select_none_area.x + app.glyph_select_none_area.width
+                                && mouse.row >= app.glyph_select_none_area.y
+                                && mouse.row
+                                    < app.glyph_select_none_area.y
+                                        + app.glyph_select_none_area.height
+                            {
+                                app.current_tab = 2;
+                                app.selected_control = 3;
+                                app.set_all_glyphs_selected(false);
+                                continue;
                             } else if mouse.column >= app.glyph_save_area.x
                                 && mouse.column < app.glyph_save_area.x + app.glyph_save_area.width
                                 && mouse.row >= app.glyph_save_area.y
                                 && mouse.row < app.glyph_save_area.y + app.glyph_save_area.height
                             {
                                 app.current_tab = 2;
-                                app.selected_control = 2;
+                                app.selected_control = 4;
                                 if let Some(target_key) = app.save_selected_glyph_config() {
                                     log::info!("Saved glyph config for block: {}", target_key);
                                 }
@@ -6029,7 +6118,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 && mouse.row < app.glyph_add_area.y + app.glyph_add_area.height
                             {
                                 app.current_tab = 2;
-                                app.selected_control = 3;
+                                app.selected_control = 5;
                                 app.show_unicode_explorer = true;
                                 continue;
                             }
@@ -7138,7 +7227,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                 } else if app.current_tab == 2 {
-                                    if app.selected_control < 3 {
+                                    if app.selected_control < 5 {
                                         app.selected_control += 1;
                                     }
                                 } else if app.current_tab == 1 {
@@ -7199,22 +7288,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Char(' ') => {
                                 if app.current_tab == 2 {
-                                    if app.selected_control == 0 {
-                                        app.toggle_tree_selection();
-                                    } else if app.selected_control == 1 {
-                                        app.toggle_glyph_selection();
-                                    } else if app.selected_control == 2 {
-                                        if let Some(target_key) =
-                                            app.save_selected_glyph_config()
-                                        {
-                                            log::info!(
-                                                "Saved glyph config for block: {}",
-                                                target_key
-                                            );
-                                        }
-                                    } else if app.selected_control == 3 {
-                                        app.show_unicode_explorer = true;
-                                    }
+                                    app.activate_selected_glyph_control();
                                 } else if app.current_tab == 1 {
                                     if app.pipeline_expanded.is_none() {
                                         if let Some(node) =
@@ -7230,22 +7304,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Enter => {
                                 if app.current_tab == 2 {
-                                    if app.selected_control == 0 {
-                                        app.toggle_tree_selection();
-                                    } else if app.selected_control == 1 {
-                                        app.toggle_glyph_selection();
-                                    } else if app.selected_control == 2 {
-                                        if let Some(target_key) =
-                                            app.save_selected_glyph_config()
-                                        {
-                                            log::info!(
-                                                "Saved glyph config for block: {}",
-                                                target_key
-                                            );
-                                        }
-                                    } else if app.selected_control == 3 {
-                                        app.show_unicode_explorer = true;
-                                    }
+                                    app.activate_selected_glyph_control();
                                 } else if app.current_tab == 3 {
                                     if app.text_field_focus == TextFieldFocus::List {
                                         if app.text_selected == Some(0) {
