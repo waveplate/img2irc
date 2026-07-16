@@ -8091,7 +8091,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
         let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
 
         let mut title_right = format!(
-            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Font: {:.1}x{:.1} px | Line {} ({} bytes) | Contour: {:.3} ",
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Advance: {:.1}px | Line height: {:.1}px | Line {} ({} bytes) | Contour: {:.3} ",
             width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, p_score
         );
 

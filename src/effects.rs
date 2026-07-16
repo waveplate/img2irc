@@ -68,7 +68,20 @@ pub fn calculate_dimensions(
     } else {
         glyphs.float_metrics
     };
-    let cell_aspect = factor_x / factor_y;
+    // The integer bitmap dimensions necessarily jump at different font sizes
+    // (width is rounded while line height is ceiled). Terminals still lay out
+    // their grid from the font's continuous advance and line metrics, so using
+    // the bitmap ratio here makes the output alternate between aspect ratios as
+    // those two dimensions cross pixel boundaries independently.
+    let cell_aspect = if float_x.is_finite()
+        && float_y.is_finite()
+        && float_x > 0.0
+        && float_y > 0.0
+    {
+        float_x / float_y
+    } else {
+        factor_x / factor_y
+    };
     let image_aspect = (orig_w / orig_h).max(f32::MIN_POSITIVE);
 
     log::info!("factor_x: {}, float_x: {}", factor_x, float_x);
