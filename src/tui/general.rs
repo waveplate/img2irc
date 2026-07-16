@@ -88,17 +88,24 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
     let item_height: u16 = 2; // 1 row content + 1 row spacing
     let max_visible = avail_height / item_height as usize;
 
-    // Scrolling offset for controls
+    // Keep the viewport stationary while the selection remains visible. The
+    // previous offset was derived directly from the selected row, which pinned
+    // the selection to the bottom edge whenever the list had been scrolled.
     let selected_ctrl = if app.current_tab == 0 {
         app.selected_control
     } else {
         usize::MAX
     };
-    let scroll_offset = if selected_ctrl != usize::MAX && selected_ctrl >= max_visible {
-        selected_ctrl - max_visible + 1
-    } else {
-        0
-    };
+    let max_scroll_offset = controls.len().saturating_sub(max_visible);
+    app.general_scroll_offset = app.general_scroll_offset.min(max_scroll_offset);
+    if selected_ctrl != usize::MAX && max_visible > 0 {
+        if selected_ctrl < app.general_scroll_offset {
+            app.general_scroll_offset = selected_ctrl;
+        } else if selected_ctrl >= app.general_scroll_offset + max_visible {
+            app.general_scroll_offset = (selected_ctrl + 1 - max_visible).min(max_scroll_offset);
+        }
+    }
+    let scroll_offset = app.general_scroll_offset;
 
     let mut control_rects = Vec::new();
     let mut y = inner.y;

@@ -1354,6 +1354,7 @@ pub(crate) struct App {
     show_pipeline: bool,
     show_glyphs: bool,
     scroll: u16,
+    general_scroll_offset: usize,
 
     // Cancellation & Debouncing
     tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
@@ -1986,6 +1987,7 @@ impl App {
             show_pipeline: true,
             show_glyphs: true,
             scroll: 0,
+            general_scroll_offset: 0,
             tx_args,
             current_cancel_flag: initial_flag,
             args_dirty: false,
