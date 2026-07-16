@@ -4157,6 +4157,13 @@ fn run_score_fix_prefix_search(
     gh: usize,
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<ScoreFixPrefixStats, ()> {
+    // Preserve the established N=1 behaviour for the primary search: Score
+    // Fix being enabled must still produce a visible alternative even when
+    // that first alternative does not beat N=0.  Extra ordering trials are
+    // exploratory, however.  Forcing their first candidate into every cell
+    // makes the completed N=1 grid independent of visit order, and that grid
+    // commonly wins every trial before ordering can have any effect.
+    let force_first_prefix = matches!(ordering, ScoreFixOrdering::WorstFirst);
     let spiral_ranks = score_fix_spiral_ranks(grid_w, grid_h);
     let threshold = args.discontinuity_threshold.max(0.0);
     let mut targets = target_scores
@@ -4390,10 +4397,11 @@ fn run_score_fix_prefix_search(
                 )
             });
 
-            // N=1 is the enabled baseline, not the unchanged N=0 render. The
-            // first actual alternative is therefore applied unconditionally;
-            // disabling Score Fix remains the way to select N=0.
-            if prefix_index == 0 {
+            // N=1 remains the enabled baseline for the primary worst-first
+            // search. Additional ordering trials accept their first moves by
+            // the configured score, so changing the visit order can actually
+            // lead them into different neighbourhood-dependent states.
+            if prefix_index == 0 && force_first_prefix {
                 apply_choice_to_raster(
                     raster,
                     grid_data,
