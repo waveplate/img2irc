@@ -3072,11 +3072,43 @@ fn all_cell_discontinuity_scores(
         .collect()
 }
 
+#[derive(Clone, Copy)]
+struct AffectedCellIndices {
+    indices: [usize; 9],
+    len: usize,
+}
+
+impl std::ops::Deref for AffectedCellIndices {
+    type Target = [usize];
+
+    fn deref(&self) -> &Self::Target {
+        &self.indices[..self.len]
+    }
+}
+
+impl IntoIterator for AffectedCellIndices {
+    type Item = usize;
+    type IntoIter = std::iter::Take<std::array::IntoIter<usize, 9>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.indices.into_iter().take(self.len)
+    }
+}
+
+impl<'a> IntoIterator for &'a AffectedCellIndices {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 fn affected_discontinuity_cell_indices(
     curr_idx: usize,
     grid_w: usize,
     grid_h: usize,
-) -> Vec<usize> {
+) -> AffectedCellIndices {
     let cx = curr_idx % grid_w;
     let cy = curr_idx / grid_w;
     let x0 = cx.saturating_sub(NEIGHBORHOOD_RADIUS);
@@ -3084,13 +3116,15 @@ fn affected_discontinuity_cell_indices(
     let x1 = (cx + NEIGHBORHOOD_RADIUS).min(grid_w - 1);
     let y1 = (cy + NEIGHBORHOOD_RADIUS).min(grid_h - 1);
 
-    let mut indices = Vec::with_capacity((x1 - x0 + 1) * (y1 - y0 + 1));
+    let mut indices = [0usize; 9];
+    let mut len = 0usize;
     for y in y0..=y1 {
         for x in x0..=x1 {
-            indices.push(y * grid_w + x);
+            indices[len] = y * grid_w + x;
+            len += 1;
         }
     }
-    indices
+    AffectedCellIndices { indices, len }
 }
 
 fn local_discontinuity_sum_for_indices(
@@ -3214,6 +3248,718 @@ struct ScoreFixPrefixStats {
     initial_score: f64,
     best_score: f64,
     priority_refreshes: usize,
+    used_band_fast_path: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ScoreFixGlyphPreview {
+    #[allow(dead_code)]
+    mask: u128,
+    internal_boundary_length: usize,
+    left_edge: u16,
+    right_edge: u16,
+    top_edge: u8,
+    bottom_edge: u8,
+}
+
+struct ScoreFixBandCache {
+    glyph_previews: Vec<ScoreFixGlyphPreview>,
+    reference_patch_lengths: Vec<usize>,
+    output_patch_lengths: Vec<Option<usize>>,
+    global_reference_length: usize,
+    global_output_length: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScoreFixBandCandidate {
+    current_score: f64,
+    candidate_score: f64,
+    global_boundary_delta: isize,
+}
+
+#[inline]
+fn score_fix_band_only(weights: &crate::contour_score::ContourScoreWeights) -> bool {
+    weights.boundary_balance > 0.0
+        && weights.bending <= 0.0
+        && weights.endpoints <= 0.0
+        && weights.junctions <= 0.0
+        && weights.fragments <= 0.0
+        && weights.fidelity <= 0.0
+}
+
+fn score_fix_has_at_most_eight_colours<'a>(pixels: impl IntoIterator<Item = &'a [u8; 3]>) -> bool {
+    let mut colours = Vec::with_capacity(9);
+    for &pixel in pixels {
+        if !colours.contains(&pixel) {
+            colours.push(pixel);
+            if colours.len() > 8 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn score_fix_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> ScoreFixGlyphPreview {
+    let mut mask = 0u128;
+    for y in 0..crate::contour_score::PREVIEW_CELL_HEIGHT {
+        let source_y = y * gh / crate::contour_score::PREVIEW_CELL_HEIGHT;
+        for x in 0..crate::contour_score::PREVIEW_CELL_WIDTH {
+            let source_x = x * gw / crate::contour_score::PREVIEW_CELL_WIDTH;
+            if glyph.bitmap[source_y * gw + source_x] != 0 {
+                mask |= 1u128 << (y * crate::contour_score::PREVIEW_CELL_WIDTH + x);
+            }
+        }
+    }
+
+    // Compare all 112 horizontal and 120 vertical pixel pairs in parallel.
+    // The masks exclude row wrapping and the final row respectively.
+    let not_right_edge = u128::from_le_bytes([0x7f; 16]);
+    let first_fifteen_rows = (1u128 << 120) - 1;
+    let horizontal = ((mask ^ (mask >> 1)) & not_right_edge).count_ones() as usize;
+    let vertical = ((mask ^ (mask >> 8)) & first_fifteen_rows).count_ones() as usize;
+    let mut left_edge = 0u16;
+    let mut right_edge = 0u16;
+    for y in 0..crate::contour_score::PREVIEW_CELL_HEIGHT {
+        left_edge |= (((mask >> (y * crate::contour_score::PREVIEW_CELL_WIDTH)) & 1) as u16)
+            << y;
+        right_edge |= (((mask
+            >> (y * crate::contour_score::PREVIEW_CELL_WIDTH
+                + crate::contour_score::PREVIEW_CELL_WIDTH
+                - 1))
+            & 1) as u16)
+            << y;
+    }
+    ScoreFixGlyphPreview {
+        mask,
+        internal_boundary_length: horizontal + vertical,
+        left_edge,
+        right_edge,
+        top_edge: mask as u8,
+        bottom_edge: (mask >> 120) as u8,
+    }
+}
+
+#[inline]
+fn score_fix_edge_mismatches(
+    a_data: &BlockData,
+    a_mask: u16,
+    a_inverted: bool,
+    b_data: &BlockData,
+    b_mask: u16,
+    b_inverted: bool,
+    valid_mask: u16,
+) -> usize {
+    let a_fg = (a_mask ^ if a_inverted { valid_mask } else { 0 }) & valid_mask;
+    let b_fg = (b_mask ^ if b_inverted { valid_mask } else { 0 }) & valid_mask;
+    let a_bg = !a_fg & valid_mask;
+    let b_bg = !b_fg & valid_mask;
+    let mut matches = 0u32;
+    if a_data.fg == b_data.fg {
+        matches += (a_fg & b_fg).count_ones();
+    }
+    if a_data.fg == b_data.bg {
+        matches += (a_fg & b_bg).count_ones();
+    }
+    if a_data.bg == b_data.fg {
+        matches += (a_bg & b_fg).count_ones();
+    }
+    if a_data.bg == b_data.bg {
+        matches += (a_bg & b_bg).count_ones();
+    }
+    valid_mask.count_ones() as usize - matches as usize
+}
+
+#[cfg(test)]
+#[inline]
+fn score_fix_preview_pixel(
+    data: &BlockData,
+    glyph: ScoreFixGlyphPreview,
+    inverted: bool,
+    x: usize,
+    y: usize,
+) -> [u8; 3] {
+    let bit = ((glyph.mask >> (y * crate::contour_score::PREVIEW_CELL_WIDTH + x)) & 1) as u8;
+    if (bit ^ inverted as u8) != 0 {
+        data.fg
+    } else {
+        data.bg
+    }
+}
+
+fn score_fix_preview_internal_lengths(
+    preview: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+) -> Vec<usize> {
+    let cell_w = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_h = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let width = grid_w * cell_w;
+    (0..grid_w * grid_h)
+        .into_par_iter()
+        .map(|idx| {
+            let cell_x = idx % grid_w;
+            let cell_y = idx / grid_w;
+            let x0 = cell_x * cell_w;
+            let y0 = cell_y * cell_h;
+            let mut length = 0usize;
+            for y in 0..cell_h {
+                let row = (y0 + y) * width + x0;
+                for x in 1..cell_w {
+                    length += (preview[row + x - 1] != preview[row + x]) as usize;
+                }
+            }
+            for y in 1..cell_h {
+                let upper = (y0 + y - 1) * width + x0;
+                let lower = upper + width;
+                for x in 0..cell_w {
+                    length += (preview[upper + x] != preview[lower + x]) as usize;
+                }
+            }
+            length
+        })
+        .collect()
+}
+
+#[inline]
+fn score_fix_preview_at(
+    preview: &[[u8; 3]],
+    preview_width: usize,
+    cell_idx: usize,
+    grid_w: usize,
+    x: usize,
+    y: usize,
+) -> [u8; 3] {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    preview[(cell_y * crate::contour_score::PREVIEW_CELL_HEIGHT + y) * preview_width
+        + cell_x * crate::contour_score::PREVIEW_CELL_WIDTH
+        + x]
+}
+
+fn score_fix_patch_boundary_length(
+    preview: &[[u8; 3]],
+    internal_lengths: &[usize],
+    center_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+) -> usize {
+    let center_x = center_idx % grid_w;
+    let center_y = center_idx / grid_w;
+    let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let mut cells = [[0usize; 3]; 3];
+    let mut length = 0usize;
+    for (patch_y, row) in cells.iter_mut().enumerate() {
+        let cell_y = center_y
+            .saturating_add(patch_y)
+            .saturating_sub(1)
+            .min(grid_h - 1);
+        for (patch_x, idx) in row.iter_mut().enumerate() {
+            let cell_x = center_x
+                .saturating_add(patch_x)
+                .saturating_sub(1)
+                .min(grid_w - 1);
+            *idx = cell_y * grid_w + cell_x;
+            length += internal_lengths[*idx];
+        }
+    }
+
+    let cell_w = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_h = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    for row in cells {
+        for pair in row.windows(2) {
+            for y in 0..cell_h {
+                length += (score_fix_preview_at(
+                    preview,
+                    preview_width,
+                    pair[0],
+                    grid_w,
+                    cell_w - 1,
+                    y,
+                ) != score_fix_preview_at(preview, preview_width, pair[1], grid_w, 0, y))
+                    as usize;
+            }
+        }
+    }
+    for rows in cells.windows(2) {
+        for x in 0..3 {
+            for pixel_x in 0..cell_w {
+                length += (score_fix_preview_at(
+                    preview,
+                    preview_width,
+                    rows[0][x],
+                    grid_w,
+                    pixel_x,
+                    cell_h - 1,
+                ) != score_fix_preview_at(
+                    preview,
+                    preview_width,
+                    rows[1][x],
+                    grid_w,
+                    pixel_x,
+                    0,
+                )) as usize;
+            }
+        }
+    }
+    length
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn score_fix_patch_boundary_length_with_candidate(
+    preview: &[[u8; 3]],
+    internal_lengths: &[usize],
+    center_idx: usize,
+    changed_idx: usize,
+    data: &BlockData,
+    glyph: ScoreFixGlyphPreview,
+    inverted: bool,
+    candidate_internal_length: usize,
+    grid_w: usize,
+    grid_h: usize,
+) -> usize {
+    let center_x = center_idx % grid_w;
+    let center_y = center_idx / grid_w;
+    let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let mut cells = [[0usize; 3]; 3];
+    let mut length = 0usize;
+    for (patch_y, row) in cells.iter_mut().enumerate() {
+        let cell_y = center_y
+            .saturating_add(patch_y)
+            .saturating_sub(1)
+            .min(grid_h - 1);
+        for (patch_x, idx) in row.iter_mut().enumerate() {
+            let cell_x = center_x
+                .saturating_add(patch_x)
+                .saturating_sub(1)
+                .min(grid_w - 1);
+            *idx = cell_y * grid_w + cell_x;
+            length += if *idx == changed_idx {
+                candidate_internal_length
+            } else {
+                internal_lengths[*idx]
+            };
+        }
+    }
+
+    let pixel = |idx, x, y| {
+        if idx == changed_idx {
+            score_fix_preview_pixel(data, glyph, inverted, x, y)
+        } else {
+            score_fix_preview_at(preview, preview_width, idx, grid_w, x, y)
+        }
+    };
+    let cell_w = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_h = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    for row in cells {
+        for pair in row.windows(2) {
+            for y in 0..cell_h {
+                length += (pixel(pair[0], cell_w - 1, y) != pixel(pair[1], 0, y)) as usize;
+            }
+        }
+    }
+    for rows in cells.windows(2) {
+        for x in 0..3 {
+            for pixel_x in 0..cell_w {
+                length += (pixel(rows[0][x], pixel_x, cell_h - 1)
+                    != pixel(rows[1][x], pixel_x, 0)) as usize;
+            }
+        }
+    }
+    length
+}
+
+fn score_fix_patch_boundary_length_from_cells(
+    grid_state: &[(usize, bool)],
+    grid_data: &[BlockData],
+    glyph_previews: &[ScoreFixGlyphPreview],
+    center_idx: usize,
+    changed: Option<(usize, (usize, bool))>,
+    grid_w: usize,
+    grid_h: usize,
+) -> usize {
+    let center_x = center_idx % grid_w;
+    let center_y = center_idx / grid_w;
+    let mut cells = [[0usize; 3]; 3];
+    for (patch_y, row) in cells.iter_mut().enumerate() {
+        let cell_y = center_y
+            .saturating_add(patch_y)
+            .saturating_sub(1)
+            .min(grid_h - 1);
+        for (patch_x, idx) in row.iter_mut().enumerate() {
+            let cell_x = center_x
+                .saturating_add(patch_x)
+                .saturating_sub(1)
+                .min(grid_w - 1);
+            *idx = cell_y * grid_w + cell_x;
+        }
+    }
+    let choice_at = |idx: usize| match changed {
+        Some((changed_idx, choice)) if idx == changed_idx => choice,
+        _ => grid_state[idx],
+    };
+    let mut length = cells
+        .iter()
+        .flatten()
+        .map(|&idx| {
+            let choice = choice_at(idx);
+            if grid_data[idx].fg == grid_data[idx].bg {
+                0
+            } else {
+                glyph_previews[choice.0].internal_boundary_length
+            }
+        })
+        .sum::<usize>();
+
+    for row in cells {
+        for pair in row.windows(2) {
+            let left = pair[0];
+            let right = pair[1];
+            let left_choice = choice_at(left);
+            let right_choice = choice_at(right);
+            length += score_fix_edge_mismatches(
+                &grid_data[left],
+                glyph_previews[left_choice.0].right_edge,
+                left_choice.1,
+                &grid_data[right],
+                glyph_previews[right_choice.0].left_edge,
+                right_choice.1,
+                u16::MAX,
+            );
+        }
+    }
+    for rows in cells.windows(2) {
+        for x in 0..3 {
+            let top = rows[0][x];
+            let bottom = rows[1][x];
+            let top_choice = choice_at(top);
+            let bottom_choice = choice_at(bottom);
+            length += score_fix_edge_mismatches(
+                &grid_data[top],
+                glyph_previews[top_choice.0].bottom_edge as u16,
+                top_choice.1,
+                &grid_data[bottom],
+                glyph_previews[bottom_choice.0].top_edge as u16,
+                bottom_choice.1,
+                u8::MAX as u16,
+            );
+        }
+    }
+    length
+}
+
+fn score_fix_grid_boundary_length(
+    preview: &[[u8; 3]],
+    internal_lengths: &[usize],
+    grid_w: usize,
+    grid_h: usize,
+) -> usize {
+    let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_w = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let cell_h = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let mut length = internal_lengths.iter().sum::<usize>();
+    for cell_y in 0..grid_h {
+        for cell_x in 1..grid_w {
+            let left = cell_y * grid_w + cell_x - 1;
+            let right = left + 1;
+            for y in 0..cell_h {
+                length += (score_fix_preview_at(
+                    preview,
+                    preview_width,
+                    left,
+                    grid_w,
+                    cell_w - 1,
+                    y,
+                ) != score_fix_preview_at(preview, preview_width, right, grid_w, 0, y))
+                    as usize;
+            }
+        }
+    }
+    for cell_y in 1..grid_h {
+        for cell_x in 0..grid_w {
+            let top = (cell_y - 1) * grid_w + cell_x;
+            let bottom = top + grid_w;
+            for x in 0..cell_w {
+                length += (score_fix_preview_at(
+                    preview,
+                    preview_width,
+                    top,
+                    grid_w,
+                    x,
+                    cell_h - 1,
+                ) != score_fix_preview_at(preview, preview_width, bottom, grid_w, x, 0))
+                    as usize;
+            }
+        }
+    }
+    length
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_fix_center_boundary_contribution(
+    grid_state: &[(usize, bool)],
+    grid_data: &[BlockData],
+    glyph_previews: &[ScoreFixGlyphPreview],
+    cell_idx: usize,
+    grid_w: usize,
+    grid_h: usize,
+    candidate: Option<(usize, bool)>,
+    replicate_edges: bool,
+) -> usize {
+    let cell_x = cell_idx % grid_w;
+    let cell_y = cell_idx / grid_w;
+    let center_choice = candidate.unwrap_or(grid_state[cell_idx]);
+    let center_data = &grid_data[cell_idx];
+    let center_glyph = glyph_previews[center_choice.0];
+    let mut length = if center_data.fg == center_data.bg {
+        0
+    } else {
+        center_glyph.internal_boundary_length
+    };
+
+    let mut add_vertical_seam = |neighbor_idx: usize, center_mask: u16, neighbor_mask: u16| {
+        let neighbor_choice = grid_state[neighbor_idx];
+        length += score_fix_edge_mismatches(
+            center_data,
+            center_mask,
+            center_choice.1,
+            &grid_data[neighbor_idx],
+            neighbor_mask,
+            neighbor_choice.1,
+            u16::MAX,
+        );
+    };
+
+    if cell_x > 0 || replicate_edges {
+        let neighbor = cell_y * grid_w + cell_x.saturating_sub(1);
+        let neighbor_glyph = glyph_previews[grid_state[neighbor].0];
+        add_vertical_seam(neighbor, center_glyph.left_edge, neighbor_glyph.right_edge);
+    }
+    if cell_x + 1 < grid_w || replicate_edges {
+        let neighbor = cell_y * grid_w + (cell_x + 1).min(grid_w - 1);
+        let neighbor_glyph = glyph_previews[grid_state[neighbor].0];
+        add_vertical_seam(neighbor, center_glyph.right_edge, neighbor_glyph.left_edge);
+    }
+
+    let mut add_horizontal_seam = |neighbor_idx: usize, center_mask: u8, neighbor_mask: u8| {
+        let neighbor_choice = grid_state[neighbor_idx];
+        length += score_fix_edge_mismatches(
+            center_data,
+            center_mask as u16,
+            center_choice.1,
+            &grid_data[neighbor_idx],
+            neighbor_mask as u16,
+            neighbor_choice.1,
+            u8::MAX as u16,
+        );
+    };
+    if cell_y > 0 || replicate_edges {
+        let neighbor = cell_y.saturating_sub(1) * grid_w + cell_x;
+        let neighbor_glyph = glyph_previews[grid_state[neighbor].0];
+        add_horizontal_seam(neighbor, center_glyph.top_edge, neighbor_glyph.bottom_edge);
+    }
+    if cell_y + 1 < grid_h || replicate_edges {
+        let neighbor = (cell_y + 1).min(grid_h - 1) * grid_w + cell_x;
+        let neighbor_glyph = glyph_previews[grid_state[neighbor].0];
+        add_horizontal_seam(neighbor, center_glyph.bottom_edge, neighbor_glyph.top_edge);
+    }
+    length
+}
+
+#[inline]
+fn score_fix_band_score(reference_length: usize, output_length: usize, weight: f64) -> f64 {
+    weight.max(0.0)
+        * 100.0
+        * (((output_length as f64 + 1.0) / (reference_length as f64 + 1.0))
+            .ln()
+            .abs())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_score_fix_band_cache(
+    source_preview: &[[u8; 3]],
+    output_preview: &[[u8; 3]],
+    grid_data: &[BlockData],
+    glyphs: &[FastGlyph],
+    weights: &crate::contour_score::ContourScoreWeights,
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+) -> Option<ScoreFixBandCache> {
+    if !score_fix_band_only(weights)
+        || grid_w == 0
+        || grid_h == 0
+        || source_preview.len()
+            != grid_w
+                * grid_h
+                * crate::contour_score::PREVIEW_CELL_WIDTH
+                * crate::contour_score::PREVIEW_CELL_HEIGHT
+        || !score_fix_has_at_most_eight_colours(source_preview)
+        || !score_fix_has_at_most_eight_colours(
+            grid_data.iter().flat_map(|data| [&data.fg, &data.bg]),
+        )
+    {
+        return None;
+    }
+
+    let glyph_previews = glyphs
+        .par_iter()
+        .map(|glyph| score_fix_preview_glyph(glyph, gw, gh))
+        .collect::<Vec<_>>();
+    let reference_internal_lengths =
+        score_fix_preview_internal_lengths(source_preview, grid_w, grid_h);
+    let output_internal_lengths =
+        score_fix_preview_internal_lengths(output_preview, grid_w, grid_h);
+    let reference_patch_lengths = (0..grid_w * grid_h)
+        .into_par_iter()
+        .map(|idx| {
+            score_fix_patch_boundary_length(
+                source_preview,
+                &reference_internal_lengths,
+                idx,
+                grid_w,
+                grid_h,
+            )
+        })
+        .collect::<Vec<_>>();
+    let global_reference_length = score_fix_grid_boundary_length(
+        source_preview,
+        &reference_internal_lengths,
+        grid_w,
+        grid_h,
+    );
+    let global_output_length = score_fix_grid_boundary_length(
+        output_preview,
+        &output_internal_lengths,
+        grid_w,
+        grid_h,
+    );
+
+    Some(ScoreFixBandCache {
+        glyph_previews,
+        reference_patch_lengths,
+        output_patch_lengths: vec![None; grid_w * grid_h],
+        global_reference_length,
+        global_output_length,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_score_fix_band_candidate(
+    cache: &mut ScoreFixBandCache,
+    grid_state: &[(usize, bool)],
+    grid_data: &[BlockData],
+    curr_idx: usize,
+    candidate: (usize, bool),
+    boundary_weight: f64,
+    grid_w: usize,
+    grid_h: usize,
+) -> ScoreFixBandCandidate {
+    let current_patch_length = cache.output_patch_lengths[curr_idx].unwrap_or_else(|| {
+        let length = score_fix_patch_boundary_length_from_cells(
+            grid_state,
+            grid_data,
+            &cache.glyph_previews,
+            curr_idx,
+            None,
+            grid_w,
+            grid_h,
+        );
+        cache.output_patch_lengths[curr_idx] = Some(length);
+        length
+    });
+    let current_local_contribution = score_fix_center_boundary_contribution(
+        grid_state,
+        grid_data,
+        &cache.glyph_previews,
+        curr_idx,
+        grid_w,
+        grid_h,
+        None,
+        true,
+    );
+    let candidate_local_contribution = score_fix_center_boundary_contribution(
+        grid_state,
+        grid_data,
+        &cache.glyph_previews,
+        curr_idx,
+        grid_w,
+        grid_h,
+        Some(candidate),
+        true,
+    );
+    let candidate_patch_length = current_patch_length - current_local_contribution
+        + candidate_local_contribution;
+    let cell_x = curr_idx % grid_w;
+    let cell_y = curr_idx / grid_w;
+    let global_boundary_delta = if cell_x > 0
+        && cell_x + 1 < grid_w
+        && cell_y > 0
+        && cell_y + 1 < grid_h
+    {
+        candidate_local_contribution as isize - current_local_contribution as isize
+    } else {
+        let current_global_contribution = score_fix_center_boundary_contribution(
+            grid_state,
+            grid_data,
+            &cache.glyph_previews,
+            curr_idx,
+            grid_w,
+            grid_h,
+            None,
+            false,
+        );
+        let candidate_global_contribution = score_fix_center_boundary_contribution(
+            grid_state,
+            grid_data,
+            &cache.glyph_previews,
+            curr_idx,
+            grid_w,
+            grid_h,
+            Some(candidate),
+            false,
+        );
+        candidate_global_contribution as isize - current_global_contribution as isize
+    };
+    let reference_length = cache.reference_patch_lengths[curr_idx];
+    ScoreFixBandCandidate {
+        current_score: score_fix_band_score(
+            reference_length,
+            current_patch_length,
+            boundary_weight,
+        ),
+        candidate_score: score_fix_band_score(
+            reference_length,
+            candidate_patch_length,
+            boundary_weight,
+        ),
+        global_boundary_delta,
+    }
+}
+
+fn apply_score_fix_band_commit(
+    cache: &mut ScoreFixBandCache,
+    curr_idx: usize,
+    candidate: ScoreFixBandCandidate,
+    grid_w: usize,
+    grid_h: usize,
+) {
+    cache.global_output_length = if candidate.global_boundary_delta >= 0 {
+        cache
+            .global_output_length
+            .checked_add(candidate.global_boundary_delta as usize)
+            .expect("score-fix global boundary length overflowed")
+    } else {
+        cache
+            .global_output_length
+            .checked_sub((-candidate.global_boundary_delta) as usize)
+            .expect("score-fix global boundary length became negative")
+    };
+    for idx in affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h) {
+        cache.output_patch_lengths[idx] = None;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3326,21 +4072,31 @@ fn run_score_fix_prefix_search(
     // the processing order within each prefix remains dynamic.
     // Deduplicate before truncating so N counts actual rendered alternatives,
     // not the unchanged glyph or duplicate glyph/inversion states.
-    for &(curr_idx, _) in &targets {
-        if grid_data[curr_idx].fg == grid_data[curr_idx].bg {
-            continue;
-        }
-        let current_choice = baseline_state[curr_idx];
-        let Some(costs) = block_glyph_costs.get(curr_idx) else {
-            continue;
-        };
-        let candidates_with_duplicates = best_candidate_pool_pre(costs, costs.len());
-        let original_count = candidates_with_duplicates.len();
-        let mut candidates =
-            deduplicate_rendered_candidates(candidates_with_duplicates, glyphs, current_choice);
-        duplicate_candidates_skipped += original_count.saturating_sub(candidates.len());
-        candidates.truncate(candidate_count.min(candidates.len()));
+    let prepared_candidates = targets
+        .par_iter()
+        .map(|&(curr_idx, _)| {
+            if grid_data[curr_idx].fg == grid_data[curr_idx].bg {
+                return (curr_idx, Vec::new(), 0usize);
+            }
+            let current_choice = baseline_state[curr_idx];
+            let Some(costs) = block_glyph_costs.get(curr_idx) else {
+                return (curr_idx, Vec::new(), 0usize);
+            };
+            let candidates_with_duplicates = best_candidate_pool_pre(costs, costs.len());
+            let original_count = candidates_with_duplicates.len();
+            let mut candidates = deduplicate_rendered_candidates(
+                candidates_with_duplicates,
+                glyphs,
+                current_choice,
+            );
+            let skipped = original_count.saturating_sub(candidates.len());
+            candidates.truncate(candidate_count.min(candidates.len()));
+            (curr_idx, candidates, skipped)
+        })
+        .collect::<Vec<_>>();
+    for (curr_idx, candidates, skipped) in prepared_candidates {
         candidate_trials += candidates.len();
+        duplicate_candidates_skipped += skipped;
         candidate_lists[curr_idx] = candidates;
     }
 
@@ -3365,13 +4121,6 @@ fn run_score_fix_prefix_search(
     } else {
         Vec::new()
     };
-    let global_reference = crate::contour_score::prepare_reference_with_weights(
-        &source_preview,
-        preview_width,
-        preview_height,
-        crate::contour_score::PREVIEW_CELL_WIDTH,
-        contour_weights,
-    );
     let (mut global_output_preview, _, _) = crate::contour_score::normalize_preview_raster(
         raster,
         grid_w,
@@ -3379,13 +4128,43 @@ fn run_score_fix_prefix_search(
         gw,
         gh,
     );
-    let initial_score = crate::contour_score::score_rgb_against_prepared_with_weights(
-        &global_reference,
+    let global_reference = band_cache.is_none().then(|| {
+        crate::contour_score::prepare_reference_with_weights(
+            &source_preview,
+            preview_width,
+            preview_height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            contour_weights,
+        )
+    });
+    let mut band_cache = prepare_score_fix_band_cache(
+        &source_preview,
         &global_output_preview,
-        crate::contour_score::PREVIEW_CELL_WIDTH,
+        grid_data,
+        glyphs,
         contour_weights,
-    )
-    .total;
+        grid_w,
+        grid_h,
+        gw,
+        gh,
+    );
+    let initial_score = if let Some(cache) = band_cache.as_ref() {
+        score_fix_band_score(
+            cache.global_reference_length,
+            cache.global_output_length,
+            contour_weights.boundary_balance,
+        )
+    } else {
+        crate::contour_score::score_rgb_against_prepared_with_weights(
+            global_reference
+                .as_ref()
+                .expect("general score-fix reference should be prepared"),
+            &global_output_preview,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+            contour_weights,
+        )
+        .total
+    };
     if prefix_count == 0 {
         return Ok(ScoreFixPrefixStats {
             target_count,
@@ -3398,6 +4177,7 @@ fn run_score_fix_prefix_search(
             initial_score,
             best_score: initial_score,
             priority_refreshes: 0,
+            used_band_fast_path: band_cache.is_some(),
         });
     }
 
@@ -3411,23 +4191,27 @@ fn run_score_fix_prefix_search(
             reference_needed[target_idx] = true;
         }
     }
-    let mut cached_references = reference_needed
-        .into_par_iter()
-        .enumerate()
-        .map(|(idx, needed)| {
-            needed.then(|| {
-                prepare_local_preview_reference(
-                    source_raster,
-                    idx,
-                    grid_w,
-                    grid_h,
-                    gw,
-                    gh,
-                    contour_weights,
-                )
+    let mut cached_references = if band_cache.is_some() {
+        (0..grid_w * grid_h).map(|_| None).collect::<Vec<_>>()
+    } else {
+        reference_needed
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, needed)| {
+                needed.then(|| {
+                    prepare_local_preview_reference(
+                        source_raster,
+                        idx,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                        contour_weights,
+                    )
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+    };
     let mut cached_cell_scores = vec![None::<f64>; grid_w * grid_h];
     let mut best_prefix_raster = raster.clone();
     let mut best_prefix_state = grid_state.clone();
@@ -3436,12 +4220,15 @@ fn run_score_fix_prefix_search(
     let mut changes = 0usize;
     let mut rejected = 0usize;
     let mut priority_refreshes = 0usize;
+    let mut processed = vec![false; grid_w * grid_h];
+    let mut priority_versions = vec![0u32; grid_w * grid_h];
+    let mut priority_queue = BinaryHeap::with_capacity(target_count);
 
     for prefix_index in 0..prefix_count {
         let mut prefix_changed = false;
-        let mut processed = vec![false; grid_w * grid_h];
-        let mut priority_versions = vec![0u32; grid_w * grid_h];
-        let mut priority_queue = BinaryHeap::with_capacity(target_count);
+        processed.fill(false);
+        priority_versions.fill(0);
+        priority_queue.clear();
         for &(cell_idx, _) in &targets {
             let score = priority_scores[cell_idx];
             if candidate_lists[cell_idx].get(prefix_index).is_some() && score >= threshold {
@@ -3473,6 +4260,18 @@ fn run_score_fix_prefix_search(
             if candidate == current_choice {
                 continue;
             }
+            let band_candidate = band_cache.as_mut().map(|cache| {
+                evaluate_score_fix_band_candidate(
+                    cache,
+                    grid_state,
+                    grid_data,
+                    curr_idx,
+                    candidate,
+                    contour_weights.boundary_balance,
+                    grid_w,
+                    grid_h,
+                )
+            });
 
             // N=1 is the enabled baseline, not the unchanged N=0 render. The
             // first actual alternative is therefore applied unconditionally;
@@ -3500,6 +4299,11 @@ fn run_score_fix_prefix_search(
                     gw,
                     gh,
                 );
+                if let (Some(cache), Some(evaluation)) =
+                    (band_cache.as_mut(), band_candidate)
+                {
+                    apply_score_fix_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
+                }
                 changes += 1;
                 prefix_changed = true;
                 priority_refreshes += refresh_score_fix_priorities(
@@ -3520,83 +4324,87 @@ fn run_score_fix_prefix_search(
                 continue;
             }
 
-            let cell_x = curr_idx % grid_w;
-            let cell_y = curr_idx / grid_w;
-            let output_patch = extract_local_patch(
-                &global_output_preview,
-                cell_x,
-                cell_y,
-                grid_w,
-                grid_h,
-                crate::contour_score::PREVIEW_CELL_WIDTH,
-                crate::contour_score::PREVIEW_CELL_HEIGHT,
-            );
-            let mut output_preview = output_patch.pixels;
-            let local_preview_width = output_patch.width;
-            let prepared_reference = cached_references[curr_idx]
-                .as_ref()
-                .expect("score-fix reference should be cached");
-            let (current_score, candidate_score) = if contour_weights.fidelity > 0.0 {
-                let baseline_preview = output_preview.clone();
-                let (current_score_details, prepared_output) =
-                    crate::contour_score::score_rgb_and_prepare_output_with_weights(
-                        prepared_reference,
-                        &baseline_preview,
-                        crate::contour_score::PREVIEW_CELL_WIDTH,
-                        contour_weights,
-                    );
-                paint_preview_center_glyph(
-                    &mut output_preview,
-                    local_preview_width,
-                    &grid_data[curr_idx],
-                    &glyphs[glyph_idx],
-                    inverted,
-                    gw,
-                    gh,
-                );
-                let candidate_score =
-                    crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
-                        prepared_reference,
-                        &prepared_output,
-                        &baseline_preview,
-                        &output_preview,
-                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
-                        NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
-                        crate::contour_score::PREVIEW_CELL_WIDTH,
-                        crate::contour_score::PREVIEW_CELL_HEIGHT,
-                        crate::contour_score::PREVIEW_CELL_WIDTH,
-                        contour_weights,
-                    )
-                    .total;
-                (current_score_details.total, candidate_score)
+            let (current_score, candidate_score) = if let Some(evaluation) = band_candidate {
+                (evaluation.current_score, evaluation.candidate_score)
             } else {
-                let current_score = cached_cell_scores[curr_idx].unwrap_or_else(|| {
-                    crate::contour_score::score_rgb_against_prepared_with_weights(
-                        prepared_reference,
-                        &output_preview,
-                        crate::contour_score::PREVIEW_CELL_WIDTH,
-                        contour_weights,
-                    )
-                    .total
-                });
-                paint_preview_center_glyph(
-                    &mut output_preview,
-                    local_preview_width,
-                    &grid_data[curr_idx],
-                    &glyphs[glyph_idx],
-                    inverted,
-                    gw,
-                    gh,
+                let cell_x = curr_idx % grid_w;
+                let cell_y = curr_idx / grid_w;
+                let output_patch = extract_local_patch(
+                    &global_output_preview,
+                    cell_x,
+                    cell_y,
+                    grid_w,
+                    grid_h,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    crate::contour_score::PREVIEW_CELL_HEIGHT,
                 );
-                let candidate_score =
-                    crate::contour_score::score_rgb_against_prepared_with_weights(
-                        prepared_reference,
-                        &output_preview,
-                        crate::contour_score::PREVIEW_CELL_WIDTH,
-                        contour_weights,
-                    )
-                    .total;
-                (current_score, candidate_score)
+                let mut output_preview = output_patch.pixels;
+                let local_preview_width = output_patch.width;
+                let prepared_reference = cached_references[curr_idx]
+                    .as_ref()
+                    .expect("score-fix reference should be cached");
+                if contour_weights.fidelity > 0.0 {
+                    let baseline_preview = output_preview.clone();
+                    let (current_score_details, prepared_output) =
+                        crate::contour_score::score_rgb_and_prepare_output_with_weights(
+                            prepared_reference,
+                            &baseline_preview,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            contour_weights,
+                        );
+                    paint_preview_center_glyph(
+                        &mut output_preview,
+                        local_preview_width,
+                        &grid_data[curr_idx],
+                        &glyphs[glyph_idx],
+                        inverted,
+                        gw,
+                        gh,
+                    );
+                    let candidate_score =
+                        crate::contour_score::score_rgb_candidate_against_prepared_with_weights(
+                            prepared_reference,
+                            &prepared_output,
+                            &baseline_preview,
+                            &output_preview,
+                            NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_WIDTH,
+                            NEIGHBORHOOD_RADIUS * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            crate::contour_score::PREVIEW_CELL_HEIGHT,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            contour_weights,
+                        )
+                        .total;
+                    (current_score_details.total, candidate_score)
+                } else {
+                    let current_score = cached_cell_scores[curr_idx].unwrap_or_else(|| {
+                        crate::contour_score::score_rgb_against_prepared_with_weights(
+                            prepared_reference,
+                            &output_preview,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            contour_weights,
+                        )
+                        .total
+                    });
+                    paint_preview_center_glyph(
+                        &mut output_preview,
+                        local_preview_width,
+                        &grid_data[curr_idx],
+                        &glyphs[glyph_idx],
+                        inverted,
+                        gw,
+                        gh,
+                    );
+                    let candidate_score =
+                        crate::contour_score::score_rgb_against_prepared_with_weights(
+                            prepared_reference,
+                            &output_preview,
+                            crate::contour_score::PREVIEW_CELL_WIDTH,
+                            contour_weights,
+                        )
+                        .total;
+                    (current_score, candidate_score)
+                }
             };
             cached_cell_scores[curr_idx] = Some(current_score);
             if candidate_score + 1e-9 >= current_score {
@@ -3626,10 +4434,33 @@ fn run_score_fix_prefix_search(
                     gw,
                     gh,
                 );
+                if let (Some(cache), Some(evaluation)) =
+                    (band_cache.as_mut(), band_candidate)
+                {
+                    apply_score_fix_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
+                }
                 for idx in affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h) {
                     cached_cell_scores[idx] = None;
                 }
-                cached_cell_scores[curr_idx] = Some(candidate_score);
+                cached_cell_scores[curr_idx] = Some(if let Some(cache) = band_cache.as_mut() {
+                    let length = score_fix_patch_boundary_length_from_cells(
+                        grid_state,
+                        grid_data,
+                        &cache.glyph_previews,
+                        curr_idx,
+                        None,
+                        grid_w,
+                        grid_h,
+                    );
+                    cache.output_patch_lengths[curr_idx] = Some(length);
+                    score_fix_band_score(
+                        cache.reference_patch_lengths[curr_idx],
+                        length,
+                        contour_weights.boundary_balance,
+                    )
+                } else {
+                    candidate_score
+                });
                 changes += 1;
                 prefix_changed = true;
                 priority_refreshes += refresh_score_fix_priorities(
@@ -3653,19 +4484,99 @@ fn run_score_fix_prefix_search(
             let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
             let mut before_sum = 0.0;
             for &idx in &affected {
-                if cached_references[idx].is_none() {
-                    cached_references[idx] = Some(prepare_local_preview_reference(
-                        source_raster,
+                if cached_cell_scores[idx].is_none() {
+                    cached_cell_scores[idx] = Some(if let Some(cache) = band_cache.as_mut() {
+                        let length = cache.output_patch_lengths[idx].unwrap_or_else(|| {
+                            let length = score_fix_patch_boundary_length_from_cells(
+                                grid_state,
+                                grid_data,
+                                &cache.glyph_previews,
+                                idx,
+                                None,
+                                grid_w,
+                                grid_h,
+                            );
+                            cache.output_patch_lengths[idx] = Some(length);
+                            length
+                        });
+                        score_fix_band_score(
+                            cache.reference_patch_lengths[idx],
+                            length,
+                            contour_weights.boundary_balance,
+                        )
+                    } else {
+                        if cached_references[idx].is_none() {
+                            cached_references[idx] = Some(prepare_local_preview_reference(
+                                source_raster,
+                                idx,
+                                grid_w,
+                                grid_h,
+                                gw,
+                                gh,
+                                contour_weights,
+                            ));
+                        }
+                        score_local_normalized_preview_output(
+                            cached_references[idx]
+                                .as_ref()
+                                .expect("score-fix reference should be cached"),
+                            &global_output_preview,
+                            idx,
+                            grid_w,
+                            grid_h,
+                            contour_weights,
+                        )
+                    });
+                }
+                before_sum +=
+                    cached_cell_scores[idx].expect("score-fix cell score should be cached");
+            }
+            let mut band_patch_lengths = [0usize; 9];
+            let mut new_scores = [0.0f64; 9];
+            if let (Some(cache), Some(_evaluation)) =
+                (band_cache.as_ref(), band_candidate)
+            {
+                for (slot, &idx) in affected.iter().enumerate() {
+                    let length = score_fix_patch_boundary_length_from_cells(
+                        grid_state,
+                        grid_data,
+                        &cache.glyph_previews,
                         idx,
+                        Some((curr_idx, candidate)),
                         grid_w,
                         grid_h,
-                        gw,
-                        gh,
-                        contour_weights,
-                    ));
+                    );
+                    band_patch_lengths[slot] = length;
+                    new_scores[slot] = score_fix_band_score(
+                        cache.reference_patch_lengths[idx],
+                        length,
+                        contour_weights.boundary_balance,
+                    );
                 }
-                if cached_cell_scores[idx].is_none() {
-                    cached_cell_scores[idx] = Some(score_local_normalized_preview_output(
+            } else {
+                apply_choice_to_raster(
+                    raster,
+                    grid_data,
+                    glyphs,
+                    grid_w,
+                    gw,
+                    gh,
+                    curr_idx,
+                    candidate,
+                );
+                paint_global_preview_cell(
+                    &mut global_output_preview,
+                    preview_width,
+                    curr_idx,
+                    grid_w,
+                    &grid_data[curr_idx],
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    gw,
+                    gh,
+                );
+                for (slot, &idx) in affected.iter().enumerate() {
+                    new_scores[slot] = score_local_normalized_preview_output(
                         cached_references[idx]
                             .as_ref()
                             .expect("score-fix reference should be cached"),
@@ -3674,49 +4585,56 @@ fn run_score_fix_prefix_search(
                         grid_w,
                         grid_h,
                         contour_weights,
-                    ));
+                    );
                 }
-                before_sum +=
-                    cached_cell_scores[idx].expect("score-fix cell score should be cached");
             }
-            apply_choice_to_raster(
-                raster,
-                grid_data,
-                glyphs,
-                grid_w,
-                gw,
-                gh,
-                curr_idx,
-                candidate,
-            );
-            paint_global_preview_cell(
-                &mut global_output_preview,
-                preview_width,
-                curr_idx,
-                grid_w,
-                &grid_data[curr_idx],
-                &glyphs[candidate.0],
-                candidate.1,
-                gw,
-                gh,
-            );
-            let mut new_scores = Vec::with_capacity(affected.len());
-            for &idx in &affected {
-                new_scores.push(score_local_normalized_preview_output(
-                    cached_references[idx]
-                        .as_ref()
-                        .expect("score-fix reference should be cached"),
-                    &global_output_preview,
-                    idx,
-                    grid_w,
-                    grid_h,
-                    contour_weights,
-                ));
-            }
-            let after_sum = new_scores.iter().sum::<f64>();
+            let after_sum = new_scores[..affected.len()].iter().sum::<f64>();
             if after_sum + 1e-9 < before_sum {
+                if band_candidate.is_some() {
+                    apply_choice_to_raster(
+                        raster,
+                        grid_data,
+                        glyphs,
+                        grid_w,
+                        gw,
+                        gh,
+                        curr_idx,
+                        candidate,
+                    );
+                    paint_global_preview_cell(
+                        &mut global_output_preview,
+                        preview_width,
+                        curr_idx,
+                        grid_w,
+                        &grid_data[curr_idx],
+                        &glyphs[candidate.0],
+                        candidate.1,
+                        gw,
+                        gh,
+                    );
+                }
                 grid_state[curr_idx] = candidate;
-                for (&idx, score) in affected.iter().zip(new_scores) {
+                if let (Some(cache), Some(evaluation)) =
+                    (band_cache.as_mut(), band_candidate)
+                {
+                    apply_score_fix_band_commit(
+                        cache,
+                        curr_idx,
+                        evaluation,
+                        grid_w,
+                        grid_h,
+                    );
+                    for (&idx, &length) in affected
+                        .iter()
+                        .zip(&band_patch_lengths[..affected.len()])
+                    {
+                        cache.output_patch_lengths[idx] = Some(length);
+                    }
+                }
+                for (&idx, &score) in affected
+                    .iter()
+                    .zip(&new_scores[..affected.len()])
+                {
                     cached_cell_scores[idx] = Some(score);
                 }
                 changes += 1;
@@ -3737,27 +4655,29 @@ fn run_score_fix_prefix_search(
                     &mut priority_queue,
                 );
             } else {
-                apply_choice_to_raster(
-                    raster,
-                    grid_data,
-                    glyphs,
-                    grid_w,
-                    gw,
-                    gh,
-                    curr_idx,
-                    current_choice,
-                );
-                paint_global_preview_cell(
-                    &mut global_output_preview,
-                    preview_width,
-                    curr_idx,
-                    grid_w,
-                    &grid_data[curr_idx],
-                    &glyphs[current_choice.0],
-                    current_choice.1,
-                    gw,
-                    gh,
-                );
+                if band_candidate.is_none() {
+                    apply_choice_to_raster(
+                        raster,
+                        grid_data,
+                        glyphs,
+                        grid_w,
+                        gw,
+                        gh,
+                        curr_idx,
+                        current_choice,
+                    );
+                    paint_global_preview_cell(
+                        &mut global_output_preview,
+                        preview_width,
+                        curr_idx,
+                        grid_w,
+                        &grid_data[curr_idx],
+                        &glyphs[current_choice.0],
+                        current_choice.1,
+                        gw,
+                        gh,
+                    );
+                }
                 rejected += 1;
             }
         }
@@ -3768,13 +4688,23 @@ fn run_score_fix_prefix_search(
         if !prefix_changed {
             continue;
         }
-        let prefix_score = crate::contour_score::score_rgb_against_prepared_with_weights(
-            &global_reference,
-            &global_output_preview,
-            crate::contour_score::PREVIEW_CELL_WIDTH,
-            contour_weights,
-        )
-        .total;
+        let prefix_score = if let Some(cache) = band_cache.as_ref() {
+            score_fix_band_score(
+                cache.global_reference_length,
+                cache.global_output_length,
+                contour_weights.boundary_balance,
+            )
+        } else {
+            crate::contour_score::score_rgb_against_prepared_with_weights(
+                global_reference
+                    .as_ref()
+                    .expect("general score-fix reference should be prepared"),
+                &global_output_preview,
+                crate::contour_score::PREVIEW_CELL_WIDTH,
+                contour_weights,
+            )
+            .total
+        };
         if prefix_index == 0 || prefix_score + 1e-9 < best_prefix_score {
             best_prefix_score = prefix_score;
             best_prefix = prefix_index + 1;
@@ -3796,6 +4726,7 @@ fn run_score_fix_prefix_search(
         initial_score,
         best_score: best_prefix_score,
         priority_refreshes,
+        used_band_fast_path: band_cache.is_some(),
     })
 }
 
@@ -4911,7 +5842,7 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) in {:?}",
+            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
             stats.target_count,
             stats.candidate_trials,
             stats.duplicate_candidates_skipped,
@@ -4922,6 +5853,11 @@ pub fn render_blocks_smooth(
             stats.best_prefix,
             stats.best_score,
             stats.initial_score,
+            if stats.used_band_fast_path {
+                "incremental Band scorer"
+            } else {
+                "general contour scorer"
+            },
             started.elapsed(),
         );
     }
@@ -6581,5 +7517,151 @@ mod tests {
         );
         assert_ne!(original, glyph_set_cache_hash(&[changed, b.clone()], 2, 2));
         assert_ne!(original, glyph_set_cache_hash(&[a, b], 1, 4));
+    }
+
+    #[test]
+    fn score_fix_band_candidate_delta_matches_repainted_preview() {
+        let grid_w = 3;
+        let grid_h = 3;
+        let gw = 12;
+        let gh = 25;
+        let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
+        let preview_height = grid_h * crate::contour_score::PREVIEW_CELL_HEIGHT;
+        let preview = vec![[8, 16, 24]; preview_width * preview_height];
+        let bitmap = (0..gw * gh)
+            .map(|idx| {
+                let x = idx % gw;
+                let y = idx / gw;
+                ((x * 3 + y * 5) % 11 < 5) as u8
+            })
+            .collect::<Vec<_>>();
+        let glyph = make_test_glyph('x', &bitmap, gw, gh);
+        let glyph_preview = score_fix_preview_glyph(&glyph, gw, gh);
+        let empty_glyph = make_test_glyph(' ', &vec![0; gw * gh], gw, gh);
+        let glyph_previews = vec![
+            score_fix_preview_glyph(&empty_glyph, gw, gh),
+            glyph_preview,
+        ];
+        let data = BlockData {
+            fg: [240, 96, 12],
+            bg: [8, 16, 24],
+            fg_col: None,
+            bg_col: None,
+            alt_fg_col: None,
+            alt_bg_col: None,
+        };
+        let grid_data = vec![data.clone(); grid_w * grid_h];
+        let grid_state = vec![(0usize, false); grid_w * grid_h];
+        let changed_idx = 4;
+        let initial_internal = score_fix_preview_internal_lengths(&preview, grid_w, grid_h);
+        let mut painted = preview.clone();
+        paint_global_preview_cell(
+            &mut painted,
+            preview_width,
+            changed_idx,
+            grid_w,
+            &data,
+            &glyph,
+            true,
+            gw,
+            gh,
+        );
+        let painted_internal =
+            score_fix_preview_internal_lengths(&painted, grid_w, grid_h);
+        assert_eq!(
+            glyph_preview.internal_boundary_length,
+            painted_internal[changed_idx]
+        );
+        let initial_global =
+            score_fix_grid_boundary_length(&preview, &initial_internal, grid_w, grid_h);
+        let painted_global =
+            score_fix_grid_boundary_length(&painted, &painted_internal, grid_w, grid_h);
+        let current_contribution = score_fix_center_boundary_contribution(
+            &grid_state,
+            &grid_data,
+            &glyph_previews,
+            changed_idx,
+            grid_w,
+            grid_h,
+            None,
+            false,
+        );
+        let candidate_contribution = score_fix_center_boundary_contribution(
+            &grid_state,
+            &grid_data,
+            &glyph_previews,
+            changed_idx,
+            grid_w,
+            grid_h,
+            Some((1, true)),
+            false,
+        );
+        assert_eq!(
+            initial_global - current_contribution + candidate_contribution,
+            painted_global
+        );
+        let band_only = crate::contour_score::ContourScoreWeights {
+            bending: 0.0,
+            endpoints: 0.0,
+            junctions: 0.0,
+            fragments: 0.0,
+            fidelity: 0.0,
+            boundary_balance: 0.1,
+            peak_sensitivity: 0.0,
+        };
+
+        for center_idx in 0..grid_w * grid_h {
+            let virtual_length = score_fix_patch_boundary_length_with_candidate(
+                &preview,
+                &initial_internal,
+                center_idx,
+                changed_idx,
+                &data,
+                glyph_preview,
+                true,
+                glyph_preview.internal_boundary_length,
+                grid_w,
+                grid_h,
+            );
+            let painted_length = score_fix_patch_boundary_length(
+                &painted,
+                &painted_internal,
+                center_idx,
+                grid_w,
+                grid_h,
+            );
+            assert_eq!(virtual_length, painted_length, "center={center_idx}");
+            let bit_parallel_length = score_fix_patch_boundary_length_from_cells(
+                &grid_state,
+                &grid_data,
+                &glyph_previews,
+                center_idx,
+                Some((changed_idx, (1, true))),
+                grid_w,
+                grid_h,
+            );
+            assert_eq!(
+                bit_parallel_length, painted_length,
+                "bit-parallel center={center_idx}"
+            );
+            let patch = extract_local_patch(
+                &painted,
+                center_idx % grid_w,
+                center_idx / grid_w,
+                grid_w,
+                grid_h,
+                crate::contour_score::PREVIEW_CELL_WIDTH,
+                crate::contour_score::PREVIEW_CELL_HEIGHT,
+            );
+            let exact_length = crate::contour_score::score_rgb_with_weights(
+                &patch.pixels,
+                patch.width,
+                patch.height,
+                crate::contour_score::PREVIEW_CELL_WIDTH,
+                &band_only,
+            )
+            .boundary_length;
+            assert_eq!(painted_length, exact_length, "center={center_idx}");
+        }
     }
 }
