@@ -4127,28 +4127,33 @@ struct GeometryScoreFixStats {
     distinct_states: usize,
     candidate_evaluations: usize,
     changes: usize,
-    initial_bending: f64,
-    final_bending: f64,
+    initial_score: f64,
+    final_score: f64,
 }
 
 struct GeometryCandidateEvaluation {
     choice: (usize, bool),
     affected_scores: Vec<crate::contour_score::ReferenceContourScore>,
-    bending_sum: f64,
+    total_sum: f64,
+    endpoint_count_sum: usize,
+    junction_count_sum: usize,
+    component_count_sum: usize,
     fidelity_sum: f64,
 }
 
-fn geometry_score_fix_weights() -> crate::contour_score::ContourScoreWeights {
+fn geometry_score_fix_weights(args: &RenderArgs) -> crate::contour_score::ContourScoreWeights {
+    // Keep raw topology and fidelity measurements available when their UI
+    // weights are zero. This epsilon is below the acceptance tolerance, so it
+    // only enables the anti-artifact measurements used below.
+    const MEASURE_ONLY: f64 = 1e-12;
     crate::contour_score::ContourScoreWeights {
-        bending: 1.0,
-        endpoints: 1.0,
-        junctions: 1.0,
-        fragments: 1.0,
-        fidelity: 1.0,
-        boundary_balance: 0.0,
-        // The geometry-first path is explicitly concerned with the worst
-        // local changes in direction, rather than average curvature alone.
-        peak_sensitivity: 1.0,
+        bending: (args.contour_bending_weight.max(0.0) as f64).max(MEASURE_ONLY),
+        endpoints: (args.contour_endpoint_weight.max(0.0) as f64).max(MEASURE_ONLY),
+        junctions: (args.contour_junction_weight.max(0.0) as f64).max(MEASURE_ONLY),
+        fragments: (args.contour_fragment_weight.max(0.0) as f64).max(MEASURE_ONLY),
+        fidelity: (args.contour_fidelity_weight.max(0.0) as f64).max(MEASURE_ONLY),
+        boundary_balance: args.contour_boundary_weight.max(0.0) as f64,
+        peak_sensitivity: args.contour_peak_weight.clamp(0.0, 1.0) as f64,
     }
 }
 
@@ -4160,19 +4165,6 @@ fn geometry_score_fix_fidelity_allowance() -> f64 {
     let one_preview_edge = crate::contour_score::PREVIEW_CELL_WIDTH
         .max(crate::contour_score::PREVIEW_CELL_HEIGHT);
     100.0 * one_preview_edge as f64 / (patch_width * patch_height) as f64
-}
-
-fn geometry_score_fix_patch_is_safe(
-    candidate: &crate::contour_score::ReferenceContourScore,
-    baseline: &crate::contour_score::ReferenceContourScore,
-    fidelity_allowance: f64,
-) -> bool {
-    let candidate_contour = &candidate.contour;
-    let baseline_contour = &baseline.contour;
-    candidate_contour.endpoint_count == baseline_contour.endpoint_count
-        && candidate_contour.junction_count == baseline_contour.junction_count
-        && candidate_contour.component_count == baseline_contour.component_count
-        && candidate.fidelity <= baseline.fidelity + fidelity_allowance + 1e-9
 }
 
 fn distinct_nonuniform_glyph_states(glyphs: &[FastGlyph]) -> Vec<(usize, bool)> {
@@ -4263,7 +4255,7 @@ fn run_geometry_score_fix(
     gh: usize,
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<GeometryScoreFixStats, ()> {
-    let weights = geometry_score_fix_weights();
+    let weights = geometry_score_fix_weights(args);
     let fidelity_allowance = geometry_score_fix_fidelity_allowance();
     let threshold = args.discontinuity_threshold.max(0.0);
     let cell_count = grid_w * grid_h;
@@ -4321,11 +4313,11 @@ fn run_geometry_score_fix(
         })
         .collect::<Vec<_>>();
     let mut current_scores = baseline_scores.clone();
-    let initial_bending = current_scores
+    let initial_score = current_scores
         .iter()
-        .map(|score| score.contour.bending)
+        .map(|score| score.total)
         .sum::<f64>();
-    let mut global_bending = initial_bending;
+    let mut global_score = initial_score;
     let mut versions = vec![0u32; cell_count];
     let mut candidate_evaluations = 0usize;
     let mut changes = 0usize;
@@ -4346,9 +4338,25 @@ fn run_geometry_score_fix(
 
         let current_choice = grid_state[curr_idx];
         let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
-        let current_bending_sum = affected
+        let current_total_sum = affected
             .iter()
-            .map(|&idx| current_scores[idx].contour.bending)
+            .map(|&idx| current_scores[idx].total)
+            .sum::<f64>();
+        let current_endpoint_count_sum = affected
+            .iter()
+            .map(|&idx| current_scores[idx].contour.endpoint_count)
+            .sum::<usize>();
+        let current_junction_count_sum = affected
+            .iter()
+            .map(|&idx| current_scores[idx].contour.junction_count)
+            .sum::<usize>();
+        let current_component_count_sum = affected
+            .iter()
+            .map(|&idx| current_scores[idx].contour.component_count)
+            .sum::<usize>();
+        let baseline_fidelity_limit = affected
+            .iter()
+            .map(|&idx| baseline_scores[idx].fidelity + fidelity_allowance)
             .sum::<f64>();
         let patches = affected
             .iter()
@@ -4380,7 +4388,10 @@ fn run_geometry_score_fix(
                     return None;
                 }
                 let mut affected_scores = Vec::with_capacity(affected.len());
-                let mut bending_sum = 0.0;
+                let mut total_sum = 0.0;
+                let mut endpoint_count_sum = 0usize;
+                let mut junction_count_sum = 0usize;
+                let mut component_count_sum = 0usize;
                 let mut fidelity_sum = 0.0;
                 for (affected_idx, baseline_patch) in &patches {
                     let mut candidate_patch = baseline_patch.clone();
@@ -4402,39 +4413,43 @@ fn run_geometry_score_fix(
                         crate::contour_score::PREVIEW_CELL_WIDTH,
                         &weights,
                     );
-                    // Do not trade a new snag in one overlapping window for
-                    // a larger improvement elsewhere. At least one window
-                    // must improve (checked by the aggregate below), while
-                    // every other affected view is monotonically non-worse.
-                    if !geometry_score_fix_patch_is_safe(
-                        &score,
-                        &baseline_scores[*affected_idx],
-                        fidelity_allowance,
-                    )
-                        || score.contour.bending
-                            > current_scores[*affected_idx].contour.bending + 1e-9
-                    {
-                        return None;
-                    }
-                    bending_sum += score.contour.bending;
+                    total_sum += score.total;
+                    endpoint_count_sum += score.contour.endpoint_count;
+                    junction_count_sum += score.contour.junction_count;
+                    component_count_sum += score.contour.component_count;
                     fidelity_sum += score.fidelity;
                     affected_scores.push(score);
                 }
-                if bending_sum + 1e-9 >= current_bending_sum {
+                // Only these overlapping terms can change. Geometry may move
+                // between adjacent windows, but it may not create additional
+                // broken ends, junctions, or components overall. The fixed
+                // baseline fidelity limit prevents cumulative drift.
+                if total_sum + 1e-9 >= current_total_sum
+                    || endpoint_count_sum > current_endpoint_count_sum
+                    || junction_count_sum > current_junction_count_sum
+                    || component_count_sum > current_component_count_sum
+                    || fidelity_sum > baseline_fidelity_limit + 1e-9
+                {
                     return None;
                 }
                 Some(GeometryCandidateEvaluation {
                     choice: candidate,
                     affected_scores,
-                    bending_sum,
+                    total_sum,
+                    endpoint_count_sum,
+                    junction_count_sum,
+                    component_count_sum,
                     fidelity_sum,
                 })
             })
             .collect::<Vec<_>>();
         candidate_evaluations += distinct_states.len().saturating_sub(1);
         let best = evaluations.into_iter().min_by(|a, b| {
-            a.bending_sum
-                .total_cmp(&b.bending_sum)
+            a.total_sum
+                .total_cmp(&b.total_sum)
+                .then_with(|| a.endpoint_count_sum.cmp(&b.endpoint_count_sum))
+                .then_with(|| a.junction_count_sum.cmp(&b.junction_count_sum))
+                .then_with(|| a.component_count_sum.cmp(&b.component_count_sum))
                 .then_with(|| a.fidelity_sum.total_cmp(&b.fidelity_sum))
                 .then_with(|| a.choice.cmp(&b.choice))
         });
@@ -4442,7 +4457,7 @@ fn run_geometry_score_fix(
             continue;
         };
 
-        global_bending += best.bending_sum - current_bending_sum;
+        global_score += best.total_sum - current_total_sum;
         grid_state[curr_idx] = best.choice;
         apply_choice_to_raster(
             raster,
@@ -4500,8 +4515,8 @@ fn run_geometry_score_fix(
         distinct_states: distinct_states.len(),
         candidate_evaluations,
         changes,
-        initial_bending,
-        final_bending: global_bending,
+        initial_score,
+        final_score: global_score,
     })
 }
 
@@ -5986,9 +6001,9 @@ pub fn render_blocks_smooth(
         }
     }
 
-    // When the legacy fixer is disabled, Score Fix can identify its target
-    // cells before building candidate costs. This avoids doing glyph work for
-    // the usually much larger set of cells below the discontinuity threshold.
+    // Score Fix can identify its target cells before building candidate
+    // costs. This avoids doing glyph work for the usually much larger set of
+    // cells below the discontinuity threshold.
     let mut score_fix_initial_disc_scores = if args.score_fix && !args.fix_disc {
         Some(all_cell_discontinuity_scores(
             rendered_raster
@@ -6003,8 +6018,7 @@ pub fn render_blocks_smooth(
         None
     };
 
-    let needs_candidate_evaluation =
-        args.fix_disc || (args.score_fix && !args.score_fix_geometry_first);
+    let needs_candidate_evaluation = args.fix_disc || args.score_fix;
     let quantized_references = if args.fix_disc {
         build_quantized_cell_references(image, &grid_data, grid_w, grid_h, gw, gh)
     } else {
@@ -6357,44 +6371,7 @@ pub fn render_blocks_smooth(
         fix_disc_time = Some(t_fix.elapsed());
     }
 
-    if args.score_fix && args.score_fix_geometry_first {
-        let raster = rendered_raster
-            .as_mut()
-            .expect("rendered raster should exist when score-fix is enabled");
-        let started = std::time::Instant::now();
-        let target_scores = score_fix_initial_disc_scores
-            .take()
-            .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
-        let stats = match run_geometry_score_fix(
-            args,
-            raster,
-            &mut grid_state,
-            &grid_data,
-            glyphs,
-            target_scores,
-            &source_raster,
-            grid_w,
-            grid_h,
-            gw,
-            gh,
-            abort_flag.as_ref(),
-        ) {
-            Ok(stats) => stats,
-            Err(()) => return "Cancelled".into(),
-        };
-        log::info!(
-            "geometry-first score-fix selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} topology-preserving changes, and reduced overlapping-patch bending from {:.6} to {:.6} in {:?}",
-            stats.target_count,
-            stats.distinct_states,
-            stats.candidate_evaluations,
-            stats.changes,
-            stats.initial_bending,
-            stats.final_bending,
-            started.elapsed(),
-        );
-    }
-
-    if args.score_fix && !args.score_fix_geometry_first {
+    if args.score_fix {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when score-fix is enabled");
@@ -6473,6 +6450,43 @@ pub fn render_blocks_smooth(
             } else {
                 "general contour scorer"
             },
+            started.elapsed(),
+        );
+    }
+
+    // Start from normal Score Fix, then exhaustively search every distinct
+    // rendered glyph state using the overlapping local geometry energy.
+    if args.score_fix && args.score_fix_geometry_first {
+        let raster = rendered_raster
+            .as_mut()
+            .expect("rendered raster should exist when score-fix is enabled");
+        let started = std::time::Instant::now();
+        let target_scores = all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh);
+        let stats = match run_geometry_score_fix(
+            args,
+            raster,
+            &mut grid_state,
+            &grid_data,
+            glyphs,
+            target_scores,
+            &source_raster,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            abort_flag.as_ref(),
+        ) {
+            Ok(stats) => stats,
+            Err(()) => return "Cancelled".into(),
+        };
+        log::info!(
+            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} monotonic topology-preserving changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
+            stats.target_count,
+            stats.distinct_states,
+            stats.candidate_evaluations,
+            stats.changes,
+            stats.initial_score,
+            stats.final_score,
             started.elapsed(),
         );
     }
