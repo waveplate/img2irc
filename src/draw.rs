@@ -5,7 +5,7 @@ use image::{Rgb, RgbImage};
 use once_cell::sync::Lazy;
 use photon_rs::PhotonImage;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::f32::consts::PI;
 use std::fmt::Write as _;
 use std::fs;
@@ -3213,6 +3213,76 @@ struct ScoreFixPrefixStats {
     best_prefix: usize,
     initial_score: f64,
     best_score: f64,
+    priority_refreshes: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScoreFixPriorityEntry {
+    score: f32,
+    cell_idx: usize,
+    version: u32,
+}
+
+impl PartialEq for ScoreFixPriorityEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.score.total_cmp(&other.score).is_eq()
+            && self.cell_idx == other.cell_idx
+            && self.version == other.version
+    }
+}
+
+impl Eq for ScoreFixPriorityEntry {}
+
+impl PartialOrd for ScoreFixPriorityEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScoreFixPriorityEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score
+            .total_cmp(&other.score)
+            // Resolve equal scores in stable row-major order.
+            .then_with(|| other.cell_idx.cmp(&self.cell_idx))
+            .then_with(|| self.version.cmp(&other.version))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_score_fix_priorities(
+    changed_idx: usize,
+    raster: &[[u8; 3]],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    threshold: f32,
+    prefix_index: usize,
+    candidate_lists: &[Vec<(usize, bool, u64)>],
+    processed: &[bool],
+    priority_scores: &mut [f32],
+    priority_versions: &mut [u32],
+    queue: &mut BinaryHeap<ScoreFixPriorityEntry>,
+) -> usize {
+    let mut refreshed = 0usize;
+    for idx in affected_discontinuity_cell_indices(changed_idx, grid_w, grid_h) {
+        if candidate_lists[idx].get(prefix_index).is_none() {
+            continue;
+        }
+        let score = cell_discontinuity_score(idx, raster, grid_w, grid_h, gw, gh);
+        priority_scores[idx] = score;
+        priority_versions[idx] = priority_versions[idx].wrapping_add(1);
+        refreshed += 1;
+        if !processed[idx] && score >= threshold {
+            queue.push(ScoreFixPriorityEntry {
+                score,
+                cell_idx: idx,
+                version: priority_versions[idx],
+            });
+        }
+    }
+    refreshed
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3240,6 +3310,10 @@ fn run_score_fix_prefix_search(
         .collect::<Vec<_>>();
     targets.sort_by(|a, b| b.1.total_cmp(&a.1));
     let target_count = targets.len();
+    let mut priority_scores = vec![f32::NEG_INFINITY; grid_w * grid_h];
+    for &(idx, score) in &targets {
+        priority_scores[idx] = score;
+    }
 
     let candidate_count = args.score_fix_candidates.max(1) as usize;
     let baseline_state = grid_state.clone();
@@ -3247,8 +3321,9 @@ fn run_score_fix_prefix_search(
     let mut candidate_trials = 0usize;
     let mut duplicate_candidates_skipped = 0usize;
 
-    // Freeze target order and complete candidate rankings before changing the
-    // raster. Candidate k must mean the same thing in an N=k and N>k run.
+    // Freeze the target set and complete candidate rankings before changing
+    // the raster. Candidate k must mean the same thing in an N=k and N>k run;
+    // the processing order within each prefix remains dynamic.
     // Deduplicate before truncating so N counts actual rendered alternatives,
     // not the unchanged glyph or duplicate glyph/inversion states.
     for &(curr_idx, _) in &targets {
@@ -3322,6 +3397,7 @@ fn run_score_fix_prefix_search(
             best_prefix: 0,
             initial_score,
             best_score: initial_score,
+            priority_refreshes: 0,
         });
     }
 
@@ -3359,10 +3435,30 @@ fn run_score_fix_prefix_search(
     let mut best_prefix = 0usize;
     let mut changes = 0usize;
     let mut rejected = 0usize;
+    let mut priority_refreshes = 0usize;
 
     for prefix_index in 0..prefix_count {
         let mut prefix_changed = false;
-        for &(curr_idx, _) in &targets {
+        let mut processed = vec![false; grid_w * grid_h];
+        let mut priority_versions = vec![0u32; grid_w * grid_h];
+        let mut priority_queue = BinaryHeap::with_capacity(target_count);
+        for &(cell_idx, _) in &targets {
+            let score = priority_scores[cell_idx];
+            if candidate_lists[cell_idx].get(prefix_index).is_some() && score >= threshold {
+                priority_queue.push(ScoreFixPriorityEntry {
+                    score,
+                    cell_idx,
+                    version: 0,
+                });
+            }
+        }
+
+        while let Some(entry) = priority_queue.pop() {
+            let curr_idx = entry.cell_idx;
+            if processed[curr_idx] || entry.version != priority_versions[curr_idx] {
+                continue;
+            }
+            processed[curr_idx] = true;
             if abort_flag.is_some_and(|flag| {
                 flag.load(std::sync::atomic::Ordering::Relaxed)
             }) {
@@ -3406,6 +3502,21 @@ fn run_score_fix_prefix_search(
                 );
                 changes += 1;
                 prefix_changed = true;
+                priority_refreshes += refresh_score_fix_priorities(
+                    curr_idx,
+                    raster,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    threshold,
+                    prefix_index,
+                    &candidate_lists,
+                    &processed,
+                    &mut priority_scores,
+                    &mut priority_versions,
+                    &mut priority_queue,
+                );
                 continue;
             }
 
@@ -3521,6 +3632,21 @@ fn run_score_fix_prefix_search(
                 cached_cell_scores[curr_idx] = Some(candidate_score);
                 changes += 1;
                 prefix_changed = true;
+                priority_refreshes += refresh_score_fix_priorities(
+                    curr_idx,
+                    raster,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    threshold,
+                    prefix_index,
+                    &candidate_lists,
+                    &processed,
+                    &mut priority_scores,
+                    &mut priority_versions,
+                    &mut priority_queue,
+                );
                 continue;
             }
 
@@ -3595,6 +3721,21 @@ fn run_score_fix_prefix_search(
                 }
                 changes += 1;
                 prefix_changed = true;
+                priority_refreshes += refresh_score_fix_priorities(
+                    curr_idx,
+                    raster,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    threshold,
+                    prefix_index,
+                    &candidate_lists,
+                    &processed,
+                    &mut priority_scores,
+                    &mut priority_versions,
+                    &mut priority_queue,
+                );
             } else {
                 apply_choice_to_raster(
                     raster,
@@ -3654,6 +3795,7 @@ fn run_score_fix_prefix_search(
         best_prefix,
         initial_score,
         best_score: best_prefix_score,
+        priority_refreshes,
     })
 }
 
@@ -4769,11 +4911,12 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) in {:?}",
+            "score-fix prefix search selected {} cells; tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) in {:?}",
             stats.target_count,
             stats.candidate_trials,
             stats.duplicate_candidates_skipped,
             stats.changes,
+            stats.priority_refreshes,
             stats.rejected,
             stats.prefix_count,
             stats.best_prefix,
