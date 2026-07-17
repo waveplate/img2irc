@@ -4121,6 +4121,151 @@ impl Ord for ScoreFixPriorityEntry {
     }
 }
 
+const GEOMETRY_FLOW_DISTANCE_CAP: u8 = 4;
+const GEOMETRY_FLOW_STRENGTH: f64 = 3.0;
+
+/// One categorical median pass. Unlike an RGB blur, this never invents a
+/// colour: it evolves the existing colour regions by one discrete
+/// mean-curvature step, shaving protrusions and filling matching indentations.
+fn categorical_median_pass(
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> Vec<[u8; 3]> {
+    if width == 0 || height == 0 || pixels.len() != width * height {
+        return Vec::new();
+    }
+    let mut output = pixels.to_vec();
+    for y in 0..height {
+        for x in 0..width {
+            let center = pixels[y * width + x];
+            let mut colours = [[0u8; 3]; 9];
+            let mut counts = [0u8; 9];
+            let mut colour_count = 0usize;
+            for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
+                    let colour = pixels[ny * width + nx];
+                    let slot = colours[..colour_count]
+                        .iter()
+                        .position(|existing| *existing == colour)
+                        .unwrap_or_else(|| {
+                            let slot = colour_count;
+                            colours[slot] = colour;
+                            colour_count += 1;
+                            slot
+                        });
+                    counts[slot] += 1;
+                }
+            }
+            let mut best = 0usize;
+            for slot in 1..colour_count {
+                if counts[slot] > counts[best]
+                    || (counts[slot] == counts[best]
+                        && colours[slot] == center
+                        && colours[best] != center)
+                {
+                    best = slot;
+                }
+            }
+            output[y * width + x] = colours[best];
+        }
+    }
+    output
+}
+
+fn categorical_boundary_mask(
+    pixels: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> Vec<bool> {
+    let mut boundary = vec![false; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+            let colour = pixels[idx];
+            boundary[idx] = (x > 0 && pixels[idx - 1] != colour)
+                || (x + 1 < width && pixels[idx + 1] != colour)
+                || (y > 0 && pixels[idx - width] != colour)
+                || (y + 1 < height && pixels[idx + width] != colour);
+        }
+    }
+    boundary
+}
+
+fn truncated_boundary_distances(boundary: &[bool], width: usize, height: usize) -> Vec<u8> {
+    let cap = GEOMETRY_FLOW_DISTANCE_CAP;
+    let mut distance = boundary
+        .iter()
+        .map(|&is_boundary| if is_boundary { 0 } else { cap })
+        .collect::<Vec<_>>();
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+            if x > 0 {
+                distance[idx] = distance[idx].min(distance[idx - 1].saturating_add(1));
+            }
+            if y > 0 {
+                distance[idx] = distance[idx].min(distance[idx - width].saturating_add(1));
+            }
+        }
+    }
+    for y in (0..height).rev() {
+        for x in (0..width).rev() {
+            let idx = y * width + x;
+            if x + 1 < width {
+                distance[idx] = distance[idx].min(distance[idx + 1].saturating_add(1));
+            }
+            if y + 1 < height {
+                distance[idx] = distance[idx].min(distance[idx + width].saturating_add(1));
+            }
+        }
+    }
+    distance
+}
+
+fn symmetric_boundary_distance(
+    a: &[[u8; 3]],
+    b: &[[u8; 3]],
+    width: usize,
+    height: usize,
+) -> f64 {
+    let a_boundary = categorical_boundary_mask(a, width, height);
+    let b_boundary = categorical_boundary_mask(b, width, height);
+    let a_count = a_boundary.iter().filter(|&&value| value).count();
+    let b_count = b_boundary.iter().filter(|&&value| value).count();
+    if a_count == 0 && b_count == 0 {
+        return 0.0;
+    }
+    if a_count == 0 || b_count == 0 {
+        return 100.0;
+    }
+    let a_distance = truncated_boundary_distances(&a_boundary, width, height);
+    let b_distance = truncated_boundary_distances(&b_boundary, width, height);
+    let a_to_b = a_boundary
+        .iter()
+        .zip(&b_distance)
+        .filter_map(|(&on_boundary, &distance)| on_boundary.then_some(distance as f64))
+        .sum::<f64>()
+        / a_count as f64;
+    let b_to_a = b_boundary
+        .iter()
+        .zip(&a_distance)
+        .filter_map(|(&on_boundary, &distance)| on_boundary.then_some(distance as f64))
+        .sum::<f64>()
+        / b_count as f64;
+    50.0 * (a_to_b + b_to_a) / GEOMETRY_FLOW_DISTANCE_CAP as f64
+}
+
+/// Intrinsic stability under one and two median-flow steps. Straight regions
+/// remain unchanged, while teeth, spikes, and abrupt pixel-scale turns move.
+fn curvature_flow_regularity(pixels: &[[u8; 3]], width: usize, height: usize) -> f64 {
+    let once = categorical_median_pass(pixels, width, height);
+    let twice = categorical_median_pass(&once, width, height);
+    let one_step = symmetric_boundary_distance(pixels, &once, width, height);
+    let two_step = symmetric_boundary_distance(pixels, &twice, width, height);
+    0.7 * one_step + 0.3 * two_step
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct GeometryScoreFixStats {
     target_count: usize,
@@ -4134,6 +4279,8 @@ struct GeometryScoreFixStats {
 struct GeometryCandidateEvaluation {
     choice: (usize, bool),
     affected_scores: Vec<crate::contour_score::ReferenceContourScore>,
+    affected_flow_scores: Vec<f64>,
+    energy_sum: f64,
     total_sum: f64,
     endpoint_count_sum: usize,
     junction_count_sum: usize,
@@ -4256,6 +4403,8 @@ fn run_geometry_score_fix(
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<GeometryScoreFixStats, ()> {
     let weights = geometry_score_fix_weights(args);
+    let flow_weight = args.contour_bending_weight.max(0.0) as f64
+        * GEOMETRY_FLOW_STRENGTH;
     let fidelity_allowance = geometry_score_fix_fidelity_allowance();
     let threshold = args.discontinuity_threshold.max(0.0);
     let cell_count = grid_w * grid_h;
@@ -4312,11 +4461,31 @@ fn run_geometry_score_fix(
             )
         })
         .collect::<Vec<_>>();
+    let mut current_flow_scores = if flow_weight > 0.0 {
+        (0..cell_count)
+            .into_par_iter()
+            .map(|cell_idx| {
+                let patch = extract_local_patch(
+                    &output_preview,
+                    cell_idx % grid_w,
+                    cell_idx / grid_w,
+                    grid_w,
+                    grid_h,
+                    crate::contour_score::PREVIEW_CELL_WIDTH,
+                    crate::contour_score::PREVIEW_CELL_HEIGHT,
+                );
+                curvature_flow_regularity(&patch.pixels, patch.width, patch.height)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![0.0; cell_count]
+    };
     let mut current_scores = baseline_scores.clone();
     let initial_score = current_scores
         .iter()
         .map(|score| score.total)
-        .sum::<f64>();
+        .sum::<f64>()
+        + flow_weight * current_flow_scores.iter().sum::<f64>();
     let mut global_score = initial_score;
     let mut versions = vec![0u32; cell_count];
     let mut candidate_evaluations = 0usize;
@@ -4342,6 +4511,11 @@ fn run_geometry_score_fix(
             .iter()
             .map(|&idx| current_scores[idx].total)
             .sum::<f64>();
+        let current_flow_sum = affected
+            .iter()
+            .map(|&idx| current_flow_scores[idx])
+            .sum::<f64>();
+        let current_energy_sum = current_total_sum + flow_weight * current_flow_sum;
         let current_endpoint_count_sum = affected
             .iter()
             .map(|&idx| current_scores[idx].contour.endpoint_count)
@@ -4388,7 +4562,9 @@ fn run_geometry_score_fix(
                     return None;
                 }
                 let mut affected_scores = Vec::with_capacity(affected.len());
+                let mut affected_flow_scores = Vec::with_capacity(affected.len());
                 let mut total_sum = 0.0;
+                let mut flow_sum = 0.0;
                 let mut endpoint_count_sum = 0usize;
                 let mut junction_count_sum = 0usize;
                 let mut component_count_sum = 0usize;
@@ -4414,17 +4590,29 @@ fn run_geometry_score_fix(
                         &weights,
                     );
                     total_sum += score.total;
+                    let flow_score = if flow_weight > 0.0 {
+                        curvature_flow_regularity(
+                            &candidate_patch.pixels,
+                            candidate_patch.width,
+                            candidate_patch.height,
+                        )
+                    } else {
+                        0.0
+                    };
+                    flow_sum += flow_score;
                     endpoint_count_sum += score.contour.endpoint_count;
                     junction_count_sum += score.contour.junction_count;
                     component_count_sum += score.contour.component_count;
                     fidelity_sum += score.fidelity;
                     affected_scores.push(score);
+                    affected_flow_scores.push(flow_score);
                 }
                 // Only these overlapping terms can change. Geometry may move
                 // between adjacent windows, but it may not create additional
                 // broken ends, junctions, or components overall. The fixed
                 // baseline fidelity limit prevents cumulative drift.
-                if total_sum + 1e-9 >= current_total_sum
+                let energy_sum = total_sum + flow_weight * flow_sum;
+                if energy_sum + 1e-9 >= current_energy_sum
                     || endpoint_count_sum > current_endpoint_count_sum
                     || junction_count_sum > current_junction_count_sum
                     || component_count_sum > current_component_count_sum
@@ -4435,6 +4623,8 @@ fn run_geometry_score_fix(
                 Some(GeometryCandidateEvaluation {
                     choice: candidate,
                     affected_scores,
+                    affected_flow_scores,
+                    energy_sum,
                     total_sum,
                     endpoint_count_sum,
                     junction_count_sum,
@@ -4445,8 +4635,9 @@ fn run_geometry_score_fix(
             .collect::<Vec<_>>();
         candidate_evaluations += distinct_states.len().saturating_sub(1);
         let best = evaluations.into_iter().min_by(|a, b| {
-            a.total_sum
-                .total_cmp(&b.total_sum)
+            a.energy_sum
+                .total_cmp(&b.energy_sum)
+                .then_with(|| a.total_sum.total_cmp(&b.total_sum))
                 .then_with(|| a.endpoint_count_sum.cmp(&b.endpoint_count_sum))
                 .then_with(|| a.junction_count_sum.cmp(&b.junction_count_sum))
                 .then_with(|| a.component_count_sum.cmp(&b.component_count_sum))
@@ -4457,7 +4648,7 @@ fn run_geometry_score_fix(
             continue;
         };
 
-        global_score += best.total_sum - current_total_sum;
+        global_score += best.energy_sum - current_energy_sum;
         grid_state[curr_idx] = best.choice;
         apply_choice_to_raster(
             raster,
@@ -4480,8 +4671,13 @@ fn run_geometry_score_fix(
             gw,
             gh,
         );
-        for (&affected_idx, score) in affected.iter().zip(best.affected_scores) {
+        for ((&affected_idx, score), flow_score) in affected
+            .iter()
+            .zip(best.affected_scores)
+            .zip(best.affected_flow_scores)
+        {
             current_scores[affected_idx] = score;
+            current_flow_scores[affected_idx] = flow_score;
         }
         changes += 1;
 
@@ -6480,7 +6676,7 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} monotonic topology-preserving changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
+            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
             stats.target_count,
             stats.distinct_states,
             stats.candidate_evaluations,
@@ -8315,5 +8511,29 @@ mod tests {
         let uniform = make_test_glyph('c', &[1, 1, 1, 1], 2, 2);
         let states = distinct_nonuniform_glyph_states(&[diagonal, complement, uniform]);
         assert_eq!(states, vec![(0, false), (0, true)]);
+    }
+
+    #[test]
+    fn curvature_flow_is_stable_for_a_line_and_penalizes_a_spur() {
+        let width = 11;
+        let height = 11;
+        let dark = [0, 0, 0];
+        let light = [255, 255, 255];
+        let mut straight = vec![light; width * height];
+        for y in 0..height {
+            for x in 0..5 {
+                straight[y * width + x] = dark;
+            }
+        }
+        let mut spurred = straight.clone();
+        spurred[5 * width + 5] = dark;
+
+        let straight_score = curvature_flow_regularity(&straight, width, height);
+        let spur_score = curvature_flow_regularity(&spurred, width, height);
+        assert!(straight_score <= 1e-9, "straight_score={straight_score}");
+        assert!(
+            spur_score > straight_score,
+            "spur_score={spur_score} straight_score={straight_score}"
+        );
     }
 }

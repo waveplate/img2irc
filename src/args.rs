@@ -711,7 +711,7 @@ pub struct Args {
     )]
     pub score_fix_orderings: u32,
 
-    /// refine the normal score-fix result using every distinct glyph state and overlapping geometry
+    /// refine score-fix with exhaustive glyph search and median-flow boundary regularity
     #[arg(long = "score-fix-geometry-first", default_value_t = false)]
     pub score_fix_geometry_first: bool,
 
