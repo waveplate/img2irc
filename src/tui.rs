@@ -86,6 +86,19 @@ enum OptimizationUpdate {
 }
 
 #[derive(Debug)]
+enum FontSizeSearchUpdate {
+    Progress(String),
+    Finished {
+        font_size: f32,
+        score: f64,
+        sampled_cells: usize,
+        glyph_shapes: usize,
+    },
+    Cancelled,
+    Failed(String),
+}
+
+#[derive(Debug)]
 enum ClipboardPasteResult {
     Loaded { path: String, bytes: usize },
     Empty,
@@ -140,6 +153,7 @@ enum ControlId {
     ScaleX,
     ScaleY,
     FontSize,
+    FindFontSize,
     Font,
     Filter,
     Eyedropper,
@@ -609,6 +623,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 10240,
             default: 0,
         },
+    },
+    ControlDef {
+        id: ControlId::FindFontSize,
+        label: "Find Font Size",
+        kind: ControlKind::Action,
     },
     ControlDef {
         id: ControlId::Font,
@@ -1647,6 +1666,10 @@ pub(crate) struct App {
     colorspace_idx: usize,
     encoding_idx: usize,
     rx_optimization: Option<mpsc::Receiver<OptimizationUpdate>>,
+    rx_font_size_search: Option<mpsc::Receiver<FontSizeSearchUpdate>>,
+    is_finding_font_size: bool,
+    font_size_search_status: String,
+    font_size_search_cancel: Option<Arc<AtomicBool>>,
 
     // Slider state
     slider_last_press: Option<std::time::Instant>,
@@ -2374,6 +2397,10 @@ impl App {
             optimization_progress: String::new(),
             optimization_best_score: None,
             rx_optimization: None,
+            rx_font_size_search: None,
+            is_finding_font_size: false,
+            font_size_search_status: String::new(),
+            font_size_search_cancel: None,
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
             saved_auto_optimize_enabled_rows: [true; 8],
@@ -2764,6 +2791,7 @@ impl App {
             ControlId::ScaleX => self.scalex,
             ControlId::ScaleY => self.scaley,
             ControlId::FontSize => (self.font_size * 10.0).round() as i32,
+            ControlId::FindFontSize => 0,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
@@ -2938,7 +2966,7 @@ impl App {
             ControlId::FrostedGlass => self.frosted_glass = val != 0,
             ControlId::Solarize => self.solarize = val != 0,
             ControlId::EdgeDetection => self.edge_detection = val != 0,
-            ControlId::Eyedropper | ControlId::AutoOptimize => {}
+            ControlId::Eyedropper | ControlId::AutoOptimize | ControlId::FindFontSize => {}
         }
     }
 
@@ -3111,6 +3139,179 @@ impl App {
             self.cached_render = overlayed.content.clone();
             self.cached_result = Some(overlayed);
         }
+    }
+
+    fn find_ideal_font_size(&mut self) {
+        if self.is_finding_font_size {
+            self.font_size_search_status = "Cancelling...".to_string();
+            if let Some(cancel) = &self.font_size_search_cancel {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        if self.image_path.is_empty() {
+            self.font_size_search_status = "Load an image first".to_string();
+            return;
+        }
+        let Some(current_glyph_store) = self.arc_glyphs.clone() else {
+            self.font_size_search_status = "Glyphs are still loading".to_string();
+            return;
+        };
+
+        // Capture current transient exclusions only when explicitly requested.
+        self.flush_render_args();
+        let args = self.render_args.clone();
+        let image_path = self.image_path.clone();
+        let current_size = self.font_size.round().max(1.0) as usize;
+        let max_size = current_size.max(64).min(128);
+        let mut sizes = (1..=max_size).collect::<Vec<_>>();
+        // Score the current/nearby sizes first to establish a useful bound.
+        sizes.sort_unstable_by_key(|&size| (size.abs_diff(current_size), size));
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.font_size_search_cancel = Some(cancel.clone());
+        self.is_finding_font_size = true;
+        self.font_size_search_status = format!("Starting 1-{max_size}...");
+        let (tx, rx) = mpsc::channel(64);
+        self.rx_font_size_search = Some(rx);
+
+        tokio::spawn(async move {
+            let loaded =
+                crate::load_image_from_url_or_path(&image_path, &args, &current_glyph_store)
+                    .await
+                    .map_err(|error| error.to_string());
+            let source = match loaded {
+                Ok(image) => image,
+                Err(error) => {
+                    let _ = tx
+                        .send(FontSizeSearchUpdate::Failed(format!(
+                            "Could not load image: {error}"
+                        )))
+                        .await;
+                    return;
+                }
+            };
+
+            let worker_tx = tx.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                let total = sizes.len();
+                let mut best: Option<(usize, draw::SparseFontAlignmentScore)> = None;
+                let mut exact_duplicates = 0usize;
+                let mut degenerate = 0usize;
+                let mut pruned = 0usize;
+                let mut seen = std::collections::HashSet::new();
+
+                for (tested, size) in sizes.into_iter().enumerate() {
+                    if cancel.load(Ordering::Relaxed) || worker_tx.is_closed() {
+                        let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Cancelled);
+                        return;
+                    }
+
+                    let mut candidate_args = args.clone();
+                    candidate_args.font_size = size as f32;
+                    let glyph_store = font::glyph_store(
+                        &candidate_args.blocks,
+                        &candidate_args.exclude_range,
+                        &candidate_args.exclude,
+                        &candidate_args.include_range,
+                        candidate_args.include.as_ref(),
+                        &candidate_args.font,
+                        candidate_args.font_size,
+                        false,
+                        Some(cancel.clone()),
+                    );
+                    if cancel.load(Ordering::Relaxed) {
+                        let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Cancelled);
+                        return;
+                    }
+                    let fast_glyphs = draw::prepare_glyphs(&glyph_store, &candidate_args);
+                    let (gw, gh) = glyph_store.metrics;
+                    let shape_signature =
+                        draw::sparse_font_alignment_shape_signature(&fast_glyphs, gw, gh);
+                    if shape_signature.is_empty() {
+                        degenerate += 1;
+                        continue;
+                    }
+
+                    let processed = crate::effects::apply_effects(
+                        &candidate_args,
+                        &glyph_store,
+                        source.clone(),
+                    );
+                    // These are exactly the same input to the predictor; keep
+                    // the first one, which is nearest the current size.
+                    let equivalence_key = (
+                        processed.get_width(),
+                        processed.get_height(),
+                        shape_signature,
+                    );
+                    if !seen.insert(equivalence_key) {
+                        exact_duplicates += 1;
+                        continue;
+                    }
+
+                    let score = draw::sparse_font_alignment_score(
+                        &processed,
+                        &fast_glyphs,
+                        gw,
+                        gh,
+                        best.as_ref().map(|(_, result)| result.score),
+                    );
+                    match score {
+                        Some(result) if result.pruned => pruned += 1,
+                        Some(result) => {
+                            if best
+                                .as_ref()
+                                .is_none_or(|(_, previous)| result.score < previous.score)
+                            {
+                                best = Some((size, result));
+                            }
+                        }
+                        None => degenerate += 1,
+                    }
+
+                    let best_text = best
+                        .as_ref()
+                        .map(|(best_size, result)| {
+                            format!("best {best_size} ({:.4})", result.score)
+                        })
+                        .unwrap_or_else(|| "no viable size yet".to_string());
+                    let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Progress(format!(
+                        "{}/{} · {} · {} pruned · {} duplicate · {} invalid",
+                        tested + 1,
+                        total,
+                        best_text,
+                        pruned,
+                        exact_duplicates,
+                        degenerate,
+                    )));
+                }
+
+                if cancel.load(Ordering::Relaxed) {
+                    let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Cancelled);
+                } else if let Some((font_size, result)) = best {
+                    let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Finished {
+                        font_size: font_size as f32,
+                        score: result.score,
+                        sampled_cells: result.sampled_cells,
+                        glyph_shapes: result.glyph_shapes,
+                    });
+                } else {
+                    let _ = worker_tx.blocking_send(FontSizeSearchUpdate::Failed(
+                        "No enabled non-uniform glyph geometry could be scored".to_string(),
+                    ));
+                }
+            })
+            .await;
+
+            if let Err(error) = worker {
+                let _ = tx
+                    .send(FontSizeSearchUpdate::Failed(format!(
+                        "Font-size search failed: {error}"
+                    )))
+                    .await;
+            }
+        });
     }
 
     fn perform_auto_optimize(&mut self) {
@@ -5046,6 +5247,59 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 }
             }
             app.rx_optimization = Some(rx);
+        }
+
+        if let Some(mut rx) = app.rx_font_size_search.take() {
+            let mut keep_receiver = true;
+            loop {
+                match rx.try_recv() {
+                    Ok(FontSizeSearchUpdate::Progress(progress)) => {
+                        app.font_size_search_status = progress;
+                    }
+                    Ok(FontSizeSearchUpdate::Finished {
+                        font_size,
+                        score,
+                        sampled_cells,
+                        glyph_shapes,
+                    }) => {
+                        app.font_size = font_size.round();
+                        app.is_finding_font_size = false;
+                        app.font_size_search_cancel = None;
+                        app.font_size_search_status = format!(
+                            "Set {} · fit {:.4} · {} cells · {} shapes",
+                            app.font_size as i32, score, sampled_cells, glyph_shapes
+                        );
+                        app.mark_args_dirty();
+                        keep_receiver = false;
+                    }
+                    Ok(FontSizeSearchUpdate::Cancelled) => {
+                        app.is_finding_font_size = false;
+                        app.font_size_search_cancel = None;
+                        app.font_size_search_status = "Cancelled".to_string();
+                        keep_receiver = false;
+                    }
+                    Ok(FontSizeSearchUpdate::Failed(error)) => {
+                        app.is_finding_font_size = false;
+                        app.font_size_search_cancel = None;
+                        app.font_size_search_status = error;
+                        keep_receiver = false;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        if app.is_finding_font_size {
+                            app.is_finding_font_size = false;
+                            app.font_size_search_cancel = None;
+                            app.font_size_search_status =
+                                "Font-size search stopped unexpectedly".to_string();
+                        }
+                        keep_receiver = false;
+                        break;
+                    }
+                }
+            }
+            if keep_receiver {
+                app.rx_font_size_search = Some(rx);
+            }
         }
 
         while let Ok((result, glyphs, ocr_overlays)) = app.rx_result.try_recv() {
@@ -7750,7 +8004,10 @@ fn toggle_control(app: &mut App) {
         ControlKind::Action => {
             if id == ControlId::AutoOptimize {
                 app.perform_auto_optimize();
+            } else if id == ControlId::FindFontSize {
+                app.find_ideal_font_size();
             }
+            return;
         }
         _ => {}
     }

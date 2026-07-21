@@ -3367,6 +3367,337 @@ fn score_fix_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> ScoreFixG
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SparseFontAlignmentScore {
+    pub score: f64,
+    pub sampled_cells: usize,
+    pub glyph_shapes: usize,
+    /// The accumulated non-negative score had already exceeded the best
+    /// complete score, so the exact remainder was intentionally skipped.
+    pub pruned: bool,
+}
+
+#[derive(Clone)]
+struct FontAlignmentShape {
+    vertical: u128,
+    horizontal: u128,
+    distances: Vec<[f64; 2]>,
+    feature_count: usize,
+}
+
+#[derive(Clone)]
+struct FontAlignmentSourceCell {
+    cell_index: usize,
+    features: Vec<(usize, usize, f64)>,
+    distances: Vec<[f64; 2]>,
+    salience: f64,
+}
+
+const FONT_ALIGNMENT_MAX_DISTANCE_SQ: f64 = 36.0;
+const FONT_ALIGNMENT_ORIENTATION_PENALTY: f64 = 4.0;
+const FONT_ALIGNMENT_FEATURES_PER_CELL: usize = 12;
+const FONT_ALIGNMENT_SAMPLE_CELLS: usize = 128;
+
+fn font_alignment_feature_distances(vertical: u128, horizontal: u128) -> Vec<[f64; 2]> {
+    let mut features = Vec::new();
+    for (orientation, mut bits) in [(0usize, vertical), (1usize, horizontal)] {
+        while bits != 0 {
+            let index = bits.trailing_zeros() as usize;
+            features.push((index, orientation));
+            bits &= bits - 1;
+        }
+    }
+
+    let mut distances = vec![[FONT_ALIGNMENT_MAX_DISTANCE_SQ; 2]; 128];
+    for (index, values) in distances.iter_mut().enumerate() {
+        let x = (index % crate::contour_score::PREVIEW_CELL_WIDTH) as i32;
+        let y = (index / crate::contour_score::PREVIEW_CELL_WIDTH) as i32;
+        for desired_orientation in 0..2 {
+            let mut best = FONT_ALIGNMENT_MAX_DISTANCE_SQ;
+            for &(feature_index, feature_orientation) in &features {
+                let fx = (feature_index % crate::contour_score::PREVIEW_CELL_WIDTH) as i32;
+                let fy = (feature_index / crate::contour_score::PREVIEW_CELL_WIDTH) as i32;
+                let dx = x - fx;
+                let dy = y - fy;
+                let orientation_cost = if desired_orientation == feature_orientation {
+                    0.0
+                } else {
+                    FONT_ALIGNMENT_ORIENTATION_PENALTY
+                };
+                best = best.min((dx * dx + dy * dy) as f64 + orientation_cost);
+            }
+            values[desired_orientation] = best.min(FONT_ALIGNMENT_MAX_DISTANCE_SQ);
+        }
+    }
+    distances
+}
+
+fn font_alignment_glyph_shapes(
+    glyphs: &[FastGlyph],
+    gw: usize,
+    gh: usize,
+) -> Vec<FontAlignmentShape> {
+    if gw == 0 || gh == 0 {
+        return Vec::new();
+    }
+
+    let not_right_edge = u128::from_le_bytes([0x7f; 16]);
+    let first_fifteen_rows = (1u128 << 120) - 1;
+    let mut seen = std::collections::HashSet::new();
+    let mut shapes = Vec::new();
+    for glyph in glyphs {
+        let preview = score_fix_preview_glyph(glyph, gw, gh);
+        let vertical = (preview.mask ^ (preview.mask >> 1)) & not_right_edge;
+        let horizontal = (preview.mask ^ (preview.mask >> 8)) & first_fifteen_rows;
+        // A glyph and its inverse expose the same contour. This also removes
+        // uniform and duplicate rendered shapes without assuming a glyph set.
+        if vertical == 0 && horizontal == 0 || !seen.insert((vertical, horizontal)) {
+            continue;
+        }
+        let feature_count = vertical.count_ones() as usize + horizontal.count_ones() as usize;
+        shapes.push(FontAlignmentShape {
+            vertical,
+            horizontal,
+            distances: font_alignment_feature_distances(vertical, horizontal),
+            feature_count,
+        });
+    }
+    shapes
+}
+
+/// Canonical contour signature for detecting font sizes that are exactly
+/// equivalent to this predictor after normalization.
+pub fn sparse_font_alignment_shape_signature(
+    glyphs: &[FastGlyph],
+    gw: usize,
+    gh: usize,
+) -> Vec<(u128, u128)> {
+    let mut signature = font_alignment_glyph_shapes(glyphs, gw, gh)
+        .into_iter()
+        .map(|shape| (shape.vertical, shape.horizontal))
+        .collect::<Vec<_>>();
+    signature.sort_unstable();
+    signature
+}
+
+#[inline]
+fn font_alignment_colour_distance(a: [u8; 3], b: [u8; 3]) -> u32 {
+    let dr = a[0] as i32 - b[0] as i32;
+    let dg = a[1] as i32 - b[1] as i32;
+    let db = a[2] as i32 - b[2] as i32;
+    (dr * dr + dg * dg + db * db) as u32
+}
+
+fn font_alignment_source_cells(
+    image: &PhotonImage,
+    gw: usize,
+    gh: usize,
+) -> Vec<FontAlignmentSourceCell> {
+    if gw == 0 || gh == 0 {
+        return Vec::new();
+    }
+    let image_width = image.get_width() as usize;
+    let image_height = image.get_height() as usize;
+    let grid_width = image_width / gw;
+    let grid_height = image_height / gh;
+    if grid_width == 0 || grid_height == 0 {
+        return Vec::new();
+    }
+
+    let raw = image.get_raw_pixels();
+    let pw = crate::contour_score::PREVIEW_CELL_WIDTH;
+    let ph = crate::contour_score::PREVIEW_CELL_HEIGHT;
+    let mut cells = Vec::new();
+    for cell_y in 0..grid_height {
+        for cell_x in 0..grid_width {
+            let mut pixels = [[0u8; 3]; 128];
+            for y in 0..ph {
+                let sy = cell_y * gh + ((2 * y + 1) * gh / (2 * ph)).min(gh - 1);
+                for x in 0..pw {
+                    let sx = cell_x * gw + ((2 * x + 1) * gw / (2 * pw)).min(gw - 1);
+                    let raw_index = (sy * image_width + sx) * 4;
+                    pixels[y * pw + x].copy_from_slice(&raw[raw_index..raw_index + 3]);
+                }
+            }
+
+            let mut vertical_strength = [0u32; 128];
+            let mut horizontal_strength = [0u32; 128];
+            for y in 0..ph {
+                for x in 0..pw - 1 {
+                    let index = y * pw + x;
+                    vertical_strength[index] =
+                        font_alignment_colour_distance(pixels[index], pixels[index + 1]);
+                }
+            }
+            for y in 0..ph - 1 {
+                for x in 0..pw {
+                    let index = y * pw + x;
+                    horizontal_strength[index] =
+                        font_alignment_colour_distance(pixels[index], pixels[index + pw]);
+                }
+            }
+
+            // Ridge maxima describe contour location without rewarding a size
+            // merely for producing more pixels in its antialiasing halo.
+            let mut candidates = Vec::new();
+            for y in 0..ph {
+                for x in 0..pw - 1 {
+                    let index = y * pw + x;
+                    let strength = vertical_strength[index];
+                    let previous = if x > 0 { vertical_strength[index - 1] } else { 0 };
+                    let next = if x + 1 < pw - 1 { vertical_strength[index + 1] } else { 0 };
+                    if strength > 0 && strength > previous && strength >= next {
+                        candidates.push((strength, index, 0usize));
+                    }
+                }
+            }
+            for y in 0..ph - 1 {
+                for x in 0..pw {
+                    let index = y * pw + x;
+                    let strength = horizontal_strength[index];
+                    let previous = if y > 0 { horizontal_strength[index - pw] } else { 0 };
+                    let next = if y + 1 < ph - 1 { horizontal_strength[index + pw] } else { 0 };
+                    if strength > 0 && strength > previous && strength >= next {
+                        candidates.push((strength, index, 1usize));
+                    }
+                }
+            }
+            candidates.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            candidates.truncate(FONT_ALIGNMENT_FEATURES_PER_CELL);
+            if candidates.is_empty() {
+                continue;
+            }
+
+            let mut vertical = 0u128;
+            let mut horizontal = 0u128;
+            let features = candidates
+                .into_iter()
+                .map(|(strength, index, orientation)| {
+                    if orientation == 0 {
+                        vertical |= 1u128 << index;
+                    } else {
+                        horizontal |= 1u128 << index;
+                    }
+                    (index, orientation, (strength as f64).sqrt())
+                })
+                .collect::<Vec<_>>();
+            let salience = features.iter().map(|feature| feature.2).sum();
+            cells.push(FontAlignmentSourceCell {
+                cell_index: cell_y * grid_width + cell_x,
+                distances: font_alignment_feature_distances(vertical, horizontal),
+                features,
+                salience,
+            });
+        }
+    }
+
+    cells.sort_by(|a, b| {
+        b.salience
+            .total_cmp(&a.salience)
+            .then_with(|| a.cell_index.cmp(&b.cell_index))
+    });
+
+    // Keep high-frequency samples spatially distributed over the image.
+    let mut selected = Vec::with_capacity(FONT_ALIGNMENT_SAMPLE_CELLS);
+    let mut selected_indices = std::collections::HashSet::new();
+    let mut bucket_counts = [0u8; 64];
+    for cell in &cells {
+        let x = cell.cell_index % grid_width;
+        let y = cell.cell_index / grid_width;
+        let bucket = (y * 8 / grid_height).min(7) * 8 + (x * 8 / grid_width).min(7);
+        if bucket_counts[bucket] < 2 {
+            bucket_counts[bucket] += 1;
+            selected_indices.insert(cell.cell_index);
+            selected.push(cell.clone());
+            if selected.len() == FONT_ALIGNMENT_SAMPLE_CELLS {
+                break;
+            }
+        }
+    }
+    if selected.len() < FONT_ALIGNMENT_SAMPLE_CELLS {
+        for cell in cells {
+            if selected_indices.insert(cell.cell_index) {
+                selected.push(cell);
+                if selected.len() == FONT_ALIGNMENT_SAMPLE_CELLS {
+                    break;
+                }
+            }
+        }
+    }
+    selected.sort_by(|a, b| b.salience.total_cmp(&a.salience));
+    selected
+}
+
+fn font_alignment_cell_shape_cost(
+    source: &FontAlignmentSourceCell,
+    shape: &FontAlignmentShape,
+) -> f64 {
+    let source_weight = source.features.iter().map(|feature| feature.2).sum::<f64>();
+    let source_to_glyph = source
+        .features
+        .iter()
+        .map(|&(index, orientation, weight)| shape.distances[index][orientation] * weight)
+        .sum::<f64>()
+        / source_weight.max(f64::MIN_POSITIVE);
+
+    let mut glyph_to_source = 0.0;
+    for (orientation, mut bits) in [(0usize, shape.vertical), (1usize, shape.horizontal)] {
+        while bits != 0 {
+            let index = bits.trailing_zeros() as usize;
+            glyph_to_source += source.distances[index][orientation];
+            bits &= bits - 1;
+        }
+    }
+    glyph_to_source /= shape.feature_count.max(1) as f64;
+    (0.7 * source_to_glyph + 0.3 * glyph_to_source) / FONT_ALIGNMENT_MAX_DISTANCE_SQ
+}
+
+/// Estimate how well salient source contours register with geometry that the
+/// enabled glyph bitmaps can actually represent. This does not render output
+/// glyphs and deliberately makes no assumptions about sextants or block names.
+pub fn sparse_font_alignment_score(
+    image: &PhotonImage,
+    glyphs: &[FastGlyph],
+    gw: usize,
+    gh: usize,
+    best_complete_score: Option<f64>,
+) -> Option<SparseFontAlignmentScore> {
+    let shapes = font_alignment_glyph_shapes(glyphs, gw, gh);
+    let cells = font_alignment_source_cells(image, gw, gh);
+    if shapes.is_empty() || cells.is_empty() {
+        return None;
+    }
+    let total_salience = cells.iter().map(|cell| cell.salience).sum::<f64>();
+    if total_salience <= f64::MIN_POSITIVE {
+        return None;
+    }
+
+    let mut weighted_score = 0.0;
+    for cell in &cells {
+        let best_shape_score = shapes
+            .iter()
+            .map(|shape| font_alignment_cell_shape_cost(cell, shape))
+            .fold(f64::INFINITY, f64::min);
+        weighted_score += best_shape_score * cell.salience;
+        let lower_bound = weighted_score / total_salience;
+        if best_complete_score.is_some_and(|best| lower_bound >= best) {
+            return Some(SparseFontAlignmentScore {
+                score: lower_bound,
+                sampled_cells: cells.len(),
+                glyph_shapes: shapes.len(),
+                pruned: true,
+            });
+        }
+    }
+
+    Some(SparseFontAlignmentScore {
+        score: weighted_score / total_salience,
+        sampled_cells: cells.len(),
+        glyph_shapes: shapes.len(),
+        pruned: false,
+    })
+}
+
 #[inline]
 fn score_fix_edge_mismatches(
     a_data: &BlockData,
@@ -8564,6 +8895,56 @@ mod tests {
         let uniform = make_test_glyph('c', &[1, 1, 1, 1], 2, 2);
         let states = distinct_nonuniform_glyph_states(&[diagonal, complement, uniform]);
         assert_eq!(states, vec![(0, false), (0, true)]);
+    }
+
+    #[test]
+    fn font_alignment_uses_distinct_nonuniform_enabled_shapes() {
+        let diagonal = make_test_glyph('a', &[1, 0, 0, 1], 2, 2);
+        let complement = make_test_glyph('b', &[0, 1, 1, 0], 2, 2);
+        let uniform = make_test_glyph('c', &[1, 1, 1, 1], 2, 2);
+        let signature = sparse_font_alignment_shape_signature(
+            &[diagonal, complement, uniform],
+            2,
+            2,
+        );
+        assert_eq!(signature.len(), 1);
+    }
+
+    #[test]
+    fn font_alignment_prefers_a_matching_contour_location() {
+        let gw = 8;
+        let gh = 16;
+        let mut rgba = Vec::with_capacity(gw * gh * 4);
+        let mut aligned = Vec::with_capacity(gw * gh);
+        let mut shifted = Vec::with_capacity(gw * gh);
+        for _y in 0..gh {
+            for x in 0..gw {
+                let value = if x < 4 { 0 } else { 255 };
+                rgba.extend_from_slice(&[value, value, value, 255]);
+                aligned.push((x < 4) as u8);
+                shifted.push((x < 2) as u8);
+            }
+        }
+        let image = PhotonImage::new(rgba, gw as u32, gh as u32);
+        let aligned_score = sparse_font_alignment_score(
+            &image,
+            &[make_test_glyph('a', &aligned, gw, gh)],
+            gw,
+            gh,
+            None,
+        )
+        .unwrap()
+        .score;
+        let shifted_score = sparse_font_alignment_score(
+            &image,
+            &[make_test_glyph('b', &shifted, gw, gh)],
+            gw,
+            gh,
+            None,
+        )
+        .unwrap()
+        .score;
+        assert!(aligned_score < shifted_score);
     }
 
     #[test]
