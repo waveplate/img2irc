@@ -4346,6 +4346,7 @@ fn geometry_score_fix_fidelity_allowance() -> f64 {
     100.0 * one_preview_edge as f64 / (patch_width * patch_height) as f64
 }
 
+#[cfg(test)]
 fn distinct_nonuniform_glyph_states(glyphs: &[FastGlyph]) -> Vec<(usize, bool)> {
     let mut states = Vec::with_capacity(glyphs.len() * 2);
     for (glyph_idx, glyph) in glyphs.iter().enumerate() {
@@ -4372,6 +4373,65 @@ fn distinct_nonuniform_glyph_states(glyphs: &[FastGlyph]) -> Vec<(usize, bool)> 
         }
     }
     states
+}
+
+struct GeometryRenderedStateCatalog {
+    class_ids: Vec<usize>,
+    uniform: Vec<bool>,
+}
+
+fn geometry_rendered_state_catalog(glyphs: &[FastGlyph]) -> GeometryRenderedStateCatalog {
+    let mut classes = std::collections::HashMap::<Vec<u8>, usize>::new();
+    let mut class_ids = Vec::with_capacity(glyphs.len() * 2);
+    let mut uniform = Vec::with_capacity(glyphs.len() * 2);
+    for glyph in glyphs {
+        for inverted in [false, true] {
+            let rendered = glyph
+                .bitmap
+                .iter()
+                .map(|&pixel| pixel ^ inverted as u8)
+                .collect::<Vec<_>>();
+            let is_uniform = rendered
+                .first()
+                .is_none_or(|&first| rendered.iter().all(|&pixel| pixel == first));
+            let next_id = classes.len();
+            let class_id = *classes.entry(rendered).or_insert(next_id);
+            class_ids.push(class_id);
+            uniform.push(is_uniform);
+        }
+    }
+    GeometryRenderedStateCatalog { class_ids, uniform }
+}
+
+fn top_unique_geometry_choices(
+    costs: &[u64],
+    current: (usize, bool),
+    limit: usize,
+    catalog: &GeometryRenderedStateCatalog,
+) -> Vec<(usize, bool)> {
+    let current_state = current.0 * 2 + current.1 as usize;
+    let Some(&current_class) = catalog.class_ids.get(current_state) else {
+        return vec![current];
+    };
+    let mut ranked = (0..costs.len().min(catalog.class_ids.len())).collect::<Vec<_>>();
+    ranked.sort_unstable_by_key(|&state| (costs[state], state));
+    let mut seen_classes = std::collections::HashSet::with_capacity(limit);
+    let mut choices = Vec::with_capacity(limit + 1);
+    for state in ranked {
+        let class_id = catalog.class_ids[state];
+        if catalog.uniform[state]
+            || class_id == current_class
+            || !seen_classes.insert(class_id)
+        {
+            continue;
+        }
+        choices.push((state / 2, state % 2 == 1));
+        if choices.len() == limit {
+            break;
+        }
+    }
+    choices.push(current);
+    choices
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4426,6 +4486,7 @@ fn run_geometry_score_fix(
     grid_state: &mut Vec<(usize, bool)>,
     grid_data: &[BlockData],
     glyphs: &[FastGlyph],
+    block_glyph_costs: &[Vec<u64>],
     target_scores: Vec<f32>,
     source_raster: &[[u8; 3]],
     grid_w: usize,
@@ -4456,7 +4517,43 @@ fn run_geometry_score_fix(
         }
     }
     let target_count = target_mask.iter().filter(|&&target| target).count();
-    let distinct_states = distinct_nonuniform_glyph_states(glyphs);
+    let mut active_mask = vec![false; cell_count];
+    for (cell_idx, &is_target) in target_mask.iter().enumerate() {
+        if is_target {
+            for affected_idx in affected_discontinuity_cell_indices(cell_idx, grid_w, grid_h) {
+                active_mask[affected_idx] = true;
+            }
+        }
+    }
+
+    // Geometry used to ignore Score Fix N and exhaustively try every enabled
+    // glyph/inversion state. Freeze the same source-ranked, render-deduplicated
+    // top-N alternatives used by Score Fix. Keep the initial state as a free
+    // rollback choice if neighboring edits later make it useful again.
+    let candidate_limit = args.score_fix_candidates.max(1) as usize;
+    let baseline_state = grid_state.clone();
+    let state_catalog = geometry_rendered_state_catalog(glyphs);
+    let candidate_lists = (0..cell_count)
+        .into_par_iter()
+        .map(|cell_idx| {
+            if !target_mask[cell_idx] {
+                return Vec::new();
+            }
+            let current = baseline_state[cell_idx];
+            block_glyph_costs
+                .get(cell_idx)
+                .map(|costs| {
+                    top_unique_geometry_choices(costs, current, candidate_limit, &state_catalog)
+                })
+                .unwrap_or_else(|| vec![current])
+        })
+        .collect::<Vec<_>>();
+    let distinct_states = candidate_lists
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     let preview_width = grid_w * crate::contour_score::PREVIEW_CELL_WIDTH;
     let (mut output_preview, _, _) = crate::contour_score::normalize_preview_raster(
         raster,
@@ -4469,34 +4566,41 @@ fn run_geometry_score_fix(
     let references = (0..cell_count)
         .into_par_iter()
         .map(|cell_idx| {
-            prepare_local_preview_reference(
-                source_raster,
-                cell_idx,
-                grid_w,
-                grid_h,
-                gw,
-                gh,
-                &weights,
-            )
+            active_mask[cell_idx].then(|| {
+                prepare_local_preview_reference(
+                    source_raster,
+                    cell_idx,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    &weights,
+                )
+            })
         })
         .collect::<Vec<_>>();
     let baseline_scores = (0..cell_count)
         .into_par_iter()
         .map(|cell_idx| {
-            score_local_normalized_preview_details(
-                &references[cell_idx],
-                &output_preview,
-                cell_idx,
-                grid_w,
-                grid_h,
-                &weights,
-            )
+            references[cell_idx].as_ref().map(|reference| {
+                score_local_normalized_preview_details(
+                    reference,
+                    &output_preview,
+                    cell_idx,
+                    grid_w,
+                    grid_h,
+                    &weights,
+                )
+            })
         })
         .collect::<Vec<_>>();
     let mut current_flow_scores = if flow_weight > 0.0 {
         (0..cell_count)
             .into_par_iter()
             .map(|cell_idx| {
+                if !active_mask[cell_idx] {
+                    return 0.0;
+                }
                 let patch = extract_local_patch(
                     &output_preview,
                     cell_idx % grid_w,
@@ -4515,7 +4619,7 @@ fn run_geometry_score_fix(
     let mut current_scores = baseline_scores.clone();
     let initial_score = current_scores
         .iter()
-        .map(|score| score.total)
+        .filter_map(|score| score.as_ref().map(|score| score.total))
         .sum::<f64>()
         + flow_weight * current_flow_scores.iter().sum::<f64>();
     let mut global_score = initial_score;
@@ -4542,7 +4646,12 @@ fn run_geometry_score_fix(
         let affected = affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h);
         let current_total_sum = affected
             .iter()
-            .map(|&idx| current_scores[idx].total)
+            .map(|&idx| {
+                current_scores[idx]
+                    .as_ref()
+                    .expect("geometry score should exist in a target halo")
+                    .total
+            })
             .sum::<f64>();
         let current_flow_sum = affected
             .iter()
@@ -4551,19 +4660,43 @@ fn run_geometry_score_fix(
         let current_energy_sum = current_total_sum + flow_weight * current_flow_sum;
         let current_endpoint_count_sum = affected
             .iter()
-            .map(|&idx| current_scores[idx].contour.endpoint_count)
+            .map(|&idx| {
+                current_scores[idx]
+                    .as_ref()
+                    .expect("geometry score should exist in a target halo")
+                    .contour
+                    .endpoint_count
+            })
             .sum::<usize>();
         let current_junction_count_sum = affected
             .iter()
-            .map(|&idx| current_scores[idx].contour.junction_count)
+            .map(|&idx| {
+                current_scores[idx]
+                    .as_ref()
+                    .expect("geometry score should exist in a target halo")
+                    .contour
+                    .junction_count
+            })
             .sum::<usize>();
         let current_component_count_sum = affected
             .iter()
-            .map(|&idx| current_scores[idx].contour.component_count)
+            .map(|&idx| {
+                current_scores[idx]
+                    .as_ref()
+                    .expect("geometry score should exist in a target halo")
+                    .contour
+                    .component_count
+            })
             .sum::<usize>();
         let baseline_fidelity_limit = affected
             .iter()
-            .map(|&idx| baseline_scores[idx].fidelity + fidelity_allowance)
+            .map(|&idx| {
+                baseline_scores[idx]
+                    .as_ref()
+                    .expect("geometry baseline should exist in a target halo")
+                    .fidelity
+                    + fidelity_allowance
+            })
             .sum::<f64>();
         let patches = affected
             .iter()
@@ -4583,9 +4716,7 @@ fn run_geometry_score_fix(
             })
             .collect::<Vec<_>>();
 
-        let evaluations = distinct_states
-            .par_iter()
-            .filter_map(|&candidate| {
+        let evaluate_candidate = |&candidate: &(usize, bool)| {
                 if glyph_states_render_identically(
                     &glyphs[candidate.0],
                     candidate.1,
@@ -4616,7 +4747,9 @@ fn run_geometry_score_fix(
                         gh,
                     );
                     let score = crate::contour_score::score_rgb_against_prepared_with_weights(
-                        &references[*affected_idx],
+                        references[*affected_idx]
+                            .as_ref()
+                            .expect("geometry reference should exist in a target halo"),
                         &candidate_patch.pixels,
                         crate::contour_score::PREVIEW_CELL_WIDTH,
                         &weights,
@@ -4681,9 +4814,30 @@ fn run_geometry_score_fix(
                     component_count_sum,
                     fidelity_sum,
                 })
+            };
+        let candidates = &candidate_lists[curr_idx];
+        candidate_evaluations += candidates
+            .iter()
+            .filter(|&&candidate| {
+                !glyph_states_render_identically(
+                    &glyphs[candidate.0],
+                    candidate.1,
+                    &glyphs[current_choice.0],
+                    current_choice.1,
+                )
             })
-            .collect::<Vec<_>>();
-        candidate_evaluations += distinct_states.len().saturating_sub(1);
+            .count();
+        let evaluations = if candidates.len() >= 8 {
+            candidates
+                .par_iter()
+                .filter_map(evaluate_candidate)
+                .collect::<Vec<_>>()
+        } else {
+            candidates
+                .iter()
+                .filter_map(evaluate_candidate)
+                .collect::<Vec<_>>()
+        };
         let best = evaluations.into_iter().min_by(|a, b| {
             a.energy_sum
                 .total_cmp(&b.energy_sum)
@@ -4726,7 +4880,7 @@ fn run_geometry_score_fix(
             .zip(best.affected_scores)
             .zip(best.affected_flow_scores)
         {
-            current_scores[affected_idx] = score;
+            current_scores[affected_idx] = Some(score);
             current_flow_scores[affected_idx] = flow_score;
         }
         changes += 1;
@@ -4758,7 +4912,7 @@ fn run_geometry_score_fix(
 
     Ok(GeometryScoreFixStats {
         target_count,
-        distinct_states: distinct_states.len(),
+        distinct_states,
         candidate_evaluations,
         flow_candidate_evaluations: flow_candidate_evaluations
             .load(std::sync::atomic::Ordering::Relaxed),
@@ -6716,6 +6870,7 @@ pub fn render_blocks_smooth(
             &mut grid_state,
             &grid_data,
             glyphs,
+            &block_glyph_costs,
             target_scores,
             &source_raster,
             grid_w,
@@ -6728,7 +6883,7 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
+            "score-fix geometry refinement selected {} cells, used {} distinct states across source-ranked top-N candidate lists ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
             stats.target_count,
             stats.distinct_states,
             stats.candidate_evaluations,
@@ -8564,6 +8719,20 @@ mod tests {
         let uniform = make_test_glyph('c', &[1, 1, 1, 1], 2, 2);
         let states = distinct_nonuniform_glyph_states(&[diagonal, complement, uniform]);
         assert_eq!(states, vec![(0, false), (0, true)]);
+    }
+
+    #[test]
+    fn geometry_top_n_counts_unique_nonuniform_alternatives() {
+        let glyphs = vec![
+            make_test_glyph('a', &[1, 0, 0, 1], 2, 2),
+            make_test_glyph('b', &[0, 1, 1, 0], 2, 2),
+            make_test_glyph('c', &[1, 1, 1, 1], 2, 2),
+            make_test_glyph('d', &[1, 0, 1, 0], 2, 2),
+        ];
+        let catalog = geometry_rendered_state_catalog(&glyphs);
+        let costs = vec![0, 5, 1, 2, 0, 0, 3, 4];
+        let choices = top_unique_geometry_choices(&costs, (0, false), 2, &catalog);
+        assert_eq!(choices, vec![(1, false), (3, false), (0, false)]);
     }
 
     #[test]

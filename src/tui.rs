@@ -1526,7 +1526,7 @@ pub(crate) struct App {
     general_scroll_offset: usize,
 
     // Cancellation & Debouncing
-    tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
+    tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant)>,
     current_cancel_flag: Arc<AtomicBool>,
     args_dirty: bool,
     last_args_change: Option<Instant>,
@@ -1535,11 +1535,13 @@ pub(crate) struct App {
         draw::RenderResult,
         Arc<font::GlyphStore>,
         Vec<crate::args::TextOverlay>,
+        Instant,
     )>,
     cached_render: String,
     cached_result: Option<draw::RenderResult>,
     /// Raw result from render thread (no overlays applied)
     base_render_result: Option<draw::RenderResult>,
+    last_render_latency: Option<Duration>,
     is_rendering: Arc<AtomicBool>,
     render_tick: usize,
     dragged_control: Option<usize>,
@@ -2128,11 +2130,12 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 impl App {
     fn new(
         render_args: RenderArgs,
-        tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>)>,
+        tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant)>,
         rx_result: mpsc::Receiver<(
             draw::RenderResult,
             Arc<font::GlyphStore>,
             Vec<crate::args::TextOverlay>,
+            Instant,
         )>,
         initial_flag: Arc<AtomicBool>,
     ) -> App {
@@ -2170,6 +2173,7 @@ impl App {
             cached_render: String::new(),
             cached_result: None,
             base_render_result: None,
+            last_render_latency: None,
             is_rendering: Arc::new(AtomicBool::new(true)),
             render_tick: 0,
             dragged_control: None,
@@ -3650,7 +3654,9 @@ impl App {
         // post-process in the display layer, so typing text never triggers a full re-render.
         let mut args_for_render = self.render_args.clone();
         args_for_render.overlays = Vec::new();
-        let _ = self.tx_args.send((args_for_render, new_flag));
+        let _ = self
+            .tx_args
+            .send((args_for_render, new_flag, Instant::now()));
         log::info!(
             "Flushing render args: width={}, scale={:?}, font={:?}",
             self.width,
@@ -4796,7 +4802,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     let arc_glyphs = Arc::new(glyph_store);
 
     let initial_flag = Arc::new(AtomicBool::new(false));
-    let (tx_args, mut rx_args) = watch::channel((render_args.clone(), initial_flag.clone()));
+    let (tx_args, mut rx_args) = watch::channel((
+        render_args.clone(),
+        initial_flag.clone(),
+        Instant::now(),
+    ));
     let (tx_result, rx_result) = mpsc::channel(1);
     let rendering_flag = Arc::new(AtomicBool::new(true));
     let rendering_flag2 = rendering_flag.clone();
@@ -4825,7 +4835,9 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             // Signal rendering start
             rendering_flag2.store(true, Ordering::Relaxed);
 
-            let (current_args, cancel_flag) = { rx_args.borrow_and_update().clone() };
+            let (current_args, cancel_flag, render_requested_at) = {
+                rx_args.borrow_and_update().clone()
+            };
 
             if current_args
                 .image
@@ -4977,7 +4989,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             // Only send if not cancelled (though render output might say cancelled)
             if !cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 if tx_result
-                    .send((result, arc_glyphs.clone(), ocr_overlays))
+                    .send((
+                        result,
+                        arc_glyphs.clone(),
+                        ocr_overlays,
+                        render_requested_at,
+                    ))
                     .await
                     .is_err()
                 {
@@ -5048,7 +5065,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             app.rx_optimization = Some(rx);
         }
 
-        while let Ok((result, glyphs, ocr_overlays)) = app.rx_result.try_recv() {
+        while let Ok((result, glyphs, ocr_overlays, render_requested_at)) =
+            app.rx_result.try_recv()
+        {
             if result.content == "Cancelled" {
                 continue;
             }
@@ -5082,6 +5101,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             app.cached_result = Some(overlayed);
             app.base_render_result = Some(result);
             app.arc_glyphs = Some(glyphs);
+            // The next terminal draw immediately below presents this cached
+            // output. Include debounce/queueing, font reload, effects, Score
+            // Fix, geometry refinement, channel wait, and overlay application.
+            app.last_render_latency = Some(render_requested_at.elapsed());
         }
 
         terminal
@@ -8184,15 +8207,24 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Build right text (timings + spinner)
     let mut right_text = String::new();
-    if let Some(res) = &app.cached_result {
-        let initial_ms = res.initial_time.as_millis();
-        if initial_ms > 0 || res.fix_disc_time.is_some() {
-            right_text.push_str(&format!(" {}ms", initial_ms));
-            if let Some(fd_time) = res.fix_disc_time {
-                right_text.push_str(&format!(" (+{}ms)", fd_time.as_millis()));
+    if let Some(end_to_end) = app.last_render_latency {
+        let elapsed = if end_to_end.as_secs_f64() >= 10.0 {
+            format!("{:.1}s", end_to_end.as_secs_f64())
+        } else {
+            format!("{}ms", end_to_end.as_millis())
+        };
+        right_text.push_str(&format!(" {}", elapsed));
+        if let Some(res) = &app.cached_result {
+            let initial_ms = res.initial_time.as_millis();
+            if initial_ms > 0 || res.fix_disc_time.is_some() {
+                right_text.push_str(&format!(" ({}ms", initial_ms));
+                if let Some(fd_time) = res.fix_disc_time {
+                    right_text.push_str(&format!(" (+{}ms)", fd_time.as_millis()));
+                }
+                right_text.push(')');
             }
-            right_text.push_str(" ");
         }
+        right_text.push(' ');
     }
 
     let is_rendering = app.is_rendering.load(Ordering::Relaxed);
