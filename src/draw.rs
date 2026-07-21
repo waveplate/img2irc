@@ -4128,32 +4128,31 @@ const GEOMETRY_FLOW_STRENGTH: f64 = 3.0;
 /// colour: it evolves the existing colour regions by one discrete
 /// mean-curvature step, shaving protrusions and filling matching indentations.
 fn categorical_median_pass(
-    pixels: &[[u8; 3]],
+    labels: &[u32],
     width: usize,
     height: usize,
-) -> Vec<[u8; 3]> {
-    if width == 0 || height == 0 || pixels.len() != width * height {
+) -> Vec<u32> {
+    if width == 0 || height == 0 || labels.len() != width * height {
         return Vec::new();
     }
-    let mut output = pixels.to_vec();
+    let mut output = labels.to_vec();
     for y in 0..height {
         for x in 0..width {
-            let center = pixels[y * width + x];
-            let mut colours = [[0u8; 3]; 9];
+            let center = labels[y * width + x];
+            let mut colours = [0u32; 9];
             let mut counts = [0u8; 9];
             let mut colour_count = 0usize;
             for ny in y.saturating_sub(1)..=(y + 1).min(height - 1) {
                 for nx in x.saturating_sub(1)..=(x + 1).min(width - 1) {
-                    let colour = pixels[ny * width + nx];
-                    let slot = colours[..colour_count]
-                        .iter()
-                        .position(|existing| *existing == colour)
-                        .unwrap_or_else(|| {
-                            let slot = colour_count;
-                            colours[slot] = colour;
-                            colour_count += 1;
-                            slot
-                        });
+                    let colour = labels[ny * width + nx];
+                    let mut slot = 0usize;
+                    while slot < colour_count && colours[slot] != colour {
+                        slot += 1;
+                    }
+                    if slot == colour_count {
+                        colours[slot] = colour;
+                        colour_count += 1;
+                    }
                     counts[slot] += 1;
                 }
             }
@@ -4174,7 +4173,7 @@ fn categorical_median_pass(
 }
 
 fn categorical_boundary_mask(
-    pixels: &[[u8; 3]],
+    labels: &[u32],
     width: usize,
     height: usize,
 ) -> Vec<bool> {
@@ -4182,11 +4181,11 @@ fn categorical_boundary_mask(
     for y in 0..height {
         for x in 0..width {
             let idx = y * width + x;
-            let colour = pixels[idx];
-            boundary[idx] = (x > 0 && pixels[idx - 1] != colour)
-                || (x + 1 < width && pixels[idx + 1] != colour)
-                || (y > 0 && pixels[idx - width] != colour)
-                || (y + 1 < height && pixels[idx + width] != colour);
+            let colour = labels[idx];
+            boundary[idx] = (x > 0 && labels[idx - 1] != colour)
+                || (x + 1 < width && labels[idx + 1] != colour)
+                || (y > 0 && labels[idx - width] != colour)
+                || (y + 1 < height && labels[idx + width] != colour);
         }
     }
     boundary
@@ -4223,46 +4222,78 @@ fn truncated_boundary_distances(boundary: &[bool], width: usize, height: usize) 
     distance
 }
 
-fn symmetric_boundary_distance(
-    a: &[[u8; 3]],
-    b: &[[u8; 3]],
+struct PreparedCategoricalBoundary {
+    mask: Vec<bool>,
+    distance: Vec<u8>,
+    count: usize,
+}
+
+fn prepare_categorical_boundary(
+    labels: &[u32],
     width: usize,
     height: usize,
+) -> PreparedCategoricalBoundary {
+    let mask = categorical_boundary_mask(labels, width, height);
+    let count = mask.iter().filter(|&&value| value).count();
+    let distance = truncated_boundary_distances(&mask, width, height);
+    PreparedCategoricalBoundary {
+        mask,
+        distance,
+        count,
+    }
+}
+
+fn symmetric_prepared_boundary_distance(
+    a: &PreparedCategoricalBoundary,
+    b: &PreparedCategoricalBoundary,
 ) -> f64 {
-    let a_boundary = categorical_boundary_mask(a, width, height);
-    let b_boundary = categorical_boundary_mask(b, width, height);
-    let a_count = a_boundary.iter().filter(|&&value| value).count();
-    let b_count = b_boundary.iter().filter(|&&value| value).count();
-    if a_count == 0 && b_count == 0 {
+    if a.count == 0 && b.count == 0 {
         return 0.0;
     }
-    if a_count == 0 || b_count == 0 {
+    if a.count == 0 || b.count == 0 {
         return 100.0;
     }
-    let a_distance = truncated_boundary_distances(&a_boundary, width, height);
-    let b_distance = truncated_boundary_distances(&b_boundary, width, height);
-    let a_to_b = a_boundary
+    let a_to_b = a
+        .mask
         .iter()
-        .zip(&b_distance)
+        .zip(&b.distance)
         .filter_map(|(&on_boundary, &distance)| on_boundary.then_some(distance as f64))
         .sum::<f64>()
-        / a_count as f64;
-    let b_to_a = b_boundary
+        / a.count as f64;
+    let b_to_a = b
+        .mask
         .iter()
-        .zip(&a_distance)
+        .zip(&a.distance)
         .filter_map(|(&on_boundary, &distance)| on_boundary.then_some(distance as f64))
         .sum::<f64>()
-        / b_count as f64;
+        / b.count as f64;
     50.0 * (a_to_b + b_to_a) / GEOMETRY_FLOW_DISTANCE_CAP as f64
 }
 
 /// Intrinsic stability under one and two median-flow steps. Straight regions
 /// remain unchanged, while teeth, spikes, and abrupt pixel-scale turns move.
 fn curvature_flow_regularity(pixels: &[[u8; 3]], width: usize, height: usize) -> f64 {
-    let once = categorical_median_pass(pixels, width, height);
+    let labels = pixels
+        .iter()
+        .map(|pixel| {
+            ((pixel[0] as u32) << 16) | ((pixel[1] as u32) << 8) | pixel[2] as u32
+        })
+        .collect::<Vec<_>>();
+    let once = categorical_median_pass(&labels, width, height);
+    if once == labels {
+        return 0.0;
+    }
     let twice = categorical_median_pass(&once, width, height);
-    let one_step = symmetric_boundary_distance(pixels, &once, width, height);
-    let two_step = symmetric_boundary_distance(pixels, &twice, width, height);
+    let original_boundary = prepare_categorical_boundary(&labels, width, height);
+    let once_boundary = prepare_categorical_boundary(&once, width, height);
+    if twice == once {
+        let distance =
+            symmetric_prepared_boundary_distance(&original_boundary, &once_boundary);
+        return 0.7 * distance + 0.3 * distance;
+    }
+    let twice_boundary = prepare_categorical_boundary(&twice, width, height);
+    let one_step = symmetric_prepared_boundary_distance(&original_boundary, &once_boundary);
+    let two_step = symmetric_prepared_boundary_distance(&original_boundary, &twice_boundary);
     0.7 * one_step + 0.3 * two_step
 }
 
@@ -4271,6 +4302,7 @@ struct GeometryScoreFixStats {
     target_count: usize,
     distinct_states: usize,
     candidate_evaluations: usize,
+    flow_candidate_evaluations: usize,
     changes: usize,
     initial_score: f64,
     final_score: f64,
@@ -4489,6 +4521,7 @@ fn run_geometry_score_fix(
     let mut global_score = initial_score;
     let mut versions = vec![0u32; cell_count];
     let mut candidate_evaluations = 0usize;
+    let flow_candidate_evaluations = std::sync::atomic::AtomicUsize::new(0);
     let mut changes = 0usize;
 
     while let Some(entry) = queue.pop() {
@@ -4562,9 +4595,8 @@ fn run_geometry_score_fix(
                     return None;
                 }
                 let mut affected_scores = Vec::with_capacity(affected.len());
-                let mut affected_flow_scores = Vec::with_capacity(affected.len());
+                let mut candidate_patches = Vec::with_capacity(affected.len());
                 let mut total_sum = 0.0;
-                let mut flow_sum = 0.0;
                 let mut endpoint_count_sum = 0usize;
                 let mut junction_count_sum = 0usize;
                 let mut component_count_sum = 0usize;
@@ -4590,34 +4622,52 @@ fn run_geometry_score_fix(
                         &weights,
                     );
                     total_sum += score.total;
-                    let flow_score = if flow_weight > 0.0 {
-                        curvature_flow_regularity(
-                            &candidate_patch.pixels,
-                            candidate_patch.width,
-                            candidate_patch.height,
-                        )
-                    } else {
-                        0.0
-                    };
-                    flow_sum += flow_score;
                     endpoint_count_sum += score.contour.endpoint_count;
                     junction_count_sum += score.contour.junction_count;
                     component_count_sum += score.contour.component_count;
                     fidelity_sum += score.fidelity;
                     affected_scores.push(score);
-                    affected_flow_scores.push(flow_score);
+                    candidate_patches.push(candidate_patch);
+                    // Flow is non-negative, as are all remaining contour and
+                    // fidelity terms. Reject impossible candidates before the
+                    // expensive median passes without changing the result.
+                    if total_sum + 1e-9 >= current_energy_sum
+                        || fidelity_sum > baseline_fidelity_limit + 1e-9
+                    {
+                        return None;
+                    }
                 }
                 // Only these overlapping terms can change. Geometry may move
                 // between adjacent windows, but it may not create additional
                 // broken ends, junctions, or components overall. The fixed
                 // baseline fidelity limit prevents cumulative drift.
-                let energy_sum = total_sum + flow_weight * flow_sum;
-                if energy_sum + 1e-9 >= current_energy_sum
-                    || endpoint_count_sum > current_endpoint_count_sum
+                if endpoint_count_sum > current_endpoint_count_sum
                     || junction_count_sum > current_junction_count_sum
                     || component_count_sum > current_component_count_sum
-                    || fidelity_sum > baseline_fidelity_limit + 1e-9
                 {
+                    return None;
+                }
+                let affected_flow_scores = if flow_weight > 0.0 {
+                    flow_candidate_evaluations.fetch_add(
+                        1,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    candidate_patches
+                        .iter()
+                        .map(|candidate_patch| {
+                            curvature_flow_regularity(
+                                &candidate_patch.pixels,
+                                candidate_patch.width,
+                                candidate_patch.height,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![0.0; affected.len()]
+                };
+                let flow_sum = affected_flow_scores.iter().sum::<f64>();
+                let energy_sum = total_sum + flow_weight * flow_sum;
+                if energy_sum + 1e-9 >= current_energy_sum {
                     return None;
                 }
                 Some(GeometryCandidateEvaluation {
@@ -4710,6 +4760,8 @@ fn run_geometry_score_fix(
         target_count,
         distinct_states: distinct_states.len(),
         candidate_evaluations,
+        flow_candidate_evaluations: flow_candidate_evaluations
+            .load(std::sync::atomic::Ordering::Relaxed),
         changes,
         initial_score,
         final_score: global_score,
@@ -6676,10 +6728,11 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} candidate evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
+            "score-fix geometry refinement selected {} cells, evaluated {} distinct non-uniform glyph states ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
             stats.target_count,
             stats.distinct_states,
             stats.candidate_evaluations,
+            stats.flow_candidate_evaluations,
             stats.changes,
             stats.initial_score,
             stats.final_score,
