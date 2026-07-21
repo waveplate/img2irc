@@ -125,8 +125,6 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
 
         let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
             "🛑 STOP AUTO-OPTIMIZE".to_string()
-        } else if ctrl.id == ControlId::FindFontSize && app.is_finding_font_size {
-            "🛑 STOP FONT SEARCH".to_string()
         } else {
             ctrl.label.to_string()
         };
@@ -206,8 +204,6 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             ControlKind::Action => {
                 let status = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
                     &app.optimization_progress
-                } else if ctrl.id == ControlId::FindFontSize {
-                    &app.font_size_search_status
                 } else {
                     ""
                 };
