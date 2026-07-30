@@ -1,5 +1,36 @@
 use super::*;
 
+fn text_toggle_button(
+    label: &'static str,
+    enabled: bool,
+    focused: bool,
+) -> Paragraph<'static> {
+    let fill = if focused {
+        ACCENT
+    } else if enabled {
+        TOGGLE_ON
+    } else {
+        TOGGLE_OFF
+    };
+    let foreground = if focused || enabled {
+        Color::Black
+    } else {
+        TEXT
+    };
+    Paragraph::new(format!(" {label} "))
+        .style(
+            Style::default()
+                .fg(foreground)
+                .bg(fill)
+                .add_modifier(if enabled || focused {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        )
+        .alignment(Alignment::Center)
+}
+
 pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let main_block = Block::default()
         .borders(Borders::ALL)
@@ -14,17 +45,23 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
     f.render_widget(main_block, area);
 
     let chunks = Layout::vertical([
-        Constraint::Length(25), // Color picker
-        Constraint::Length(3),  // FG/BG color swatches
-        Constraint::Length(3),  // Options (Wrap toggle / Bold / Italic / Underline)
-        Constraint::Length(3),  // Delete button
-        Constraint::Length(8),  // Mini list of overlays
-        Constraint::Min(0),     // Instructions / Status
+        Constraint::Length(20), // Color picker
+        Constraint::Length(1),  // FG/BG targets and clear actions
+        Constraint::Length(5),  // Text editor
+        Constraint::Length(1),  // Wrap / fit / formatting / delete
+        Constraint::Min(6),     // Overlay list
+        Constraint::Length(5),  // Instructions / status
     ])
     .split(inner);
 
     // Color Picker always visible
-    let cp_rect = Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, 27);
+    let cp_rect = chunks[0];
+    let has_selection = app
+        .text_selected
+        .is_some_and(|s| s > 0 && s <= app.render_args.overlays.len());
+    app.text_btn_areas.clear();
+    app.text_field_areas.clear();
+    app.text_field_areas.push(chunks[2]);
 
     // Ensure CP is instantiated with correct mode
     let mode = match app.render_mode_idx {
@@ -48,23 +85,29 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 let ov = &app.render_args.overlays[sel - 1];
                 if cp_state.editing_fg {
                     if let Some(fg) = &ov.fg {
-                        let (r, g, b) = match fg {
-                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
-                        };
-                        cp_state.fg_rgb = (r, g, b);
-                        cp_state.set_rgb(r, g, b);
+                        match fg {
+                            crate::args::ColorSpec::Rgb(rgb) => {
+                                cp_state.fg_rgb = (rgb[0], rgb[1], rgb[2]);
+                                cp_state.set_rgb(rgb[0], rgb[1], rgb[2]);
+                            }
+                            crate::args::ColorSpec::Index(i) => {
+                                cp_state.set_grid_idx(*i as usize);
+                            }
+                        }
                     } else {
                         cp_state.fg_idx = None;
                     }
                 } else {
                     if let Some(bg) = &ov.bg {
-                        let (r, g, b) = match bg {
-                            crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                            crate::args::ColorSpec::Index(i) => cp_state.rgb_from_idx(*i as usize),
-                        };
-                        cp_state.bg_rgb = Some((r, g, b));
-                        cp_state.set_rgb(r, g, b);
+                        match bg {
+                            crate::args::ColorSpec::Rgb(rgb) => {
+                                cp_state.bg_rgb = Some((rgb[0], rgb[1], rgb[2]));
+                                cp_state.set_rgb(rgb[0], rgb[1], rgb[2]);
+                            }
+                            crate::args::ColorSpec::Index(i) => {
+                                cp_state.set_grid_idx(*i as usize);
+                            }
+                        }
                     } else {
                         cp_state.bg_idx = None;
                         cp_state.bg_rgb = None;
@@ -81,199 +124,284 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         );
     }
 
-    // FG/BG color swatch display
-    {
+    // Keep each clear action immediately adjacent to the swatch it affects.
+    let color_btn_areas = {
         let swatch_area = chunks[1];
-        let swatch_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(BORDER))
-            .title(" Color ");
-        let swatch_inner = swatch_block.inner(swatch_area);
-        f.render_widget(swatch_block, swatch_area);
+        let parts = Layout::horizontal([
+            Constraint::Length(10),
+            Constraint::Length(2),
+            Constraint::Length(2),
+            Constraint::Length(10),
+            Constraint::Length(2),
+            Constraint::Min(0),
+        ])
+        .split(swatch_area);
+        let color_btn_areas = [parts[0], parts[3], parts[1], parts[4]];
 
-        let swatch_halves =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(swatch_inner);
-
-        // FG swatch
         let fg_editing = app
             .color_picker_state
             .as_ref()
             .map_or(true, |cp| cp.editing_fg);
-        let fg_label = if fg_editing { "▶Fg " } else { " Fg " };
-        if let Some(sel) = app.text_selected {
-            if sel > 0 && sel <= app.render_args.overlays.len() {
-                let ov = &app.render_args.overlays[sel - 1];
-                let fg_style = if let Some(fg) = &ov.fg {
-                    let (r, g, b) = match fg {
-                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                        crate::args::ColorSpec::Index(i) => {
-                            let cp = app.color_picker_state.as_ref().unwrap();
-                            cp.rgb_from_idx(*i as usize)
-                        }
-                    };
-                    Style::default().bg(Color::Rgb(r, g, b)).fg(
-                        if (r as u16 + g as u16 + b as u16) > 380 {
-                            Color::Black
-                        } else {
-                            Color::White
-                        },
-                    )
-                } else {
-                    Style::default().fg(Color::DarkGray)
+        if has_selection {
+            let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
+            let color_rgb = |color: &Option<crate::args::ColorSpec>| {
+                color.as_ref().map(|color| match color {
+                    crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
+                    crate::args::ColorSpec::Index(i) => {
+                        let cp = app.color_picker_state.as_ref().unwrap();
+                        cp.rgb_from_idx(*i as usize)
+                    }
+                })
+            };
+            let color_line =
+                |label: &'static str, rgb: Option<(u8, u8, u8)>, active: bool| -> Line<'static> {
+                    let mut spans = vec![Span::styled(
+                        format!(" {label} "),
+                        Style::default()
+                            .fg(if active { Color::White } else { TEXT_DIM })
+                            .bg(if active { ACCENT_DIM } else { SURFACE })
+                            .add_modifier(if active {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    )];
+                    if let Some((r, g, b)) = rgb {
+                        spans.push(Span::styled(
+                            "    ",
+                            Style::default().bg(Color::Rgb(r, g, b)),
+                        ));
+                    } else {
+                        spans.push(Span::styled(" ∅ ", Style::default().fg(TEXT_DIM)));
+                    }
+                    Line::from(spans)
                 };
-                let fg_text = if ov.fg.is_some() {
-                    format!("{}████", fg_label)
-                } else {
-                    format!("{}[None]", fg_label)
-                };
-                f.render_widget(Paragraph::new(fg_text).style(fg_style), swatch_halves[0]);
+            f.render_widget(
+                Paragraph::new(color_line("FG", color_rgb(&ov.fg), fg_editing)),
+                parts[0],
+            );
+            f.render_widget(
+                Paragraph::new(color_line("BG", color_rgb(&ov.bg), !fg_editing)),
+                parts[3],
+            );
 
-                // BG swatch
-                let bg_label = if !fg_editing { "▶Bg " } else { " Bg " };
-                let bg_style = if let Some(bg) = &ov.bg {
-                    let (r, g, b) = match bg {
-                        crate::args::ColorSpec::Rgb(rgb) => (rgb[0], rgb[1], rgb[2]),
-                        crate::args::ColorSpec::Index(i) => {
-                            let cp = app.color_picker_state.as_ref().unwrap();
-                            cp.rgb_from_idx(*i as usize)
-                        }
-                    };
-                    Style::default().bg(Color::Rgb(r, g, b)).fg(
-                        if (r as u16 + g as u16 + b as u16) > 380 {
-                            Color::Black
-                        } else {
-                            Color::White
-                        },
+            let clear_style = |enabled| {
+                Style::default()
+                    .fg(if enabled { Color::LightRed } else { TEXT_DIM })
+                    .add_modifier(Modifier::BOLD)
+            };
+            f.render_widget(
+                Paragraph::new("×")
+                    .style(
+                        clear_style(ov.fg.is_some()).bg(
+                            if app.text_field_focus == TextFieldFocus::ClearFgButton {
+                                ACCENT_DIM
+                            } else {
+                                SURFACE
+                            },
+                        ),
                     )
-                } else {
-                    Style::default().fg(Color::DarkGray)
-                };
-                let bg_text = if ov.bg.is_some() {
-                    format!("{}████", bg_label)
-                } else {
-                    format!("{}[None]", bg_label)
-                };
-                f.render_widget(Paragraph::new(bg_text).style(bg_style), swatch_halves[1]);
-            }
+                    .alignment(Alignment::Center),
+                parts[1],
+            );
+            f.render_widget(
+                Paragraph::new("×")
+                    .style(
+                        clear_style(ov.bg.is_some()).bg(
+                            if app.text_field_focus == TextFieldFocus::ClearBgButton {
+                                ACCENT_DIM
+                            } else {
+                                SURFACE
+                            },
+                        ),
+                    )
+                    .alignment(Alignment::Center),
+                parts[4],
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new(" Select an overlay to choose colors ")
+                    .style(Style::default().fg(TEXT_DIM)),
+                swatch_area,
+            );
         }
+        color_btn_areas
+    };
+
+    // The text box is both a live preview and the entry point for editing.
+    if has_selection {
+        let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
+        let editing = app.input_mode == InputMode::TextEdit;
+        let mut visible_text = if editing {
+            app.value_edit_buffer.clone()
+        } else {
+            ov.text.clone()
+        };
+        if editing {
+            visible_text.push('▌');
+        } else if visible_text.is_empty() {
+            visible_text.push_str("Click here to type…");
+        }
+        let title = if editing {
+            " Text · Enter = newline · Ctrl+Enter/Esc = done "
+        } else {
+            " Text · click to edit "
+        };
+        let editor = Paragraph::new(visible_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(
+                        if editing || app.text_field_focus == TextFieldFocus::TextInput {
+                            ACCENT
+                        } else {
+                            BORDER
+                        },
+                    ))
+                    .title(title),
+            )
+            .style(Style::default().fg(if ov.text.is_empty() && !editing {
+                TEXT_DIM
+            } else {
+                TEXT
+            }))
+            .wrap(Wrap { trim: false });
+        f.render_widget(editor, chunks[2]);
+    } else {
+        f.render_widget(
+            Paragraph::new(
+                "Single-click the canvas and type, or double-click and drag a fixed-size box.",
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(BORDER))
+                    .title(" Text "),
+            )
+            .style(Style::default().fg(TEXT_DIM))
+            .wrap(Wrap { trim: true }),
+            chunks[2],
+        );
     }
 
-    app.text_btn_areas.clear();
-
-    let has_selection = app
-        .text_selected
-        .map_or(false, |s| s > 0 && s <= app.render_args.overlays.len());
     if has_selection {
         let sel_idx = app.text_selected.unwrap() - 1;
         let ov = &app.render_args.overlays[sel_idx];
 
-        // Row 1: Wrap, Bold, Italic, Underline
+        // Borderless, fixed-width chips keep the toolbar compact and readable.
         let options_chunks = Layout::horizontal([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Length(7),
+            Constraint::Length(5),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(5),
+            Constraint::Min(0),
         ])
-        .split(chunks[2]);
+        .split(chunks[3]);
 
-        // Wrap
-        let wrap_style = if ov.wrap {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let wrap_p = Paragraph::new(if ov.wrap { "[x] Wrap" } else { "[ ] Wrap" })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(wrap_style),
-            )
-            .alignment(Alignment::Center);
-        f.render_widget(wrap_p, options_chunks[0]);
+        f.render_widget(
+            text_toggle_button(
+                "Wrap",
+                ov.wrap,
+                app.text_field_focus == TextFieldFocus::WrapButton,
+            ),
+            options_chunks[0],
+        );
         app.text_btn_areas.push(options_chunks[0]); // Index 0
 
-        // Bold
-        let bold_style = if ov.bold {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let bold_p = Paragraph::new(" B ")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(bold_style),
-            )
-            .alignment(Alignment::Center);
-        f.render_widget(bold_p, options_chunks[1]);
+        // Grow the box in both directions as text is entered.
+        f.render_widget(
+            text_toggle_button(
+                "Fit",
+                ov.auto_grow,
+                app.text_field_focus == TextFieldFocus::FitButton,
+            ),
+            options_chunks[1],
+        );
         app.text_btn_areas.push(options_chunks[1]); // Index 1
 
-        // Italic
-        let italic_style = if ov.italic {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let italic_p = Paragraph::new(" I ")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(italic_style),
-            )
-            .alignment(Alignment::Center);
-        f.render_widget(italic_p, options_chunks[2]);
+        f.render_widget(
+            text_toggle_button(
+                "B",
+                ov.bold,
+                app.text_field_focus == TextFieldFocus::BoldButton,
+            ),
+            options_chunks[2],
+        );
         app.text_btn_areas.push(options_chunks[2]); // Index 2
 
-        // Underline
-        let underline_style = if ov.underline {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        let underline_p = Paragraph::new(" U ")
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(underline_style),
-            )
-            .alignment(Alignment::Center);
-        f.render_widget(underline_p, options_chunks[3]);
+        f.render_widget(
+            text_toggle_button(
+                "I",
+                ov.italic,
+                app.text_field_focus == TextFieldFocus::ItalicButton,
+            ),
+            options_chunks[3],
+        );
         app.text_btn_areas.push(options_chunks[3]); // Index 3
 
-        // Row 2: Delete
-        let del_btn = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Red));
-        let del_p = Paragraph::new("Delete Overlay")
-            .block(del_btn)
+        f.render_widget(
+            text_toggle_button(
+                "U",
+                ov.underline,
+                app.text_field_focus == TextFieldFocus::UnderlineButton,
+            ),
+            options_chunks[4],
+        );
+        app.text_btn_areas.push(options_chunks[4]); // Index 4
+
+        let del_p = Paragraph::new("Del")
+            .style(
+                Style::default()
+                    .fg(if app.text_field_focus == TextFieldFocus::DeleteButton {
+                        Color::Black
+                    } else {
+                        Color::LightRed
+                    })
+                    .bg(if app.text_field_focus == TextFieldFocus::DeleteButton {
+                        ACCENT
+                    } else {
+                        TOGGLE_OFF
+                    })
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center);
-        f.render_widget(del_p, chunks[3]);
-        app.text_btn_areas.push(chunks[3]); // Index 4
+        f.render_widget(del_p, options_chunks[5]);
+        app.text_btn_areas.push(options_chunks[5]); // Index 5
     } else {
-        for _ in 0..5 {
+        for _ in 0..6 {
             app.text_btn_areas.push(Rect::default());
         }
     }
+    app.text_btn_areas.extend(color_btn_areas);
 
     // Mini-list of overlays
     let mut items: Vec<ListItem> = Vec::new();
+    let add_style = if app.text_selected == Some(0) {
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(TOGGLE_ON)
+    };
+    items.push(ListItem::new(" + Add text overlay").style(add_style));
     for (i, ov) in app.render_args.overlays.iter().enumerate() {
         let is_selected = app.text_selected == Some(i + 1);
-        let text_trunc: String = if ov.text.chars().count() > 20 {
-            format!("{}…", ov.text.chars().take(20).collect::<String>())
+        let single_line = ov.text.replace('\n', " ↵ ");
+        let text_trunc: String = if single_line.chars().count() > 22 {
+            format!("{}…", single_line.chars().take(22).collect::<String>())
+        } else if single_line.is_empty() {
+            "(empty)".to_string()
         } else {
-            ov.text.clone()
+            single_line
         };
-        let label = format!(
-            " #{} {} ({},{}) {}x{}",
-            i + 1,
-            text_trunc,
-            ov.x,
-            ov.y,
-            ov.w,
-            ov.h
-        );
+        let size = if ov.auto_grow {
+            format!("fit {}×{}", ov.w, ov.h)
+        } else if ov.w > 0 || ov.h > 0 {
+            format!("{}×{}", ov.w, ov.h)
+        } else {
+            "auto".to_string()
+        };
+        let label = format!(" {}. {}  @{},{} · {}", i + 1, text_trunc, ov.x, ov.y, size);
         let style = if is_selected {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
         } else {
@@ -281,24 +409,31 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         };
         items.push(ListItem::new(label).style(style));
     }
-    let list_block = Block::default().borders(Borders::ALL).title(" Overlays ");
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(
+            if app.text_field_focus == TextFieldFocus::List {
+                ACCENT
+            } else {
+                BORDER
+            },
+        ))
+        .title(" Overlays ");
     let list = List::new(items).block(list_block);
     f.render_stateful_widget(list, chunks[4], &mut app.text_list_state);
-    // Note: We don't update text_list_area here because we want mouse to work on image
 
     let mut status_text = String::from(
-        "Instructions:\n\
-    - Double-click canvas: Create Text / Start Editing\n\
-    - Left Click: Select FG / Right Click: Select BG\n\
-    - Drag Box: Move / Drag Corner: Resize\n\
-    - Type: Enter Text / Esc: Deselect",
+        "Click canvas + type = fit box · double-click + drag = fixed box\n\
+Hover = outline · either lower-right edge = 🢆 resize · inside = move\n\
+Palette: left = selected · middle = FG · right = BG\n\
+Tab moves focus · Enter/Space activates · Esc finishes",
     );
 
     if let Some(sel) = app.text_selected {
         if sel > 0 && sel <= app.render_args.overlays.len() {
             let ov = &app.render_args.overlays[sel - 1];
             status_text = format!(
-                "Selected #{} | Pos: {},{} | Size: {}x{}\n",
+                "#{} · position {},{} · box {}×{}\n",
                 sel, ov.x, ov.y, ov.w, ov.h
             ) + &status_text;
         }

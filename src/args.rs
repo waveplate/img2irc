@@ -55,20 +55,16 @@ fn default_score_fix_orderings() -> u32 {
     1
 }
 
-fn default_contour_weight() -> f32 {
-    1.0
+fn default_contour_bending_weight() -> f32 {
+    10.0
 }
 
 fn default_contour_junction_weight() -> f32 {
-    2.0
+    10.0
 }
 
-fn default_contour_reference_weight() -> f32 {
-    0.1
-}
-
-fn default_contour_peak_weight() -> f32 {
-    0.4
+fn default_contour_zero_weight() -> f32 {
+    0.0
 }
 
 fn default_ocr_max_text_height_ratio() -> f32 {
@@ -138,6 +134,8 @@ pub struct TextOverlay {
     pub bg: Option<ColorSpec>,
     #[serde(default)]
     pub wrap: bool,
+    #[serde(default)]
+    pub auto_grow: bool,
     #[serde(default)]
     pub bold: bool,
     #[serde(default)]
@@ -226,12 +224,6 @@ pub struct RenderArgs {
     pub show_discontinuities: bool,
     #[serde(default = "default_discontinuity_threshold")]
     pub discontinuity_threshold: f32,
-    pub fix_disc: bool,
-    pub fix_disc_passes: u32,
-    pub fix_disc_shift_radius: u32,
-    pub fix_disc_ref_tolerance_ratio: f32,
-    pub fix_disc_ref_tolerance_pixels: u32,
-    pub fix_disc_pool_size: u32,
     pub score_fix: bool,
     pub score_fix_candidates: u32,
     #[serde(default = "default_score_fix_orderings")]
@@ -240,19 +232,19 @@ pub struct RenderArgs {
     pub score_fix_geometry_first: bool,
     #[serde(default = "default_true")]
     pub score_fix_neighborhood_guard: bool,
-    #[serde(default = "default_contour_weight")]
+    #[serde(default = "default_contour_bending_weight")]
     pub contour_bending_weight: f32,
-    #[serde(default = "default_contour_weight")]
+    #[serde(default = "default_contour_zero_weight")]
     pub contour_endpoint_weight: f32,
     #[serde(default = "default_contour_junction_weight")]
     pub contour_junction_weight: f32,
-    #[serde(default = "default_contour_weight")]
+    #[serde(default = "default_contour_zero_weight")]
     pub contour_fragment_weight: f32,
-    #[serde(default = "default_contour_reference_weight")]
+    #[serde(default = "default_contour_zero_weight")]
     pub contour_fidelity_weight: f32,
-    #[serde(default = "default_contour_reference_weight")]
+    #[serde(default = "default_contour_zero_weight")]
     pub contour_boundary_weight: f32,
-    #[serde(default = "default_contour_peak_weight")]
+    #[serde(default = "default_contour_zero_weight")]
     pub contour_peak_weight: f32,
     pub misc3: i32,
     pub misc4: i32,
@@ -651,50 +643,6 @@ pub struct Args {
     )]
     pub discontinuity_threshold: f32,
 
-    /// fix discontinuities by trying alternative glyphs
-    #[arg(long = "fix", visible_alias = "fix-disc", default_value_t = false)]
-    pub fix_disc: bool,
-
-    /// number of fix-disc passes to run
-    #[arg(
-        long = "passes",
-        visible_alias = "fix-disc-passes",
-        default_value = "10"
-    )]
-    pub fix_disc_passes: u32,
-
-    /// max pixel shift in x/y when matching the quantized reference
-    #[arg(
-        long = "radius",
-        visible_alias = "fix-disc-shift-radius",
-        default_value = "2"
-    )]
-    pub fix_disc_shift_radius: u32,
-
-    /// allowed fractional increase in reference mismatch when continuity improves
-    #[arg(
-        long = "tol-ratio",
-        visible_alias = "fix-disc-ref-tolerance-ratio",
-        default_value = "0.20"
-    )]
-    pub fix_disc_ref_tolerance_ratio: f32,
-
-    /// allowed absolute increase in reference mismatch pixels when continuity improves
-    #[arg(
-        long = "tol-pixels",
-        visible_alias = "fix-disc-ref-tolerance-pixels",
-        default_value = "2"
-    )]
-    pub fix_disc_ref_tolerance_pixels: u32,
-
-    /// number of cheap glyph candidates to consider during fix-disc
-    #[arg(
-        long = "pool",
-        visible_alias = "fix-disc-pool-size",
-        default_value = "12"
-    )]
-    pub fix_disc_pool_size: u32,
-
     /// improve highlighted discontinuity cells using the preview contour score
     #[arg(long = "score-fix", default_value_t = false)]
     pub score_fix: bool,
@@ -723,26 +671,26 @@ pub struct Args {
     )]
     pub score_fix_neighborhood_guard: bool,
 
-    #[arg(long = "contour-bending-weight", default_value = "1.0")]
+    #[arg(long = "contour-bending-weight", default_value = "10.0")]
     pub contour_bending_weight: f32,
 
-    #[arg(long = "contour-endpoint-weight", default_value = "1.0")]
+    #[arg(long = "contour-endpoint-weight", default_value = "0.0")]
     pub contour_endpoint_weight: f32,
 
-    #[arg(long = "contour-junction-weight", default_value = "2.0")]
+    #[arg(long = "contour-junction-weight", default_value = "10.0")]
     pub contour_junction_weight: f32,
 
-    #[arg(long = "contour-fragment-weight", default_value = "1.0")]
+    #[arg(long = "contour-fragment-weight", default_value = "0.0")]
     pub contour_fragment_weight: f32,
 
-    #[arg(long = "contour-fidelity-weight", default_value = "0.1")]
+    #[arg(long = "contour-fidelity-weight", default_value = "0.0")]
     pub contour_fidelity_weight: f32,
 
-    #[arg(long = "contour-boundary-weight", default_value = "0.1")]
+    #[arg(long = "contour-boundary-weight", default_value = "0.0")]
     pub contour_boundary_weight: f32,
 
     /// blend between RMS bending (0) and peak-sensitive fourth-power bending (1)
-    #[arg(long = "contour-peak-weight", default_value = "0.4")]
+    #[arg(long = "contour-peak-weight", default_value = "0.0")]
     pub contour_peak_weight: f32,
 
     #[arg(long, default_value = "0", hide = true)]

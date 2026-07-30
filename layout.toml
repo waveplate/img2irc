@@ -1,0 +1,111 @@
+# img2irc TUI layout
+#
+# Search order:
+#   $IMG2IRC_CONFIG_DIR/layout.toml
+#   ./layout.toml
+#   $XDG_CONFIG_HOME/img2irc/layout.toml
+#
+# IDs in `order` are moved to the front in this order. Any omitted IDs are
+# appended in img2irc's default order, so newly-added controls still appear.
+# Put IDs in `hidden` to remove them. Underscores may be used instead of dashes.
+
+[general]
+order = [
+    "mode",
+    "graphics-preview",
+    "width",
+    "ocr",
+    "ocr-line-orientation",
+    "ocr-most-angle",
+    "ocr-document-orientation",
+    "ocr-document-unwarping",
+    "ocr-confidence",
+    "ocr-model",
+    "ocr-max-side",
+    "ocr-max-height",
+    "ocr-threads",
+    "gpu",
+    "show-discontinuities",
+    "discontinuity-threshold",
+    "score-fix",
+    "score-fix-candidates",
+    "score-fix-orderings",
+    "score-fix-geometry",
+    "score-fix-overlap",
+    "advanced",
+    "contour-bending-weight",
+    "contour-endpoint-weight",
+    "contour-junction-weight",
+    "contour-fragment-weight",
+    "contour-fidelity-weight",
+    "contour-boundary-weight",
+    "contour-peak-weight",
+    "font-size",
+    "font",
+    "sampling-filter",
+    "grayscale-tolerance",
+    "colorspace",
+    "encoding",
+    "auto-optimize",
+]
+hidden = []
+
+[pipeline]
+order = [
+    "adjustments",
+    "select-color",
+    "brightness",
+    "contrast",
+    "saturation",
+    "gamma",
+    "hue",
+    "geometry",
+    "crop-top",
+    "crop-right",
+    "crop-bottom",
+    "crop-left",
+    "flip-horizontal",
+    "flip-vertical",
+    "rotate",
+    "scale-x",
+    "scale-y",
+    "effects",
+    "gaussian-blur",
+    "box-blur",
+    "pixelize",
+    "dither",
+    "stylize",
+    "invert",
+    "grayscale",
+    "halftone",
+    "sepia",
+    "solarize",
+    "normalize",
+    "noise",
+    "sharpen",
+    "edge-detection",
+    "emboss",
+    "frosted-glass",
+    "laplace",
+    "identity",
+    "filters",
+    "cali",
+    "dramatic",
+    "firenze",
+    "golden",
+    "lix",
+    "lofi",
+    "neue",
+    "obsidian",
+    "pastel-pink",
+    "ryo",
+]
+hidden = []
+
+[panes]
+general_width = 40
+pipeline_width = 60
+glyphs_width = 45
+text_width = 40
+glyph_tree_height = 10
+glyph_list_height = 30

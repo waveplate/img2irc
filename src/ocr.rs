@@ -982,6 +982,7 @@ fn push_overlay_runs(
             fg: Some(ColorSpec::Rgb(fg)),
             bg: run_bg.map(ColorSpec::Rgb),
             wrap: false,
+            auto_grow: false,
             bold: false,
             italic: false,
             underline: false,

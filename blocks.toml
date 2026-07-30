@@ -1,111 +1,3 @@
-[largetype]
-ranges = [[
-    0x1CE1A,
-    0x1CE50,
-]]
-
-[octants]
-ranges = [[
-    0x1CD20,
-    0x1CDE5,
-]]
-
-[sextants]
-ranges = [[
-    0x1FB00,
-    0x1FB3B,
-]]
-
-["math"]
-ranges = [[
-    0x2980,
-    0x29FF,
-]]
-
-["misc"]
-ranges = [[
-    0x2600,
-    0x26FF,
-]]
-
-["misc2"]
-ranges = [[
-    0x1FA00,
-    0x1FA6F,
-]]
-
-[ascii.space]
-glyphs = [0x20]
-
-[ascii.alpha]
-ranges = [[0x61, 0x7A]]
-
-[blocks.full]
-glyphs = [0x2588]
-
-[blocks.half]
-glyphs = [0x2580]
-
-[blocks.quarter]
-ranges = [[0x2596, 0x259F]]
-
-[blocks.eighth]
-ranges = [
-    [0x2581, 0x2587],
-    [0x2589, 0x258F]
-]
-
-[vb]
-ranges = [
-    [0x2581, 0x2587]
-]
-
-[hb]
-ranges = [
-    [0x2589, 0x258F]
-]
-
-[p]
-ranges = [[0x1FB3C, 0x1FB6F]]
-
-[p2]
-ranges = [[0x1FB3C, 0x1FB6F]]
-exclude = [0x1FB69, 0x1FB6B, 0x1FB6D, 0x1FB6F]
-
-[legacy.base.polygons]
-ranges = [[0x1FB3C, 0x1FB6F]]
-
-[legacy.base.sextants]
-ranges = [[0x1FB00, 0x1FB3B]]
-
-[legacy.supp]
-ranges = [[0x1CC00, 0x1CEBF]]
-
-[box]
-ranges = [[0x2500, 0x257F]]
-
-[braille]
-ranges = [[0x2800, 0x28FF]]
-
-[geo]
-ranges = [[0x25A0, 0x25FF]]
-
-[geo2]
-ranges = [[0x1F780, 0x1F7FF]]
-
-[arrows]
-ranges = [[0x2190, 0x21FF]]
-
-[default]
-include = [
-    "p2",
-    "vb",
-    "hb",
-    "ascii.space",
-    "blocks.half",
-    "blocks.full",
-]
-
 [all]
 include = [
     "ascii.space",
@@ -121,5 +13,215 @@ include = [
     "braille",
     "geo",
     "geo2",
-    "arrows"
+    "arrows",
 ]
+
+[arrows]
+ranges = [[
+    0x2190,
+    0x21FF,
+]]
+
+[ascii.alpha]
+ranges = [[
+    97,
+    122,
+]]
+
+[ascii.space]
+glyphs = [32]
+
+[blocks.eighth]
+ranges = [
+    [
+    0x2581,
+    0x2587,
+],
+    [
+    0x2589,
+    0x258F,
+],
+]
+
+[blocks.full]
+glyphs = [0x2588]
+
+[blocks.half]
+glyphs = [0x2580]
+
+[blocks.quarter]
+ranges = [[
+    0x2596,
+    0x259F,
+]]
+
+[box]
+ranges = [[
+    0x2500,
+    0x257F,
+]]
+
+[braille]
+ranges = [[
+    0x2800,
+    0x28FF,
+]]
+
+[default]
+include = [
+    "p2",
+    "vb",
+    "hb",
+    "ascii.space",
+    "blocks.half",
+    "blocks.full",
+]
+
+[geo]
+ranges = [[
+    0x25A0,
+    0x25FF,
+]]
+
+[geo2]
+ranges = [[
+    0x1F780,
+    0x1F7FF,
+]]
+
+[hb]
+ranges = [[
+    0x2589,
+    0x258F,
+]]
+
+[largetype]
+ranges = [[
+    0x1CE1A,
+    0x1CE50,
+]]
+
+[legacy.base.polygons]
+ranges = [[
+    0x1FB3C,
+    0x1FB6F,
+]]
+
+[legacy.base.sextants]
+ranges = [[
+    0x1FB00,
+    0x1FB3B,
+]]
+
+[legacy.supp]
+ranges = [[
+    0x1CC00,
+    0x1CEBF,
+]]
+
+[math]
+ranges = [[
+    0x2980,
+    0x29FF,
+]]
+
+[misc]
+ranges = [[
+    0x2600,
+    0x26FF,
+]]
+
+[misc2]
+ranges = [[
+    0x1FA00,
+    0x1FA6F,
+]]
+
+[octants]
+ranges = [[
+    0x1CD20,
+    0x1CDE5,
+]]
+
+[p]
+ranges = [[
+    0x1FB3C,
+    0x1FB6F,
+]]
+
+[p2]
+ranges = [[
+    0x1FB3C,
+    0x1FB6F,
+]]
+
+[sextants]
+exclude = [
+    0x1FB00,
+    0x1FB01,
+    0x1FB03,
+    0x1FB04,
+    0x1FB05,
+    0x1FB06,
+    0x1FB07,
+    0x1FB08,
+    0x1FB09,
+    0x1FB0A,
+    0x1FB0B,
+    0x1FB0C,
+    0x1FB0D,
+    0x1FB0E,
+    0x1FB0F,
+    0x1FB10,
+    0x1FB11,
+    0x1FB12,
+    0x1FB13,
+    0x1FB14,
+    0x1FB15,
+    0x1FB16,
+    0x1FB17,
+    0x1FB18,
+    0x1FB19,
+    0x1FB1A,
+    0x1FB1B,
+    0x1FB1C,
+    0x1FB1D,
+    0x1FB1E,
+    0x1FB1F,
+    0x1FB20,
+    0x1FB21,
+    0x1FB22,
+    0x1FB23,
+    0x1FB24,
+    0x1FB25,
+    0x1FB26,
+    0x1FB27,
+    0x1FB28,
+    0x1FB29,
+    0x1FB2A,
+    0x1FB2B,
+    0x1FB2C,
+    0x1FB2E,
+    0x1FB2F,
+    0x1FB30,
+    0x1FB31,
+    0x1FB32,
+    0x1FB33,
+    0x1FB34,
+    0x1FB35,
+    0x1FB36,
+    0x1FB37,
+    0x1FB38,
+    0x1FB3A,
+    0x1FB3B,
+]
+ranges = [[
+    0x1FB00,
+    0x1FB3B,
+]]
+
+[vb]
+ranges = [[
+    0x2581,
+    0x2587,
+]]

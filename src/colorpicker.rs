@@ -163,6 +163,34 @@ impl ColorPickerState {
         self.update_current();
     }
 
+    /// Move the embedded picker's keyboard selection while staying within the
+    /// visible palette/grid.
+    pub fn move_selection(&mut self, dx: i32, dy: i32) {
+        match self.mode {
+            PaletteMode::Irc => {
+                let idx = self.grid_idx.clamp(16, 98);
+                let row = ((idx - 16) / 12) as i32;
+                let col = ((idx - 16) % 12) as i32;
+                let next_row = (row + dy).clamp(0, 6);
+                let next_col = (col + dx).clamp(0, 11);
+                self.set_grid_idx((16 + next_row * 12 + next_col).min(98) as usize);
+            }
+            PaletteMode::Ansi => {
+                let row = (self.grid_idx / 16) as i32;
+                let col = (self.grid_idx % 16) as i32;
+                let next_row = (row + dy).clamp(0, 15);
+                let next_col = (col + dx).clamp(0, 15);
+                self.set_grid_idx((next_row * 16 + next_col) as usize);
+            }
+            PaletteMode::Ansi24 => {
+                let saturation =
+                    (self.saturation + dx as f64 / 29.0).clamp(0.0, 1.0);
+                let value = (self.value - dy as f64 / 15.0).clamp(0.0, 1.0);
+                self.update_from_hsv(self.hue, saturation, value);
+            }
+        }
+    }
+
     fn update_current(&mut self) {
         if self.editing_fg {
             self.fg_rgb = self.rgb;
@@ -194,7 +222,17 @@ impl ColorPickerState {
         )
     }
 
-    pub fn handle_mouse_down(&mut self, x: u16, y: u16, area: Rect, is_right: bool) -> bool {
+    /// Handle a press in the embedded picker. `target` overrides which channel
+    /// receives the color (`Some(true)` = foreground, `Some(false)` =
+    /// background); `None` preserves the channel selected in the surrounding
+    /// text UI.
+    pub fn handle_mouse_down(
+        &mut self,
+        x: u16,
+        y: u16,
+        area: Rect,
+        target: Option<bool>,
+    ) -> bool {
         if !area.contains(ratatui::layout::Position { x, y }) {
             return false;
         }
@@ -205,17 +243,19 @@ impl ColorPickerState {
             area.height.saturating_sub(2),
         );
 
-        let main_width = 32;
+        let main_width = if self.mode == PaletteMode::Ansi24 {
+            30
+        } else {
+            32
+        };
         let main_height = 16;
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
-        let hue_rect = Rect::new(inner.x + 35, inner.y + 1, 3, main_height);
+        let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, main_height);
 
         if main_rect.contains(ratatui::layout::Position { x, y }) {
             self.focus = Focus::MainArea;
-            if is_right {
-                self.editing_fg = false;
-            } else {
-                self.editing_fg = true;
+            if let Some(editing_fg) = target {
+                self.editing_fg = editing_fg;
             }
             self.is_dragging_main = true;
             self.apply_main_area_click(x, y, main_rect);
@@ -273,8 +313,13 @@ impl ColorPickerState {
             area.width.saturating_sub(2),
             area.height.saturating_sub(2),
         );
-        let main_rect = Rect::new(inner.x + 1, inner.y + 1, 32, 16);
-        let hue_rect = Rect::new(inner.x + 35, inner.y + 1, 3, 16);
+        let main_width = if self.mode == PaletteMode::Ansi24 {
+            30
+        } else {
+            32
+        };
+        let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, 16);
+        let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, 16);
 
         if self.is_dragging_main {
             self.apply_main_area_click(x, y, main_rect);
@@ -305,7 +350,7 @@ impl ColorPickerState {
                 }
             }
         } else if self.mode == PaletteMode::Ansi {
-            if dx < 32 && dy < 16 {
+            if dx < rect.width && dy < rect.height {
                 let col = dx / 2;
                 let row = dy;
                 let idx = row * 16 + col;
@@ -314,8 +359,8 @@ impl ColorPickerState {
                 }
             }
         } else {
-            let s = dx as f64 / 31.0;
-            let v = 1.0 - (dy as f64 / 15.0);
+            let s = dx as f64 / rect.width.saturating_sub(1).max(1) as f64;
+            let v = 1.0 - (dy as f64 / rect.height.saturating_sub(1).max(1) as f64);
             self.update_from_hsv(self.hue, s, v);
         }
     }
@@ -323,7 +368,7 @@ impl ColorPickerState {
     fn apply_hue_click(&mut self, y: u16, rect: Rect) {
         let cy = y.clamp(rect.y, rect.y + rect.height.saturating_sub(1));
         let dy = cy - rect.y;
-        let h = 360.0 * (1.0 - (dy as f64 / 15.0));
+        let h = 360.0 * (1.0 - (dy as f64 / rect.height.saturating_sub(1).max(1) as f64));
         self.update_from_hsv(h, self.saturation, self.value);
     }
 }
@@ -346,10 +391,14 @@ impl<'a> Widget for ColorPickerWidget<'a> {
         let inner = main_block.inner(area);
         main_block.render(area, buf);
 
-        let main_width = 32;
+        let main_width = if self.state.mode == PaletteMode::Ansi24 {
+            30
+        } else {
+            32
+        };
         let main_height = 16;
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
-        let hue_rect = Rect::new(inner.x + 35, inner.y + 1, 3, main_height);
+        let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, main_height);
 
         Block::default()
             .borders(Borders::ALL)
@@ -395,34 +444,10 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                 }
             }
         } else if self.state.mode == PaletteMode::Ansi {
-            // 1. Generate all 240 indices
-            let indices = [0, 2, 4]
-                .into_iter()
-                .flat_map(|br| {
-                    // We need to reverse the 'b' loop ONLY for the middle band (br == 2)
-                    let b_range: Vec<i32> = if br == 2 {
-                        (0..6).rev().collect()
-                    } else {
-                        (0..6).collect()
-                    };
-
-                    b_range.into_iter().flat_map(move |b| {
-                        [0, 1, 2, 3, 4, 5, 11, 10, 9, 8, 7, 6]
-                            .into_iter()
-                            .map(move |rg| {
-                                let r = br + (rg / 6);
-                                let g = rg % 6;
-                                (16 + 36 * r + 6 * g + b) as usize
-                            })
-                    })
-                })
-                .chain(232..244) // Grayscale Row 19
-                .chain((244..=255).rev()); // Grayscale Row 20
-
-            // 2. Single loop to handle all rendering
-            for (i, idx) in indices.enumerate() {
-                let col_x = (i % 12) as u16;
-                let row_y = (i / 12) as u16;
+            // The standard 16×16 arrangement fits the picker and matches hit-testing.
+            for idx in 0..256 {
+                let col_x = (idx % 16) as u16;
+                let row_y = (idx / 16) as u16;
 
                 let (r, g, b) = self.state.rgb_from_idx(idx);
                 let fg = Color::Rgb(r, g, b);
@@ -451,15 +476,16 @@ impl<'a> Widget for ColorPickerWidget<'a> {
             let h = self.state.hue;
             for row in 0..16 {
                 let v = 1.0 - (row as f64 / 15.0);
-                for col in 0..32 {
-                    let s = col as f64 / 31.0;
+                for col in 0..main_width {
+                    let s = col as f64 / main_width.saturating_sub(1).max(1) as f64;
                     let (r, g, b) = hsv_to_rgb(h, s, v);
                     buf.get_mut(main_rect.x + col, main_rect.y + row)
                         .set_char('█')
                         .set_fg(Color::Rgb(r, g, b));
                 }
             }
-            let sel_x = main_rect.x + (self.state.saturation * 31.0).round() as u16;
+            let sel_x = main_rect.x
+                + (self.state.saturation * main_width.saturating_sub(1) as f64).round() as u16;
             let sel_y = main_rect.y + (15.0 - self.state.value * 15.0).round() as u16;
             buf.get_mut(sel_x, sel_y)
                 .set_char('◯')
@@ -612,5 +638,50 @@ impl<'a> Widget for ColorPickerWidget<'a> {
         }
 
         // OK/Cancel buttons removed for embedded TUI use.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_ansi_pickers_fit_the_text_pane() {
+        let area = Rect::new(0, 0, 39, 20);
+        for mode in [PaletteMode::Ansi, PaletteMode::Ansi24] {
+            let mut state = ColorPickerState::new(mode, true);
+            let mut buffer = Buffer::empty(area);
+            ColorPickerWidget {
+                state: &mut state,
+                show_details: false,
+            }
+            .render(area, &mut buffer);
+        }
+    }
+
+    #[test]
+    fn left_click_preserves_the_selected_channel_and_middle_click_selects_fg() {
+        let area = Rect::new(0, 0, 39, 20);
+        let mut state = ColorPickerState::new(PaletteMode::Irc, true);
+        state.editing_fg = false;
+
+        assert!(state.handle_mouse_down(2, 2, area, None));
+        assert!(!state.editing_fg);
+        state.is_dragging_main = false;
+
+        assert!(state.handle_mouse_down(2, 2, area, Some(true)));
+        assert!(state.editing_fg);
+    }
+
+    #[test]
+    fn keyboard_palette_navigation_clamps_at_the_edges() {
+        let mut state = ColorPickerState::new(PaletteMode::Ansi, true);
+        state.set_grid_idx(0);
+        state.move_selection(-1, -1);
+        assert_eq!(state.grid_idx, 0);
+
+        state.set_grid_idx(255);
+        state.move_selection(1, 1);
+        assert_eq!(state.grid_idx, 255);
     }
 }

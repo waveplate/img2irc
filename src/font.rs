@@ -325,6 +325,78 @@ pub fn is_emoji_render_candidate(ch: char) -> bool {
         || (0x1F000..=0x1FAFF).contains(&cp)
 }
 
+fn block_table_mut<'a>(
+    root: &'a mut toml::map::Map<String, Value>,
+    path: &str,
+    create: bool,
+) -> Option<&'a mut toml::map::Map<String, Value>> {
+    // Preserve compatibility with quoted keys that literally contain dots.
+    if root.contains_key(path) {
+        return root.get_mut(path)?.as_table_mut();
+    }
+
+    let segments = path
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.is_empty() {
+        return None;
+    }
+
+    let mut table = root;
+    for segment in segments {
+        if !table.contains_key(segment) {
+            if !create {
+                return None;
+            }
+            table.insert(
+                segment.to_string(),
+                Value::Table(toml::map::Map::new()),
+            );
+        }
+        table = table.get_mut(segment)?.as_table_mut()?;
+    }
+    Some(table)
+}
+
+fn remove_block_path(root: &mut toml::map::Map<String, Value>, path: &str) -> bool {
+    if root.remove(path).is_some() {
+        return true;
+    }
+
+    fn remove_nested(
+        table: &mut toml::map::Map<String, Value>,
+        segments: &[&str],
+    ) -> bool {
+        let Some((head, tail)) = segments.split_first() else {
+            return false;
+        };
+        if tail.is_empty() {
+            return table.remove(*head).is_some();
+        }
+
+        let (removed, child_empty) = {
+            let Some(child) = table.get_mut(*head).and_then(Value::as_table_mut) else {
+                return false;
+            };
+            let removed = remove_nested(child, tail);
+            (removed, removed && child.is_empty())
+        };
+        if child_empty {
+            table.remove(*head);
+        }
+        removed
+    }
+
+    let segments = path
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    remove_nested(root, &segments)
+}
+
 pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
@@ -386,7 +458,9 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
         entry.insert("exclude".to_string(), Value::Array(exclude));
     }
 
-    raw_config.insert(name.to_string(), Value::Table(entry));
+    let block = block_table_mut(&mut raw_config, name, true)
+        .expect("Invalid empty or conflicting glyph-set path");
+    *block = entry;
 
     let mut new_toml =
         toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
@@ -449,7 +523,7 @@ pub fn remove_range_from_blocks_config(name: &str) {
     let mut raw_config: toml::map::Map<String, Value> =
         toml::from_str(&toml_str).expect("Invalid TOML");
 
-    if raw_config.remove(name).is_some() {
+    if remove_block_path(&mut raw_config, name) {
         let mut new_toml =
             toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
 
@@ -512,7 +586,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     let (config_groups, _) = load_blocks_config_unfiltered();
     let block_codes = config_groups.get(block_name).expect("Block not found");
 
-    // Filter global exclude list to only those in the current block
+    // Exclusions belong to this block only.
     let block_exclude: Vec<Value> = exclude
         .iter()
         .filter(|&ch| block_codes.contains(&(*ch as u32)))
@@ -520,11 +594,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
         .collect();
 
     // Ensure the block entry exists and update its exclude list
-    let block_entry = raw_config
-        .entry(block_name.to_string())
-        .or_insert_with(|| Value::Table(toml::map::Map::new()));
-
-    if let Some(table) = block_entry.as_table_mut() {
+    if let Some(table) = block_table_mut(&mut raw_config, block_name, false) {
         if block_exclude.is_empty() {
             table.remove("exclude");
         } else {
@@ -1741,4 +1811,55 @@ pub fn print_block_bitmaps(store: &GlyphStore) -> String {
         out.push_str(&format!("{}\n", "-".repeat(40)));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_block_paths_can_be_created_and_removed_at_any_depth() {
+        let mut root = toml::map::Map::new();
+        block_table_mut(&mut root, "blocks.eighth.vertical", true)
+            .unwrap()
+            .insert(
+                "ranges".to_string(),
+                Value::Array(vec![Value::Array(vec![
+                    Value::Integer(0x2581),
+                    Value::Integer(0x2587),
+                ])]),
+            );
+        block_table_mut(&mut root, "blocks.eighth.horizontal", true)
+            .unwrap()
+            .insert(
+                "glyphs".to_string(),
+                Value::Array(vec![Value::Integer(0x258C)]),
+            );
+
+        assert!(block_table_mut(&mut root, "blocks.eighth.vertical", false).is_some());
+        assert!(block_table_mut(&mut root, "blocks.eighth.horizontal", false).is_some());
+
+        assert!(remove_block_path(&mut root, "blocks.eighth.vertical"));
+        assert!(block_table_mut(&mut root, "blocks.eighth.vertical", false).is_none());
+        assert!(block_table_mut(&mut root, "blocks.eighth.horizontal", false).is_some());
+
+        assert!(remove_block_path(&mut root, "blocks.eighth.horizontal"));
+        assert!(root.is_empty(), "empty parent folders should be pruned");
+    }
+
+    #[test]
+    fn quoted_dotted_block_names_remain_addressable() {
+        let mut root = toml::map::Map::new();
+        root.insert(
+            "legacy.one".to_string(),
+            Value::Table(toml::map::Map::from_iter([(
+                "glyphs".to_string(),
+                Value::Array(vec![Value::Integer(0x2588)]),
+            )])),
+        );
+
+        assert!(block_table_mut(&mut root, "legacy.one", false).is_some());
+        assert!(remove_block_path(&mut root, "legacy.one"));
+        assert!(root.is_empty());
+    }
 }

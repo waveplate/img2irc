@@ -36,6 +36,15 @@ pub mod ocr {
         detections.iter().filter(|_| false)
     }
 
+    pub fn has_renderable_detections(
+        _detections: &[OcrDetection],
+        _args: &RenderArgs,
+        _image_w: u32,
+        _image_h: u32,
+    ) -> bool {
+        false
+    }
+
     pub fn log_detections(_detections: &[OcrDetection], _args: &RenderArgs) {}
 
     pub fn choose_text_render_geometry(
@@ -194,12 +203,6 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         show_discontinuities: args.show_discontinuities,
         discontinuity_threshold: args.discontinuity_threshold,
-        fix_disc: args.fix_disc,
-        fix_disc_passes: args.fix_disc_passes,
-        fix_disc_shift_radius: args.fix_disc_shift_radius,
-        fix_disc_ref_tolerance_ratio: args.fix_disc_ref_tolerance_ratio,
-        fix_disc_ref_tolerance_pixels: args.fix_disc_ref_tolerance_pixels,
-        fix_disc_pool_size: args.fix_disc_pool_size,
         score_fix: args.score_fix,
         score_fix_candidates: args.score_fix_candidates,
         score_fix_orderings: args.score_fix_orderings,

@@ -59,6 +59,27 @@ sudo pacman -S noto-fonts noto-fonts-extra
 
 `img2irc <URL or PATH> [OPTIONS]`
 
+## TUI layout
+
+The TUI reads an optional `layout.toml`. It looks in
+`$IMG2IRC_CONFIG_DIR`, the current directory, and
+`$XDG_CONFIG_HOME/img2irc`, in that order. The
+[included layout](layout.toml) documents every stable input and pipeline ID.
+
+- `[general].order` and `[pipeline].order` move inputs to the front in the
+  requested order. Unlisted inputs follow in their default order.
+- The corresponding `hidden` lists remove inputs or pipeline-library entries.
+- `[panes]` defines the initial widths and Glyphs row heights. Pane widths can
+  still be resized with the mouse while the TUI is running.
+- OCR's detailed inputs are automatically hidden while OCR is disabled.
+
+Crop, flip, rotate, and scale are ordered Pipeline effects. This means they can
+be inserted, reordered, disabled, and removed like the other image operations.
+Pipeline effects run on the source image before terminal-output sizing, so
+scaling a source does not multiply the configured output dimensions. Press
+`Escape` to discard an effect-library preview without adding or replacing an
+effect.
+
 | option                                 | description                                                   | default value |
 |----------------------------------------|---------------------------------------------------------------|---------------|
 | image                                  | image url or file path                                        | required      |

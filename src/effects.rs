@@ -38,9 +38,9 @@ fn hash_image(img: &PhotonImage) -> u64 {
     img.get_width().hash(&mut hasher);
     img.get_height().hash(&mut hasher);
     let raw = img.get_raw_pixels();
-    raw.len().hash(&mut hasher);
-    let sample_len = 1024.min(raw.len());
-    raw[0..sample_len].hash(&mut hasher);
+    // Rotation commonly creates a large transparent border, so hashing only a
+    // prefix can make visibly different processed images share a cache key.
+    raw.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -196,7 +196,7 @@ fn fast_crop_and_nearest_resize(
     PhotonImage::new(dest_pixels, dest_w, dest_h)
 }
 
-pub fn apply_effects(
+fn resize_for_output(
     args: &args::RenderArgs,
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
@@ -312,12 +312,8 @@ pub fn apply_effects(
 
         if args.rotate != 0.00 {
             let angle_radians = args.rotate.to_radians();
-            let image_buffer = image::ImageBuffer::from_raw(
-                width,
-                height,
-                resized.get_raw_pixels(),
-            )
-            .unwrap();
+            let image_buffer =
+                image::ImageBuffer::from_raw(width, height, resized.get_raw_pixels()).unwrap();
             let rotated = rotate_about_center(
                 &image_buffer,
                 angle_radians,
@@ -332,8 +328,17 @@ pub fn apply_effects(
         base_image = Some(resized);
     }
 
-    let mut photon_image = base_image.unwrap();
+    base_image.unwrap()
+}
 
+pub fn apply_effects(
+    args: &args::RenderArgs,
+    glyphs: &GlyphStore,
+    mut photon_image: PhotonImage,
+) -> PhotonImage {
+    // Pipeline nodes operate on the source image. Output sizing is deliberately
+    // deferred until every node has run so ScaleX/ScaleY alter the input
+    // geometry without multiplying the configured terminal output width.
     type ColourFunc = fn(&mut PhotonImage, &str, f32);
 
     let colour_func: ColourFunc = match args.colorspace {
@@ -634,7 +639,7 @@ pub fn apply_effects(
         }
     }
 
-    photon_image
+    resize_for_output(args, glyphs, photon_image)
 }
 
 pub fn apply_luma_effects(
@@ -743,4 +748,80 @@ pub fn apply_luma_effects(
     }
 
     photon_image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use std::collections::{HashMap, HashSet};
+
+    fn rotate_test_image(source: &PhotonImage, degrees: f32) -> PhotonImage {
+        let width = source.get_width();
+        let height = source.get_height();
+        let buffer =
+            image::ImageBuffer::from_raw(width, height, source.get_raw_pixels()).unwrap();
+        let rotated = rotate_about_center(
+            &buffer,
+            degrees.to_radians(),
+            Interpolation::Bilinear,
+            Rgba([0, 0, 0, 0]),
+        );
+        PhotonImage::new(rotated.into_raw(), width, height)
+    }
+
+    #[test]
+    fn rotate_cache_identity_changes_after_a_transparent_prefix() {
+        let width = 64_u32;
+        let height = 64_u32;
+        let mut pixels = vec![0_u8; (width * height * 4) as usize];
+        for y in 22..40 {
+            for x in 18..43 {
+                let offset = ((y * width + x) * 4) as usize;
+                pixels[offset..offset + 4].copy_from_slice(&[
+                    (x * 4) as u8,
+                    (y * 5) as u8,
+                    ((x + y) * 2) as u8,
+                    255,
+                ]);
+            }
+        }
+        let source = PhotonImage::new(pixels, width, height);
+        let first = rotate_test_image(&source, 12.0);
+        let second = rotate_test_image(&source, 28.0);
+
+        assert_ne!(first.get_raw_pixels(), second.get_raw_pixels());
+        assert_ne!(hash_image(&first), hash_image(&second));
+    }
+
+    #[test]
+    fn pipeline_scale_changes_source_not_configured_output_size() {
+        let cli =
+            crate::args::Args::try_parse_from(["img2irc", "--width", "10"]).unwrap();
+        let mut args = crate::args_to_render_args(&cli);
+        let unscaled_args = args.clone();
+        args.pipeline = vec![
+            crate::pipeline::ImageEffect::ScaleX(200),
+            crate::pipeline::ImageEffect::ScaleY(200),
+        ];
+
+        let glyphs = GlyphStore {
+            glyphs: Vec::new(),
+            groups: HashMap::new(),
+            selected: HashSet::new(),
+            metrics: (1, 1),
+            float_metrics: (1.0, 1.0),
+        };
+        let source = PhotonImage::new(vec![128; 100 * 50 * 4], 100, 50);
+
+        let unscaled_output = apply_effects(&unscaled_args, &glyphs, source.clone());
+        let output = apply_effects(&args, &glyphs, source);
+
+        assert_eq!(output.get_width(), unscaled_output.get_width());
+        assert_eq!(output.get_height(), unscaled_output.get_height());
+        assert_eq!(
+            (output.get_width(), output.get_height()),
+            (10, 5)
+        );
+    }
 }

@@ -1,6 +1,11 @@
 use super::*;
 
 pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.glyph_select_all_area = Rect::default();
+    app.glyph_select_none_area = Rect::default();
+    app.glyph_add_area = Rect::default();
+    app.glyph_delete_area = Rect::default();
+
     let max_tree = area.height.saturating_sub(14).max(5);
     app.glyph_tree_height = app.glyph_tree_height.clamp(5, max_tree);
     let max_list = area.height.saturating_sub(app.glyph_tree_height + 7).max(7);
@@ -28,10 +33,16 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
     });
 
     // Render tree in the first section
+    let tree_focused = app.current_tab == 2 && app.selected_control == 0;
     let tree_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
+        .border_style(Style::new().fg(if tree_focused { ACCENT } else { BORDER }))
         .border_set(symbols::border::ROUNDED)
+        .title(if tree_focused {
+            " Sets · ↑↓ navigate · ←→ fold · Space toggle "
+        } else {
+            " Sets "
+        })
         .style(Style::new().bg(SURFACE));
     let tree_area = tree_block.inner(chunks[0]);
     f.render_widget(tree_block, chunks[0]);
@@ -50,40 +61,53 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
         .borders(Borders::ALL)
         .border_style(border_style)
         .title(if is_focused {
-            " Glyphs ◄► "
+            " Glyphs · ↑↓ navigate · Space toggle "
         } else {
             " Glyphs "
         });
 
-    if let Some(node) = app.tree_state.get_selected_node() {
+    if let Some((target_key, is_leaf)) = app.tree_state.get_selected_node().map(|node| {
+        (
+            if node.full_path.is_empty() {
+                node.name.clone()
+            } else {
+                node.full_path.clone()
+            },
+            node.is_leaf,
+        )
+    }) {
         let (config_groups, _) = crate::font::load_blocks_config_unfiltered();
         let (enabled_groups, _) = crate::font::load_blocks_config();
 
-        let target_key = if !node.full_path.is_empty() {
-            &node.full_path
-        } else {
-            &node.name
-        };
+        if app.last_glyph_list_key.as_deref() != Some(target_key.as_str()) {
+            app.glyph_list_state = ListState::default();
+            app.glyph_list_state.select(Some(0));
+            app.last_glyph_list_key = Some(target_key.clone());
+        }
 
-        if let Some(codes) = config_groups.get(target_key) {
+        let selected_codes = if is_leaf {
+            config_groups.get(&target_key)
+        } else {
+            None
+        };
+        if let Some(codes) = selected_codes {
             let glyph_chunks = Layout::vertical([
                 Constraint::Min(0),
                 Constraint::Length(3), // Selection buttons
-                Constraint::Length(3), // Save/add buttons
+                Constraint::Length(3), // Add/delete range buttons
             ])
             .split(chunks[2]);
 
-            app.glyph_list_area = glyph_chunks[0];
+            app.glyph_list_area = glyph_block.inner(glyph_chunks[0]);
 
             let items: Vec<ListItem> = codes
                 .iter()
                 .map(|&code| {
-                    let ch = char::from_u32(code).unwrap_or('?');
                     let is_saved_excluded = enabled_groups
-                        .get(target_key)
+                        .get(&target_key)
                         .is_none_or(|enabled| !enabled.contains(&code));
-                    let is_excluded = is_saved_excluded || app.render_args.exclude.contains(&ch);
-                    let marker = if is_excluded { "☐ " } else { "🗹 " };
+                    let marker = if is_saved_excluded { "☐ " } else { "🗹 " };
+                    let ch = char::from_u32(code).unwrap_or('?');
                     ListItem::new(format!("{}{} U+{:04X}", marker, ch, code))
                 })
                 .collect();
@@ -99,80 +123,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 .highlight_symbol("▸ ");
             f.render_stateful_widget(list, glyph_chunks[0], &mut app.glyph_list_state);
 
-            // Bulk selection buttons above the persistent config actions.
-            let select_chunks =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(glyph_chunks[1]);
-            let action_chunks =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(glyph_chunks[2]);
-
-            app.glyph_select_all_area = select_chunks[0];
-            app.glyph_select_none_area = select_chunks[1];
-            app.glyph_save_area = action_chunks[0];
-            app.glyph_add_area = action_chunks[1];
-
-            let select_all_focused = app.selected_control == 2;
-            let select_none_focused = app.selected_control == 3;
-            let save_focused = app.selected_control == 4;
-            let add_focused = app.selected_control == 5;
-
-            let button_style = |focused| {
-                if focused {
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(TEXT)
-                }
-            };
-
-            let select_all_style = button_style(select_all_focused);
-            let select_none_style = button_style(select_none_focused);
-            let save_style = button_style(save_focused);
-            let add_style = button_style(add_focused);
-
-            let select_all_btn = Paragraph::new(" Select All ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .border_style(select_all_style),
-                )
-                .alignment(Alignment::Center)
-                .style(select_all_style);
-            f.render_widget(select_all_btn, select_chunks[0]);
-
-            let select_none_btn = Paragraph::new(" Select None ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .border_style(select_none_style),
-                )
-                .alignment(Alignment::Center)
-                .style(select_none_style);
-            f.render_widget(select_none_btn, select_chunks[1]);
-
-            let save_btn = Paragraph::new(" Save Glyph Config ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .border_style(save_style),
-                )
-                .alignment(Alignment::Center)
-                .style(save_style);
-            f.render_widget(save_btn, action_chunks[0]);
-
-            let add_btn = Paragraph::new(" Add Range ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_set(ratatui::symbols::border::ROUNDED)
-                        .border_style(add_style),
-                )
-                .alignment(Alignment::Center)
-                .style(add_style);
-            f.render_widget(add_btn, action_chunks[1]);
+            render_glyph_action_rows(f, app, glyph_chunks[1], glyph_chunks[2], true);
 
             // Preview bitmap below
             let idx = app.glyph_list_state.selected().unwrap_or(0);
@@ -182,16 +133,132 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
                 }
             }
         } else {
+            app.glyph_list_state.select(None);
+            let glyph_chunks = Layout::vertical([
+                Constraint::Min(0),
+                Constraint::Length(3),
+                Constraint::Length(3),
+            ])
+            .split(chunks[2]);
+            app.glyph_list_area = glyph_block.inner(glyph_chunks[0]);
             f.render_widget(
-                Paragraph::new("No known glyphs").block(glyph_block),
-                chunks[2],
+                Paragraph::new(if is_leaf {
+                    "No known glyphs"
+                } else {
+                    "Folder: use ○ to enable its sets, or choose a nested range"
+                })
+                .block(glyph_block),
+                glyph_chunks[0],
             );
+            render_glyph_action_rows(f, app, glyph_chunks[1], glyph_chunks[2], is_leaf);
         }
+    } else {
+        let glyph_chunks = Layout::vertical([
+            Constraint::Min(0),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(chunks[2]);
+        app.glyph_list_state.select(None);
+        app.glyph_list_area = glyph_block.inner(glyph_chunks[0]);
+        f.render_widget(
+            Paragraph::new("No glyph ranges yet. Add one to get started.").block(glyph_block),
+            glyph_chunks[0],
+        );
+        render_glyph_action_rows(f, app, glyph_chunks[1], glyph_chunks[2], false);
     }
+}
+
+fn render_glyph_action_rows(
+    f: &mut ratatui::Frame,
+    app: &mut App,
+    select_area: Rect,
+    action_area: Rect,
+    is_leaf: bool,
+) {
+    let select_chunks =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(select_area);
+    let action_chunks =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(action_area);
+
+    app.glyph_select_all_area = select_chunks[0];
+    app.glyph_select_none_area = select_chunks[1];
+    app.glyph_add_area = action_chunks[0];
+    app.glyph_delete_area = action_chunks[1];
+
+    let button_style = |focused| {
+        if focused {
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(TEXT)
+        }
+    };
+    let select_all_style = button_style(app.selected_control == 2);
+    let select_none_style = button_style(app.selected_control == 3);
+    let add_style = button_style(app.selected_control == 4);
+    let delete_style = if !is_leaf {
+        Style::default().fg(TEXT_DIM)
+    } else if app.selected_control == 5 {
+        Style::default()
+            .fg(Color::LightRed)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+
+    let button = |label, style| {
+        Paragraph::new(label)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(ratatui::symbols::border::ROUNDED)
+                    .border_style(style),
+            )
+            .alignment(Alignment::Center)
+            .style(style)
+    };
+    f.render_widget(
+        button(
+            if is_leaf {
+                " Select All "
+            } else {
+                " Enable Sets "
+            },
+            select_all_style,
+        ),
+        select_chunks[0],
+    );
+    f.render_widget(
+        button(
+            if is_leaf {
+                " Select None "
+            } else {
+                " Disable Sets "
+            },
+            select_none_style,
+        ),
+        select_chunks[1],
+    );
+    f.render_widget(button(" Add Range ", add_style), action_chunks[0]);
+    f.render_widget(
+        button(
+            if is_leaf {
+                " Delete Range "
+            } else {
+                " Select a range "
+            },
+            delete_style,
+        ),
+        action_chunks[1],
+    );
 }
 
 pub(crate) fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.tree_area = area;
+    let (all_groups, _) = crate::font::load_blocks_config_unfiltered();
+    let (enabled_groups, _) = crate::font::load_blocks_config();
     let buf = f.buffer_mut();
     // Get flattened nodes (this might be expensive to do every frame, but fine for now)
     // 1. Update Scroll
@@ -249,32 +316,72 @@ pub(crate) fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
 
         // Indentation
-        let indent_len = (node.level as u16) * 2;
+        let indent_len = (node.level as u16)
+            .saturating_mul(2)
+            .min(area.width.saturating_sub(4));
         let x = area.x + indent_len;
 
-        // Marker
-        let marker = if !node.is_leaf {
-            if node.expanded {
-                "▼ "
-            } else {
-                "▶ "
-            }
+        let mut leaves = Vec::new();
+        App::collect_leaves(node, &mut leaves);
+        let selected_count = leaves
+            .iter()
+            .filter(|leaf| app.render_args.blocks.contains(*leaf))
+            .count();
+        let selection_marker = if selected_count == 0 {
+            '○'
+        } else if selected_count == leaves.len() {
+            '●'
         } else {
-            // Check if selected in render_args
-            let name = &node.full_path;
-            if app.render_args.blocks.contains(name) {
-                "🗹 "
-            } else {
-                "☐ "
-            }
+            '◐'
         };
-
-        // Draw marker
+        let expansion_marker = if node.children.is_empty() {
+            ' '
+        } else if node.expanded {
+            '▼'
+        } else {
+            '▶'
+        };
+        let marker = format!("{expansion_marker} {selection_marker} ");
         buf.set_string(x, y, marker, style.fg(ACCENT));
 
-        // Draw name
-        // +2 for marker width
-        buf.set_string(x + 2, y, &node.name, style);
+        let total_glyphs = leaves
+            .iter()
+            .filter_map(|leaf| all_groups.get(leaf))
+            .map(Vec::len)
+            .sum::<usize>();
+        let enabled_glyphs = leaves
+            .iter()
+            .filter_map(|leaf| enabled_groups.get(leaf))
+            .map(Vec::len)
+            .sum::<usize>();
+        let excluded = total_glyphs.saturating_sub(enabled_glyphs);
+        let count_text = if excluded > 0 {
+            format!("{}  −{}", total_glyphs, excluded)
+        } else {
+            total_glyphs.to_string()
+        };
+        let count_width = count_text.chars().count() as u16;
+        let count_x = area
+            .x
+            .saturating_add(area.width)
+            .saturating_sub(count_width);
+        let name_x = x + 4;
+        let max_name_width = count_x.saturating_sub(name_x).saturating_sub(1) as usize;
+        let display_name = node.name.chars().take(max_name_width).collect::<String>();
+
+        buf.set_string(name_x, y, display_name, style);
+        if count_x > name_x {
+            buf.set_string(
+                count_x,
+                y,
+                count_text,
+                style.fg(if excluded > 0 {
+                    Color::Yellow
+                } else {
+                    TEXT_DIM
+                }),
+            );
+        }
     }
 }
 

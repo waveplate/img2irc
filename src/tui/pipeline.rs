@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let catalog = PIPELINE_CATALOG;
+    let catalog = &app.pipeline_catalog;
     let no_image = app
         .render_args
         .image
@@ -222,7 +222,7 @@ pub(crate) fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App,
         current_visual_index += 1;
 
         if is_expanded {
-            let catalog = crate::tui::PIPELINE_CATALOG;
+            let catalog = &app.pipeline_catalog;
             for (lib_idx, e) in catalog.iter().enumerate() {
                 let lib_selected = lib_idx == app.pipeline_library_selected;
                 let lib_style = if lib_selected {
@@ -282,7 +282,8 @@ pub(crate) fn add_pipeline_effect(app: &mut App, catalog_idx: usize) {
     let effect = if let Some(preview) = app.pipeline_preview_effect.clone() {
         preview
     } else {
-        let Some(effect) = PIPELINE_CATALOG
+        let Some(effect) = app
+            .pipeline_catalog
             .get(catalog_idx)
             .and_then(|item| item.effect.clone())
         else {
@@ -302,7 +303,8 @@ pub(crate) fn add_pipeline_effect(app: &mut App, catalog_idx: usize) {
     app.selected_control = app.pipeline_nodes.len().saturating_sub(1);
 
     // Refresh preview for next selection
-    app.pipeline_preview_effect = PIPELINE_CATALOG
+    app.pipeline_preview_effect = app
+        .pipeline_catalog
         .get(catalog_idx)
         .and_then(|item| item.effect.clone());
 
@@ -310,15 +312,17 @@ pub(crate) fn add_pipeline_effect(app: &mut App, catalog_idx: usize) {
 }
 
 pub(crate) fn select_pipeline_library(app: &mut App, catalog_idx: usize) {
-    app.pipeline_library_selected = catalog_idx.min(PIPELINE_CATALOG.len().saturating_sub(1));
-    app.pipeline_preview_effect = PIPELINE_CATALOG
+    app.pipeline_library_selected =
+        catalog_idx.min(app.pipeline_catalog.len().saturating_sub(1));
+    app.pipeline_preview_effect = app
+        .pipeline_catalog
         .get(app.pipeline_library_selected)
         .and_then(|item| item.effect.clone());
     app.mark_args_dirty();
 }
 
 pub(crate) fn move_pipeline_library_selection(app: &mut App, direction: i32) {
-    if PIPELINE_CATALOG.is_empty() {
+    if app.pipeline_catalog.is_empty() {
         app.pipeline_library_selected = 0;
         return;
     }
@@ -326,10 +330,10 @@ pub(crate) fn move_pipeline_library_selection(app: &mut App, direction: i32) {
     let mut iter: Box<dyn Iterator<Item = usize>> = if direction < 0 {
         Box::new((0..app.pipeline_library_selected).rev())
     } else {
-        Box::new((app.pipeline_library_selected + 1)..PIPELINE_CATALOG.len())
+        Box::new((app.pipeline_library_selected + 1)..app.pipeline_catalog.len())
     };
 
-    if let Some(idx) = iter.find(|idx| PIPELINE_CATALOG[*idx].effect.is_some()) {
+    if let Some(idx) = iter.find(|idx| app.pipeline_catalog[*idx].effect.is_some()) {
         select_pipeline_library(app, idx);
     }
 
