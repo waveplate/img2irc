@@ -28,7 +28,7 @@ path = "src/main.rs"
 [features]
 default = ["ocr"]
 gpu = ["dep:bytemuck", "dep:pollster", "dep:wgpu"]
-ocr = ["dep:libc", "dep:ppocr-rs"]
+ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs"]
 vendored-openssl = ["dep:openssl"]
 
 [dependencies]
@@ -73,6 +73,7 @@ educe = "0.6"
 regex = "1.11"
 arboard = "3.4.1"
 ppocr-rs = { version = "0.7.3", features = ["fetch-models", "test-binaries"], optional = true }
+figlet-rs = { version = "1.0.0", optional = true }
 libc = { version = "0.2", optional = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 

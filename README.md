@@ -71,7 +71,63 @@ The TUI reads an optional `layout.toml`. It looks in
 - The corresponding `hidden` lists remove inputs or pipeline-library entries.
 - `[panes]` defines the initial widths and Glyphs row heights. Pane widths can
   still be resized with the mouse while the TUI is running.
-- OCR's detailed inputs are automatically hidden while OCR is disabled.
+- OCR's detailed inputs are automatically hidden while OCR is disabled and
+  use a subtly different background to show that they belong to the OCR group.
+  The FIGlet thresholds are nested under the OCR FIGlet switch.
+- Width `0` means automatic sizing. In OCR mode the source image's rendered
+  pixel size is the baseline, and the grid grows when necessary so complete
+  recognized strings fit their detected boxes. `--max-width` can impose an
+  explicit upper bound; there is no implicit 100-column OCR limit.
+
+OCR measures a detected box's fractional size in the output grid before
+rounding its edges to cells. It tries the configured font group for the largest
+whole line height that fits, then falls back through smaller groups. This keeps
+a box that merely crosses two row boundaries from being mistaken for a
+two-line box. A rendering must fit both dimensions without clipping or
+truncating the recognized string. Horizontal fitting can use empty layout space
+up to the next text region, while placement stays anchored to the source text's
+actual left edge. Large text is included by default; set OCR Max H to a nonzero
+percentage only when unusually tall detections should be excluded. The
+preferred defaults are `phm-minecraft`, Unicode-safe `phm-largetype`, and
+`phm-lcdmatrix`. It recognizes fonts from
+[Philippe Majerus's FIGfonts collection](https://github.com/PhMajerus/FIGfonts),
+including the repository's zipped `.flf` files, along with several common
+FIGlet fonts. OCR overlay backgrounds are sampled per cell from the
+text-removed source; sampled colors are not replaced with black or white merely
+to increase contrast.
+
+FIGlet rendering has two independent size gates. `FIG Min Rows` requires a
+minimum detected height in terminal rows. `FIG Min H %` compares a detection
+with the median OCR line height on pages with at least three recognized lines;
+the default `125` means the text must be at least 1.25 times the typical line
+height. Set the percentage to `0` to disable the relative gate, or turn OCR
+FIGlet off to render every recognized string as normal one-row text. The
+specialized line/page orientation and unwarping switches remain available as
+CLI/settings options but are omitted from the main TUI.
+
+Define the allowed fonts for each declared FIGlet height in `config.toml`.
+Providing this table replaces the built-in lists. `plain` is the normal
+one-row renderer:
+
+```toml
+[ocr_figlet_fonts]
+1 = ["plain"]
+2 = ["phm-minecraft", "phm-lcdmatrix", "phm-leds"]
+3 = ["phm-largetype", "phm-shinonome"]
+```
+
+The equivalent CLI option is repeatable, for example
+`--ocr-figlet-fonts '1=plain' --ocr-figlet-fonts '2=phm-minecraft,phm-lcdmatrix'`.
+A font is ignored when its FIGlet-declared height differs from the list in
+which it appears.
+
+FIGfonts are discovered through `IMG2IRC_FIGLET_FONT_DIR`, `FIGLET_FONTDIR`,
+FIGlet's configured font directory, and common system font directories. The
+environment variables may contain a platform-separated list of directories.
+
+The TUI caches OCR detections while adjusting visual controls. Inference runs
+again only when the image or an OCR inference setting changes, such as the model
+tier, model paths, orientation options, thread count, or detection thresholds.
 
 Crop, flip, rotate, and scale are ordered Pipeline effects. This means they can
 be inserted, reordered, disabled, and removed like the other image operations.
@@ -85,6 +141,10 @@ effect.
 | image                                  | image url or file path                                        | required      |
 | -w, --width                            | output image width in columns                                 | auto          |
 | -H, --height                           | output image height in rows                                   | auto          |
+| --ocr-figlet                           | enable OCR FIGlet rendering (`true` or `false`)                | true          |
+| --ocr-figlet-min-height                | minimum output-row height before FIGlet may be used            | 2             |
+| --ocr-figlet-min-height-ratio          | minimum height relative to the median OCR line; `0` disables   | 1.25          |
+| --ocr-figlet-fonts                     | allowed OCR FIGlet fonts as `LINES=FONT1,FONT2`; repeat by height | built-in lists |
 | --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |
 | --crop                                 | crop image ("x1,y1,x2,y2")                                    | none          |
 | --filter                               | sampling filter                                               | nearest       |

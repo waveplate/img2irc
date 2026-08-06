@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub font: Option<String>,
     pub blocks: Option<Vec<String>>,
+    pub ocr_figlet_fonts: Option<BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Clone, Deserialize, Default, Debug, PartialEq, Eq)]
@@ -108,7 +110,23 @@ fn find_config_file(filename: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::UiLayout;
+    use super::{Config, UiLayout};
+
+    #[test]
+    fn parses_ocr_figlet_fonts_by_line_height() {
+        let config: Config = toml::from_str(
+            r#"
+                [ocr_figlet_fonts]
+                1 = ["plain"]
+                2 = ["phm-minecraft", "phm-lcdmatrix"]
+                3 = ["phm-largetype"]
+            "#,
+        )
+        .unwrap();
+
+        let fonts = config.ocr_figlet_fonts.unwrap();
+        assert_eq!(fonts["2"], ["phm-minecraft", "phm-lcdmatrix"]);
+    }
 
     #[test]
     fn parses_partial_ui_layout() {

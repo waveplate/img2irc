@@ -28,6 +28,24 @@ async fn main() {
                 args.blocks = b;
             }
         }
+        if args.ocr_figlet_fonts.is_empty() {
+            if let Some(fonts_by_height) = config.ocr_figlet_fonts {
+                args.ocr_figlet_fonts = fonts_by_height
+                    .into_iter()
+                    .filter_map(|(height, fonts)| match height.parse::<u32>() {
+                        Ok(height) if height > 0 => {
+                            Some(args::OcrFigletFontList { height, fonts })
+                        }
+                        _ => {
+                            log::warn!(
+                                "Ignoring config ocr_figlet_fonts key {height:?}; expected a positive line count"
+                            );
+                            None
+                        }
+                    })
+                    .collect();
+            }
+        }
     }
 
     if args.tui {

@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use toml::Value;
 use unicode_width::UnicodeWidthChar;
 
+use swash::scale::{Render, ScaleContext, Source as SwashSource};
 use swash::FontRef;
-use swash::scale::{ScaleContext, Render, Source as SwashSource};
 
 pub type GlyphBitmap = Vec<Vec<u8>>;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,12 +47,35 @@ struct CachedBlock {
 }
 
 pub struct SystemFont {
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
+    pub face_index: usize,
+    pub source_path: String,
+}
+
+impl SystemFont {
+    fn new(bytes: Arc<[u8]>, face_index: usize, source_path: String) -> Option<Self> {
+        FontRef::from_index(&bytes, face_index)?;
+        Some(Self {
+            bytes,
+            face_index,
+            source_path,
+        })
+    }
+
+    fn font_ref(&self) -> FontRef<'_> {
+        FontRef::from_index(&self.bytes, self.face_index).expect("validated font face")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FontLocation {
+    path: String,
+    face_index: usize,
 }
 
 struct FontContext {
     user_faces: HashMap<String, Arc<SystemFont>>,
-    fallback_faces: HashMap<String, Arc<SystemFont>>,
+    fallback_faces: HashMap<String, Vec<Arc<SystemFont>>>,
     font_paths: Vec<String>,
     missing_chars: HashSet<char>,
     font_size: f32,
@@ -71,14 +94,21 @@ impl FontContext {
         };
 
         for font_name in &fonts_to_load {
-            if let Some(path) = find_font_path(font_name) {
-                if let Ok(data) = fs::read(&path) {
-                    if let Some(_) = FontRef::from_index(&data, 0) {
-                        let sys_font = SystemFont { bytes: data };
+            if let Some(location) = find_font_location(font_name) {
+                if let Ok(data) = fs::read(&location.path) {
+                    let bytes = Arc::<[u8]>::from(data);
+                    if let Some(sys_font) =
+                        SystemFont::new(bytes, location.face_index, location.path.clone())
+                    {
                         if is_monospace_font(&sys_font) {
-                            log::info!("Loaded font: {}", path);
-                            font_paths.push(path.clone());
-                            user_faces.insert(path, Arc::new(sys_font));
+                            let key = format!("{}#{}", location.path, location.face_index);
+                            log::info!(
+                                "Loaded font: {} (face {})",
+                                location.path,
+                                location.face_index
+                            );
+                            font_paths.push(key.clone());
+                            user_faces.insert(key, Arc::new(sys_font));
                         } else {
                             log::info!("Warning: Font '{}' is not monospace, skipping.", font_name);
                         }
@@ -116,26 +146,28 @@ impl FontContext {
 }
 
 fn get_font_cache_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()?;
     Some(Path::new(&home).join(".img2irc_font_cache.json"))
 }
 
-fn read_cached_font_path(font_name: &str) -> Option<String> {
+fn read_cached_font_location(font_name: &str) -> Option<FontLocation> {
     let path = get_font_cache_path()?;
     if !path.is_file() {
         return None;
     }
     let content = fs::read_to_string(&path).ok()?;
-    let cache: HashMap<String, String> = serde_json::from_str(&content).ok()?;
-    let cached_path = cache.get(font_name)?;
-    if Path::new(cached_path).is_file() {
-        Some(cached_path.clone())
+    let cache: HashMap<String, FontLocation> = serde_json::from_str(&content).ok()?;
+    let location = cache.get(font_name)?;
+    if Path::new(&location.path).is_file() {
+        Some(location.clone())
     } else {
         None
     }
 }
 
-fn write_cached_font_path(font_name: &str, font_path: &str) {
+fn write_cached_font_location(font_name: &str, location: &FontLocation) {
     if let Some(path) = get_font_cache_path() {
         let mut cache = if path.is_file() {
             if let Ok(content) = fs::read_to_string(&path) {
@@ -146,7 +178,7 @@ fn write_cached_font_path(font_name: &str, font_path: &str) {
         } else {
             HashMap::new()
         };
-        cache.insert(font_name.to_string(), font_path.to_string());
+        cache.insert(font_name.to_string(), location.clone());
         if let Ok(content) = serde_json::to_string_pretty(&cache) {
             let _ = fs::write(&path, content);
         }
@@ -162,14 +194,17 @@ static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
     Mutex::new(db)
 });
 
-fn find_font_path(font_name: &str) -> Option<String> {
+fn find_font_location(font_name: &str) -> Option<FontLocation> {
     let direct_path = Path::new(font_name);
     if direct_path.is_file() {
-        return Some(direct_path.to_string_lossy().to_string());
+        return Some(FontLocation {
+            path: direct_path.to_string_lossy().to_string(),
+            face_index: 0,
+        });
     }
 
-    if let Some(cached_path) = read_cached_font_path(font_name) {
-        return Some(cached_path);
+    if let Some(location) = read_cached_font_location(font_name) {
+        return Some(location);
     }
 
     let db = DB.lock().unwrap();
@@ -178,16 +213,19 @@ fn find_font_path(font_name: &str) -> Option<String> {
         ..Default::default()
     };
     let resolved = db.query(&query).and_then(|id| {
-        let (src, _) = db.face_source(id)?;
+        let (src, face_index) = db.face_source(id)?;
         if let Source::File(path) = src {
-            Some(path.to_string_lossy().to_string())
+            Some(FontLocation {
+                path: path.to_string_lossy().to_string(),
+                face_index: face_index as usize,
+            })
         } else {
             None
         }
     });
 
-    if let Some(ref path) = resolved {
-        write_cached_font_path(font_name, path);
+    if let Some(ref location) = resolved {
+        write_cached_font_location(font_name, location);
     }
     resolved
 }
@@ -350,10 +388,7 @@ fn block_table_mut<'a>(
             if !create {
                 return None;
             }
-            table.insert(
-                segment.to_string(),
-                Value::Table(toml::map::Map::new()),
-            );
+            table.insert(segment.to_string(), Value::Table(toml::map::Map::new()));
         }
         table = table.get_mut(segment)?.as_table_mut()?;
     }
@@ -365,10 +400,7 @@ fn remove_block_path(root: &mut toml::map::Map<String, Value>, path: &str) -> bo
         return true;
     }
 
-    fn remove_nested(
-        table: &mut toml::map::Map<String, Value>,
-        segments: &[&str],
-    ) -> bool {
+    fn remove_nested(table: &mut toml::map::Map<String, Value>, segments: &[&str]) -> bool {
         let Some((head, tail)) = segments.split_first() else {
             return false;
         };
@@ -620,9 +652,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
 }
 
-fn load_blocks_config_impl(
-    apply_exclusions: bool,
-) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
         let path = Path::new(&config_dir).join("blocks.toml");
@@ -971,9 +1001,7 @@ fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<Gly
     };
     let a = (a.0, legacy_y(a.1));
     let b = (b.0, legacy_y(b.1));
-    let cross = |point: Point| {
-        (b.0 - a.0) * (point.1 - a.1) - (b.1 - a.1) * (point.0 - a.0)
-    };
+    let cross = |point: Point| (b.0 - a.0) * (point.1 - a.1) - (b.1 - a.1) * (point.0 - a.0);
     let anchor_side = cross(filled_anchor);
     for (y, row) in cell.iter_mut().enumerate() {
         let py = (y as f64 + 0.5) / h.max(1) as f64;
@@ -1044,7 +1072,9 @@ fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> 
         0x2591 => {
             for y in 0..h {
                 for x in 0..w {
-                    if (x + y) % 4 == 0 { cell[y][x] = 1; }
+                    if (x + y) % 4 == 0 {
+                        cell[y][x] = 1;
+                    }
                 }
             }
         }
@@ -1052,7 +1082,9 @@ fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> 
         0x2592 => {
             for y in 0..h {
                 for x in 0..w {
-                    if (x + y) % 2 == 0 { cell[y][x] = 1; }
+                    if (x + y) % 2 == 0 {
+                        cell[y][x] = 1;
+                    }
                 }
             }
         }
@@ -1060,7 +1092,9 @@ fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> 
         0x2593 => {
             for y in 0..h {
                 for x in 0..w {
-                    if (x + y) % 4 != 0 { cell[y][x] = 1; }
+                    if (x + y) % 4 != 0 {
+                        cell[y][x] = 1;
+                    }
                 }
             }
         }
@@ -1113,8 +1147,8 @@ fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> 
 }
 
 thread_local! {
-    static SCALE_CONTEXT: std::cell::RefCell<swash::scale::ScaleContext> =
-        std::cell::RefCell::new(swash::scale::ScaleContext::new());
+    static SCALE_CONTEXT: std::cell::RefCell<ScaleContext> =
+        std::cell::RefCell::new(ScaleContext::new());
 }
 
 fn render_glyph_from_font(font: &SystemFont, ch: char, metrics: &CachedMetrics) -> GlyphBitmap {
@@ -1128,7 +1162,7 @@ fn render_glyph_from_font(font: &SystemFont, ch: char, metrics: &CachedMetrics) 
 
     let mut cell = vec![vec![0u8; cell_width]; cell_height];
 
-    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let font_ref = font.font_ref();
     let gid = font_ref.charmap().map(ch);
     if gid == 0 {
         return cell;
@@ -1136,27 +1170,28 @@ fn render_glyph_from_font(font: &SystemFont, ch: char, metrics: &CachedMetrics) 
 
     SCALE_CONTEXT.with(|ctx_cell| {
         let mut ctx = ctx_cell.borrow_mut();
-        let mut scaler = ctx.builder(font_ref)
+        let mut scaler = ctx
+            .builder(font_ref)
             .size(metrics.font_size)
             .hint(false)
             .build();
-        
+
         if let Some(image) = Render::new(&[SwashSource::Outline]).render(&mut scaler, gid) {
             let baseline_y = metrics.main_ascent_px.round() as i32;
             let start_y = baseline_y - image.placement.top;
-            
+
             let font_metrics = font_ref.metrics(&[]);
             let units_per_em = font_metrics.units_per_em as f32;
             let scale_factor = metrics.font_size / units_per_em;
-            
+
             let glyph_metrics = font_ref.glyph_metrics(&[]);
             let advance_px = glyph_metrics.advance_width(gid) * scale_factor;
             let x_origin = (cell_width as f32 - advance_px) / 2.0;
             let start_x = (x_origin.round() as i32) + image.placement.left;
-            
+
             let w = image.placement.width as usize;
             let h = image.placement.height as usize;
-            
+
             for y in 0..h {
                 let cell_y = start_y + y as i32;
                 if cell_y >= 0 && cell_y < cell_height as i32 {
@@ -1198,10 +1233,10 @@ fn cache_dir() -> PathBuf {
 }
 
 fn measure_reference_advance_unscaled(font: &SystemFont) -> f32 {
-    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let font_ref = font.font_ref();
     let charmap = font_ref.charmap();
     let glyph_metrics = font_ref.glyph_metrics(&[]);
-    
+
     let mut gid = charmap.map('X');
     let mut advance = glyph_metrics.advance_width(gid);
     if advance == 0.0 {
@@ -1216,10 +1251,10 @@ fn measure_reference_advance_unscaled(font: &SystemFont) -> f32 {
 }
 
 pub fn is_monospace_font(font: &SystemFont) -> bool {
-    let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
+    let font_ref = font.font_ref();
     let charmap = font_ref.charmap();
     let glyph_metrics = font_ref.glyph_metrics(&[]);
-    
+
     let chars_to_check = ['X', 'i', 'W', 'M', '.', '|'];
     let mut advances = Vec::new();
     for &ch in &chars_to_check {
@@ -1242,8 +1277,43 @@ fn is_renderable_char(ch: char) -> bool {
     if ch.is_control() {
         return false;
     }
-    let w = ch.width().unwrap_or(1);
-    w >= 1 && w <= 2
+    ch.width() == Some(1)
+}
+
+fn font_supports_terminal_char(font: &SystemFont, ch: char) -> bool {
+    if !is_renderable_char(ch) {
+        return false;
+    }
+
+    let font_ref = font.font_ref();
+    let gid = font_ref.charmap().map(ch);
+    if gid == 0 {
+        return false;
+    }
+
+    let glyph_advance = font_ref.glyph_metrics(&[]).advance_width(gid);
+    let cell_advance = measure_reference_advance_unscaled(font);
+    glyph_advance > 0.0 && (glyph_advance - cell_advance).abs() <= cell_advance * 0.1
+}
+
+fn load_monospace_faces(path: &str) -> Vec<Arc<SystemFont>> {
+    let Ok(data) = fs::read(path) else {
+        return Vec::new();
+    };
+    let bytes = Arc::<[u8]>::from(data);
+    let mut faces = Vec::new();
+    let mut face_index = 0usize;
+
+    while FontRef::from_index(&bytes, face_index).is_some() {
+        if let Some(font) = SystemFont::new(bytes.clone(), face_index, path.to_string()) {
+            if is_monospace_font(&font) {
+                faces.push(Arc::new(font));
+            }
+        }
+        face_index += 1;
+    }
+
+    faces
 }
 
 fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemFont>, String)> {
@@ -1253,12 +1323,11 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
 
     for path in &ctx.font_paths {
         if let Some(font) = ctx.user_faces.get(path) {
-            let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
-            if font_ref.charmap().map(ch) != 0 {
-                let font_name = Path::new(path)
+            if font_supports_terminal_char(font, ch) {
+                let font_name = Path::new(&font.source_path)
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.clone());
+                    .unwrap_or_else(|| font.source_path.clone());
                 return Some((font.clone(), font_name));
             }
         }
@@ -1267,26 +1336,24 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
     let paths = get_fallback_font_paths(ch);
     for path in paths {
         if !ctx.fallback_faces.contains_key(&path) {
-            if let Ok(data) = fs::read(&path) {
-                if let Some(_) = FontRef::from_index(&data, 0) {
-                    let sys_font = SystemFont { bytes: data };
-                    if is_monospace_font(&sys_font) {
-                        log::info!("Adding fallback font: {}", path);
-                        ctx.fallback_faces.insert(path.clone(), Arc::new(sys_font));
-                    } else {
-                        log::debug!("Fallback font {} is not monospace, skipping", path);
-                    }
-                }
+            let faces = load_monospace_faces(&path);
+            if !faces.is_empty() {
+                log::info!("Adding fallback font: {} ({} faces)", path, faces.len());
+            } else {
+                log::debug!("Fallback font {} has no monospace faces, skipping", path);
             }
+            ctx.fallback_faces.insert(path.clone(), faces);
         }
-        if let Some(font) = ctx.fallback_faces.get(&path) {
-            let font_ref = FontRef::from_index(&font.bytes, 0).unwrap();
-            if font_ref.charmap().map(ch) != 0 {
+        if let Some(faces) = ctx.fallback_faces.get(&path) {
+            if let Some(font) = faces
+                .iter()
+                .find(|font| font_supports_terminal_char(font, ch))
+            {
                 let font_name = Path::new(&path)
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| path.clone());
-                return Some((font.clone(), font_name));
+                return Some((Arc::clone(font), font_name));
             }
         }
     }
@@ -1298,7 +1365,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v15".hash(&mut hasher);
+    "v16".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1316,7 +1383,7 @@ fn block_hash_context(
     chars: &[char],
 ) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v15".hash(&mut hasher);
+    "v16".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1355,7 +1422,7 @@ fn get_metrics(ctx: &mut FontContext, chars: &[char]) -> CachedMetrics {
     }
 
     let main_font = ctx.get_main_font();
-    let font_ref = FontRef::from_index(&main_font.bytes, 0).unwrap();
+    let font_ref = main_font.font_ref();
     let metrics = font_ref.metrics(&[]);
 
     let units_per_em = metrics.units_per_em as f32;
@@ -1456,11 +1523,9 @@ fn get_block_glyphs(
         }
 
         // Terminal block geometry must not depend on fallback-font metrics.
-        if let Some(bitmap) = procedural_block_bitmap(
-            ch,
-            metrics.cell_width.max(1),
-            metrics.cell_height.max(1),
-        ) {
+        if let Some(bitmap) =
+            procedural_block_bitmap(ch, metrics.cell_width.max(1), metrics.cell_height.max(1))
+        {
             glyphs.push((ch, bitmap, "Procedural terminal geometry".to_string()));
             found = true;
         // Otherwise resolve a font (handles user fonts and fallbacks).
@@ -1861,5 +1926,28 @@ mod tests {
         assert!(block_table_mut(&mut root, "legacy.one", false).is_some());
         assert!(remove_block_path(&mut root, "legacy.one"));
         assert!(root.is_empty());
+    }
+
+    #[test]
+    fn only_single_cell_characters_are_font_render_candidates() {
+        assert!(is_renderable_char('⇠'));
+        assert!(!is_renderable_char('界'));
+        assert!(!is_renderable_char('\u{0301}'));
+    }
+
+    #[test]
+    fn iosevka_collection_rejects_the_double_advance_arrow_face() {
+        let path = "/usr/share/fonts/TTF/Iosevka-Regular.ttc";
+        if !Path::new(path).is_file() {
+            return;
+        }
+
+        let faces = load_monospace_faces(path);
+        assert!(faces.len() >= 2);
+        assert!(!font_supports_terminal_char(&faces[0], '⇠'));
+        assert!(faces
+            .iter()
+            .skip(1)
+            .any(|face| font_supports_terminal_char(face, '⇠')));
     }
 }

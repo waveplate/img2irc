@@ -137,7 +137,11 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         auto_optimize_batch_size: args.auto_optimize_batch_size,
 
         image: args.image.clone(),
-        width: args.width.as_ref().map(|p| param_base(p) as u32),
+        width: args
+            .width
+            .as_ref()
+            .map(|p| param_base(p) as u32)
+            .filter(|width| *width > 0),
         height: args.height.as_ref().map(|p| param_base(p) as u32),
         scale: Some((sx, sy)),
         crop,
@@ -241,6 +245,14 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_threads: args.ocr_threads,
         ocr_max_side_len: args.ocr_max_side_len,
         ocr_max_text_height_ratio: args.ocr_max_text_height_ratio,
+        ocr_figlet: args.ocr_figlet,
+        ocr_figlet_min_height: args.ocr_figlet_min_height,
+        ocr_figlet_min_height_ratio: args.ocr_figlet_min_height_ratio,
+        ocr_figlet_fonts: if args.ocr_figlet_fonts.is_empty() {
+            crate::args::default_ocr_figlet_font_lists()
+        } else {
+            args.ocr_figlet_fonts.clone()
+        },
         ocr_box_score_threshold: args.ocr_box_score_threshold,
         ocr_box_threshold: args.ocr_box_threshold,
         ocr_unclip_ratio: args.ocr_unclip_ratio,
@@ -519,6 +531,46 @@ pub async fn load_image_from_url_or_path(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+
+    #[test]
+    fn zero_cli_width_means_auto() {
+        let args = crate::args::Args::parse_from(["img2irc", "--width", "0"]);
+        assert_eq!(crate::args_to_render_args(&args).width, None);
+    }
+
+    #[test]
+    fn cli_accepts_figlet_font_lists_by_line_height() {
+        let args = crate::args::Args::parse_from([
+            "img2irc",
+            "--ocr-figlet-fonts",
+            "1=plain",
+            "--ocr-figlet-fonts",
+            "2=phm-minecraft,phm-lcdmatrix",
+        ]);
+        let lists = crate::args_to_render_args(&args).ocr_figlet_fonts;
+
+        assert_eq!(lists.len(), 2);
+        assert_eq!(lists[0].height, 1);
+        assert_eq!(lists[1].fonts, ["phm-minecraft", "phm-lcdmatrix"]);
+    }
+
+    #[test]
+    fn cli_controls_when_figlet_is_allowed_for_ocr() {
+        let args = crate::args::Args::parse_from([
+            "img2irc",
+            "--ocr-figlet",
+            "false",
+            "--ocr-figlet-min-height",
+            "3.5",
+            "--ocr-figlet-min-height-ratio",
+            "1.75",
+        ]);
+        let render_args = crate::args_to_render_args(&args);
+
+        assert!(!render_args.ocr_figlet);
+        assert_eq!(render_args.ocr_figlet_min_height, 3.5);
+        assert_eq!(render_args.ocr_figlet_min_height_ratio, 1.75);
+    }
 
     #[tokio::test]
     async fn test_consecutive_renders_performance() {

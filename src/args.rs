@@ -68,7 +68,91 @@ fn default_contour_zero_weight() -> f32 {
 }
 
 fn default_ocr_max_text_height_ratio() -> f32 {
-    2.5
+    0.0
+}
+
+fn default_ocr_figlet_min_height() -> f32 {
+    2.0
+}
+
+fn default_ocr_figlet_min_height_ratio() -> f32 {
+    1.25
+}
+
+pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
+    vec![
+        OcrFigletFontList {
+            height: 1,
+            fonts: vec!["plain".to_string()],
+        },
+        OcrFigletFontList {
+            height: 2,
+            fonts: [
+                "phm-minecraft",
+                "phm-lcdmatrix",
+                "phm-leds",
+                "phm-c64",
+                "phm-cga",
+                "phm-vga-square",
+                "phm-dos-square",
+                "1Row",
+                "Two Point",
+                "konto",
+                "kontoslant",
+                "Cybersmall",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        },
+        OcrFigletFontList {
+            height: 3,
+            fonts: [
+                "phm-largetype",
+                "hp2640-largetype",
+                "phm-shinonome",
+                "Bigfig",
+                "Calvin S",
+                "Three Point",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        },
+    ]
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OcrFigletFontList {
+    pub height: u32,
+    pub fonts: Vec<String>,
+}
+
+impl FromStr for OcrFigletFontList {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (height, fonts) = value
+            .split_once('=')
+            .ok_or_else(|| "expected LINES=FONT1,FONT2".to_string())?;
+        let height = height
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| format!("invalid FIGlet line height: {height:?}"))?;
+        if height == 0 {
+            return Err("FIGlet line height must be at least 1".to_string());
+        }
+        let fonts = fonts
+            .split(',')
+            .map(str::trim)
+            .filter(|font| !font.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if fonts.is_empty() {
+            return Err("at least one FIGlet font name is required".to_string());
+        }
+        Ok(Self { height, fonts })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -278,6 +362,14 @@ pub struct RenderArgs {
     pub ocr_max_side_len: u32,
     #[serde(default = "default_ocr_max_text_height_ratio")]
     pub ocr_max_text_height_ratio: f32,
+    #[serde(default = "default_true")]
+    pub ocr_figlet: bool,
+    #[serde(default = "default_ocr_figlet_min_height")]
+    pub ocr_figlet_min_height: f32,
+    #[serde(default = "default_ocr_figlet_min_height_ratio")]
+    pub ocr_figlet_min_height_ratio: f32,
+    #[serde(default = "default_ocr_figlet_font_lists")]
+    pub ocr_figlet_fonts: Vec<OcrFigletFontList>,
     pub ocr_box_score_threshold: f32,
     pub ocr_box_threshold: f32,
     pub ocr_unclip_ratio: f32,
@@ -328,7 +420,7 @@ pub struct Args {
     #[arg(help = "input image path or URL")]
     pub image: Option<String>,
 
-    /// output image width in columns
+    /// output image width in columns; 0 selects automatic sizing
     #[arg(short = 'w', long)]
     pub width: Option<Param>,
 
@@ -788,8 +880,24 @@ pub struct Args {
     pub ocr_max_side_len: u32,
 
     /// skip OCR overlay/removal for text taller than this multiple of normal OCR line height; 0 disables
-    #[arg(long = "ocr-max-text-height-ratio", default_value_t = 2.5)]
+    #[arg(long = "ocr-max-text-height-ratio", default_value_t = 0.0)]
     pub ocr_max_text_height_ratio: f32,
+
+    /// allow OCR text to use configured FIGlet fonts; pass false to render plain text only
+    #[arg(long = "ocr-figlet", default_value_t = true, action = clap::ArgAction::Set)]
+    pub ocr_figlet: bool,
+
+    /// minimum detected text-box height in output rows before FIGlet may be used
+    #[arg(long = "ocr-figlet-min-height", default_value_t = 2.0)]
+    pub ocr_figlet_min_height: f32,
+
+    /// minimum text height relative to the median OCR line before FIGlet may be used; 0 disables
+    #[arg(long = "ocr-figlet-min-height-ratio", default_value_t = 1.25)]
+    pub ocr_figlet_min_height_ratio: f32,
+
+    /// OCR FIGlet fonts allowed at a declared line height; repeat for other heights
+    #[arg(long = "ocr-figlet-fonts", value_name = "LINES=FONT1,FONT2")]
+    pub ocr_figlet_fonts: Vec<OcrFigletFontList>,
 
     /// PP-OCR text-box score threshold
     #[arg(long = "ocr-box-score-threshold", default_value_t = 0.6)]

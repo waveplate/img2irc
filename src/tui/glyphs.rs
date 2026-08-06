@@ -401,23 +401,39 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
         }
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" Preview: {} ({}) ", ch, font_name));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
     if let Some(bitmap) = found_bitmap {
-        let lines = sextant_preview_lines(bitmap, inner.width as usize, inner.height as usize);
+        let lines = exact_halfblock_preview_lines(bitmap);
         if lines.is_empty() {
             return;
         }
-        let preview_height = lines.len().min(inner.height as usize) as u16;
+
+        let bitmap_width = bitmap.iter().map(Vec::len).max().unwrap_or(0) as u16;
+        let bitmap_height = lines.len() as u16;
+        let title = format!(" Preview: {} ({}) ", ch, font_name);
+        let (render_area, is_floating) = glyph_preview_area(
+            area,
+            f.area(),
+            bitmap_width,
+            bitmap_height,
+            title.chars().count() as u16,
+        );
+        app.preview_area = render_area;
+        if is_floating {
+            f.render_widget(Clear, render_area);
+        }
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .style(Style::new().bg(SURFACE));
+        let inner = block.inner(render_area);
+        f.render_widget(block, render_area);
+
         let preview_area = Rect::new(
             inner.x,
-            inner.y + inner.height.saturating_sub(preview_height) / 2,
+            inner.y + inner.height.saturating_sub(bitmap_height) / 2,
             inner.width,
-            preview_height,
+            bitmap_height.min(inner.height),
         );
         let style = Style::new().fg(Color::Cyan).bg(SURFACE);
         let text = Text::from(
@@ -426,8 +442,16 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
                 .map(|line| Line::from(Span::styled(line, style)))
                 .collect::<Vec<_>>(),
         );
-        f.render_widget(Paragraph::new(text).alignment(Alignment::Center), preview_area);
+        f.render_widget(
+            Paragraph::new(text).alignment(Alignment::Center),
+            preview_area,
+        );
     } else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Preview: {} ({}) ", ch, font_name));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
         let p = Paragraph::new(
             "No bitmap was rendered for this glyph.\nIt may be unsupported by the selected and fallback fonts.",
         )
@@ -436,76 +460,99 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
     }
 }
 
-/// Convert one 2x3 binary patch to the corresponding Unicode sextant. Unicode
-/// reuses older block elements for the two half blocks and the full block.
-fn sextant_char(mask: u8) -> char {
-    match mask & 0x3f {
-        0 => ' ',
-        0b01_01_01 => '▌',
-        0b10_10_10 => '▐',
-        0b11_11_11 => '█',
-        mask => {
-            let omitted_before = u32::from(mask > 0b01_01_01) + u32::from(mask > 0b10_10_10);
-            char::from_u32(0x1FB00 + mask as u32 - 1 - omitted_before).unwrap_or(' ')
-        }
+fn glyph_preview_area(
+    preferred: Rect,
+    frame: Rect,
+    bitmap_width: u16,
+    bitmap_height: u16,
+    title_width: u16,
+) -> (Rect, bool) {
+    let required_width = bitmap_width.max(title_width).saturating_add(2);
+    let required_height = bitmap_height.saturating_add(2);
+    let preferred_fits = preferred.width >= required_width && preferred.height >= required_height;
+    if preferred_fits {
+        return (preferred, false);
     }
+
+    let width = required_width.min(frame.width);
+    let height = required_height.min(frame.height);
+    (
+        Rect::new(
+            frame.right().saturating_sub(width),
+            frame.bottom().saturating_sub(height),
+            width,
+            height,
+        ),
+        true,
+    )
 }
 
-/// Scale the glyph to the preview pane, then pack six binary pixels into each
-/// terminal cell. Nearest-neighbour scaling preserves the actual cached mask.
-fn sextant_preview_lines(
-    bitmap: &[Vec<u8>],
-    max_cell_width: usize,
-    max_cell_height: usize,
-) -> Vec<String> {
+/// Render the cached bitmap at its native resolution. Each terminal cell
+/// represents exactly two vertical bitmap pixels using Unicode half blocks;
+/// no interpolation, enlargement, or shrinking is performed.
+fn exact_halfblock_preview_lines(bitmap: &[Vec<u8>]) -> Vec<String> {
     let source_height = bitmap.len();
     let source_width = bitmap.iter().map(Vec::len).max().unwrap_or(0);
-    if source_width == 0 || source_height == 0 || max_cell_width == 0 || max_cell_height == 0 {
+    if source_width == 0 || source_height == 0 {
         return Vec::new();
     }
 
-    let max_pixel_width = max_cell_width.saturating_mul(2);
-    let max_pixel_height = max_cell_height.saturating_mul(3);
-    let scale = (max_pixel_width as f64 / source_width as f64)
-        .min(max_pixel_height as f64 / source_height as f64);
-    let scaled_width = ((source_width as f64 * scale).floor() as usize)
-        .clamp(1, max_pixel_width);
-    let scaled_height = ((source_height as f64 * scale).floor() as usize)
-        .clamp(1, max_pixel_height);
-    let cell_width = (scaled_width + 1) / 2;
-    let cell_height = (scaled_height + 2) / 3;
-    let mut lines = Vec::with_capacity(cell_height);
-
-    for cell_y in 0..cell_height {
-        let mut line = String::with_capacity(cell_width * 4);
-        for cell_x in 0..cell_width {
-            let mut mask = 0u8;
-            for sub_y in 0..3 {
-                let scaled_y = cell_y * 3 + sub_y;
-                if scaled_y >= scaled_height {
-                    continue;
-                }
-                let source_y = scaled_y * source_height / scaled_height;
-                for sub_x in 0..2 {
-                    let scaled_x = cell_x * 2 + sub_x;
-                    if scaled_x >= scaled_width {
-                        continue;
-                    }
-                    let source_x = scaled_x * source_width / scaled_width;
-                    if bitmap
-                        .get(source_y)
-                        .and_then(|row| row.get(source_x))
-                        .copied()
-                        .unwrap_or(0)
-                        > 0
-                    {
-                        mask |= 1 << (sub_y * 2 + sub_x);
-                    }
-                }
-            }
-            line.push(sextant_char(mask));
+    let mut lines = Vec::with_capacity(source_height.div_ceil(2));
+    for top_y in (0..source_height).step_by(2) {
+        let mut line = String::with_capacity(source_width * 3);
+        for x in 0..source_width {
+            let top = bitmap
+                .get(top_y)
+                .and_then(|row| row.get(x))
+                .copied()
+                .unwrap_or(0)
+                > 0;
+            let bottom = bitmap
+                .get(top_y + 1)
+                .and_then(|row| row.get(x))
+                .copied()
+                .unwrap_or(0)
+                > 0;
+            line.push(match (top, bottom) {
+                (false, false) => ' ',
+                (true, false) => '▀',
+                (false, true) => '▄',
+                (true, true) => '█',
+            });
         }
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{exact_halfblock_preview_lines, glyph_preview_area};
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn halfblock_preview_preserves_native_pixels() {
+        let bitmap = vec![vec![1, 0, 1], vec![0, 1, 1], vec![1, 0, 0]];
+        assert_eq!(exact_halfblock_preview_lines(&bitmap), vec!["▀▄█", "▀  "]);
+    }
+
+    #[test]
+    fn undersized_preview_floats_at_the_bottom_right_without_scaling() {
+        let preferred = Rect::new(0, 0, 10, 4);
+        let frame = Rect::new(0, 0, 80, 30);
+        let (area, floating) = glyph_preview_area(preferred, frame, 14, 14, 24);
+
+        assert!(floating);
+        assert_eq!(area, Rect::new(54, 14, 26, 16));
+    }
+
+    #[test]
+    fn sufficiently_large_preview_stays_in_its_pane() {
+        let preferred = Rect::new(3, 5, 30, 20);
+        let frame = Rect::new(0, 0, 80, 30);
+        assert_eq!(
+            glyph_preview_area(preferred, frame, 14, 14, 24),
+            (preferred, false)
+        );
+    }
 }

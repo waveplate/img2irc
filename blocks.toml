@@ -90,6 +90,7 @@ ranges = [[
 ]]
 
 [hb]
+exclude = [0x258F]
 ranges = [[
     0x2589,
     0x258F,

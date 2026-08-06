@@ -122,6 +122,18 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
 
         let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
         let selected = v_idx == selected_ctrl;
+        let control_bg = if ctrl.id.is_conditional_child() {
+            CONDITIONAL_BG
+        } else {
+            SURFACE
+        };
+        let group_area = Rect::new(
+            inner.x,
+            y,
+            inner.width,
+            item_height.min(inner.y + inner.height - y),
+        );
+        buf.set_style(group_area, Style::new().bg(control_bg));
 
         let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
             "🛑 STOP AUTO-OPTIMIZE".to_string()
@@ -137,7 +149,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                     let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
                     let style = Style::new()
                         .fg(Color::Yellow)
-                        .bg(SURFACE)
+                        .bg(SELECTED_BG)
                         .add_modifier(Modifier::BOLD);
                     for (i, ch) in edit_text.chars().enumerate() {
                         if ctrl_area.x + i as u16 >= ctrl_area.x + ctrl_area.width {
@@ -147,7 +159,9 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                             .map(|cell| cell.set_char(ch).set_style(style));
                     }
                 } else {
-                    let dv = if ctrl.id == ControlId::FontSize {
+                    let dv = if ctrl.id == ControlId::Width && value == 0 {
+                        Some("Auto".to_string())
+                    } else if ctrl.id == ControlId::FontSize {
                         Some((value / 10).to_string())
                     } else if matches!(
                         ctrl.id,
@@ -173,16 +187,25 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                         max,
                         selected,
                         dv.as_deref(),
+                        control_bg,
                     );
                 }
             }
             ControlKind::Enum { options, .. } => {
                 let value = app.get_control_value(0, v_idx) as usize;
-                render_enum(buf, ctrl_area, &label_text, options, value, selected);
+                render_enum(
+                    buf,
+                    ctrl_area,
+                    &label_text,
+                    options,
+                    value,
+                    selected,
+                    control_bg,
+                );
             }
             ControlKind::Toggle { .. } => {
                 let on = app.get_control_value(0, v_idx) != 0;
-                render_toggle(buf, ctrl_area, &label_text, on, selected);
+                render_toggle(buf, ctrl_area, &label_text, on, selected, control_bg);
             }
             ControlKind::FontSelector => {
                 let font_name: &str = if app.font_idx < app.fonts.len() {
@@ -190,7 +213,15 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 } else {
                     "Default"
                 };
-                render_enum(buf, ctrl_area, &label_text, &[font_name], 0, selected);
+                render_enum(
+                    buf,
+                    ctrl_area,
+                    &label_text,
+                    &[font_name],
+                    0,
+                    selected,
+                    control_bg,
+                );
             }
             ControlKind::EyedropperWidget => {
                 render_eyedropper_widget(
@@ -199,6 +230,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                     &label_text,
                     app.eyedropper_color,
                     selected,
+                    control_bg,
                 );
             }
             ControlKind::Action => {
@@ -207,7 +239,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 } else {
                     ""
                 };
-                render_button(buf, ctrl_area, &label_text, selected, status);
+                render_button(buf, ctrl_area, &label_text, selected, status, control_bg);
             }
         }
 

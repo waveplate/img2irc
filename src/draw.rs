@@ -7682,6 +7682,7 @@ mod tests {
 
         assert_eq!(overlaid.grid[0][0].char, 'X');
         assert_eq!(overlaid.grid[0][0].fg, [240, 230, 220]);
+        assert_eq!(overlaid.grid[0][0].bg, Some([1, 2, 3]));
         assert!(overlaid.grid[0][0].bold);
         assert!(overlaid.grid[0][0].underline);
     }

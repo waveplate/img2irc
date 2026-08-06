@@ -58,6 +58,7 @@ use tokio::sync::{mpsc, watch};
 // ── Theme ────────────────────────────────────────────────────────────────────
 const BG: Color = Color::Rgb(22, 22, 30);
 const SURFACE: Color = Color::Rgb(30, 30, 42);
+const CONDITIONAL_BG: Color = Color::Rgb(27, 31, 49);
 const BORDER: Color = Color::Rgb(60, 60, 80);
 const TEXT: Color = Color::Rgb(200, 200, 220);
 const TEXT_DIM: Color = Color::Rgb(110, 110, 140);
@@ -105,10 +106,9 @@ enum ControlId {
     RenderMode,
     GraphicsPreview,
     Ocr,
-    OcrTextlineOrientation,
-    OcrMostAngle,
-    OcrDocOrientation,
-    OcrDocUnwarping,
+    OcrFiglet,
+    OcrFigletMinHeight,
+    OcrFigletMinHeightRatio,
     OcrMinConfidence,
     OcrModelTier,
     OcrMaxSideLen,
@@ -193,10 +193,9 @@ impl ControlId {
             ControlId::RenderMode => "mode",
             ControlId::GraphicsPreview => "graphics-preview",
             ControlId::Ocr => "ocr",
-            ControlId::OcrTextlineOrientation => "ocr-line-orientation",
-            ControlId::OcrMostAngle => "ocr-most-angle",
-            ControlId::OcrDocOrientation => "ocr-document-orientation",
-            ControlId::OcrDocUnwarping => "ocr-document-unwarping",
+            ControlId::OcrFiglet => "ocr-figlet",
+            ControlId::OcrFigletMinHeight => "ocr-figlet-min-height",
+            ControlId::OcrFigletMinHeightRatio => "ocr-figlet-min-height-ratio",
             ControlId::OcrMinConfidence => "ocr-confidence",
             ControlId::OcrModelTier => "ocr-model",
             ControlId::OcrMaxSideLen => "ocr-max-side",
@@ -275,16 +274,39 @@ impl ControlId {
     fn requires_ocr(self) -> bool {
         matches!(
             self,
-            ControlId::OcrTextlineOrientation
-                | ControlId::OcrMostAngle
-                | ControlId::OcrDocOrientation
-                | ControlId::OcrDocUnwarping
+            ControlId::OcrFiglet
+                | ControlId::OcrFigletMinHeight
+                | ControlId::OcrFigletMinHeightRatio
                 | ControlId::OcrMinConfidence
                 | ControlId::OcrModelTier
                 | ControlId::OcrMaxSideLen
                 | ControlId::OcrMaxTextHeight
                 | ControlId::OcrThreads
         )
+    }
+
+    fn requires_figlet(self) -> bool {
+        matches!(
+            self,
+            ControlId::OcrFigletMinHeight | ControlId::OcrFigletMinHeightRatio
+        )
+    }
+
+    fn requires_advanced(self) -> bool {
+        matches!(
+            self,
+            ControlId::ContourBendingWeight
+                | ControlId::ContourEndpointWeight
+                | ControlId::ContourJunctionWeight
+                | ControlId::ContourFragmentWeight
+                | ControlId::ContourFidelityWeight
+                | ControlId::ContourBoundaryWeight
+                | ControlId::ContourPeakWeight
+        )
+    }
+
+    fn is_conditional_child(self) -> bool {
+        self.requires_ocr() || self.requires_advanced()
     }
 }
 
@@ -332,7 +354,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         id: ControlId::Width,
         label: "Width",
         kind: ControlKind::Slider {
-            min: 10,
+            min: 0,
             max: 300,
             default: 80,
         },
@@ -343,24 +365,27 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
-        id: ControlId::OcrTextlineOrientation,
-        label: "OCR Line Ori",
+        id: ControlId::OcrFiglet,
+        label: "OCR FIGlet",
         kind: ControlKind::Toggle { default: true },
     },
     ControlDef {
-        id: ControlId::OcrMostAngle,
-        label: "OCR Most Angle",
-        kind: ControlKind::Toggle { default: false },
+        id: ControlId::OcrFigletMinHeight,
+        label: "FIG Min Rows",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 12,
+            default: 2,
+        },
     },
     ControlDef {
-        id: ControlId::OcrDocOrientation,
-        label: "OCR Doc Ori",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
-        id: ControlId::OcrDocUnwarping,
-        label: "OCR Unwarp",
-        kind: ControlKind::Toggle { default: false },
+        id: ControlId::OcrFigletMinHeightRatio,
+        label: "FIG Min H %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 500,
+            default: 125,
+        },
     },
     ControlDef {
         id: ControlId::OcrMinConfidence,
@@ -394,7 +419,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Slider {
             min: 0,
             max: 1000,
-            default: 250,
+            default: 0,
         },
     },
     ControlDef {
@@ -633,6 +658,10 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Action,
     },
 ];
+
+fn render_width_from_tui(width: i32) -> Option<u32> {
+    (width > 0).then_some(width as u32)
+}
 
 const EFFECT_CONTROLS: &[ControlDef] = &[
     ControlDef {
@@ -1113,22 +1142,14 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
 fn visible_general_controls(
     controls: &[ControlDef],
     ocr_enabled: bool,
+    figlet_enabled: bool,
     show_advanced: bool,
 ) -> Vec<ControlDef> {
-    let advanced_ids = [
-        ControlId::ContourBendingWeight,
-        ControlId::ContourEndpointWeight,
-        ControlId::ContourJunctionWeight,
-        ControlId::ContourFragmentWeight,
-        ControlId::ContourFidelityWeight,
-        ControlId::ContourBoundaryWeight,
-        ControlId::ContourPeakWeight,
-    ];
-
     controls
         .iter()
         .filter(|control| ocr_enabled || !control.id.requires_ocr())
-        .filter(|control| show_advanced || !advanced_ids.contains(&control.id))
+        .filter(|control| figlet_enabled || !control.id.requires_figlet())
+        .filter(|control| show_advanced || !control.id.requires_advanced())
         .copied()
         .collect()
 }
@@ -1207,6 +1228,35 @@ fn centered_rect(container: Rect, content: Rect) -> Rect {
 #[cfg(test)]
 mod ui_layout_tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn visual_slider_changes_do_not_invalidate_ocr_inference() {
+        let parsed = crate::args::Args::parse_from(["img2irc"]);
+        let mut args = crate::args_to_render_args(&parsed);
+        let original = OcrInferenceKey::from(&args);
+
+        args.brightness = 20.0;
+        args.width = Some(120);
+        args.ocr_figlet = false;
+        args.ocr_figlet_min_height = 4.0;
+        args.ocr_figlet_min_height_ratio = 2.0;
+        assert_eq!(OcrInferenceKey::from(&args), original);
+
+        args.ocr_model_tier = OcrModelTier::Small;
+        assert_ne!(OcrInferenceKey::from(&args), original);
+    }
+
+    #[test]
+    fn zero_width_is_available_and_means_auto() {
+        let ControlKind::Slider { min, .. } = get_control_def(ControlId::Width).kind else {
+            panic!("width control should be a slider");
+        };
+
+        assert_eq!(min, 0);
+        assert_eq!(render_width_from_tui(0), None);
+        assert_eq!(render_width_from_tui(80), Some(80));
+    }
 
     #[test]
     fn geometry_is_only_in_the_pipeline_library() {
@@ -1232,12 +1282,23 @@ mod ui_layout_tests {
     #[test]
     fn hides_ocr_children_until_ocr_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
-        let disabled = visible_general_controls(&controls, false, true);
-        let enabled = visible_general_controls(&controls, true, true);
+        let disabled = visible_general_controls(&controls, false, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::Ocr));
         assert!(!disabled.iter().any(|control| control.id.requires_ocr()));
         assert!(enabled.iter().any(|control| control.id.requires_ocr()));
+    }
+
+    #[test]
+    fn hides_figlet_thresholds_until_figlet_is_enabled() {
+        let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+        let disabled = visible_general_controls(&controls, true, false, true);
+        let enabled = visible_general_controls(&controls, true, true, true);
+
+        assert!(disabled.iter().any(|control| control.id == ControlId::OcrFiglet));
+        assert!(!disabled.iter().any(|control| control.id.requires_figlet()));
+        assert!(enabled.iter().any(|control| control.id.requires_figlet()));
     }
 
     #[test]
@@ -2308,10 +2369,9 @@ pub(crate) struct App {
     width: i32,
     render_mode_idx: usize,
     ocr: bool,
-    ocr_textline_orientation: bool,
-    ocr_most_angle: bool,
-    ocr_doc_orientation: bool,
-    ocr_doc_unwarping: bool,
+    ocr_figlet: bool,
+    ocr_figlet_min_height: i32,
+    ocr_figlet_min_height_ratio: i32,
     ocr_min_confidence: i32,
     ocr_model_tier_idx: usize,
     ocr_max_side_len: i32,
@@ -2995,12 +3055,12 @@ impl App {
 
             image_path: render_args.image.clone().unwrap_or_default(),
             ocr_overlay_count: 0,
-            width: render_args.width.unwrap_or(80) as i32,
+            width: render_args.width.unwrap_or(0) as i32,
             ocr: render_args.ocr,
-            ocr_textline_orientation: render_args.ocr_textline_orientation,
-            ocr_most_angle: render_args.ocr_most_angle,
-            ocr_doc_orientation: render_args.ocr_doc_orientation,
-            ocr_doc_unwarping: render_args.ocr_doc_unwarping,
+            ocr_figlet: render_args.ocr_figlet,
+            ocr_figlet_min_height: render_args.ocr_figlet_min_height.ceil() as i32,
+            ocr_figlet_min_height_ratio:
+                (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32,
             ocr_min_confidence: (render_args.ocr_min_confidence * 100.0).round() as i32,
             ocr_model_tier_idx: match render_args.ocr_model_tier {
                 OcrModelTier::Tiny => 0,
@@ -3229,12 +3289,12 @@ impl App {
             render_args.font_size.round()
         };
         self.render_args.font_size = ui_font_size;
-        self.width = render_args.width.unwrap_or(80) as i32;
+        self.width = render_args.width.unwrap_or(0) as i32;
         self.ocr = render_args.ocr;
-        self.ocr_textline_orientation = render_args.ocr_textline_orientation;
-        self.ocr_most_angle = render_args.ocr_most_angle;
-        self.ocr_doc_orientation = render_args.ocr_doc_orientation;
-        self.ocr_doc_unwarping = render_args.ocr_doc_unwarping;
+        self.ocr_figlet = render_args.ocr_figlet;
+        self.ocr_figlet_min_height = render_args.ocr_figlet_min_height.ceil() as i32;
+        self.ocr_figlet_min_height_ratio =
+            (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32;
         self.ocr_min_confidence = (render_args.ocr_min_confidence * 100.0).round() as i32;
         self.ocr_model_tier_idx = match render_args.ocr_model_tier {
             OcrModelTier::Tiny => 0,
@@ -3555,10 +3615,9 @@ impl App {
             ControlId::RenderMode => self.render_mode_idx as i32,
             ControlId::GraphicsPreview => self.graphics_preview as i32,
             ControlId::Ocr => self.ocr as i32,
-            ControlId::OcrTextlineOrientation => self.ocr_textline_orientation as i32,
-            ControlId::OcrMostAngle => self.ocr_most_angle as i32,
-            ControlId::OcrDocOrientation => self.ocr_doc_orientation as i32,
-            ControlId::OcrDocUnwarping => self.ocr_doc_unwarping as i32,
+            ControlId::OcrFiglet => self.ocr_figlet as i32,
+            ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height,
+            ControlId::OcrFigletMinHeightRatio => self.ocr_figlet_min_height_ratio,
             ControlId::OcrMinConfidence => self.ocr_min_confidence,
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
             ControlId::OcrMaxSideLen => self.ocr_max_side_len,
@@ -3641,7 +3700,7 @@ impl App {
             ControlId::Width => {
                 let old_w = self.width;
                 self.width = val;
-                if old_w > 0 && old_w != val && !self.render_args.overlays.is_empty() {
+                if old_w > 0 && val > 0 && old_w != val && !self.render_args.overlays.is_empty() {
                     let scale = val as f32 / old_w as f32;
                     for ov in &mut self.render_args.overlays {
                         ov.x = (ov.x as f32 * scale).round() as i32;
@@ -3658,10 +3717,11 @@ impl App {
                 }
             }
             ControlId::Ocr => self.ocr = val != 0,
-            ControlId::OcrTextlineOrientation => self.ocr_textline_orientation = val != 0,
-            ControlId::OcrMostAngle => self.ocr_most_angle = val != 0,
-            ControlId::OcrDocOrientation => self.ocr_doc_orientation = val != 0,
-            ControlId::OcrDocUnwarping => self.ocr_doc_unwarping = val != 0,
+            ControlId::OcrFiglet => self.ocr_figlet = val != 0,
+            ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height = val.clamp(0, 12),
+            ControlId::OcrFigletMinHeightRatio => {
+                self.ocr_figlet_min_height_ratio = val.clamp(0, 500)
+            }
             ControlId::OcrMinConfidence => self.ocr_min_confidence = val.clamp(0, 100),
             ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
             ControlId::OcrMaxSideLen => self.ocr_max_side_len = val.max(32),
@@ -3749,7 +3809,12 @@ impl App {
 
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
         match tab {
-            0 => visible_general_controls(&self.general_controls, self.ocr, self.show_advanced),
+            0 => visible_general_controls(
+                &self.general_controls,
+                self.ocr,
+                self.ocr_figlet,
+                self.show_advanced,
+            ),
             1 => vec![], // Pipeline Canvas is handled totally separately
             2 => self
                 .available_blocks
@@ -4275,12 +4340,12 @@ impl App {
         self.render_args.saturation = self.saturation as f32;
         self.render_args.gamma = self.gamma as f32;
         self.render_args.hue = self.hue as f32;
-        self.render_args.width = Some(self.width as u32);
+        self.render_args.width = render_width_from_tui(self.width);
         self.render_args.ocr = self.ocr;
-        self.render_args.ocr_textline_orientation = self.ocr_textline_orientation;
-        self.render_args.ocr_most_angle = self.ocr_most_angle;
-        self.render_args.ocr_doc_orientation = self.ocr_doc_orientation;
-        self.render_args.ocr_doc_unwarping = self.ocr_doc_unwarping;
+        self.render_args.ocr_figlet = self.ocr_figlet;
+        self.render_args.ocr_figlet_min_height = self.ocr_figlet_min_height.max(0) as f32;
+        self.render_args.ocr_figlet_min_height_ratio =
+            self.ocr_figlet_min_height_ratio.max(0) as f32 / 100.0;
         self.render_args.ocr_min_confidence = self.ocr_min_confidence as f32 / 100.0;
         self.render_args.ocr_model_tier = match self.ocr_model_tier_idx {
             0 => OcrModelTier::Tiny,
@@ -5169,6 +5234,7 @@ fn render_bar(
     max: i32,
     selected: bool,
     display_value: Option<&str>,
+    unselected_bg: Color,
 ) {
     if area.height < 1 || area.width < 4 {
         return;
@@ -5177,7 +5243,7 @@ fn render_bar(
     let bg_style = if selected {
         Style::new().bg(SELECTED_BG)
     } else {
-        Style::new().bg(SURFACE)
+        Style::new().bg(unselected_bg)
     };
     buf.set_style(area, bg_style);
 
@@ -5272,12 +5338,17 @@ fn render_enum(
     options: &[&str],
     value: usize,
     selected: bool,
+    unselected_bg: Color,
 ) {
     if area.height < 1 || area.width < 4 {
         return;
     }
 
-    let bg = if selected { SELECTED_BG } else { SURFACE };
+    let bg = if selected {
+        SELECTED_BG
+    } else {
+        unselected_bg
+    };
     buf.set_style(area, Style::new().bg(bg));
 
     let ly = area.y + area.height.saturating_sub(1) / 2;
@@ -5331,12 +5402,17 @@ fn render_eyedropper_widget(
     label: &str,
     color: Option<(u8, u8, u8)>,
     selected: bool,
+    unselected_bg: Color,
 ) {
     if area.height < 1 || area.width < 4 {
         return;
     }
 
-    let bg = if selected { SELECTED_BG } else { SURFACE };
+    let bg = if selected {
+        SELECTED_BG
+    } else {
+        unselected_bg
+    };
     buf.set_style(area, Style::new().bg(bg));
 
     let ly = area.y + area.height.saturating_sub(1) / 2;
@@ -5386,12 +5462,23 @@ fn render_eyedropper_widget(
 }
 
 /// A toggle switch
-fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: bool) {
+fn render_toggle(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    on: bool,
+    selected: bool,
+    unselected_bg: Color,
+) {
     if area.height < 1 || area.width < 4 {
         return;
     }
 
-    let bg = if selected { SELECTED_BG } else { SURFACE };
+    let bg = if selected {
+        SELECTED_BG
+    } else {
+        unselected_bg
+    };
     buf.set_style(area, Style::new().bg(bg));
 
     let ly = area.y + area.height.saturating_sub(1) / 2;
@@ -5442,13 +5529,20 @@ fn render_toggle(buf: &mut Buffer, area: Rect, label: &str, on: bool, selected: 
     }
 }
 
-fn render_button(buf: &mut Buffer, area: Rect, label: &str, selected: bool, status: &str) {
+fn render_button(
+    buf: &mut Buffer,
+    area: Rect,
+    label: &str,
+    selected: bool,
+    status: &str,
+    unselected_bg: Color,
+) {
     let bg = if selected {
         SELECTED_BG
     } else if !status.is_empty() {
         OPTIMIZE_BG
     } else {
-        SURFACE
+        unselected_bg
     };
     buf.set_style(area, Style::new().bg(bg));
 
@@ -5490,6 +5584,49 @@ fn render_button(buf: &mut Buffer, area: Rect, label: &str, selected: bool, stat
 }
 
 // ── Main Entry Point ─────────────────────────────────────────────────────────
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OcrInferenceKey {
+    model_tier: OcrModelTier,
+    model_cache: Option<String>,
+    det_model: Option<String>,
+    cls_model: Option<String>,
+    rec_model: Option<String>,
+    dict: Option<String>,
+    textline_orientation: bool,
+    most_angle: bool,
+    doc_orientation: bool,
+    doc_orientation_model: Option<String>,
+    doc_unwarping: bool,
+    threads: usize,
+    max_side_len: u32,
+    box_score_threshold: u32,
+    box_threshold: u32,
+    unclip_ratio: u32,
+}
+
+impl From<&RenderArgs> for OcrInferenceKey {
+    fn from(args: &RenderArgs) -> Self {
+        Self {
+            model_tier: args.ocr_model_tier,
+            model_cache: args.ocr_model_cache.clone(),
+            det_model: args.ocr_det_model.clone(),
+            cls_model: args.ocr_cls_model.clone(),
+            rec_model: args.ocr_rec_model.clone(),
+            dict: args.ocr_dict.clone(),
+            textline_orientation: args.ocr_textline_orientation,
+            most_angle: args.ocr_most_angle,
+            doc_orientation: args.ocr_doc_orientation,
+            doc_orientation_model: args.ocr_doc_orientation_model.clone(),
+            doc_unwarping: args.ocr_doc_unwarping,
+            threads: args.ocr_threads,
+            max_side_len: args.ocr_max_side_len,
+            box_score_threshold: args.ocr_box_score_threshold.to_bits(),
+            box_threshold: args.ocr_box_threshold.to_bits(),
+            unclip_ratio: args.ocr_unclip_ratio.to_bits(),
+        }
+    }
+}
+
 pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     // Initialize logging to file
     let log_config = simplelog::ConfigBuilder::new()
@@ -5522,10 +5659,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
     log::info!("Starting img2irc TUI...");
 
-    if render_args.width.is_none() {
-        render_args.width = Some(80);
-    }
     render_args.render = Render::Ansi;
+    render_args.as_preview = true;
 
     let no_initial_image = render_args
         .image
@@ -5592,6 +5727,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
         let mut arc_image = arc_image;
         let mut current_image_path = initial_image_path;
+        let mut image_revision = 0u64;
+        let mut ocr_detection_cache: Option<(
+            u64,
+            OcrInferenceKey,
+            Vec<crate::ocr::OcrDetection>,
+        )> = None;
 
         // Use thread_render_args here instead of capturing render_args
         let mut arc_glyphs = arc_glyphs;
@@ -5618,6 +5759,11 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 .map(|p| p.is_empty())
                 .unwrap_or(true)
             {
+                if current_args.image != current_image_path {
+                    current_image_path = current_args.image.clone();
+                    image_revision = image_revision.wrapping_add(1);
+                    ocr_detection_cache = None;
+                }
                 rendering_flag2.store(false, Ordering::Relaxed);
                 if rx_args.changed().await.is_err() {
                     break;
@@ -5633,6 +5779,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                         Ok(img) => {
                             arc_image = Arc::new(img);
                             current_image_path = Some(path.clone());
+                            image_revision = image_revision.wrapping_add(1);
+                            ocr_detection_cache = None;
                         }
                         Err(e) => {
                             log::info!("Failed to reload image: {}", e);
@@ -5645,8 +5793,37 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
             let ocr_detections = if effective_args.ocr {
-                match crate::ocr::detect_text(&arc_image, &effective_args) {
+                let inference_key = OcrInferenceKey::from(&effective_args);
+                let cached = ocr_detection_cache
+                    .as_ref()
+                    .filter(|(revision, key, _)| {
+                        *revision == image_revision && *key == inference_key
+                    })
+                    .map(|(_, _, detections)| detections.clone());
+                let detection_result = if let Some(detections) = cached {
+                    log::debug!("Reusing cached OCR detections");
+                    Ok(detections)
+                } else {
+                    let detection_image = arc_image.clone();
+                    let detection_args = effective_args.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        crate::ocr::detect_text(&detection_image, &detection_args)
+                            .map_err(|error| error.to_string())
+                    })
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(error) => Err(format!("OCR worker failed: {error}")),
+                    }
+                };
+
+                match detection_result {
                     Ok(detections) => {
+                        ocr_detection_cache = Some((
+                            image_revision,
+                            inference_key,
+                            detections.clone(),
+                        ));
                         crate::ocr::log_detections(&detections, &effective_args);
                         if !crate::ocr::has_renderable_detections(
                             &detections,
