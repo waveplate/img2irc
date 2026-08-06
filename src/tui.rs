@@ -115,7 +115,6 @@ enum ControlId {
     OcrMaxTextHeight,
     OcrThreads,
 
-    Gpu,
     HighlightDisc,
     DiscThreshold,
     ScoreFix,
@@ -201,7 +200,6 @@ impl ControlId {
             ControlId::OcrMaxSideLen => "ocr-max-side",
             ControlId::OcrMaxTextHeight => "ocr-max-height",
             ControlId::OcrThreads => "ocr-threads",
-            ControlId::Gpu => "gpu",
             ControlId::HighlightDisc => "show-discontinuities",
             ControlId::DiscThreshold => "discontinuity-threshold",
             ControlId::ScoreFix => "score-fix",
@@ -305,8 +303,19 @@ impl ControlId {
         )
     }
 
+    fn requires_score_fix(self) -> bool {
+        matches!(
+            self,
+            ControlId::ScoreFixCandidates
+                | ControlId::ScoreFixOrderings
+                | ControlId::ScoreFixGeometryFirst
+                | ControlId::ScoreFixNeighborhoodGuard
+                | ControlId::ShowAdvanced
+        ) || self.requires_advanced()
+    }
+
     fn is_conditional_child(self) -> bool {
-        self.requires_ocr() || self.requires_advanced()
+        self.requires_ocr() || self.requires_score_fix()
     }
 }
 
@@ -430,11 +439,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 32,
             default: 4,
         },
-    },
-    ControlDef {
-        id: ControlId::Gpu,
-        label: "GPU Mode",
-        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::HighlightDisc,
@@ -1143,12 +1147,14 @@ fn visible_general_controls(
     controls: &[ControlDef],
     ocr_enabled: bool,
     figlet_enabled: bool,
+    score_fix_enabled: bool,
     show_advanced: bool,
 ) -> Vec<ControlDef> {
     controls
         .iter()
         .filter(|control| ocr_enabled || !control.id.requires_ocr())
         .filter(|control| figlet_enabled || !control.id.requires_figlet())
+        .filter(|control| score_fix_enabled || !control.id.requires_score_fix())
         .filter(|control| show_advanced || !control.id.requires_advanced())
         .copied()
         .collect()
@@ -1225,6 +1231,10 @@ fn centered_rect(container: Rect, content: Rect) -> Rect {
     )
 }
 
+fn clamp_output_scroll(scroll: u16, line_count: u16, viewport_height: u16) -> u16 {
+    scroll.min(line_count.saturating_sub(viewport_height))
+}
+
 #[cfg(test)]
 mod ui_layout_tests {
     use super::*;
@@ -1282,8 +1292,8 @@ mod ui_layout_tests {
     #[test]
     fn hides_ocr_children_until_ocr_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
-        let disabled = visible_general_controls(&controls, false, true, true);
-        let enabled = visible_general_controls(&controls, true, true, true);
+        let disabled = visible_general_controls(&controls, false, true, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::Ocr));
         assert!(!disabled.iter().any(|control| control.id.requires_ocr()));
@@ -1293,12 +1303,23 @@ mod ui_layout_tests {
     #[test]
     fn hides_figlet_thresholds_until_figlet_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
-        let disabled = visible_general_controls(&controls, true, false, true);
-        let enabled = visible_general_controls(&controls, true, true, true);
+        let disabled = visible_general_controls(&controls, true, false, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::OcrFiglet));
         assert!(!disabled.iter().any(|control| control.id.requires_figlet()));
         assert!(enabled.iter().any(|control| control.id.requires_figlet()));
+    }
+
+    #[test]
+    fn hides_score_fix_children_until_score_fix_is_enabled() {
+        let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+        let disabled = visible_general_controls(&controls, true, true, false, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true);
+
+        assert!(disabled.iter().any(|control| control.id == ControlId::ScoreFix));
+        assert!(!disabled.iter().any(|control| control.id.requires_score_fix()));
+        assert!(enabled.iter().any(|control| control.id.requires_score_fix()));
     }
 
     #[test]
@@ -1357,6 +1378,13 @@ mod ui_layout_tests {
             centered_rect(container, Rect::new(0, 0, 30, 16)),
             container
         );
+    }
+
+    #[test]
+    fn output_scroll_resets_when_new_content_fits_the_viewport() {
+        assert_eq!(clamp_output_scroll(40, 12, 20), 0);
+        assert_eq!(clamp_output_scroll(40, 100, 20), 40);
+        assert_eq!(clamp_output_scroll(90, 100, 20), 80);
     }
 
     #[test]
@@ -2378,7 +2406,6 @@ pub(crate) struct App {
     ocr_max_text_height_ratio: i32,
     ocr_threads: i32,
     dither: i32,
-    gpu: bool,
     show_discontinuities: bool,
     discontinuity_threshold: i32,
     graphics_preview: bool,
@@ -3072,7 +3099,6 @@ impl App {
                 as i32,
             ocr_threads: render_args.ocr_threads as i32,
             dither: render_args.dither as i32,
-            gpu: render_args.gpu,
             show_discontinuities: render_args.show_discontinuities,
             discontinuity_threshold: (render_args.discontinuity_threshold * 10.0).round() as i32,
             graphics_preview: false,
@@ -3311,7 +3337,6 @@ impl App {
             Render::Ansi24 => 2,
         };
         self.dither = render_args.dither as i32;
-        self.gpu = render_args.gpu;
         self.show_discontinuities = render_args.show_discontinuities;
         self.discontinuity_threshold = (render_args.discontinuity_threshold * 10.0).round() as i32;
         self.score_fix = render_args.score_fix;
@@ -3645,7 +3670,6 @@ impl App {
             ControlId::Encoding => self.encoding_idx as i32,
 
             ControlId::Dither => self.dither,
-            ControlId::Gpu => self.gpu as i32,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::DiscThreshold => self.discontinuity_threshold,
             ControlId::ScoreFix => self.score_fix as i32,
@@ -3752,7 +3776,6 @@ impl App {
             ControlId::Encoding => self.encoding_idx = val as usize,
 
             ControlId::Dither => self.dither = val,
-            ControlId::Gpu => self.gpu = val != 0,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::DiscThreshold => self.discontinuity_threshold = val.max(0),
             ControlId::ScoreFix => self.score_fix = val != 0,
@@ -3813,6 +3836,7 @@ impl App {
                 &self.general_controls,
                 self.ocr,
                 self.ocr_figlet,
+                self.score_fix,
                 self.show_advanced,
             ),
             1 => vec![], // Pipeline Canvas is handled totally separately
@@ -4133,14 +4157,9 @@ impl App {
             let mut best_args = args.clone();
             let mut curr = 0;
 
-            let use_gpu = cfg!(feature = "gpu") && args.gpu;
-            let concurrency = if use_gpu {
-                1
-            } else {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(1)
-            };
+            let concurrency = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1);
             let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
             let (res_tx, mut res_rx) = tokio::sync::mpsc::channel(concurrency * 2);
 
@@ -4359,7 +4378,6 @@ impl App {
         self.render_args.dither = self.dither as u32;
         self.render_args.invert = self.invert;
         self.render_args.grayscale = self.grayscale;
-        self.render_args.gpu = self.gpu;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.discontinuity_threshold = self.discontinuity_threshold as f32 / 10.0;
         self.render_args.score_fix = self.score_fix;
@@ -4630,6 +4648,7 @@ impl App {
 
         self.image_path = path.clone();
         self.render_args.image = Some(path);
+        self.scroll = 0;
         self.mark_args_dirty();
     }
 
@@ -4663,6 +4682,7 @@ impl App {
                 log::info!("Loaded image from clipboard: {} ({} bytes)", path, bytes);
                 self.image_path = path.clone();
                 self.render_args.image = Some(path);
+                self.scroll = 0;
                 self.clipboard_paste_in_progress = false;
                 self.clipboard_paste_status = Some(format!("Pasted image ({} bytes)", bytes));
                 self.mark_args_dirty();
@@ -9513,7 +9533,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             }
 
             if let Some(protocol) = &mut app.output_preview_protocol {
-                let resize = Resize::Fit(None);
+                let resize = Resize::Crop(None);
                 let preview_area = centered_rect(inner, protocol.size_for(resize.clone(), inner));
                 protocol.resize_encode(&resize, preview_area);
                 f.render_stateful_widget(StatefulImage::default(), preview_area, protocol);
@@ -9534,6 +9554,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
 
             // Vertical center calculation
             let line_count = app.cached_render.lines().count() as u16;
+            app.scroll = clamp_output_scroll(app.scroll, line_count, inner.height);
             let pad_y = if line_count < inner.height {
                 inner.height.saturating_sub(line_count).saturating_div(2)
             } else {

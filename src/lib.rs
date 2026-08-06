@@ -4,8 +4,6 @@ pub mod contour_score;
 pub mod draw;
 pub mod effects;
 pub mod font;
-#[cfg(feature = "gpu")]
-pub mod gpu;
 #[cfg(feature = "ocr")]
 pub mod ocr;
 #[cfg(not(feature = "ocr"))]
@@ -129,10 +127,6 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
 
     RenderArgs {
         as_preview: false,
-        list_blocks: args.list_blocks,
-        list_ranges: args.list_ranges,
-        print_ranges: args.print_ranges,
-        show_block_bitmaps: args.show_block_bitmaps,
         clear_cache: args.clear_cache,
         auto_optimize_batch_size: args.auto_optimize_batch_size,
 
@@ -225,7 +219,6 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         misc6: args.misc6,
         misc7: args.misc7,
         misc8: args.misc8,
-        gpu: args.gpu,
         save: args.save.clone(),
         fft_debug_dir: args.fft_debug_dir.clone(),
         ocr: args.ocr,
@@ -572,6 +565,27 @@ mod tests {
         assert_eq!(render_args.ocr_figlet_min_height_ratio, 1.75);
     }
 
+    #[test]
+    fn cli_uses_glyph_print_names_and_removes_obsolete_switches() {
+        let args = crate::args::Args::parse_from([
+            "img2irc",
+            "--print-glyph-chars",
+            "--print-glyph-bitmaps",
+        ]);
+        assert!(args.print_glyph_chars);
+        assert!(args.print_glyph_bitmaps);
+
+        for obsolete in [
+            "--list-blocks",
+            "--list-ranges",
+            "--print-ranges",
+            "--show-block-bitmaps",
+            "--gpu",
+        ] {
+            assert!(crate::args::Args::try_parse_from(["img2irc", obsolete]).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn test_consecutive_renders_performance() {
         let img_path = "inputs/lisa.png";
@@ -589,7 +603,6 @@ mod tests {
             "40",
             "--font-size",
             "13",
-            "--gpu",
             "inputs/lisa.png",
         ]);
         let render_args = crate::args_to_render_args(&args);

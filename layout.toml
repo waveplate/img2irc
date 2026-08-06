@@ -23,7 +23,6 @@ order = [
     "ocr-max-side",
     "ocr-max-height",
     "ocr-threads",
-    "gpu",
     "show-discontinuities",
     "discontinuity-threshold",
     "score-fix",

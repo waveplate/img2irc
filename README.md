@@ -59,6 +59,13 @@ sudo pacman -S noto-fonts noto-fonts-extra
 
 `img2irc <URL or PATH> [OPTIONS]`
 
+Running `img2irc` without arguments prints the full command usage. Glyph-set
+definitions live in `glyphs.toml`; the search order is
+`$IMG2IRC_CONFIG_DIR`, the current directory, and
+`$XDG_CONFIG_HOME/img2irc`. Use `--print-glyph-chars` to print the configured
+characters or `--print-glyph-bitmaps` to inspect their rendered bitmaps. Bitmap
+output uses a 16-pixel font when `--font-size` is omitted.
+
 ## TUI layout
 
 The TUI reads an optional `layout.toml`. It looks in
@@ -145,6 +152,8 @@ effect.
 | --ocr-figlet-min-height                | minimum output-row height before FIGlet may be used            | 2             |
 | --ocr-figlet-min-height-ratio          | minimum height relative to the median OCR line; `0` disables   | 1.25          |
 | --ocr-figlet-fonts                     | allowed OCR FIGlet fonts as `LINES=FONT1,FONT2`; repeat by height | built-in lists |
+| --print-glyph-chars                    | print configured characters grouped by glyph set               | false         |
+| --print-glyph-bitmaps                  | print enabled glyph bitmaps                                     | false         |
 | --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |
 | --crop                                 | crop image ("x1,y1,x2,y2")                                    | none          |
 | --filter                               | sampling filter                                               | nearest       |

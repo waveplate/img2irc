@@ -231,10 +231,6 @@ pub struct TextOverlay {
 // Struct used for actual rendering (all values resolved to f32)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RenderArgs {
-    pub list_blocks: bool,
-    pub list_ranges: bool,
-    pub print_ranges: bool,
-    pub show_block_bitmaps: bool,
     pub clear_cache: bool,
 
     pub auto_optimize_batch_size: u32,
@@ -336,7 +332,6 @@ pub struct RenderArgs {
     pub misc6: i32,
     pub misc7: i32,
     pub misc8: i32,
-    pub gpu: bool,
     pub score: bool,
     pub save: Option<String>,
     pub fft_debug_dir: Option<String>,
@@ -383,23 +378,15 @@ pub struct RenderArgs {
 }
 
 #[derive(Parser, Clone, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(name = "img2irc", author, version, about, long_about = None)]
 pub struct Args {
-    /// list available blocks
+    /// print all configured glyph characters grouped by glyph set
     #[arg(long, default_value_t = false)]
-    pub list_blocks: bool,
+    pub print_glyph_chars: bool,
 
-    /// list available unicode ranges
+    /// print bitmaps for all enabled glyph characters
     #[arg(long, default_value_t = false)]
-    pub list_ranges: bool,
-
-    /// print all characters in each range
-    #[arg(long, default_value_t = false)]
-    pub print_ranges: bool,
-
-    /// show bitmaps for characters in blocks
-    #[arg(long, default_value_t = false)]
-    pub show_block_bitmaps: bool,
+    pub print_glyph_bitmaps: bool,
 
     /// clear the font cache
     #[arg(long, default_value_t = false)]
@@ -408,10 +395,6 @@ pub struct Args {
     /// launch the TUI
     #[arg(long, default_value_t = false)]
     pub tui: bool,
-
-    /// enable gpu acceleration (requires building with --features gpu)
-    #[arg(long, default_value_t = false)]
-    pub gpu: bool,
 
     /// Number of auto-optimize permutations processed at once
     #[arg(long, default_value_t = 10)]

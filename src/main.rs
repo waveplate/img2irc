@@ -1,11 +1,27 @@
 use img2irc_rs::{args, draw, font};
-use simplelog::{Config, LevelFilter, WriteLogger};
+use clap::CommandFactory;
+use simplelog::{LevelFilter, WriteLogger};
 use std::fs::File;
 use std::process::exit;
 
+fn glyph_bitmap_font_size(requested: f32) -> f32 {
+    if requested > 0.0 {
+        requested
+    } else {
+        16.0
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    let no_arguments = std::env::args_os().len() == 1;
     let mut args = args::parse_args();
+
+    if no_arguments {
+        args::Args::command().print_help().unwrap();
+        println!();
+        exit(0);
+    }
 
     let log_config = simplelog::ConfigBuilder::new()
         .set_time_format_rfc3339()
@@ -60,29 +76,19 @@ async fn main() {
     if args.clear_cache {
         font::clear_cache();
         log::info!("Cache cleared.");
-        if args.image.is_none() && !args.list_blocks && !args.show_block_bitmaps {
+        if args.image.is_none() && !args.print_glyph_chars && !args.print_glyph_bitmaps {
             exit(0);
         }
     }
 
-    if args.list_blocks {
-        log::info!("Available blocks:");
-        img2irc_rs::write_encoded_output(&font::print_blocks_config(), &args.encoding);
+    if args.print_glyph_chars {
+        img2irc_rs::write_encoded_output(&font::print_glyph_chars(), &args.encoding);
         exit(0);
     }
 
-    if args.list_ranges {
-        img2irc_rs::write_encoded_output(&font::list_ranges(), &args.encoding);
-        exit(0);
-    }
-
-    if args.print_ranges {
-        img2irc_rs::write_encoded_output(&font::print_ranges(), &args.encoding);
-        exit(0);
-    }
-
-    if args.show_block_bitmaps {
-        let render_args = img2irc_rs::args_to_render_args(&args);
+    if args.print_glyph_bitmaps {
+        let mut render_args = img2irc_rs::args_to_render_args(&args);
+        render_args.font_size = glyph_bitmap_font_size(render_args.font_size);
         let glyphs = font::glyph_store(
             &render_args.blocks,
             &render_args.exclude_range,
@@ -94,7 +100,7 @@ async fn main() {
             false,
             None,
         );
-        img2irc_rs::write_encoded_output(&font::print_block_bitmaps(&glyphs), &args.encoding);
+        img2irc_rs::write_encoded_output(&font::print_glyph_bitmaps(&glyphs), &args.encoding);
         exit(0);
     }
 
@@ -250,5 +256,16 @@ async fn main() {
             log::info!("Error: {}", e);
             exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::glyph_bitmap_font_size;
+
+    #[test]
+    fn glyph_bitmaps_default_to_sixteen_pixel_font() {
+        assert_eq!(glyph_bitmap_font_size(0.0), 16.0);
+        assert_eq!(glyph_bitmap_font_size(24.0), 24.0);
     }
 }

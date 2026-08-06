@@ -13,6 +13,40 @@ pub enum PaletteMode {
     Ansi24,
 }
 
+fn main_area_dimensions(mode: PaletteMode) -> (u16, u16) {
+    match mode {
+        PaletteMode::Irc => (24, 7),
+        // The ordered ANSI palette has 12 columns and 20 logical rows. Two
+        // logical rows share each terminal row through upper-half blocks.
+        PaletteMode::Ansi => (24, 10),
+        PaletteMode::Ansi24 => (30, 16),
+    }
+}
+
+fn ordered_ansi_indices() -> Vec<usize> {
+    [0, 2, 4]
+        .into_iter()
+        .flat_map(|red_band| {
+            let blue_levels: Vec<i32> = if red_band == 2 {
+                (0..6).rev().collect()
+            } else {
+                (0..6).collect()
+            };
+            blue_levels.into_iter().flat_map(move |blue| {
+                [0, 1, 2, 3, 4, 5, 11, 10, 9, 8, 7, 6]
+                    .into_iter()
+                    .map(move |red_green| {
+                        let red = red_band + red_green / 6;
+                        let green = red_green % 6;
+                        (16 + 36 * red + 6 * green + blue) as usize
+                    })
+            })
+        })
+        .chain(232..244)
+        .chain((244..=255).rev())
+        .collect()
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Focus {
     MainArea,
@@ -176,11 +210,16 @@ impl ColorPickerState {
                 self.set_grid_idx((16 + next_row * 12 + next_col).min(98) as usize);
             }
             PaletteMode::Ansi => {
-                let row = (self.grid_idx / 16) as i32;
-                let col = (self.grid_idx % 16) as i32;
-                let next_row = (row + dy).clamp(0, 15);
-                let next_col = (col + dx).clamp(0, 15);
-                self.set_grid_idx((next_row * 16 + next_col) as usize);
+                let indices = ordered_ansi_indices();
+                let position = indices
+                    .iter()
+                    .position(|idx| *idx == self.grid_idx)
+                    .unwrap_or(0);
+                let row = (position / 12) as i32;
+                let col = (position % 12) as i32;
+                let next_row = (row + dy).clamp(0, 19);
+                let next_col = (col + dx).clamp(0, 11);
+                self.set_grid_idx(indices[(next_row * 12 + next_col) as usize]);
             }
             PaletteMode::Ansi24 => {
                 let saturation =
@@ -243,12 +282,7 @@ impl ColorPickerState {
             area.height.saturating_sub(2),
         );
 
-        let main_width = if self.mode == PaletteMode::Ansi24 {
-            30
-        } else {
-            32
-        };
-        let main_height = 16;
+        let (main_width, main_height) = main_area_dimensions(self.mode);
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
         let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, main_height);
 
@@ -313,13 +347,9 @@ impl ColorPickerState {
             area.width.saturating_sub(2),
             area.height.saturating_sub(2),
         );
-        let main_width = if self.mode == PaletteMode::Ansi24 {
-            30
-        } else {
-            32
-        };
-        let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, 16);
-        let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, 16);
+        let (main_width, main_height) = main_area_dimensions(self.mode);
+        let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
+        let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, main_height);
 
         if self.is_dragging_main {
             self.apply_main_area_click(x, y, main_rect);
@@ -350,12 +380,14 @@ impl ColorPickerState {
                 }
             }
         } else if self.mode == PaletteMode::Ansi {
-            if dx < rect.width && dy < rect.height {
+            if dx < 24 && dy < 10 {
                 let col = dx / 2;
-                let row = dy;
-                let idx = row * 16 + col;
-                if idx < 256 {
-                    self.set_grid_idx(idx as usize);
+                // Each two-character half-block represents an upper and lower
+                // color. The left/right half selects the upper/lower color,
+                // preserving mouse access despite the compact display.
+                let logical_row = dy * 2 + dx % 2;
+                if let Some(idx) = ordered_ansi_indices().get((logical_row * 12 + col) as usize) {
+                    self.set_grid_idx(*idx);
                 }
             }
         } else {
@@ -391,12 +423,7 @@ impl<'a> Widget for ColorPickerWidget<'a> {
         let inner = main_block.inner(area);
         main_block.render(area, buf);
 
-        let main_width = if self.state.mode == PaletteMode::Ansi24 {
-            30
-        } else {
-            32
-        };
-        let main_height = 16;
+        let (main_width, main_height) = main_area_dimensions(self.state.mode);
         let main_rect = Rect::new(inner.x + 1, inner.y + 1, main_width, main_height);
         let hue_rect = Rect::new(inner.x + main_width + 3, inner.y + 1, 3, main_height);
 
@@ -444,32 +471,36 @@ impl<'a> Widget for ColorPickerWidget<'a> {
                 }
             }
         } else if self.state.mode == PaletteMode::Ansi {
-            // The standard 16×16 arrangement fits the picker and matches hit-testing.
-            for idx in 0..256 {
-                let col_x = (idx % 16) as u16;
-                let row_y = (idx / 16) as u16;
+            let indices = ordered_ansi_indices();
+            for row in 0..10 {
+                for col in 0..12 {
+                    let upper_idx = indices[(row * 2 * 12 + col) as usize];
+                    let lower_idx = indices[((row * 2 + 1) * 12 + col) as usize];
+                    let (upper_r, upper_g, upper_b) = self.state.rgb_from_idx(upper_idx);
+                    let (lower_r, lower_g, lower_b) = self.state.rgb_from_idx(lower_idx);
+                    let upper = Color::Rgb(upper_r, upper_g, upper_b);
+                    let lower = Color::Rgb(lower_r, lower_g, lower_b);
+                    let x = main_rect.x + col * 2;
+                    let y = main_rect.y + row;
 
-                let (r, g, b) = self.state.rgb_from_idx(idx);
-                let fg = Color::Rgb(r, g, b);
-                let x = main_rect.x + (col_x * 2);
-                let y = main_rect.y + row_y;
-
-                // Draw base blocks
-                buf.get_mut(x, y).set_char('█').set_fg(fg);
-                buf.get_mut(x + 1, y).set_char('█').set_fg(fg);
-
-                // Selection logic
-                if idx == self.state.grid_idx {
-                    let contrast = if (r as u32 + g as u32 + b as u32) > 380 {
-                        Color::Black
-                    } else {
-                        Color::White
-                    };
-                    buf.get_mut(x, y).set_char('X').set_fg(contrast).set_bg(fg);
+                    buf.get_mut(x, y).set_char('▀').set_fg(upper).set_bg(lower);
                     buf.get_mut(x + 1, y)
-                        .set_char('X')
-                        .set_fg(contrast)
-                        .set_bg(fg);
+                        .set_char('▀')
+                        .set_fg(upper)
+                        .set_bg(lower);
+
+                    if upper_idx == self.state.grid_idx {
+                        buf.get_mut(x, y)
+                            .set_char('▛')
+                            .set_fg(Color::White)
+                            .set_bg(upper);
+                    }
+                    if lower_idx == self.state.grid_idx {
+                        buf.get_mut(x + 1, y)
+                            .set_char('▙')
+                            .set_fg(lower)
+                            .set_bg(Color::White);
+                    }
                 }
             }
         } else {
@@ -660,6 +691,14 @@ mod tests {
     }
 
     #[test]
+    fn ansi_palette_keeps_the_grouped_hue_order_in_a_compact_grid() {
+        let indices = ordered_ansi_indices();
+        assert_eq!(indices.len(), 240);
+        assert_eq!(&indices[..6], &[16, 22, 28, 34, 40, 46]);
+        assert_eq!(main_area_dimensions(PaletteMode::Ansi), (24, 10));
+    }
+
+    #[test]
     fn left_click_preserves_the_selected_channel_and_middle_click_selects_fg() {
         let area = Rect::new(0, 0, 39, 20);
         let mut state = ColorPickerState::new(PaletteMode::Irc, true);
@@ -676,12 +715,13 @@ mod tests {
     #[test]
     fn keyboard_palette_navigation_clamps_at_the_edges() {
         let mut state = ColorPickerState::new(PaletteMode::Ansi, true);
-        state.set_grid_idx(0);
+        let indices = ordered_ansi_indices();
+        state.set_grid_idx(indices[0]);
         state.move_selection(-1, -1);
-        assert_eq!(state.grid_idx, 0);
+        assert_eq!(state.grid_idx, indices[0]);
 
-        state.set_grid_idx(255);
+        state.set_grid_idx(*indices.last().unwrap());
         state.move_selection(1, 1);
-        assert_eq!(state.grid_idx, 255);
+        assert_eq!(state.grid_idx, *indices.last().unwrap());
     }
 }

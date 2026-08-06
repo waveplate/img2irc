@@ -5489,165 +5489,11 @@ pub fn render_blocks_smooth(
 
     let scales = vec![(1.0, 1.0)];
 
-    if args.gpu && !cfg!(feature = "gpu") {
-        log::warn!("--gpu requested, but this binary was built without the `gpu` feature; using CPU renderer");
-    }
-    let use_gpu = cfg!(feature = "gpu") && args.gpu;
-    log::debug!("args.gpu = {}, use_gpu = {}", args.gpu, use_gpu);
-    // Parallel Processing
-    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = if use_gpu {
-        #[cfg(feature = "gpu")]
-        {
-            let gpu_res = crate::gpu::render_blocks_gpu(
-                image,
-                glyphs,
-                render.clone(),
-                args.grayscale_tolerance,
-                bp as u32,
-                grid_h * grid_w,
-            );
-            let mut results = Vec::with_capacity(grid_h);
-            let mut r_idx = 0;
-            for _y in 0..grid_h {
-                let mut row_data = Vec::with_capacity(grid_w);
-                let mut row_state = Vec::with_capacity(grid_w);
-                for _x in 0..grid_w {
-                    let res = &gpu_res[r_idx];
-                    r_idx += 1;
-
-                    let (final_fg, final_bg, fg_obj, bg_obj, alt_fg_obj, alt_bg_obj) =
-                        if render == Render::Ansi24 {
-                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
-                            (
-                                final_fg,
-                                final_bg,
-                                Some(Colour::RGB(final_fg)),
-                                Some(Colour::RGB(final_bg)),
-                                None,
-                                None,
-                            )
-                        } else if render == Render::Irc {
-                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
-
-                            let col_hi = make_rgb_u32(&final_fg);
-                            let col_lo = make_rgb_u32(&final_bg);
-                            let hi_idx = nearest_strict_partitioned_hex_colour(
-                                col_hi,
-                                &IRC99,
-                                args.grayscale_tolerance,
-                            );
-                            let lo_idx = nearest_strict_partitioned_hex_colour(
-                                col_lo,
-                                &IRC99,
-                                args.grayscale_tolerance,
-                            );
-
-                            let hi_rgb = unpack_rgb(IRC99[hi_idx as usize]);
-                            let lo_rgb = unpack_rgb(IRC99[lo_idx as usize]);
-
-                            (
-                                hi_rgb,
-                                lo_rgb,
-                                Some(Colour::Index(hi_idx)),
-                                Some(Colour::Index(lo_idx)),
-                                None,
-                                None,
-                            )
-                        } else if render == Render::Ansi {
-                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
-
-                            let col_hi = make_rgb_u32(&final_fg);
-                            let col_lo = make_rgb_u32(&final_bg);
-                            let hi_idx = nearest_strict_partitioned_hex_colour(
-                                col_hi,
-                                &ANSI256,
-                                args.grayscale_tolerance,
-                            );
-                            let lo_idx = nearest_strict_partitioned_hex_colour(
-                                col_lo,
-                                &ANSI256,
-                                args.grayscale_tolerance,
-                            );
-
-                            let hi_rgb = unpack_rgb(ANSI256[hi_idx as usize]);
-                            let lo_rgb = unpack_rgb(ANSI256[lo_idx as usize]);
-
-                            (
-                                hi_rgb,
-                                lo_rgb,
-                                Some(Colour::Index(hi_idx)),
-                                Some(Colour::Index(lo_idx)),
-                                None,
-                                None,
-                            )
-                        } else {
-                            let final_fg = [res.fg_r as u8, res.fg_g as u8, res.fg_b as u8];
-                            let final_bg = [res.bg_r as u8, res.bg_g as u8, res.bg_b as u8];
-
-                            let col_hi = make_rgb_u32(&final_fg);
-                            let col_lo = make_rgb_u32(&final_bg);
-
-                            let hi_ansi = nearest_strict_partitioned_hex_colour(
-                                col_hi,
-                                &ANSI256,
-                                args.grayscale_tolerance,
-                            );
-                            let lo_ansi = nearest_strict_partitioned_hex_colour(
-                                col_lo,
-                                &ANSI256,
-                                args.grayscale_tolerance,
-                            );
-
-                            let hi_irc = nearest_strict_partitioned_hex_colour(
-                                col_hi,
-                                &IRC99,
-                                args.grayscale_tolerance,
-                            );
-                            let lo_irc = nearest_strict_partitioned_hex_colour(
-                                col_lo,
-                                &IRC99,
-                                args.grayscale_tolerance,
-                            );
-
-                            let hi_rgb = unpack_rgb(ANSI256[hi_ansi as usize]);
-                            let lo_rgb = unpack_rgb(ANSI256[lo_ansi as usize]);
-
-                            (
-                                hi_rgb,
-                                lo_rgb,
-                                Some(Colour::Index(hi_ansi)),
-                                Some(Colour::Index(lo_ansi)),
-                                Some(Colour::Index(hi_irc)),
-                                Some(Colour::Index(lo_irc)),
-                            )
-                        };
-
-                    row_data.push(BlockData {
-                        fg: final_fg,
-                        bg: final_bg,
-                        fg_col: fg_obj,
-                        bg_col: bg_obj,
-                        alt_fg_col: alt_fg_obj,
-                        alt_bg_col: alt_bg_obj,
-                    });
-                    row_state.push((res.best_glyph as usize, res.best_inv != 0));
-                }
-                results.push((row_data, row_state));
-            }
-            results
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            unreachable!("use_gpu is false when the `gpu` feature is disabled");
-        }
-    } else {
-        image
-            .block
-            .par_iter()
-            .map(|block_row| {
+    // Parallel CPU rendering
+    let rows_results: Vec<(Vec<BlockData>, Vec<(usize, bool)>)> = image
+        .block
+        .par_iter()
+        .map(|block_row| {
                 if let Some(flag) = &abort_flag {
                     if flag.load(std::sync::atomic::Ordering::Relaxed) {
                         return (Vec::new(), Vec::new());
@@ -6046,9 +5892,8 @@ pub fn render_blocks_smooth(
                     row_state.push((best_glyph_idx, best_inv));
                 }
                 (row_data, row_state)
-            })
-            .collect()
-    };
+        })
+        .collect();
 
     let mut grid_data = Vec::with_capacity(grid_h * grid_w);
     let mut grid_state = Vec::with_capacity(grid_h * grid_w);

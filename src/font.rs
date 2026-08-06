@@ -432,13 +432,13 @@ fn remove_block_path(root: &mut toml::map::Map<String, Value>, path: &str) -> bo
 pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join("blocks.toml");
+        let path = Path::new(&config_dir).join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
     }
     if toml_path.is_none() {
-        let path = PathBuf::from("blocks.toml");
+        let path = PathBuf::from("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -446,7 +446,7 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
     if toml_path.is_none() {
         let config_home = env::var("XDG_CONFIG_HOME")
             .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
-        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        let path = Path::new(&config_home).join("img2irc").join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -456,15 +456,15 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
             let path = Path::new(&home)
                 .join(".config")
                 .join("img2irc")
-                .join("blocks.toml");
+                .join("glyphs.toml");
             if path.exists() {
                 toml_path = Some(path);
             }
         }
     }
 
-    let toml_path = toml_path.expect("Failed to find blocks.toml for adding range");
-    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let toml_path = toml_path.expect("Failed to find glyphs.toml for adding range");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read glyphs.toml");
     let mut raw_config: toml::map::Map<String, Value> =
         toml::from_str(&toml_str).expect("Invalid TOML");
 
@@ -513,19 +513,19 @@ pub fn add_range_to_blocks_config(name: &str, start: u32, end: u32) {
         })
         .to_string();
 
-    fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+    fs::write(toml_path, new_toml).expect("Failed to write glyphs.toml");
 }
 
 pub fn remove_range_from_blocks_config(name: &str) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join("blocks.toml");
+        let path = Path::new(&config_dir).join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
     }
     if toml_path.is_none() {
-        let path = PathBuf::from("blocks.toml");
+        let path = PathBuf::from("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -533,7 +533,7 @@ pub fn remove_range_from_blocks_config(name: &str) {
     if toml_path.is_none() {
         let config_home = env::var("XDG_CONFIG_HOME")
             .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
-        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        let path = Path::new(&config_home).join("img2irc").join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -543,15 +543,15 @@ pub fn remove_range_from_blocks_config(name: &str) {
             let path = Path::new(&home)
                 .join(".config")
                 .join("img2irc")
-                .join("blocks.toml");
+                .join("glyphs.toml");
             if path.exists() {
                 toml_path = Some(path);
             }
         }
     }
 
-    let toml_path = toml_path.expect("Failed to find blocks.toml for removing range");
-    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let toml_path = toml_path.expect("Failed to find glyphs.toml for removing range");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read glyphs.toml");
     let mut raw_config: toml::map::Map<String, Value> =
         toml::from_str(&toml_str).expect("Invalid TOML");
 
@@ -571,20 +571,20 @@ pub fn remove_range_from_blocks_config(name: &str) {
             })
             .to_string();
 
-        fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+        fs::write(toml_path, new_toml).expect("Failed to write glyphs.toml");
     }
 }
 
 pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join("blocks.toml");
+        let path = Path::new(&config_dir).join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
     }
     if toml_path.is_none() {
-        let path = PathBuf::from("blocks.toml");
+        let path = PathBuf::from("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -592,7 +592,7 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     if toml_path.is_none() {
         let config_home = env::var("XDG_CONFIG_HOME")
             .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
-        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        let path = Path::new(&config_home).join("img2irc").join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -602,15 +602,15 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
             let path = Path::new(&home)
                 .join(".config")
                 .join("img2irc")
-                .join("blocks.toml");
+                .join("glyphs.toml");
             if path.exists() {
                 toml_path = Some(path);
             }
         }
     }
 
-    let toml_path = toml_path.expect("Failed to find blocks.toml for saving");
-    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read blocks.toml");
+    let toml_path = toml_path.expect("Failed to find glyphs.toml for saving");
+    let toml_str = fs::read_to_string(&toml_path).expect("Failed to read glyphs.toml");
     let mut raw_config: toml::map::Map<String, Value> =
         toml::from_str(&toml_str).expect("Invalid TOML");
 
@@ -649,19 +649,19 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
         })
         .to_string();
 
-    fs::write(toml_path, new_toml).expect("Failed to write blocks.toml");
+    fs::write(toml_path, new_toml).expect("Failed to write glyphs.toml");
 }
 
 fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join("blocks.toml");
+        let path = Path::new(&config_dir).join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
     }
     if toml_path.is_none() {
-        let path = PathBuf::from("blocks.toml");
+        let path = PathBuf::from("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -669,7 +669,7 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
     if toml_path.is_none() {
         let config_home = env::var("XDG_CONFIG_HOME")
             .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
-        let path = Path::new(&config_home).join("img2irc").join("blocks.toml");
+        let path = Path::new(&config_home).join("img2irc").join("glyphs.toml");
         if path.exists() {
             toml_path = Some(path);
         }
@@ -679,7 +679,7 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
             let path = Path::new(&home)
                 .join(".config")
                 .join("img2irc")
-                .join("blocks.toml");
+                .join("glyphs.toml");
             if path.exists() {
                 toml_path = Some(path);
             }
@@ -687,7 +687,7 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
     }
 
     let toml_str = if let Some(path) = toml_path {
-        fs::read_to_string(path).expect("Failed to read blocks.toml")
+        fs::read_to_string(path).expect("Failed to read glyphs.toml")
     } else {
         let default_toml = r#"[default]
 include = [
@@ -759,13 +759,13 @@ glyphs = [32]
         // Attempt to save default toml
         let mut save_path = None;
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
-            save_path = Some(Path::new(&config_home).join("img2irc").join("blocks.toml"));
+            save_path = Some(Path::new(&config_home).join("img2irc").join("glyphs.toml"));
         } else if let Ok(home) = env::var("HOME") {
             save_path = Some(
                 Path::new(&home)
                     .join(".config")
                     .join("img2irc")
-                    .join("blocks.toml"),
+                    .join("glyphs.toml"),
             );
         }
 
@@ -775,10 +775,10 @@ glyphs = [32]
             }
             if fs::write(&p, default_toml).is_err() {
                 // If config home fails, try current dir
-                fs::write("blocks.toml", default_toml).ok();
+                fs::write("glyphs.toml", default_toml).ok();
             }
         } else {
-            fs::write("blocks.toml", default_toml).ok();
+            fs::write("glyphs.toml", default_toml).ok();
         }
 
         default_toml.to_string()
@@ -1708,7 +1708,7 @@ pub fn glyph_store(
                 }
             }
         } else {
-            log::info!("Warning: Block '{}' not defined in blocks.toml", block_name);
+            log::info!("Warning: Block '{}' not defined in glyphs.toml", block_name);
         }
     }
 
@@ -1764,22 +1764,7 @@ pub fn glyph_store(
     }
 }
 
-pub fn list_ranges() -> String {
-    let (groups, _) = load_blocks_config();
-    let mut sorted_groups: Vec<_> = groups.iter().collect();
-    sorted_groups.sort_by_key(|(k, _)| *k);
-
-    let mut out = String::new();
-    out.push_str(&format!("{:<30} | {}\n", "Block Name", "Count"));
-    out.push_str(&format!("{:-<30}-+-{:-<5}\n", "", ""));
-
-    for (name, codes) in sorted_groups {
-        out.push_str(&format!("{:<30} | {}\n", name, codes.len()));
-    }
-    out
-}
-
-pub fn print_ranges() -> String {
+pub fn print_glyph_chars() -> String {
     let (groups, _) = load_blocks_config();
     let mut sorted_groups: Vec<_> = groups.iter().collect();
     sorted_groups.sort_by_key(|(k, _)| *k);
@@ -1806,18 +1791,7 @@ pub fn print_ranges() -> String {
     out
 }
 
-pub fn print_blocks_config() -> String {
-    let (groups, _) = load_blocks_config();
-    let mut sorted_groups: Vec<_> = groups.iter().collect();
-    sorted_groups.sort_by_key(|(k, _)| *k);
-    let mut out = String::new();
-    for (name, codes) in sorted_groups {
-        out.push_str(&format!("{}: {} glyphs\n", name, codes.len()));
-    }
-    out
-}
-
-pub fn print_block_bitmaps(store: &GlyphStore) -> String {
+pub fn print_glyph_bitmaps(store: &GlyphStore) -> String {
     let glyph_map: HashMap<char, (&GlyphBitmap, &String)> =
         store.glyphs.iter().map(|(c, b, f)| (*c, (b, f))).collect();
     let mut sorted_groups: Vec<_> = store.groups.keys().collect();
