@@ -12,8 +12,9 @@
 [general]
 order = [
     "mode",
-    "graphics-preview",
     "width",
+    "font-size",
+    "graphics-preview",
     "ocr",
     "ocr-figlet",
     "ocr-figlet-min-height",
@@ -23,13 +24,11 @@ order = [
     "ocr-max-side",
     "ocr-max-height",
     "ocr-threads",
-    "show-discontinuities",
-    "discontinuity-threshold",
-    "score-fix",
-    "score-fix-candidates",
-    "score-fix-orderings",
-    "score-fix-geometry",
-    "score-fix-overlap",
+    "smooth",
+    "smooth-candidates",
+    "smooth-orders",
+    "smooth-shapes",
+    "smooth-neighbors",
     "advanced",
     "contour-bending-weight",
     "contour-endpoint-weight",
@@ -38,7 +37,6 @@ order = [
     "contour-fidelity-weight",
     "contour-boundary-weight",
     "contour-peak-weight",
-    "font-size",
     "font",
     "sampling-filter",
     "grayscale-tolerance",
@@ -46,7 +44,10 @@ order = [
     "encoding",
     "auto-optimize",
 ]
-hidden = []
+hidden = [
+    "show-discontinuities",
+    "discontinuity-threshold",
+]
 
 [pipeline]
 order = [

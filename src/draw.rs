@@ -3678,12 +3678,12 @@ fn apply_score_fix_band_commit(
         cache
             .global_output_length
             .checked_add(candidate.global_boundary_delta as usize)
-            .expect("score-fix global boundary length overflowed")
+            .expect("smoothing global boundary length overflowed")
     } else {
         cache
             .global_output_length
             .checked_sub((-candidate.global_boundary_delta) as usize)
-            .expect("score-fix global boundary length became negative")
+            .expect("smoothing global boundary length became negative")
     };
     for idx in affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h) {
         cache.output_patch_lengths[idx] = None;
@@ -4804,7 +4804,7 @@ fn run_score_fix_prefix_search(
         crate::contour_score::score_rgb_against_prepared_with_weights(
             global_reference
                 .as_ref()
-                .expect("general score-fix reference should be prepared"),
+                .expect("general smoothing reference should be prepared"),
             &global_output_preview,
             crate::contour_score::PREVIEW_CELL_WIDTH,
             contour_weights,
@@ -4998,7 +4998,7 @@ fn run_score_fix_prefix_search(
                 let local_preview_width = output_patch.width;
                 let prepared_reference = cached_references[curr_idx]
                     .as_ref()
-                    .expect("score-fix reference should be cached");
+                    .expect("smoothing reference should be cached");
                 if contour_weights.fidelity > 0.0 {
                     let baseline_preview = output_preview.clone();
                     let (current_score_details, prepared_output) =
@@ -5177,7 +5177,7 @@ fn run_score_fix_prefix_search(
                         score_local_normalized_preview_output(
                             cached_references[idx]
                                 .as_ref()
-                                .expect("score-fix reference should be cached"),
+                                .expect("smoothing reference should be cached"),
                             &global_output_preview,
                             idx,
                             grid_w,
@@ -5187,7 +5187,7 @@ fn run_score_fix_prefix_search(
                     });
                 }
                 before_sum +=
-                    cached_cell_scores[idx].expect("score-fix cell score should be cached");
+                    cached_cell_scores[idx].expect("smoothing cell score should be cached");
             }
             let mut band_patch_lengths = [0usize; 9];
             let mut new_scores = [0.0f64; 9];
@@ -5237,7 +5237,7 @@ fn run_score_fix_prefix_search(
                     new_scores[slot] = score_local_normalized_preview_output(
                         cached_references[idx]
                             .as_ref()
-                            .expect("score-fix reference should be cached"),
+                            .expect("smoothing reference should be cached"),
                         &global_output_preview,
                         idx,
                         grid_w,
@@ -5358,7 +5358,7 @@ fn run_score_fix_prefix_search(
             crate::contour_score::score_rgb_against_prepared_with_weights(
                 global_reference
                     .as_ref()
-                    .expect("general score-fix reference should be prepared"),
+                    .expect("general smoothing reference should be prepared"),
                 &global_output_preview,
                 crate::contour_score::PREVIEW_CELL_WIDTH,
                 contour_weights,
@@ -5945,7 +5945,7 @@ pub fn render_blocks_smooth(
         Some(all_cell_discontinuity_scores(
             rendered_raster
                 .as_ref()
-                .expect("rendered raster should exist when score-fix is enabled"),
+                .expect("rendered raster should exist when smoothing is enabled"),
             grid_w,
             grid_h,
             gw,
@@ -6053,7 +6053,7 @@ pub fn render_blocks_smooth(
     if args.score_fix {
         let raster = rendered_raster
             .as_mut()
-            .expect("rendered raster should exist when score-fix is enabled");
+            .expect("rendered raster should exist when smoothing is enabled");
         let started = std::time::Instant::now();
         let target_scores = score_fix_initial_disc_scores
             .take()
@@ -6111,7 +6111,7 @@ pub fn render_blocks_smooth(
         raster.copy_from_slice(&best_raster);
         grid_state.copy_from_slice(&best_state);
         log::info!(
-            "score-fix ordering search [{}] selected {}; selected {} cells, tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} overlap regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
+            "smoothing order search [{}] selected {}; selected {} cells, tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} neighbor regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
             order_scores,
             selected_ordering.name(),
             stats.target_count,
@@ -6138,7 +6138,7 @@ pub fn render_blocks_smooth(
     if args.score_fix && args.score_fix_geometry_first {
         let raster = rendered_raster
             .as_mut()
-            .expect("rendered raster should exist when score-fix is enabled");
+            .expect("rendered raster should exist when smoothing is enabled");
         let started = std::time::Instant::now();
         let target_scores = all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh);
         let stats = match run_geometry_score_fix(
@@ -6160,7 +6160,7 @@ pub fn render_blocks_smooth(
             Err(()) => return "Cancelled".into(),
         };
         log::info!(
-            "score-fix geometry refinement selected {} cells, used {} distinct states across source-ranked top-N candidate lists ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
+            "smoothing shape refinement selected {} cells, used {} distinct states across source-ranked top-N candidate lists ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
             stats.target_count,
             stats.distinct_states,
             stats.candidate_evaluations,
@@ -6177,7 +6177,7 @@ pub fn render_blocks_smooth(
     if false && args.score_fix {
         let raster = rendered_raster
             .as_mut()
-            .expect("rendered raster should exist when score-fix is enabled");
+            .expect("rendered raster should exist when smoothing is enabled");
         let started = std::time::Instant::now();
         let pre_score_fix_raster = raster.clone();
         let pre_score_fix_grid_state = grid_state.clone();
@@ -6276,7 +6276,7 @@ pub fn render_blocks_smooth(
             }
             let prepared_reference = cached_references[curr_idx]
                 .as_ref()
-                .expect("score-fix reference should be cached");
+                .expect("smoothing reference should be cached");
             let baseline_preview = output_preview.clone();
             let (current_score_details, prepared_output) =
                 crate::contour_score::score_rgb_and_prepare_output_with_weights(
@@ -6422,7 +6422,7 @@ pub fn render_blocks_smooth(
                         let score = score_local_preview_output(
                             cached_references[idx]
                                 .as_ref()
-                                .expect("score-fix reference should be cached"),
+                                .expect("smoothing reference should be cached"),
                             raster,
                             idx,
                             grid_w,
@@ -6434,7 +6434,7 @@ pub fn render_blocks_smooth(
                         cached_cell_scores[idx] = Some(score);
                     }
                     before_sum +=
-                        cached_cell_scores[idx].expect("score-fix cell score should be cached");
+                        cached_cell_scores[idx].expect("smoothing cell score should be cached");
                 }
                 apply_choice_to_raster(
                     raster,
@@ -6451,7 +6451,7 @@ pub fn render_blocks_smooth(
                     new_scores.push(score_local_preview_output(
                         cached_references[idx]
                             .as_ref()
-                            .expect("score-fix reference should be cached"),
+                            .expect("smoothing reference should be cached"),
                         raster,
                         idx,
                         grid_w,
@@ -6502,7 +6502,7 @@ pub fn render_blocks_smooth(
             after_global = before_global;
         }
         log::info!(
-            "score-fix selected {} cells at threshold {:.1}; mode={}; tried {} unique candidates (skipped {} duplicate rasters), kept {} regional improvements, rejected {} neighborhood regressions: local -{:.6}, global {:.6} -> {:.6}, full rollback={} in {:?}",
+            "smoothing selected {} cells at threshold {:.1}; mode={}; tried {} unique candidates (skipped {} duplicate rasters), kept {} regional improvements, rejected {} neighbor regressions: local -{:.6}, global {:.6} -> {:.6}, full rollback={} in {:?}",
             target_count,
             threshold,
             if args.score_fix_neighborhood_guard { "overlap-guard" } else { "center-3x3" },

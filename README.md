@@ -152,6 +152,11 @@ effect.
 | --ocr-figlet-min-height                | minimum output-row height before FIGlet may be used            | 2             |
 | --ocr-figlet-min-height-ratio          | minimum height relative to the median OCR line; `0` disables   | 1.25          |
 | --ocr-figlet-fonts                     | allowed OCR FIGlet fonts as `LINES=FONT1,FONT2`; repeat by height | built-in lists |
+| --smooth                               | smooth rough transitions between neighboring glyphs            | false         |
+| --smooth-candidates                    | number of source-matching glyph choices to try                   | 12            |
+| --smooth-orders                        | number of cell scan orders to try (1–5)                          | 1             |
+| --smooth-shapes                        | further refine shapes with a broader glyph search                | false         |
+| --smooth-neighbors                     | keep changes that also work with neighboring cells               | true          |
 | --print-glyph-chars                    | print configured characters grouped by glyph set               | false         |
 | --print-glyph-bitmaps                  | print enabled glyph bitmaps                                     | false         |
 | --scale                                | scaling factors (x:y, e.g., "2:2")                            | none          |

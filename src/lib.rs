@@ -201,11 +201,11 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         show_discontinuities: args.show_discontinuities,
         discontinuity_threshold: args.discontinuity_threshold,
-        score_fix: args.score_fix,
-        score_fix_candidates: args.score_fix_candidates,
-        score_fix_orderings: args.score_fix_orderings,
-        score_fix_geometry_first: args.score_fix_geometry_first,
-        score_fix_neighborhood_guard: args.score_fix_neighborhood_guard,
+        score_fix: args.smooth,
+        score_fix_candidates: args.smooth_candidates,
+        score_fix_orderings: args.smooth_orders,
+        score_fix_geometry_first: args.smooth_shapes,
+        score_fix_neighborhood_guard: args.smooth_neighbors,
         contour_bending_weight: args.contour_bending_weight,
         contour_endpoint_weight: args.contour_endpoint_weight,
         contour_junction_weight: args.contour_junction_weight,
@@ -584,6 +584,27 @@ mod tests {
         ] {
             assert!(crate::args::Args::try_parse_from(["img2irc", obsolete]).is_err());
         }
+    }
+
+    #[test]
+    fn cli_uses_short_smoothing_option_names() {
+        let args = crate::args::Args::parse_from([
+            "img2irc",
+            "--smooth",
+            "--smooth-candidates",
+            "24",
+            "--smooth-orders",
+            "3",
+            "--smooth-shapes",
+            "--smooth-neighbors",
+            "false",
+        ]);
+
+        assert!(args.smooth);
+        assert_eq!(args.smooth_candidates, 24);
+        assert_eq!(args.smooth_orders, 3);
+        assert!(args.smooth_shapes);
+        assert!(!args.smooth_neighbors);
     }
 
     #[tokio::test]

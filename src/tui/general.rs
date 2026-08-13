@@ -120,12 +120,19 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             continue;
         }
 
-        let ctrl_area = Rect::new(inner.x, y, inner.width, 1);
+        let conditional_depth = ctrl.id.conditional_depth();
+        let indent = conditional_depth.saturating_mul(2).min(inner.width);
+        let ctrl_area = Rect::new(
+            inner.x.saturating_add(indent),
+            y,
+            inner.width.saturating_sub(indent),
+            1,
+        );
         let selected = v_idx == selected_ctrl;
-        let control_bg = if ctrl.id.is_conditional_child() {
-            CONDITIONAL_BG
-        } else {
-            SURFACE
+        let control_bg = match conditional_depth {
+            0 => SURFACE,
+            1 => CONDITIONAL_BG,
+            _ => NESTED_CONDITIONAL_BG,
         };
         let group_area = Rect::new(
             inner.x,

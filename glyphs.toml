@@ -1,3 +1,9 @@
+["Yijing Hexagram Symbols"]
+ranges = [[
+    0x4DC0,
+    0x4DFF,
+]]
+
 [all]
 include = [
     "ascii.space",

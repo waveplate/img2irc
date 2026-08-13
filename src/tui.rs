@@ -58,7 +58,8 @@ use tokio::sync::{mpsc, watch};
 // ── Theme ────────────────────────────────────────────────────────────────────
 const BG: Color = Color::Rgb(22, 22, 30);
 const SURFACE: Color = Color::Rgb(30, 30, 42);
-const CONDITIONAL_BG: Color = Color::Rgb(27, 31, 49);
+const CONDITIONAL_BG: Color = Color::Rgb(42, 47, 72);
+const NESTED_CONDITIONAL_BG: Color = Color::Rgb(49, 43, 76);
 const BORDER: Color = Color::Rgb(60, 60, 80);
 const TEXT: Color = Color::Rgb(200, 200, 220);
 const TEXT_DIM: Color = Color::Rgb(110, 110, 140);
@@ -202,11 +203,11 @@ impl ControlId {
             ControlId::OcrThreads => "ocr-threads",
             ControlId::HighlightDisc => "show-discontinuities",
             ControlId::DiscThreshold => "discontinuity-threshold",
-            ControlId::ScoreFix => "score-fix",
-            ControlId::ScoreFixCandidates => "score-fix-candidates",
-            ControlId::ScoreFixOrderings => "score-fix-orderings",
-            ControlId::ScoreFixGeometryFirst => "score-fix-geometry",
-            ControlId::ScoreFixNeighborhoodGuard => "score-fix-overlap",
+            ControlId::ScoreFix => "smooth",
+            ControlId::ScoreFixCandidates => "smooth-candidates",
+            ControlId::ScoreFixOrderings => "smooth-orders",
+            ControlId::ScoreFixGeometryFirst => "smooth-shapes",
+            ControlId::ScoreFixNeighborhoodGuard => "smooth-neighbors",
             ControlId::ContourBendingWeight => "contour-bending-weight",
             ControlId::ContourEndpointWeight => "contour-endpoint-weight",
             ControlId::ContourJunctionWeight => "contour-junction-weight",
@@ -314,8 +315,14 @@ impl ControlId {
         ) || self.requires_advanced()
     }
 
-    fn is_conditional_child(self) -> bool {
-        self.requires_ocr() || self.requires_score_fix()
+    fn conditional_depth(self) -> u16 {
+        if self.requires_figlet() || self.requires_advanced() {
+            2
+        } else if self.requires_ocr() || self.requires_score_fix() {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -355,11 +362,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::GraphicsPreview,
-        label: "Kitty/Sixel Preview",
-        kind: ControlKind::Toggle { default: false },
-    },
-    ControlDef {
         id: ControlId::Width,
         label: "Width",
         kind: ControlKind::Slider {
@@ -367,6 +369,20 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 300,
             default: 80,
         },
+    },
+    ControlDef {
+        id: ControlId::FontSize,
+        label: "Font Size",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 10240,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::GraphicsPreview,
+        label: "Kitty/Sixel Preview",
+        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::Ocr,
@@ -456,12 +472,12 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::ScoreFix,
-        label: "Score Fix",
+        label: "Smoothing",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::ScoreFixCandidates,
-        label: "Score Fix N",
+        label: "Candidates",
         kind: ControlKind::Slider {
             min: 1,
             max: 256,
@@ -470,7 +486,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::ScoreFixOrderings,
-        label: "SF Orders",
+        label: "Scan Patterns",
         kind: ControlKind::Slider {
             min: 1,
             max: 5,
@@ -479,12 +495,12 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::ScoreFixGeometryFirst,
-        label: "SF Geometry",
+        label: "Refine Shapes",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::ScoreFixNeighborhoodGuard,
-        label: "SF Overlap",
+        label: "Protect Neighbors",
         kind: ControlKind::Toggle { default: true },
     },
     ControlDef {
@@ -609,15 +625,6 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     //         default: 0,
     //     },
     // },
-    ControlDef {
-        id: ControlId::FontSize,
-        label: "Font Size",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 10240,
-            default: 0,
-        },
-    },
     ControlDef {
         id: ControlId::Font,
         label: "Font",
@@ -1094,7 +1101,15 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
 ];
 
 fn normalized_layout_id(id: &str) -> String {
-    id.trim().to_ascii_lowercase().replace('_', "-")
+    let normalized = id.trim().to_ascii_lowercase().replace('_', "-");
+    match normalized.as_str() {
+        "score-fix" => "smooth".to_string(),
+        "score-fix-candidates" => "smooth-candidates".to_string(),
+        "score-fix-orderings" => "smooth-orders".to_string(),
+        "score-fix-geometry" => "smooth-shapes".to_string(),
+        "score-fix-overlap" => "smooth-neighbors".to_string(),
+        _ => normalized,
+    }
 }
 
 fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDef> {
@@ -1152,6 +1167,9 @@ fn visible_general_controls(
 ) -> Vec<ControlDef> {
     controls
         .iter()
+        .filter(|control| {
+            !matches!(control.id, ControlId::HighlightDisc | ControlId::DiscThreshold)
+        })
         .filter(|control| ocr_enabled || !control.id.requires_ocr())
         .filter(|control| figlet_enabled || !control.id.requires_figlet())
         .filter(|control| score_fix_enabled || !control.id.requires_score_fix())
@@ -1320,6 +1338,42 @@ mod ui_layout_tests {
         assert!(disabled.iter().any(|control| control.id == ControlId::ScoreFix));
         assert!(!disabled.iter().any(|control| control.id.requires_score_fix()));
         assert!(enabled.iter().any(|control| control.id.requires_score_fix()));
+    }
+
+    #[test]
+    fn general_starts_with_mode_width_and_font_size() {
+        let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+        let leading_ids = controls
+            .iter()
+            .take(3)
+            .map(|control| control.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            leading_ids,
+            [ControlId::RenderMode, ControlId::Width, ControlId::FontSize]
+        );
+    }
+
+    #[test]
+    fn discontinuity_debug_controls_are_not_visible() {
+        let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+        let visible = visible_general_controls(&controls, true, true, true, true);
+
+        assert!(!visible.iter().any(|control| matches!(
+            control.id,
+            ControlId::HighlightDisc | ControlId::DiscThreshold
+        )));
+    }
+
+    #[test]
+    fn conditional_controls_have_nested_hierarchy_depths() {
+        assert_eq!(ControlId::OcrFiglet.conditional_depth(), 1);
+        assert_eq!(ControlId::OcrFigletMinHeight.conditional_depth(), 2);
+        assert_eq!(ControlId::ScoreFixCandidates.conditional_depth(), 1);
+        assert_eq!(ControlId::ContourBendingWeight.conditional_depth(), 2);
+        assert_ne!(SURFACE, CONDITIONAL_BG);
+        assert_ne!(CONDITIONAL_BG, NESTED_CONDITIONAL_BG);
     }
 
     #[test]

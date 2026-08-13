@@ -718,33 +718,43 @@ pub struct Args {
     )]
     pub discontinuity_threshold: f32,
 
-    /// improve highlighted discontinuity cells using the preview contour score
-    #[arg(long = "score-fix", default_value_t = false)]
-    pub score_fix: bool,
+    /// smooth rough glyph transitions using the preview contour score
+    #[arg(long = "smooth", alias = "score-fix", default_value_t = false)]
+    pub smooth: bool,
 
-    /// number of source-matching glyph states tried by score-fix
-    #[arg(long = "score-fix-candidates", default_value = "12")]
-    pub score_fix_candidates: u32,
-
-    /// number of independent cell-ordering strategies tried by score-fix
+    /// number of source-matching glyph states tried during smoothing
     #[arg(
-        long = "score-fix-orderings",
+        long = "smooth-candidates",
+        alias = "score-fix-candidates",
+        default_value = "12"
+    )]
+    pub smooth_candidates: u32,
+
+    /// number of independent cell scan orders tried during smoothing
+    #[arg(
+        long = "smooth-orders",
+        alias = "score-fix-orderings",
         default_value = "1",
         value_parser = clap::value_parser!(u32).range(1..=5)
     )]
-    pub score_fix_orderings: u32,
+    pub smooth_orders: u32,
 
-    /// refine score-fix with exhaustive glyph search and median-flow boundary regularity
-    #[arg(long = "score-fix-geometry-first", default_value_t = false)]
-    pub score_fix_geometry_first: bool,
-
-    /// validate a score-fix change against every overlapping 3x3 neighborhood
+    /// further refine shapes with a broader glyph search
     #[arg(
-        long = "score-fix-neighborhood-guard",
+        long = "smooth-shapes",
+        alias = "score-fix-geometry-first",
+        default_value_t = false
+    )]
+    pub smooth_shapes: bool,
+
+    /// keep a smoothing change only when it also works with neighboring cells
+    #[arg(
+        long = "smooth-neighbors",
+        alias = "score-fix-neighborhood-guard",
         default_value = "true",
         action = clap::ArgAction::Set
     )]
-    pub score_fix_neighborhood_guard: bool,
+    pub smooth_neighbors: bool,
 
     #[arg(long = "contour-bending-weight", default_value = "10.0")]
     pub contour_bending_weight: f32,
