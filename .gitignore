@@ -2,6 +2,11 @@
 Cargo.lock
 img2irc.log
 /inputs
+/web/pkg
+/web/assets/fonts
+/dist
+/.img2irc-web.*
+/deploy.sh
 *.jpg
 *.png
 *.txt

@@ -241,6 +241,10 @@ async fn main() {
                 None,
             );
 
+            if args.profile {
+                eprintln!("img2irc profile: {}", result.profile.summary());
+            }
+
             img2irc_rs::write_encoded_output(&result.content, &args.encoding);
             if let Some(path) = &args.save {
                 let metadata = format!("{:?}", args);

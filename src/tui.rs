@@ -284,6 +284,10 @@ impl ControlId {
         )
     }
 
+    fn available_in_build(self) -> bool {
+        cfg!(feature = "ocr") || (self != ControlId::Ocr && !self.requires_ocr())
+    }
+
     fn requires_figlet(self) -> bool {
         matches!(
             self,
@@ -1130,7 +1134,9 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
             .iter()
             .find(|control| control.id.layout_id() == requested)
         {
-            arranged.push(*control);
+            if control.id.available_in_build() {
+                arranged.push(*control);
+            }
         } else {
             log::warn!("Unknown General layout item '{requested}', ignoring it");
         }
@@ -1138,7 +1144,10 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
 
     for control in GENERAL_CONTROLS {
         let id = control.id.layout_id();
-        if !hidden.contains(id) && used.insert(id.to_string()) {
+        if control.id.available_in_build()
+            && !hidden.contains(id)
+            && used.insert(id.to_string())
+        {
             arranged.push(*control);
         }
     }
@@ -1310,6 +1319,14 @@ mod ui_layout_tests {
     #[test]
     fn hides_ocr_children_until_ocr_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+
+        if !cfg!(feature = "ocr") {
+            assert!(!controls.iter().any(|control| {
+                control.id == ControlId::Ocr || control.id.requires_ocr()
+            }));
+            return;
+        }
+
         let disabled = visible_general_controls(&controls, false, true, true, true);
         let enabled = visible_general_controls(&controls, true, true, true, true);
 
@@ -1321,6 +1338,14 @@ mod ui_layout_tests {
     #[test]
     fn hides_figlet_thresholds_until_figlet_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+
+        if !cfg!(feature = "ocr") {
+            assert!(!controls.iter().any(|control| {
+                control.id == ControlId::OcrFiglet || control.id.requires_figlet()
+            }));
+            return;
+        }
+
         let disabled = visible_general_controls(&controls, true, false, true, true);
         let enabled = visible_general_controls(&controls, true, true, true, true);
 
@@ -5702,6 +5727,10 @@ impl From<&RenderArgs> for OcrInferenceKey {
 }
 
 pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
+    if !cfg!(feature = "ocr") && render_args.ocr {
+        return Err("OCR support is not compiled in; rebuild with `--features ocr`".into());
+    }
+
     // Initialize logging to file
     let log_config = simplelog::ConfigBuilder::new()
         .set_time_format_rfc3339()

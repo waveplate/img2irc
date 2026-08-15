@@ -1,3 +1,5 @@
+#[cfg(not(feature = "ocr"))]
+use clap::CommandFactory;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -800,6 +802,10 @@ pub struct Args {
     #[arg(long, default_value_t = false, hide = true)]
     pub score: bool,
 
+    /// print a per-stage render timing profile to stderr
+    #[arg(long, default_value_t = false)]
+    pub profile: bool,
+
     /// save output as PNG (path or directory)
     #[arg(long)]
     pub save: Option<String>,
@@ -810,98 +816,122 @@ pub struct Args {
 
     /// detect readable text with PaddleOCR and overlay it as normal text
     #[arg(long = "ocr", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr: bool,
 
     /// minimum OCR confidence for text overlays
     #[arg(long = "ocr-min-confidence", default_value_t = 0.0)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_min_confidence: f32,
 
     /// minimum printable ASCII ratio for OCR text overlays
     #[arg(long = "ocr-min-ascii-ratio", default_value_t = 0.7)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_min_ascii_ratio: f32,
 
     /// PP-OCRv6 model tier to use
     #[arg(long = "ocr-model-tier", value_enum, default_value_t = OcrModelTier::Tiny)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_model_tier: OcrModelTier,
 
     /// directory for downloaded PP-OCR models
     #[arg(long = "ocr-model-cache")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_model_cache: Option<String>,
 
     /// explicit PP-OCR detection ONNX path
     #[arg(long = "ocr-det-model")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_det_model: Option<String>,
 
     /// explicit PP-OCR text-line orientation classifier ONNX path
     #[arg(long = "ocr-cls-model")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_cls_model: Option<String>,
 
     /// explicit PP-OCR recognition ONNX path
     #[arg(long = "ocr-rec-model")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_rec_model: Option<String>,
 
     /// explicit PP-OCR dictionary path
     #[arg(long = "ocr-dict")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_dict: Option<String>,
 
     /// classify and correct per-line text orientation, matching PaddleOCR use_textline_orientation=True
     #[arg(long = "ocr-textline-orientation", default_value_t = false, action = clap::ArgAction::Set)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_textline_orientation: bool,
 
     /// force all text lines to the majority 0/180-degree orientation
     #[arg(long = "ocr-most-angle", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_most_angle: bool,
 
     /// classify whole-page orientation before OCR
     #[arg(long = "ocr-doc-orientation", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_doc_orientation: bool,
 
     /// explicit PP-OCR document orientation classifier ONNX path
     #[arg(long = "ocr-doc-orientation-model")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_doc_orientation_model: Option<String>,
 
     /// enable document unwarping stage if supported by the OCR backend
     #[arg(long = "ocr-doc-unwarping", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_doc_unwarping: bool,
 
     /// OCR inference worker threads
     #[arg(long = "ocr-threads", default_value_t = 4)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_threads: usize,
 
     /// maximum side length for OCR detection preprocessing
     #[arg(long = "ocr-max-side-len", default_value_t = 3000)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_max_side_len: u32,
 
     /// skip OCR overlay/removal for text taller than this multiple of normal OCR line height; 0 disables
     #[arg(long = "ocr-max-text-height-ratio", default_value_t = 0.0)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_max_text_height_ratio: f32,
 
     /// allow OCR text to use configured FIGlet fonts; pass false to render plain text only
     #[arg(long = "ocr-figlet", default_value_t = true, action = clap::ArgAction::Set)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet: bool,
 
     /// minimum detected text-box height in output rows before FIGlet may be used
     #[arg(long = "ocr-figlet-min-height", default_value_t = 2.0)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_min_height: f32,
 
     /// minimum text height relative to the median OCR line before FIGlet may be used; 0 disables
     #[arg(long = "ocr-figlet-min-height-ratio", default_value_t = 1.25)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_min_height_ratio: f32,
 
     /// OCR FIGlet fonts allowed at a declared line height; repeat for other heights
     #[arg(long = "ocr-figlet-fonts", value_name = "LINES=FONT1,FONT2")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_fonts: Vec<OcrFigletFontList>,
 
     /// PP-OCR text-box score threshold
     #[arg(long = "ocr-box-score-threshold", default_value_t = 0.6)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_box_score_threshold: f32,
 
     /// PP-OCR box binarization threshold
     #[arg(long = "ocr-box-threshold", default_value_t = 0.2)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_box_threshold: f32,
 
     /// PP-OCR detected-box unclip ratio
     #[arg(long = "ocr-unclip-ratio", default_value_t = 1.6)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_unclip_ratio: f32,
 
     /// minimum width in columns for auto-resized grids (OCR, etc.)
@@ -914,7 +944,19 @@ pub struct Args {
 }
 
 pub fn parse_args() -> Args {
-    Args::parse()
+    let args = Args::parse();
+
+    #[cfg(not(feature = "ocr"))]
+    if args.ocr {
+        Args::command()
+            .error(
+                clap::error::ErrorKind::InvalidValue,
+                "OCR support is not compiled in; rebuild with `--features ocr`",
+            )
+            .exit();
+    }
+
+    args
 }
 
 fn parse_xy_pair(s: &str) -> Result<(f32, f32), String> {

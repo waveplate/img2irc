@@ -49,9 +49,6 @@ ranges = [
 ],
 ]
 
-[blocks.full]
-glyphs = [0x2588]
-
 [blocks.half]
 glyphs = [0x2580]
 
@@ -226,6 +223,14 @@ ranges = [[
     0x1FB00,
     0x1FB3B,
 ]]
+
+[smooth]
+include = [
+    "ascii.space",
+    "p2",
+    "sextants",
+    "hb",
+]
 
 [vb]
 ranges = [[

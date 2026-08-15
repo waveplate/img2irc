@@ -1,12 +1,13 @@
 pub mod args;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod config;
 pub mod contour_score;
 pub mod draw;
 pub mod effects;
 pub mod font;
-#[cfg(feature = "ocr")]
+#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub mod ocr;
-#[cfg(not(feature = "ocr"))]
+#[cfg(any(not(feature = "ocr"), target_arch = "wasm32"))]
 pub mod ocr {
     use crate::args::{RenderArgs, TextOverlay};
     use crate::font::GlyphStore;
@@ -81,15 +82,20 @@ pub mod ocr {
 pub mod palette;
 pub mod pipeline;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod colorpicker;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tui;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod web;
 
 use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
-use std::{
-    error::Error,
-    io::{Cursor, Write},
-};
+use std::io::Write;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::{error::Error, io::Cursor};
+#[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
 // Main execution logic moved to binary files
@@ -221,7 +227,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         misc8: args.misc8,
         save: args.save.clone(),
         fft_debug_dir: args.fft_debug_dir.clone(),
-        ocr: args.ocr,
+        ocr: cfg!(all(feature = "ocr", not(target_arch = "wasm32"))) && args.ocr,
         ocr_min_confidence: args.ocr_min_confidence,
         ocr_min_ascii_ratio: args.ocr_min_ascii_ratio,
         ocr_model_tier: args.ocr_model_tier,
@@ -273,6 +279,7 @@ pub fn prepare_canvas(
 ) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = effects::apply_effects(args, glyphs, image);
 
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.save {
         let _ = photon_rs::native::save_image(image.clone(), path);
     }
@@ -393,8 +400,13 @@ pub fn render_output(
     // If font_size was resolved/changed, we might need a new glyph_store and new FastGlyphs.
     // However, for simplicity in this pass, we'll use the provided ones if they match.
     // In TUI, this will be handled by the refresh loop.
+    let prepare_started = draw::RenderInstant::now();
     let (canvas, luma_canvas) = prepare_canvas(&args, glyph_store, image);
-    render_from_canvas(&args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag)
+    let prepare_time = prepare_started.elapsed();
+    let mut result = render_from_canvas(&args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag);
+    result.profile.prepare_canvas = prepare_time;
+    log::info!("render profile: {}", result.profile.summary());
+    result
 }
 
 pub fn write_encoded_output(content: &str, encoding: &crate::args::Encoding) {
@@ -458,6 +470,7 @@ pub fn write_encoded_to<W: Write>(
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn load_image_from_url_or_path(
     image: &str,
     args: &RenderArgs,

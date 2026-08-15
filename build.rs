@@ -2,7 +2,8 @@ use std::{env, fs, path::PathBuf};
 
 fn main() {
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    if target_env != "musl" {
+    let ocr_enabled = env::var_os("CARGO_FEATURE_OCR").is_some();
+    if target_env != "musl" || !ocr_enabled {
         return;
     }
 

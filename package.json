@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "build:web": "bash scripts/build-wasm.sh",
+    "build:wasm": "bash scripts/build-wasm.sh"
+  },
   "dependencies": {
     "@google/gemini-cli": "^0.42.0"
   }

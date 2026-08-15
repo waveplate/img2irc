@@ -28,6 +28,89 @@
 
   if you prefer to compile it yourself
 
+## build from source
+
+OCR support is enabled by default. Build normally to include it:
+
+```bash
+cargo build --release
+```
+
+For targets where the OCR runtime is unavailable or unnecessary, build without
+default features. This excludes the PP-OCR engine and its OCR-only dependencies:
+
+```bash
+cargo build --release --no-default-features
+```
+
+To enable OCR explicitly in a feature-selected build, use
+`cargo build --release --no-default-features --features ocr`.
+
+## WebAssembly / JavaScript
+
+The browser build accepts image and monospace-font bytes directly, so it does
+not depend on a browser filesystem or installed system fonts. OCR is not part of
+the WebAssembly build.
+
+Install the wasm target and the binding generator, then build the package:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.127
+npm run build:web
+```
+
+This generates a complete web root in `dist/`, including `index.html`, the
+JavaScript/WASM package, the runtime `glyphs.json` catalog, hosted Cascadia Code,
+and Iosevka Fixed/Extended. Copy the contents of `dist/` directly to a static
+web server. To test it locally, run
+`python3 -m http.server --directory dist 8080`, then open
+<http://localhost:8080/>.
+
+The browser interface includes the usable General controls, common image
+adjustments, selectable glyph groups and custom include/exclude characters or
+Unicode ranges. Images can be opened, pasted from the clipboard, or dropped
+anywhere on the page, and the encoded IRC/ANSI output can be copied or downloaded.
+Rendering runs in a Web Worker, so smoothing and large outputs do not block the
+interface; rapid changes are coalesced into one follow-up render using the
+latest settings. The output can be displayed as either a pixel-exact bitmap or
+selectable browser text. Browser-text mode loads the same font used by the WASM
+matcher and applies terminal foreground/background styles; bitmap mode remains
+the reference when browser font rasterization differs from a terminal.
+Additional monospace families are discovered through the same Google Fonts
+metadata source as `spotifm/player`; their TrueType bytes are fetched from
+Google when selected and passed directly to the WebAssembly renderer.
+The browser editor's module boundaries and planned text-overlay integration are
+documented in `web/README.md`.
+
+```js
+import init, { Img2Irc } from "./pkg/img2irc_rs.js";
+
+await init();
+const renderer = new Img2Irc(new Uint8Array(await fontFile.arrayBuffer()));
+renderer.setImage(new Uint8Array(await imageFile.arrayBuffer()));
+const result = renderer.renderCurrent({
+  width: 80,
+  render: "ansi24",
+  glyphs: " .#@",
+});
+
+console.log(result.content); // ANSI/IRC encoded text
+```
+
+The renderer retains the decoded source image and caches rasterized glyphs and
+the most recent prepared image canvas between calls. Reuse one `Img2Irc`
+instance while changing settings. `setFont(fontBytes)` replaces the font while
+retaining that decoded image, and `clearCache()` releases its render caches.
+The original `render(imageBytes, options)` entry point remains available for
+one-shot use. Pass `includeCells: true` when an integration needs the optional
+styled cell matrix in addition to encoded text and the RGBA preview.
+
+Use `--profile` with the native utility to print release-compatible per-stage
+timings to stderr while keeping encoded output on stdout. The web editor shows
+the same stages, prepared-canvas cache state, and contour-cache hit count in its
+statistics footer after every render.
+
 > [!NOTE]
 > if you like this project, i would appreciate you giving it a vote on the [aur](https://aur.archlinux.org/packages/img2irc-bin)!
 

@@ -1,4 +1,6 @@
+#[cfg(not(target_arch = "wasm32"))]
 use fontdb::{Database, Family, Query, Source};
+#[cfg(not(target_arch = "wasm32"))]
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -7,8 +9,11 @@ use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Mutex;
 use toml::Value;
 use unicode_width::UnicodeWidthChar;
 
@@ -67,6 +72,7 @@ impl SystemFont {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct FontLocation {
     path: String,
@@ -82,6 +88,7 @@ struct FontContext {
 }
 
 impl FontContext {
+    #[cfg(not(target_arch = "wasm32"))]
     fn new(font_names: &[String], font_size: f32) -> Self {
         let mut font_paths = Vec::new();
         let mut user_faces = HashMap::new();
@@ -132,6 +139,41 @@ impl FontContext {
         }
     }
 
+    fn from_bytes(data: &[u8], font_size: f32) -> Result<Self, String> {
+        let bytes = Arc::<[u8]>::from(data.to_vec());
+        let mut selected = None;
+        let mut face_index = 0usize;
+
+        while FontRef::from_index(&bytes, face_index).is_some() {
+            if let Some(font) = SystemFont::new(
+                Arc::clone(&bytes),
+                face_index,
+                format!("browser-font#{face_index}"),
+            ) {
+                if is_monospace_font(&font) {
+                    selected = Some((face_index, Arc::new(font)));
+                    break;
+                }
+            }
+            face_index += 1;
+        }
+
+        let (face_index, font) = selected.ok_or_else(|| {
+            "font data does not contain a usable monospace OpenType/TrueType face".to_string()
+        })?;
+        let key = format!("memory-font#{face_index}");
+        let mut user_faces = HashMap::new();
+        user_faces.insert(key.clone(), font);
+
+        Ok(Self {
+            user_faces,
+            fallback_faces: HashMap::new(),
+            font_paths: vec![key],
+            missing_chars: HashSet::new(),
+            font_size,
+        })
+    }
+
     fn get_main_font(&self) -> Arc<SystemFont> {
         // Return the first successfully loaded user face
         // We iterate font_paths to preserve priority order
@@ -145,6 +187,11 @@ impl FontContext {
     }
 }
 
+pub fn validate_monospace_font_bytes(data: &[u8]) -> Result<(), String> {
+    FontContext::from_bytes(data, 16.0).map(|_| ())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn get_font_cache_path() -> Option<PathBuf> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -152,6 +199,7 @@ fn get_font_cache_path() -> Option<PathBuf> {
     Some(Path::new(&home).join(".img2irc_font_cache.json"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_cached_font_location(font_name: &str) -> Option<FontLocation> {
     let path = get_font_cache_path()?;
     if !path.is_file() {
@@ -167,6 +215,7 @@ fn read_cached_font_location(font_name: &str) -> Option<FontLocation> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_cached_font_location(font_name: &str, location: &FontLocation) {
     if let Some(path) = get_font_cache_path() {
         let mut cache = if path.is_file() {
@@ -185,6 +234,7 @@ fn write_cached_font_location(font_name: &str, location: &FontLocation) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
     if atty::is(atty::Stream::Stderr) {
         eprintln!("Scanning system fonts (this may take a moment)...");
@@ -194,6 +244,7 @@ static DB: Lazy<Mutex<Database>> = Lazy::new(|| {
     Mutex::new(db)
 });
 
+#[cfg(not(target_arch = "wasm32"))]
 fn find_font_location(font_name: &str) -> Option<FontLocation> {
     let direct_path = Path::new(font_name);
     if direct_path.is_file() {
@@ -230,9 +281,11 @@ fn find_font_location(font_name: &str) -> Option<FontLocation> {
     resolved
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 static FALLBACK_FONT_CACHE: Lazy<Mutex<HashMap<char, Vec<String>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_fallback_font_paths(ch: char) -> Vec<String> {
     if let Some(paths) = FALLBACK_FONT_CACHE.lock().unwrap().get(&ch) {
         return paths.clone();
@@ -271,6 +324,12 @@ fn get_fallback_font_paths(ch: char) -> Vec<String> {
     results
 }
 
+#[cfg(target_arch = "wasm32")]
+fn get_fallback_font_paths(_ch: char) -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum HexOrInt {
@@ -278,6 +337,7 @@ enum HexOrInt {
     Int(u32),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl HexOrInt {
     fn to_u32(&self) -> u32 {
         match self {
@@ -291,6 +351,7 @@ impl HexOrInt {
 }
 
 // Custom serialization to write as integer (post-processed to hex)
+#[cfg(not(target_arch = "wasm32"))]
 impl Serialize for HexOrInt {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -300,6 +361,7 @@ impl Serialize for HexOrInt {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize, Serialize)]
 struct BlockEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -652,6 +714,15 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     fs::write(toml_path, new_toml).expect("Failed to write glyphs.toml");
 }
 
+#[cfg(target_arch = "wasm32")]
+fn load_blocks_config_impl(_apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+    // Browser callers provide their selected characters explicitly from the
+    // runtime glyph catalog. Keep the catalog out of the WASM binary so it can
+    // be changed or replaced independently of the renderer.
+    (HashMap::new(), HashSet::new())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     let mut toml_path = None;
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
@@ -1563,6 +1634,7 @@ fn parse_hex_range(s: &str) -> Option<std::ops::RangeInclusive<u32>> {
     Some(start..=end)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn glyph_store(
     blocks: &[String],
     exclude_ranges: &[String],
@@ -1574,7 +1646,59 @@ pub fn glyph_store(
     load_all: bool,
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> GlyphStore {
-    let mut ctx = FontContext::new(fonts, font_size);
+    let ctx = FontContext::new(fonts, font_size);
+    glyph_store_with_context(
+        ctx,
+        blocks,
+        exclude_ranges,
+        exclude_chars,
+        include_ranges,
+        include_chars,
+        load_all,
+        true,
+        abort_flag,
+    )
+}
+
+/// Build a glyph store from font bytes supplied by an embedding application.
+///
+/// This is the browser-safe equivalent of [`glyph_store`], which discovers
+/// installed fonts through native operating-system APIs.
+pub fn glyph_store_from_font_bytes(
+    font_data: &[u8],
+    blocks: &[String],
+    exclude_ranges: &[String],
+    exclude_chars: &[char],
+    include_ranges: &[String],
+    include_chars: Option<&String>,
+    font_size: f32,
+    load_all: bool,
+) -> Result<GlyphStore, String> {
+    let ctx = FontContext::from_bytes(font_data, font_size)?;
+    Ok(glyph_store_with_context(
+        ctx,
+        blocks,
+        exclude_ranges,
+        exclude_chars,
+        include_ranges,
+        include_chars,
+        load_all,
+        false,
+        None,
+    ))
+}
+
+fn glyph_store_with_context(
+    mut ctx: FontContext,
+    blocks: &[String],
+    exclude_ranges: &[String],
+    exclude_chars: &[char],
+    include_ranges: &[String],
+    include_chars: Option<&String>,
+    load_all: bool,
+    select_all_when_blocks_empty: bool,
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> GlyphStore {
     let (config_groups, _) = load_blocks_config();
     let (all_config_groups, _) = load_blocks_config_unfiltered();
 
@@ -1600,7 +1724,7 @@ pub fn glyph_store(
         }
     }
 
-    if blocks.is_empty() && !load_all {
+    if blocks.is_empty() && !load_all && select_all_when_blocks_empty {
         // If no blocks specified and not loading all, load ALL known blocks (legacy behavior?)
         // Wait, if blocks is empty, args.blocks is empty.
         // Old behavior: "If no blocks specified, load ALL known blocks from config"
@@ -1907,6 +2031,26 @@ mod tests {
         assert!(is_renderable_char('⇠'));
         assert!(!is_renderable_char('界'));
         assert!(!is_renderable_char('\u{0301}'));
+    }
+
+    #[test]
+    fn smooth_group_composes_filtered_space_polygons_sextants_and_halfblocks() {
+        let (groups, _) = load_blocks_config();
+        let smooth = groups["smooth"].iter().copied().collect::<HashSet<_>>();
+        let expected = ["ascii.space", "p2", "sextants", "hb"]
+            .into_iter()
+            .flat_map(|name| groups[name].iter().copied())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(smooth, expected);
+
+        let (unfiltered, _) = load_blocks_config_unfiltered();
+        for excluded in unfiltered["sextants"]
+            .iter()
+            .filter(|code| !groups["sextants"].contains(code))
+        {
+            assert!(!smooth.contains(excluded));
+        }
     }
 
     #[test]

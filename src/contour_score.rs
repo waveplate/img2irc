@@ -5,7 +5,132 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+
+const CONTOUR_CACHE_MAX_PIXELS: usize = 2_048;
+const CONTOUR_CACHE_MAX_ENTRIES: usize = 32_768;
+
+#[derive(Default)]
+struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut hash = if self.0 == 0 {
+            0xcbf29ce484222325
+        } else {
+            self.0
+        };
+        for &byte in bytes {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        self.0 = hash;
+    }
+
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.0 = (value as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    }
+}
+
+type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
+
+#[derive(Hash, PartialEq, Eq)]
+struct ContourCacheKey {
+    // Labels have at most eight values, so two fit losslessly in one byte.
+    // Keeping the exact packed sequence avoids collision-based cache results
+    // while halving its dominant memory cost and hashing work.
+    labels: Box<[u8]>,
+    width: usize,
+    height: usize,
+    cell_scale: usize,
+    weights: [u64; 5],
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct PixelCacheKey {
+    fingerprint: [u64; 2],
+    width: usize,
+    height: usize,
+    cell_scale: usize,
+    weights: [u64; 5],
+}
+
+thread_local! {
+    static CONTOUR_SCORE_CACHE: std::cell::RefCell<FastMap<ContourCacheKey, ContourScore>> =
+        std::cell::RefCell::new(FastMap::with_capacity_and_hasher(
+            1_024,
+            BuildHasherDefault::default(),
+        ));
+    static PIXEL_SCORE_CACHE: std::cell::RefCell<FastMap<PixelCacheKey, ContourScore>> =
+        std::cell::RefCell::new(FastMap::with_capacity_and_hasher(
+            1_024,
+            BuildHasherDefault::default(),
+        ));
+}
+
+static CONTOUR_CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static CONTOUR_CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+pub fn cache_stats() -> (u64, u64) {
+    (
+        CONTOUR_CACHE_HITS.load(Ordering::Relaxed),
+        CONTOUR_CACHE_MISSES.load(Ordering::Relaxed),
+    )
+}
+
+pub fn clear_cache() {
+    CONTOUR_SCORE_CACHE.with(|cache| cache.borrow_mut().clear());
+    PIXEL_SCORE_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+fn packed_labels(labels: &[u8]) -> Box<[u8]> {
+    let mut packed = Vec::with_capacity(labels.len().div_ceil(2));
+    for pair in labels.chunks(2) {
+        let high = pair.get(1).copied().unwrap_or(0) << 4;
+        packed.push(pair[0] | high);
+    }
+    packed.into_boxed_slice()
+}
+
+fn pixel_fingerprint(pixels: &[[u8; 3]]) -> [u64; 2] {
+    let mut first = 0xcbf29ce484222325u64;
+    let mut second = 0x9e3779b97f4a7c15u64;
+    for (index, pixel) in pixels.iter().enumerate() {
+        let color = ((pixel[0] as u64) << 16) | ((pixel[1] as u64) << 8) | pixel[2] as u64;
+        first ^= color;
+        first = first.wrapping_mul(0x100000001b3);
+        second = second.rotate_left(27)
+            ^ color.wrapping_add((index as u64).wrapping_mul(0x9e3779b185ebca87));
+    }
+    [first, second]
+}
+
+fn cache_contour_score(key: ContourCacheKey, score: ContourScore) {
+    CONTOUR_SCORE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= CONTOUR_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(key, score);
+    });
+}
+
+fn cache_pixel_score(key: PixelCacheKey, score: ContourScore) {
+    PIXEL_SCORE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= CONTOUR_CACHE_MAX_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(key, score);
+    });
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ContourScore {
@@ -250,37 +375,15 @@ impl Graph {
 }
 
 fn dominant_labels(pixels: &[[u8; 3]]) -> Vec<u8> {
-    #[derive(Default)]
-    struct ColorHasher(u64);
-
-    impl Hasher for ColorHasher {
-        #[inline]
-        fn finish(&self) -> u64 {
-            self.0
-        }
-
-        fn write(&mut self, bytes: &[u8]) {
-            let mut hash = 0xcbf29ce484222325u64;
-            for &byte in bytes {
-                hash ^= byte as u64;
-                hash = hash.wrapping_mul(0x100000001b3);
-            }
-            self.0 = hash;
-        }
-
-        #[inline]
-        fn write_u32(&mut self, value: u32) {
-            self.0 = (value as u64).wrapping_mul(0x9e3779b97f4a7c15);
-        }
-    }
-
-    type ColorMap = HashMap<u32, usize, BuildHasherDefault<ColorHasher>>;
-    let mut counts = ColorMap::default();
+    let mut counts: FastMap<u32, usize> = FastMap::default();
     for &pixel in pixels {
         let color = ((pixel[0] as u32) << 16) | ((pixel[1] as u32) << 8) | pixel[2] as u32;
         *counts.entry(color).or_default() += 1;
     }
-    let mut palette = counts.into_iter().collect::<Vec<_>>();
+    let mut palette = counts
+        .iter()
+        .map(|(&color, &count)| (color, count))
+        .collect::<Vec<_>>();
     palette.sort_unstable_by(|(color_a, count_a), (color_b, count_b)| {
         count_b.cmp(count_a).then_with(|| color_a.cmp(color_b))
     });
@@ -296,22 +399,37 @@ fn dominant_labels(pixels: &[[u8; 3]]) -> Vec<u8> {
         })
         .collect::<Vec<_>>();
 
+    // Candidate rasters are made from a small number of terminal colours.
+    // Classify each distinct colour once instead of repeating eight RGB
+    // distance calculations for every pixel in the raster.
+    let mut color_labels: FastMap<u32, usize> = FastMap::default();
+    for &color in counts.keys() {
+        let pixel = [
+            ((color >> 16) & 0xff) as u8,
+            ((color >> 8) & 0xff) as u8,
+            (color & 0xff) as u8,
+        ];
+        let label = colors
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, candidate)| {
+                (0..3)
+                    .map(|channel| {
+                        let delta = pixel[channel] as i32 - candidate[channel] as i32;
+                        delta * delta
+                    })
+                    .sum::<i32>()
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        color_labels.insert(color, label);
+    }
+
     pixels
         .iter()
         .map(|pixel| {
-            colors
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, color)| {
-                    (0..3)
-                        .map(|channel| {
-                            let delta = pixel[channel] as i32 - color[channel] as i32;
-                            delta * delta
-                        })
-                        .sum::<i32>()
-                })
-                .map(|(index, _)| index as u8)
-                .unwrap_or(0)
+            let color = ((pixel[0] as u32) << 16) | ((pixel[1] as u32) << 8) | pixel[2] as u32;
+            color_labels.get(&color).copied().unwrap_or(0) as u8
         })
         .collect()
 }
@@ -489,10 +607,61 @@ pub fn score_rgb_with_weights(
         };
     }
 
+    let cache_weights = [
+        weights.bending.to_bits(),
+        weights.endpoints.to_bits(),
+        weights.junctions.to_bits(),
+        weights.fragments.to_bits(),
+        weights.peak_sensitivity.to_bits(),
+    ];
+    let cacheable = pixels.len() <= CONTOUR_CACHE_MAX_PIXELS;
+    let pixel_cache_key = cacheable.then(|| PixelCacheKey {
+        fingerprint: pixel_fingerprint(pixels),
+        width,
+        height,
+        cell_scale,
+        weights: cache_weights,
+    });
+    if let Some(cached) = pixel_cache_key
+        .as_ref()
+        .and_then(|key| PIXEL_SCORE_CACHE.with(|cache| cache.borrow().get(key).copied()))
+    {
+        CONTOUR_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+        return cached;
+    }
+
     let labels = dominant_labels(pixels);
+    let cache_key = cacheable.then(|| ContourCacheKey {
+        labels: packed_labels(&labels),
+        width,
+        height,
+        cell_scale,
+        weights: cache_weights,
+    });
+    if let Some(cached) = cache_key
+        .as_ref()
+        .and_then(|key| CONTOUR_SCORE_CACHE.with(|cache| cache.borrow().get(key).copied()))
+    {
+        if let Some(key) = pixel_cache_key {
+            cache_pixel_score(key, cached);
+        }
+        CONTOUR_CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+        return cached;
+    }
+    if cache_key.is_some() {
+        CONTOUR_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+    }
+
     let graph = Graph::from_labels(&labels, width, height, fragments_enabled);
     if graph.edges.is_empty() {
-        return ContourScore::default();
+        let score = ContourScore::default();
+        if let Some(key) = cache_key {
+            cache_contour_score(key, score);
+        }
+        if let Some(key) = pixel_cache_key {
+            cache_pixel_score(key, score);
+        }
+        return score;
     }
 
     let length = graph.edges.len() as f64;
@@ -537,7 +706,7 @@ pub fn score_rgb_with_weights(
         + weights.endpoints.max(0.0) * endpoint_score
         + weights.junctions.max(0.0) * junction_score
         + weights.fragments.max(0.0) * fragment_score;
-    ContourScore {
+    let score = ContourScore {
         total,
         bending,
         endpoints: endpoint_score,
@@ -547,7 +716,14 @@ pub fn score_rgb_with_weights(
         endpoint_count: endpoints as usize,
         junction_count: junctions as usize,
         component_count: graph.component_lengths.len(),
+    };
+    if let Some(key) = cache_key {
+        cache_contour_score(key, score);
     }
+    if let Some(key) = pixel_cache_key {
+        cache_pixel_score(key, score);
+    }
+    score
 }
 
 fn rgb_integral(pixels: &[[u8; 3]], width: usize, height: usize) -> Vec<[u64; 3]> {
@@ -1074,5 +1250,20 @@ mod tests {
         let full = score_rgb_against_prepared(&prepared_reference, &candidate, 8);
         assert!((incremental.fidelity - full.fidelity).abs() < 1e-10);
         assert!((incremental.total - full.total).abs() < 1e-10);
+    }
+
+    #[test]
+    fn repeated_small_raster_uses_contour_cache_without_changing_score() {
+        let width = 17;
+        let height = 19;
+        let pixels = raster(width, height, |x, y| (x * 7 + y * 11 + (x ^ y)) % 13 < 6);
+        let before = cache_stats();
+        let first = score_rgb(&pixels, width, height, 8);
+        let second = score_rgb(&pixels, width, height, 8);
+        let after = cache_stats();
+
+        assert_eq!(first.total, second.total);
+        assert_eq!(first.boundary_length, second.boundary_length);
+        assert!(after.0 > before.0, "a repeated raster should hit the cache");
     }
 }

@@ -11,6 +11,37 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type RenderInstant = std::time::Instant;
+
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+pub(crate) struct RenderInstant(f64);
+
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+impl RenderInstant {
+    pub(crate) fn now() -> Self {
+        Self(js_sys::Date::now())
+    }
+
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::from_secs_f64(((js_sys::Date::now() - self.0) / 1000.0).max(0.0))
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "web")))]
+pub(crate) struct RenderInstant;
+
+#[cfg(all(target_arch = "wasm32", not(feature = "web")))]
+impl RenderInstant {
+    pub(crate) fn now() -> Self {
+        Self
+    }
+
+    pub(crate) fn elapsed(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+}
+
 #[derive(Clone)]
 pub struct FastGlyph {
     pub ch: char,
@@ -1246,6 +1277,53 @@ pub struct RenderedCell {
 }
 
 #[derive(Clone)]
+pub struct RenderProfile {
+    pub prepare_canvas: std::time::Duration,
+    pub glyph_match: std::time::Duration,
+    pub smoothing_prepare: std::time::Duration,
+    pub smoothing_search: std::time::Duration,
+    pub shape_refine: std::time::Duration,
+    pub final_score: std::time::Duration,
+    pub encode: std::time::Duration,
+    pub contour_cache_hits: u64,
+    pub contour_cache_misses: u64,
+}
+
+impl Default for RenderProfile {
+    fn default() -> Self {
+        Self {
+            prepare_canvas: std::time::Duration::ZERO,
+            glyph_match: std::time::Duration::ZERO,
+            smoothing_prepare: std::time::Duration::ZERO,
+            smoothing_search: std::time::Duration::ZERO,
+            shape_refine: std::time::Duration::ZERO,
+            final_score: std::time::Duration::ZERO,
+            encode: std::time::Duration::ZERO,
+            contour_cache_hits: 0,
+            contour_cache_misses: 0,
+        }
+    }
+}
+
+impl RenderProfile {
+    pub fn summary(&self) -> String {
+        let millis = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+        format!(
+            "prepare={:.1}ms match={:.1}ms smooth-prep={:.1}ms smooth={:.1}ms shapes={:.1}ms score={:.1}ms encode={:.1}ms contour-cache={}/{}",
+            millis(self.prepare_canvas),
+            millis(self.glyph_match),
+            millis(self.smoothing_prepare),
+            millis(self.smoothing_search),
+            millis(self.shape_refine),
+            millis(self.final_score),
+            millis(self.encode),
+            self.contour_cache_hits,
+            self.contour_cache_hits + self.contour_cache_misses,
+        )
+    }
+}
+
+#[derive(Clone)]
 pub struct RenderResult {
     pub content: String,
     pub save_content: Option<String>,
@@ -1256,6 +1334,7 @@ pub struct RenderResult {
     pub score: f64,
     pub longest_line_bytes: usize,
     pub initial_time: std::time::Duration,
+    pub profile: RenderProfile,
 }
 
 impl From<&str> for RenderResult {
@@ -1270,6 +1349,7 @@ impl From<&str> for RenderResult {
             score: 0.0,
             longest_line_bytes: 0,
             initial_time: std::time::Duration::ZERO,
+            profile: RenderProfile::default(),
         }
     }
 }
@@ -1489,6 +1569,7 @@ pub fn apply_overlays_to_result(
         score: base.score,
         longest_line_bytes,
         initial_time: base.initial_time,
+        profile: base.profile.clone(),
     }
 }
 
@@ -5469,7 +5550,8 @@ pub fn render_blocks_smooth(
     glyphs: &[FastGlyph],
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> RenderResult {
-    let process_start_time = std::time::Instant::now();
+    let process_start_time = RenderInstant::now();
+    let contour_cache_start = crate::contour_score::cache_stats();
 
     if glyphs.is_empty() {
         return "Error: no glyphs available".into();
@@ -5914,6 +5996,9 @@ pub fn render_blocks_smooth(
         return "Cancelled".into();
     }
 
+    let glyph_match_time = process_start_time.elapsed();
+    let smoothing_prepare_started = RenderInstant::now();
+
     let fft_debug_root = args.fft_debug_dir.as_deref().and_then(ensure_fft_debug_dir);
 
     let mut rendered_raster = if needs_frequency_metric {
@@ -6048,13 +6133,16 @@ pub fn render_blocks_smooth(
         Vec::new()
     };
 
+    let smoothing_prepare_time = smoothing_prepare_started.elapsed();
     let initial_time = process_start_time.elapsed();
+    let mut smoothing_search_time = std::time::Duration::ZERO;
+    let mut shape_refine_time = std::time::Duration::ZERO;
 
     if args.score_fix {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
-        let started = std::time::Instant::now();
+        let started = RenderInstant::now();
         let target_scores = score_fix_initial_disc_scores
             .take()
             .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
@@ -6110,6 +6198,7 @@ pub fn render_blocks_smooth(
         let (_, stats, best_raster, best_state) = trials.swap_remove(best_trial_idx);
         raster.copy_from_slice(&best_raster);
         grid_state.copy_from_slice(&best_state);
+        smoothing_search_time = started.elapsed();
         log::info!(
             "smoothing order search [{}] selected {}; selected {} cells, tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} neighbor regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
             order_scores,
@@ -6129,7 +6218,7 @@ pub fn render_blocks_smooth(
             } else {
                 "general contour scorer"
             },
-            started.elapsed(),
+            smoothing_search_time,
         );
     }
 
@@ -6139,7 +6228,7 @@ pub fn render_blocks_smooth(
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
-        let started = std::time::Instant::now();
+        let started = RenderInstant::now();
         let target_scores = all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh);
         let stats = match run_geometry_score_fix(
             args,
@@ -6159,6 +6248,7 @@ pub fn render_blocks_smooth(
             Ok(stats) => stats,
             Err(()) => return "Cancelled".into(),
         };
+        shape_refine_time = started.elapsed();
         log::info!(
             "smoothing shape refinement selected {} cells, used {} distinct states across source-ranked top-N candidate lists ({} cheap candidate evaluations, {} median-flow evaluations), made {} monotonic topology-preserving median-flow changes, and reduced overlapping-patch energy from {:.6} to {:.6} in {:?}",
             stats.target_count,
@@ -6168,7 +6258,7 @@ pub fn render_blocks_smooth(
             stats.changes,
             stats.initial_score,
             stats.final_score,
-            started.elapsed(),
+            shape_refine_time,
         );
     }
 
@@ -6178,7 +6268,7 @@ pub fn render_blocks_smooth(
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
-        let started = std::time::Instant::now();
+        let started = RenderInstant::now();
         let pre_score_fix_raster = raster.clone();
         let pre_score_fix_grid_state = grid_state.clone();
         let before_global = preview_contour_score(
@@ -6519,7 +6609,7 @@ pub fn render_blocks_smooth(
     }
 
     let disc_threshold = args.discontinuity_threshold.max(0.0);
-    let t_disc_score = std::time::Instant::now();
+    let t_disc_score = RenderInstant::now();
     let cell_disc_scores = all_cell_discontinuity_scores(
         rendered_raster
             .as_ref()
@@ -6529,7 +6619,6 @@ pub fn render_blocks_smooth(
         gw,
         gh,
     );
-    let disc_score_time = t_disc_score.elapsed();
     let relative_disc_score = if cell_disc_scores.is_empty() {
         0.0
     } else {
@@ -6551,6 +6640,7 @@ pub fn render_blocks_smooth(
         gh,
         &contour_weights,
     );
+    let disc_score_time = t_disc_score.elapsed();
     log::info!(
         "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
         contour_score.total,
@@ -6602,6 +6692,8 @@ pub fn render_blocks_smooth(
         disc_threshold
     );
     log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
+
+    let encode_started = RenderInstant::now();
 
     // Precompute cheapest glyph for uniform cells (FG==BG, glyph invisible).
     // Space/braille blank allow skipping the FG color code (~3 byte saving),
@@ -6821,7 +6913,10 @@ pub fn render_blocks_smooth(
                 char: final_char,
                 fg: final_draw_fg_raw,
                 bg: final_draw_bg_raw,
-                inverted: inv,
+                // `final_draw_*` already account for an inverted glyph state.
+                // Export final display colours so structured consumers do not
+                // need to repeat the renderer's internal inversion step.
+                inverted: false,
                 bold: text_overlay.map(|ov| ov.bold).unwrap_or(false),
                 italic: text_overlay.map(|ov| ov.italic).unwrap_or(false),
                 underline: text_overlay.map(|ov| ov.underline).unwrap_or(false),
@@ -7017,6 +7112,8 @@ pub fn render_blocks_smooth(
     } else {
         out.lines().map(|l| l.len()).max().unwrap_or(0)
     };
+    let encode_time = encode_started.elapsed();
+    let contour_cache_end = crate::contour_score::cache_stats();
 
     RenderResult {
         content: out.trim_end_matches('\n').into(),
@@ -7032,6 +7129,17 @@ pub fn render_blocks_smooth(
         score: contour_score.total,
         longest_line_bytes,
         initial_time,
+        profile: RenderProfile {
+            glyph_match: glyph_match_time,
+            smoothing_prepare: smoothing_prepare_time,
+            smoothing_search: smoothing_search_time,
+            shape_refine: shape_refine_time,
+            final_score: disc_score_time,
+            encode: encode_time,
+            contour_cache_hits: contour_cache_end.0.saturating_sub(contour_cache_start.0),
+            contour_cache_misses: contour_cache_end.1.saturating_sub(contour_cache_start.1),
+            ..RenderProfile::default()
+        },
     }
 }
 pub fn render_braille(
@@ -7054,8 +7162,10 @@ pub fn render_braille(
     let thr = min_l + ((max_l - min_l).max(1) / 2);
     let mut out = String::new();
     let mut alt_out = String::new();
+    let mut grid_out = Vec::with_capacity(h.div_ceil(4));
     let prepared_overlays: Vec<_> = args.overlays.iter().map(PreparedTextOverlay::new).collect();
     for y in (0..h).step_by(4) {
+        let mut row_vec = Vec::with_capacity(w.div_ceil(2));
         let mut first = true;
         let mut alt_first = true;
         let mut last_fg = None;
@@ -7166,6 +7276,18 @@ pub fn render_braille(
                 }
             }
 
+            row_vec.push(RenderedCell {
+                char: final_ch,
+                fg: colour_to_rgb(&final_fg, render),
+                bg: final_bg
+                    .as_ref()
+                    .map(|colour| colour_to_rgb(colour, render)),
+                inverted: false,
+                bold: final_bold,
+                italic: final_italic,
+                underline: final_underline,
+            });
+
             emit_colourized(
                 &mut out,
                 render,
@@ -7256,6 +7378,7 @@ pub fn render_braille(
         if args.as_preview {
             alt_out.push_str("\x0f\n");
         }
+        grid_out.push(row_vec);
     }
 
     let longest_line_bytes = if args.as_preview && render == Render::Irc {
@@ -7274,10 +7397,25 @@ pub fn render_braille(
         error_count: 0,
         total_pixels: (h * w) as u64,
         dynamic_scaling_count: 0,
-        grid: Vec::new(),
+        grid: grid_out,
         score: 0.0,
         longest_line_bytes,
         initial_time: std::time::Duration::ZERO,
+        profile: RenderProfile::default(),
+    }
+}
+
+fn colour_to_rgb(colour: &Colour, render: Render) -> [u8; 3] {
+    match colour {
+        Colour::RGB(rgb) => *rgb,
+        Colour::Index(index) => {
+            let palette = if render == Render::Irc {
+                &IRC99[..]
+            } else {
+                &ANSI256[..]
+            };
+            unpack_rgb(palette[(*index as usize).min(palette.len() - 1)])
+        }
     }
 }
 
@@ -7330,11 +7468,29 @@ pub fn save_as_png(
     Ok(())
 }
 
-/// Rasterize a rendered character grid using the exact glyph bitmaps selected
-/// by the renderer. Keeping this in memory lets both PNG export and terminal
-/// graphics previews share one source of truth without an encode/decode round
-/// trip through a temporary PNG.
-pub fn render_result_image(result: &RenderResult, glyphs: &GlyphStore) -> Option<DynamicImage> {
+pub struct GlyphBitmapIndex {
+    indices: HashMap<char, usize>,
+    fallback: Option<usize>,
+}
+
+pub fn prepare_glyph_bitmap_index(glyphs: &GlyphStore) -> GlyphBitmapIndex {
+    GlyphBitmapIndex {
+        indices: glyphs
+            .glyphs
+            .iter()
+            .enumerate()
+            .map(|(index, (ch, _, _))| (*ch, index))
+            .collect(),
+        fallback: glyphs.glyphs.iter().position(|(ch, _, _)| *ch == '?'),
+    }
+}
+
+fn render_result_pixels_indexed<const CHANNELS: usize>(
+    result: &RenderResult,
+    glyphs: &GlyphStore,
+    bitmap_index: &GlyphBitmapIndex,
+) -> Option<(u32, u32, Vec<u8>)> {
+    debug_assert!(CHANNELS >= 3);
     let first_row = result.grid.first()?;
     if first_row.is_empty() {
         return None;
@@ -7347,42 +7503,80 @@ pub fn render_result_image(result: &RenderResult, glyphs: &GlyphStore) -> Option
 
     let rows = result.grid.len();
     let cols = first_row.len();
-    let width = (cols * gw) as u32;
-    let height = (rows * gh) as u32;
-    let fallback = glyphs
-        .glyphs
-        .iter()
-        .find(|(ch, _, _)| *ch == '?')
-        .map(|(_, bitmap, _)| bitmap);
-    let bitmaps = glyphs
-        .glyphs
-        .iter()
-        .map(|(ch, bitmap, _)| (*ch, bitmap))
-        .collect::<HashMap<_, _>>();
-
-    let mut image = RgbImage::new(width, height);
+    let width = cols.checked_mul(gw)?;
+    let height = rows.checked_mul(gh)?;
+    // Initialize every pixel as opaque. RGB callers overwrite the first three
+    // channels, while RGBA callers retain 255 in the alpha channel.
+    let mut pixels = vec![255; width.checked_mul(height)?.checked_mul(CHANNELS)?];
     for (row_idx, row) in result.grid.iter().enumerate() {
         for (col_idx, cell) in row.iter().take(cols).enumerate() {
-            let bitmap = bitmaps.get(&cell.char).copied().or(fallback);
+            let bitmap = bitmap_index
+                .indices
+                .get(&cell.char)
+                .copied()
+                .or(bitmap_index.fallback)
+                .and_then(|index| glyphs.glyphs.get(index))
+                .map(|(_, bitmap, _)| bitmap);
             let background = cell.bg.unwrap_or([0, 0, 0]);
             for y in 0..gh {
-                for x in 0..gw {
-                    let is_foreground = bitmap
-                        .and_then(|bitmap| bitmap.get(y))
-                        .and_then(|bitmap_row| bitmap_row.get(x))
-                        .is_some_and(|bit| *bit != 0);
-                    let color = if is_foreground { cell.fg } else { background };
-                    image.put_pixel(
-                        (col_idx * gw + x) as u32,
-                        (row_idx * gh + y) as u32,
-                        Rgb(color),
-                    );
+                let output_start =
+                    ((row_idx * gh + y) * width + col_idx * gw) * CHANNELS;
+                let output_end = output_start + gw * CHANNELS;
+                let output_row = &mut pixels[output_start..output_end];
+                if let Some(bitmap_row) = bitmap.and_then(|bitmap| bitmap.get(y)) {
+                    for (x, pixel) in output_row.chunks_exact_mut(CHANNELS).enumerate() {
+                        let color = if bitmap_row.get(x).is_some_and(|bit| *bit != 0) {
+                            cell.fg
+                        } else {
+                            background
+                        };
+                        pixel[..3].copy_from_slice(&color);
+                    }
+                } else {
+                    for pixel in output_row.chunks_exact_mut(CHANNELS) {
+                        pixel[..3].copy_from_slice(&background);
+                    }
                 }
             }
         }
     }
 
-    Some(DynamicImage::ImageRgb8(image))
+    Some((width as u32, height as u32, pixels))
+}
+
+fn render_result_pixels<const CHANNELS: usize>(
+    result: &RenderResult,
+    glyphs: &GlyphStore,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let bitmap_index = prepare_glyph_bitmap_index(glyphs);
+    render_result_pixels_indexed::<CHANNELS>(result, glyphs, &bitmap_index)
+}
+
+/// Rasterize a rendered character grid to tightly packed, opaque RGBA pixels.
+/// Browser callers can pass this directly to `ImageData`, avoiding an
+/// intermediate PNG encode/decode cycle.
+pub fn render_result_rgba(
+    result: &RenderResult,
+    glyphs: &GlyphStore,
+) -> Option<(u32, u32, Vec<u8>)> {
+    render_result_pixels::<4>(result, glyphs)
+}
+
+pub fn render_result_rgba_indexed(
+    result: &RenderResult,
+    glyphs: &GlyphStore,
+    bitmap_index: &GlyphBitmapIndex,
+) -> Option<(u32, u32, Vec<u8>)> {
+    render_result_pixels_indexed::<4>(result, glyphs, bitmap_index)
+}
+
+/// Rasterize a rendered character grid using the exact glyph bitmaps selected
+/// by the renderer. Keeping this in memory lets both PNG export and terminal
+/// graphics previews share one source of truth without an encode/decode round
+/// trip through a temporary PNG.
+pub fn render_result_image(result: &RenderResult, glyphs: &GlyphStore) -> Option<DynamicImage> {
+    let (width, height, pixels) = render_result_pixels::<3>(result, glyphs)?;
+    RgbImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgb8)
 }
 
 fn get_transformed_block_pixels_into(
@@ -7441,6 +7635,7 @@ fn get_transformed_block_pixels_into(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     fn laid_out_strings(text: &str, width: Option<usize>) -> Vec<String> {
         layout_overlay_text(text, width)
@@ -7507,6 +7702,7 @@ mod tests {
             score: 0.0,
             longest_line_bytes: 1,
             initial_time: std::time::Duration::ZERO,
+            profile: RenderProfile::default(),
         };
         let overlay = crate::args::TextOverlay {
             text: "X".to_string(),
@@ -7563,6 +7759,7 @@ mod tests {
             score: 0.0,
             longest_line_bytes: 1,
             initial_time: std::time::Duration::ZERO,
+            profile: RenderProfile::default(),
         };
 
         let image = render_result_image(&result, &glyphs).unwrap().to_rgb8();
@@ -7571,6 +7768,13 @@ mod tests {
         assert_eq!(image.get_pixel(1, 0).0, [1, 2, 3]);
         assert_eq!(image.get_pixel(0, 1).0, [1, 2, 3]);
         assert_eq!(image.get_pixel(1, 1).0, [240, 10, 20]);
+
+        let (width, height, rgba) = render_result_rgba(&result, &glyphs).unwrap();
+        assert_eq!((width, height), (2, 2));
+        assert_eq!(
+            rgba,
+            vec![240, 10, 20, 255, 1, 2, 3, 255, 1, 2, 3, 255, 240, 10, 20, 255,]
+        );
     }
 
     #[test]
@@ -7583,6 +7787,27 @@ mod tests {
             float_metrics: (1.0, 1.0),
         };
         assert!(render_result_image(&RenderResult::from(""), &glyphs).is_none());
+    }
+
+    #[test]
+    fn braille_render_populates_the_structured_grid() {
+        let glyphs = GlyphStore {
+            glyphs: Vec::new(),
+            groups: HashMap::new(),
+            selected: std::collections::HashSet::new(),
+            metrics: (2, 4),
+            float_metrics: (2.0, 4.0),
+        };
+        let image = PhotonImage::new(vec![255; 2 * 4 * 4], 2, 4);
+        let canvas = AnsiImage::new(image, glyphs, 32, false);
+        let cli = crate::args::Args::parse_from(["img2irc", "--braille", "--width", "1"]);
+        let args = crate::args_to_render_args(&cli);
+
+        let result = render_braille(&canvas, &canvas, &args, Render::Ansi);
+
+        assert_eq!(result.grid.len(), 1);
+        assert_eq!(result.grid[0].len(), 1);
+        assert!((0x2800..=0x28ff).contains(&(result.grid[0][0].char as u32)));
     }
 
     fn make_test_glyph(ch: char, bitmap: &[u8], gw: usize, gh: usize) -> FastGlyph {

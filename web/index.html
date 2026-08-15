@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>img2irc</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <form id="controls" class="editor" novalidate>
+      <header class="app-toolbar" aria-label="Application toolbar">
+        <div class="brand">img2irc</div>
+        <label class="file-button">
+          Open image
+          <input id="image" type="file" accept="image/*" />
+        </label>
+        <label class="toolbar-field">
+          <span>Output</span>
+          <select id="render">
+            <option value="irc" selected>IRC</option>
+            <option value="ansi">ANSI 256</option>
+            <option value="ansi24">ANSI 24-bit</option>
+          </select>
+        </label>
+        <label class="toolbar-toggle">
+          <input id="auto-render" type="checkbox" checked />
+          Render after changes
+        </label>
+        <button id="render-button" class="primary" type="submit">Render</button>
+        <p id="status" role="status" aria-live="polite">Loading WebAssembly…</p>
+      </header>
+
+      <main class="workspace">
+        <aside class="control-dock" aria-label="Render controls">
+          <section class="source-panel">
+            <img id="source-preview" alt="Selected source image" hidden />
+            <p id="source-placeholder">Open, paste, or drop an image to begin.</p>
+          </section>
+
+          <details class="control-panel" open>
+            <summary>General</summary>
+            <div class="control-grid">
+              <label>
+                Width in cells
+                <input id="width" type="number" min="1" max="300" value="80" placeholder="Auto" />
+              </label>
+              <label>
+                Height in cells
+                <input id="height" type="number" min="1" max="300" placeholder="Auto" />
+              </label>
+              <label class="wide-control">
+                Font
+                <select id="font">
+                  <option value="local:cascadia" selected>Cascadia Code (hosted)</option>
+                  <option value="local:iosevka-fixed">Iosevka Fixed (hosted)</option>
+                  <option value="local:iosevka-fixed-extended">Iosevka Fixed Extended (hosted)</option>
+                </select>
+                <small id="font-status">Loading Google Fonts list…</small>
+              </label>
+              <label>
+                Glyph raster size
+                <input id="font-size" type="number" min="6" max="256" step="1" value="16" />
+              </label>
+              <label>
+                Sampling filter
+                <select id="filter">
+                  <option value="nearest">Nearest</option>
+                  <option value="triangle">Triangle</option>
+                  <option value="catmull-rom">Catmull-Rom</option>
+                  <option value="gaussian">Gaussian</option>
+                  <option value="lanczos3" selected>Lanczos3</option>
+                </select>
+              </label>
+              <label>
+                Grayscale tolerance
+                <input id="grayscale-tolerance" type="number" min="0" max="255" value="32" />
+              </label>
+              <label>
+                Colour space
+                <select id="colour-space">
+                  <option value="hsl">HSL</option>
+                  <option value="hsv" selected>HSV</option>
+                  <option value="hsluv">HSLuv</option>
+                  <option value="lch">LCH</option>
+                </select>
+              </label>
+            </div>
+
+            <fieldset>
+              <legend>Smoothing</legend>
+              <label class="inline-control">
+                <input id="smooth" type="checkbox" />
+                Enable glyph smoothing
+              </label>
+              <div id="smoothing-options" class="control-grid conditional" hidden>
+                <label>
+                  Candidates
+                  <input id="smooth-candidates" type="number" min="1" max="256" value="12" />
+                </label>
+                <label>
+                  Scan patterns
+                  <input id="smooth-orders" type="number" min="1" max="5" value="1" />
+                </label>
+                <label class="inline-control">
+                  <input id="smooth-shapes" type="checkbox" />
+                  Refine shapes
+                </label>
+                <label class="inline-control">
+                  <input id="smooth-neighbors" type="checkbox" checked />
+                  Protect neighbors
+                </label>
+              </div>
+            </fieldset>
+          </details>
+
+          <details class="control-panel" open>
+            <summary>Image adjustments</summary>
+            <div class="range-grid">
+              <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Contrast <input id="contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Gamma <input id="gamma" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Saturation <input id="saturation" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Hue <input id="hue" type="range" min="0" max="360" value="0" /> <output>0</output></label>
+              <label>Rotation <input id="rotate" type="range" min="-180" max="180" value="0" /> <output>0°</output></label>
+              <label>Horizontal scale <input id="scale-x" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
+              <label>Vertical scale <input id="scale-y" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
+              <label>Pixelize <input id="pixelize" type="range" min="0" max="64" value="0" /> <output>0</output></label>
+              <label>Gaussian blur <input id="gaussian-blur" type="range" min="0" max="20" value="0" /> <output>0</output></label>
+              <label>Dither <input id="dither" type="range" min="0" max="8" value="0" /> <output>0</output></label>
+            </div>
+            <div class="toggle-grid">
+              <label><input id="flip-horizontal" type="checkbox" /> Flip horizontally</label>
+              <label><input id="flip-vertical" type="checkbox" /> Flip vertically</label>
+              <label><input id="invert" type="checkbox" /> Invert</label>
+              <label><input id="grayscale" type="checkbox" /> Grayscale</label>
+              <label><input id="box-blur" type="checkbox" /> Box blur</label>
+            </div>
+            <button id="reset-adjustments" type="button">Reset adjustments</button>
+          </details>
+
+          <details class="control-panel glyph-panel" open>
+            <summary>Glyphs</summary>
+            <label class="inline-control">
+              <input id="braille" type="checkbox" />
+              Use Braille output instead of glyph groups
+            </label>
+            <div id="glyph-controls">
+              <div class="button-row">
+                <button id="glyph-default" type="button">Default</button>
+                <button id="glyph-smooth" type="button">Smooth</button>
+                <button id="glyph-all" type="button">All</button>
+                <button id="glyph-none" type="button">None</button>
+              </div>
+              <label>
+                Find a group
+                <input id="glyph-search" type="search" placeholder="blocks, legacy, box…" />
+              </label>
+              <div id="glyph-groups" class="glyph-groups" aria-label="Glyph groups"></div>
+              <div class="control-grid">
+                <label>
+                  Include characters
+                  <input id="include" type="text" placeholder="@#%" />
+                </label>
+                <label>
+                  Exclude characters
+                  <input id="exclude" type="text" />
+                </label>
+                <label class="wide-control">
+                  Include Unicode ranges
+                  <textarea id="include-ranges" rows="2" placeholder="2600-26FF (one per line)"></textarea>
+                </label>
+                <label class="wide-control">
+                  Exclude Unicode ranges
+                  <textarea id="exclude-ranges" rows="2" placeholder="1F600-1F64F (one per line)"></textarea>
+                </label>
+              </div>
+            </div>
+          </details>
+        </aside>
+
+        <section class="document-area" aria-label="Output workspace">
+          <div class="document-toolbar">
+            <strong>Output preview</strong>
+            <span id="output-size"></span>
+            <div class="toolbar-spacer"></div>
+            <label class="preview-mode">
+              Display
+              <select id="preview-mode">
+                <option value="bitmap" selected>Bitmap</option>
+                <option value="text">Browser text</option>
+              </select>
+            </label>
+            <label class="output-font-size">
+              Output font size
+              <input id="output-font-size" type="number" min="6" max="64" step="1" value="16" />
+              <span>px</span>
+            </label>
+            <button id="copy-output" type="button" disabled>Copy encoded output</button>
+            <button id="download-output" type="button" disabled>Download</button>
+          </div>
+          <div class="canvas-viewport">
+            <canvas id="output-canvas" role="img" aria-label="Rendered terminal art"></canvas>
+            <div id="output-text" class="output-text" role="img" aria-label="Rendered terminal art as browser text" hidden></div>
+            <p id="output-placeholder">Rendered output will appear here.</p>
+          </div>
+          <details class="raw-output-panel">
+            <summary>Raw IRC/ANSI data</summary>
+            <textarea id="raw-output" rows="8" readonly></textarea>
+          </details>
+          <footer id="render-stats" class="render-stats" aria-label="Render statistics" aria-live="polite">
+            Render statistics will appear here.
+          </footer>
+        </section>
+      </main>
+    </form>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
