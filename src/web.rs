@@ -1,15 +1,25 @@
-use crate::args::{Args, ColourSpace, Param, Render, SamplingFilter};
+use crate::args::{Args, ColorSpec, ColourSpace, Param, Render, SamplingFilter, TextOverlay};
 use crate::{args_to_render_args, draw, font};
 use clap::Parser;
+use figlet_rs::FIGlet;
 use photon_rs::PhotonImage;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::{Cursor, Read};
+use unicode_width::UnicodeWidthChar;
 use wasm_bindgen::prelude::*;
 
 const DEFAULT_WIDTH: u32 = 80;
 const DEFAULT_FONT_SIZE: f32 = 16.0;
 const MAX_INPUT_PIXELS: u64 = 64 * 1024 * 1024;
 const GLYPH_CACHE_CAPACITY: usize = 2;
+const MAX_FIGLET_FONTS: usize = 128;
+const MAX_FIGLET_FONT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_FIGLET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+const MAX_FIGLET_REQUESTS: usize = 1024;
+const PREFERRED_OCR_FIGLET_FONTS: &[&str] = &["phm-minecraft", "phm-largetype", "phm-lcdmatrix"];
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
@@ -59,6 +69,43 @@ export interface Img2IrcRenderOptions {
     smoothShapes?: boolean;
     smoothNeighbors?: boolean;
     includeCells?: boolean;
+    includePreview?: boolean;
+    overlays?: Img2IrcTextOverlay[];
+}
+
+export interface Img2IrcTextOverlay {
+    text: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    foreground?: [number, number, number];
+    background?: [number, number, number];
+    wrap?: boolean;
+    autoGrow?: boolean;
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+}
+
+export interface Img2IrcFigletFont {
+    name: string;
+    height: number;
+    data: Uint8Array;
+}
+
+export interface Img2IrcFigletRequest {
+    text: string;
+    maxWidth: number;
+    maxHeight: number;
+    useFiglet?: boolean;
+}
+
+export interface Img2IrcFigletArt {
+    source: string;
+    text: string;
+    width: number;
+    height: number;
 }
 
 export interface Img2IrcCell {
@@ -93,6 +140,7 @@ export interface Img2IrcRenderResult {
 
 export interface Img2IrcRenderTimings {
     canvasCacheHit: boolean;
+    resultCacheHit: boolean;
     prepareCanvasMs: number;
     glyphMatchMs: number;
     smoothingPrepareMs: number;
@@ -100,6 +148,7 @@ export interface Img2IrcRenderTimings {
     shapeRefineMs: number;
     finalScoreMs: number;
     encodeMs: number;
+    overlayMs: number;
     previewMs: number;
     contourCacheHits: number;
     contourCacheMisses: number;
@@ -108,6 +157,8 @@ export interface Img2IrcRenderTimings {
 export interface Img2Irc {
     setFont(fontData: Uint8Array): void;
     setImage(imageData: Uint8Array): void;
+    setFigletFonts(fonts: Img2IrcFigletFont[]): void;
+    renderFiglet(requests: Img2IrcFigletRequest[]): (Img2IrcFigletArt | undefined)[];
     clearCache(): void;
     renderCurrent(options: Img2IrcRenderOptions): Img2IrcRenderResult;
     render(imageData: Uint8Array, options: Img2IrcRenderOptions): Img2IrcRenderResult;
@@ -216,6 +267,113 @@ struct WebOptions {
     smooth_shapes: bool,
     smooth_neighbors: bool,
     include_cells: bool,
+    include_preview: bool,
+    overlays: Vec<WebTextOverlay>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct WebTextOverlay {
+    text: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    foreground: Option<[u8; 3]>,
+    background: Option<[u8; 3]>,
+    wrap: bool,
+    auto_grow: bool,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebFigletFontInput {
+    name: String,
+    height: u32,
+    data: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct WebFigletFont {
+    name: String,
+    height: u32,
+    priority: usize,
+    font: FIGlet,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct WebFigletRequest {
+    text: String,
+    max_width: usize,
+    max_height: usize,
+    use_figlet: bool,
+}
+
+impl Default for WebFigletRequest {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            max_width: 1,
+            max_height: 1,
+            use_figlet: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebFigletArt {
+    source: String,
+    text: String,
+    width: usize,
+    height: usize,
+    #[serde(skip)]
+    priority: usize,
+}
+
+impl WebFigletArt {
+    fn fill_key(&self) -> (usize, usize, usize, Reverse<usize>) {
+        (
+            self.width * self.height,
+            self.height,
+            self.width,
+            Reverse(self.priority),
+        )
+    }
+}
+
+impl WebTextOverlay {
+    fn into_render_overlay(self) -> TextOverlay {
+        let (width, height) = if self.auto_grow {
+            let mut width = 0usize;
+            let mut height = 0usize;
+            for line in self.text.split('\n') {
+                width = width.max(line.trim_end_matches('\r').chars().count());
+                height += 1;
+            }
+            (width.max(1) as i32, height.max(1) as i32)
+        } else {
+            (self.width.max(0), self.height.max(0))
+        };
+        TextOverlay {
+            text: self.text,
+            x: self.x,
+            y: self.y,
+            w: width,
+            h: height,
+            fg: self.foreground.map(ColorSpec::Rgb),
+            bg: self.background.map(ColorSpec::Rgb),
+            wrap: self.wrap,
+            auto_grow: self.auto_grow,
+            bold: self.bold,
+            italic: self.italic,
+            underline: self.underline,
+        }
+    }
 }
 
 impl Default for WebOptions {
@@ -257,6 +415,8 @@ impl Default for WebOptions {
             smooth_shapes: false,
             smooth_neighbors: true,
             include_cells: false,
+            include_preview: true,
+            overlays: Vec::new(),
         }
     }
 }
@@ -286,6 +446,18 @@ impl WebOptions {
             return Err(js_error(
                 "glyphs must be supplied from a runtime catalog or explicit includes",
             ));
+        }
+        if self.overlays.len() > 1024 {
+            return Err(js_error("at most 1024 text overlays may be rendered"));
+        }
+        if self.overlays.iter().any(|overlay| {
+            overlay.text.chars().count() > 65_536
+                || overlay.width < 0
+                || overlay.height < 0
+                || overlay.width > 16_384
+                || overlay.height > 16_384
+        }) {
+            return Err(js_error("a text overlay has invalid text or dimensions"));
         }
         Ok(())
     }
@@ -327,6 +499,18 @@ impl WebOptions {
         self.pixelize.hash(&mut hasher);
         self.box_blur.hash(&mut hasher);
         self.gaussian_blur.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn result_cache_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.canvas_cache_key().hash(&mut hasher);
+        (self.render as u8).hash(&mut hasher);
+        self.smooth.hash(&mut hasher);
+        self.smooth_candidates.hash(&mut hasher);
+        self.smooth_orders.hash(&mut hasher);
+        self.smooth_shapes.hash(&mut hasher);
+        self.smooth_neighbors.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -383,6 +567,7 @@ struct WebRenderResult {
 #[serde(rename_all = "camelCase")]
 struct WebRenderTimings {
     canvas_cache_hit: bool,
+    result_cache_hit: bool,
     prepare_canvas_ms: f64,
     glyph_match_ms: f64,
     smoothing_prepare_ms: f64,
@@ -390,6 +575,7 @@ struct WebRenderTimings {
     shape_refine_ms: f64,
     final_score_ms: f64,
     encode_ms: f64,
+    overlay_ms: f64,
     preview_ms: f64,
     contour_cache_hits: u64,
     contour_cache_misses: u64,
@@ -412,6 +598,152 @@ struct CanvasCache {
     luma_canvas: Option<draw::AnsiImage>,
 }
 
+struct ResultCache {
+    key: u64,
+    result: draw::RenderResult,
+}
+
+fn normalize_figlet_art(source: String, priority: usize, rendered: &str) -> Option<WebFigletArt> {
+    let rows = rendered
+        .lines()
+        .map(|line| line.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if rows.is_empty()
+        || rows.iter().flatten().any(|character| {
+            character.is_control()
+                || *character == '\u{1b}'
+                || matches!(UnicodeWidthChar::width(*character), Some(width) if width != 1)
+        })
+    {
+        return None;
+    }
+
+    let mut min_x = usize::MAX;
+    let mut max_x = 0usize;
+    let mut min_y = usize::MAX;
+    let mut max_y = 0usize;
+    for (y, row) in rows.iter().enumerate() {
+        for (x, character) in row.iter().enumerate() {
+            if !character.is_whitespace() {
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+                min_y = min_y.min(y);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if min_x == usize::MAX || min_y == usize::MAX {
+        return None;
+    }
+
+    let lines = rows[min_y..=max_y]
+        .iter()
+        .map(|row| {
+            (min_x..=max_x)
+                .map(|x| row.get(x).copied().unwrap_or(' '))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    Some(WebFigletArt {
+        source,
+        text: lines.join("\n"),
+        width: max_x - min_x + 1,
+        height: max_y - min_y + 1,
+        priority,
+    })
+}
+
+fn plain_figlet_art(text: &str, max_width: usize, max_height: usize) -> Option<WebFigletArt> {
+    let text = text.trim();
+    let width = text.chars().count();
+    if text.is_empty() || width > max_width || max_height == 0 {
+        return None;
+    }
+    Some(WebFigletArt {
+        source: "plain".to_string(),
+        text: text.to_string(),
+        width,
+        height: 1,
+        priority: usize::MAX,
+    })
+}
+
+fn render_figlet_font(font: &WebFigletFont, text: &str) -> Option<WebFigletArt> {
+    let figure = font.font.convert(text)?;
+    if figure.characters.len() != text.chars().count() {
+        return None;
+    }
+    normalize_figlet_art(font.name.clone(), font.priority, &figure.as_str())
+}
+
+fn decode_figlet_font(data: &[u8]) -> Result<String, String> {
+    if data.starts_with(b"PK\x03\x04") {
+        let mut archive =
+            zip::ZipArchive::new(Cursor::new(data)).map_err(|error| error.to_string())?;
+        if archive.is_empty() {
+            return Err("ZIP archive is empty".to_string());
+        }
+        let mut file = archive.by_index(0).map_err(|error| error.to_string())?;
+        if file.size() > MAX_FIGLET_FONT_BYTES as u64 {
+            return Err("decompressed FIGlet font exceeds the browser limit".to_string());
+        }
+        let mut contents = String::new();
+        (&mut file)
+            .take(MAX_FIGLET_FONT_BYTES as u64 + 1)
+            .read_to_string(&mut contents)
+            .map_err(|error| error.to_string())?;
+        if contents.len() > MAX_FIGLET_FONT_BYTES {
+            return Err("decompressed FIGlet font exceeds the browser limit".to_string());
+        }
+        Ok(contents)
+    } else {
+        String::from_utf8(data.to_vec()).map_err(|error| error.to_string())
+    }
+}
+
+fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Option<WebFigletArt> {
+    let text = request.text.trim();
+    if text.is_empty() || request.max_width == 0 || request.max_height == 0 {
+        return None;
+    }
+    if request.use_figlet {
+        let mut heights = fonts
+            .iter()
+            .map(|font| font.height)
+            .filter(|height| *height > 0 && *height as usize <= request.max_height)
+            .collect::<Vec<_>>();
+        heights.sort_unstable_by(|left, right| right.cmp(left));
+        heights.dedup();
+
+        for height in heights {
+            let fitting = fonts
+                .iter()
+                .filter(|font| font.height == height)
+                .filter_map(|font| render_figlet_font(font, text))
+                .filter(|art| art.width <= request.max_width && art.height <= request.max_height)
+                .collect::<Vec<_>>();
+            let has_preferred = fitting.iter().any(|art| {
+                PREFERRED_OCR_FIGLET_FONTS
+                    .iter()
+                    .any(|preferred| *preferred == art.source)
+            });
+            if let Some(selected) = fitting
+                .into_iter()
+                .filter(|art| {
+                    !has_preferred
+                        || PREFERRED_OCR_FIGLET_FONTS
+                            .iter()
+                            .any(|preferred| *preferred == art.source)
+                })
+                .max_by_key(WebFigletArt::fill_key)
+            {
+                return Some(selected);
+            }
+        }
+    }
+    plain_figlet_art(text, request.max_width, request.max_height)
+}
+
 /// A reusable img2irc renderer for browser applications.
 ///
 /// Construct it with a monospace OpenType/TrueType font as a `Uint8Array`, then
@@ -421,6 +753,8 @@ pub struct WebRenderer {
     font_data: Vec<u8>,
     glyph_caches: Vec<GlyphCache>,
     canvas_cache: Option<CanvasCache>,
+    result_cache: Option<ResultCache>,
+    figlet_fonts: Vec<WebFigletFont>,
     source_image: Option<PhotonImage>,
     cli: Args,
 }
@@ -440,6 +774,8 @@ impl WebRenderer {
             font_data: font_data.to_vec(),
             glyph_caches: Vec::with_capacity(GLYPH_CACHE_CAPACITY),
             canvas_cache: None,
+            result_cache: None,
+            figlet_fonts: Vec::new(),
             source_image: None,
             // Parsing Clap defaults is relatively expensive in WASM. Do it
             // once per font-backed renderer instead of once per image render.
@@ -454,6 +790,7 @@ impl WebRenderer {
     pub fn set_image(&mut self, image_data: &[u8]) -> Result<(), JsValue> {
         self.source_image = Some(decode_image(image_data)?);
         self.canvas_cache = None;
+        self.result_cache = None;
         Ok(())
     }
 
@@ -469,7 +806,100 @@ impl WebRenderer {
         self.font_data.extend_from_slice(font_data);
         self.glyph_caches.clear();
         self.canvas_cache = None;
+        self.result_cache = None;
         Ok(())
+    }
+
+    /// Parse and cache externally hosted FIGlet fonts. Font data remains a
+    /// deployment asset and is supplied by JavaScript instead of being
+    /// embedded in the WebAssembly module.
+    #[wasm_bindgen(js_name = setFigletFonts)]
+    pub fn set_figlet_fonts(&mut self, fonts: JsValue) -> Result<(), JsValue> {
+        let inputs: Vec<WebFigletFontInput> = serde_wasm_bindgen::from_value(fonts)
+            .map_err(|error| js_error(format!("invalid FIGlet font list: {error}")))?;
+        if inputs.len() > MAX_FIGLET_FONTS {
+            return Err(js_error(format!(
+                "at most {MAX_FIGLET_FONTS} FIGlet fonts may be loaded"
+            )));
+        }
+        let total_bytes = inputs.iter().map(|font| font.data.len()).sum::<usize>();
+        if total_bytes > MAX_FIGLET_TOTAL_BYTES
+            || inputs
+                .iter()
+                .any(|font| font.data.len() > MAX_FIGLET_FONT_BYTES)
+        {
+            return Err(js_error("FIGlet font data exceeds the browser limit"));
+        }
+
+        let mut names = HashSet::new();
+        let mut parsed = Vec::with_capacity(inputs.len());
+        let mut decoded_bytes = 0usize;
+        for (priority, input) in inputs.into_iter().enumerate() {
+            let name = input.name.trim();
+            if name.is_empty() || name.len() > 256 || name.eq_ignore_ascii_case("plain") {
+                return Err(js_error("a FIGlet font has an invalid or reserved name"));
+            }
+            if input.height == 0 || input.height > 64 {
+                return Err(js_error(format!(
+                    "FIGlet font {name:?} has an invalid configured height"
+                )));
+            }
+            if !names.insert(name.to_lowercase()) {
+                return Err(js_error(format!("duplicate FIGlet font {name:?}")));
+            }
+            let contents = decode_figlet_font(&input.data).map_err(|error| {
+                js_error(format!("could not decode FIGlet font {name:?}: {error}"))
+            })?;
+            decoded_bytes = decoded_bytes.saturating_add(contents.len());
+            if decoded_bytes > MAX_FIGLET_TOTAL_BYTES {
+                return Err(js_error(
+                    "decompressed FIGlet font data exceeds the browser limit",
+                ));
+            }
+            let font = FIGlet::from_content(&contents).map_err(|error| {
+                js_error(format!("could not parse FIGlet font {name:?}: {error}"))
+            })?;
+            if font.header_line.height as u32 != input.height {
+                return Err(js_error(format!(
+                    "FIGlet font {name:?} declares {} rows, but the manifest says {}",
+                    font.header_line.height, input.height
+                )));
+            }
+            parsed.push(WebFigletFont {
+                name: name.to_string(),
+                height: input.height,
+                priority,
+                font,
+            });
+        }
+        self.figlet_fonts = parsed;
+        Ok(())
+    }
+
+    /// Render a batch of text labels into the best fitting hosted FIGlet font,
+    /// falling back to ordinary one-row text when no configured font fits.
+    #[wasm_bindgen(js_name = renderFiglet)]
+    pub fn render_figlet(&self, requests: JsValue) -> Result<JsValue, JsValue> {
+        let requests: Vec<WebFigletRequest> = serde_wasm_bindgen::from_value(requests)
+            .map_err(|error| js_error(format!("invalid FIGlet requests: {error}")))?;
+        if requests.len() > MAX_FIGLET_REQUESTS {
+            return Err(js_error(format!(
+                "at most {MAX_FIGLET_REQUESTS} FIGlet labels may be rendered"
+            )));
+        }
+        if requests.iter().any(|request| {
+            request.text.chars().count() > 4096
+                || request.max_width > 16_384
+                || request.max_height > 16_384
+        }) {
+            return Err(js_error("a FIGlet request exceeds the browser limit"));
+        }
+        let rendered = requests
+            .iter()
+            .map(|request| select_figlet_art(&self.figlet_fonts, request))
+            .collect::<Vec<_>>();
+        serde_wasm_bindgen::to_value(&rendered)
+            .map_err(|error| js_error(format!("could not serialize FIGlet output: {error}")))
     }
 
     /// Render the image most recently supplied to `setImage`.
@@ -491,6 +921,7 @@ impl WebRenderer {
     pub fn clear_cache(&mut self) {
         self.glyph_caches.clear();
         self.canvas_cache = None;
+        self.result_cache = None;
         crate::contour_score::clear_cache();
     }
 }
@@ -555,6 +986,12 @@ impl WebRenderer {
         args.ocr = false;
         args.save = None;
         args.fft_debug_dir = None;
+        args.overlays = options
+            .overlays
+            .clone()
+            .into_iter()
+            .map(WebTextOverlay::into_render_overlay)
+            .collect();
 
         let key = options.glyph_cache_key();
         if let Some(position) = self.glyph_caches.iter().position(|cache| cache.key == key) {
@@ -613,16 +1050,50 @@ impl WebRenderer {
             .as_ref()
             .expect("canvas cache initialized");
         let prepare_canvas_time = prepare_started.elapsed();
-        let mut result = crate::render_from_canvas(
-            &args,
-            &canvas_cache.canvas,
-            canvas_cache.luma_canvas.as_ref(),
-            &cache.fast_glyphs,
-            None,
+        let result_key = options.result_cache_key();
+        let result_cache_hit =
+            self.result_cache.as_ref().map(|cache| cache.key) == Some(result_key);
+        let mut base_result = if result_cache_hit {
+            self.result_cache
+                .as_ref()
+                .expect("result cache key checked")
+                .result
+                .clone()
+        } else {
+            let mut base_args = args.clone();
+            base_args.overlays.clear();
+            let mut rendered = crate::render_from_canvas(
+                &base_args,
+                &canvas_cache.canvas,
+                canvas_cache.luma_canvas.as_ref(),
+                &cache.fast_glyphs,
+                None,
+            );
+            rendered.profile.prepare_canvas = prepare_canvas_time;
+            self.result_cache = Some(ResultCache {
+                key: result_key,
+                result: rendered.clone(),
+            });
+            rendered
+        };
+        if result_cache_hit {
+            base_result.profile = draw::RenderProfile::default();
+            base_result.profile.prepare_canvas = prepare_canvas_time;
+        }
+        let overlay_started = draw::RenderInstant::now();
+        let result = draw::apply_overlays_to_result(
+            &base_result,
+            &args.overlays,
+            args.render,
+            false,
+            args.grayscale_tolerance,
         );
-        result.profile.prepare_canvas = prepare_canvas_time;
+        let overlay_time = overlay_started.elapsed();
         let preview_started = draw::RenderInstant::now();
-        let preview = draw::render_result_rgba_indexed(&result, &cache.store, &cache.bitmap_index);
+        let preview = options
+            .include_preview
+            .then(|| draw::render_result_rgba_indexed(&result, &cache.store, &cache.bitmap_index))
+            .flatten();
         let preview_time = preview_started.elapsed();
         let (preview_width, preview_height) = preview
             .as_ref()
@@ -638,6 +1109,7 @@ impl WebRenderer {
         });
         let timings = WebRenderTimings {
             canvas_cache_hit,
+            result_cache_hit,
             prepare_canvas_ms: duration_ms(result.profile.prepare_canvas),
             glyph_match_ms: duration_ms(result.profile.glyph_match),
             smoothing_prepare_ms: duration_ms(result.profile.smoothing_prepare),
@@ -645,6 +1117,7 @@ impl WebRenderer {
             shape_refine_ms: duration_ms(result.profile.shape_refine),
             final_score_ms: duration_ms(result.profile.final_score),
             encode_ms: duration_ms(result.profile.encode),
+            overlay_ms: duration_ms(overlay_time),
             preview_ms: duration_ms(preview_time),
             contour_cache_hits: result.profile.contour_cache_hits,
             contour_cache_misses: result.profile.contour_cache_misses,

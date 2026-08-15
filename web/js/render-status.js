@@ -44,12 +44,13 @@ export class RenderStatus {
     if (timings) {
       items.push(
         stat("Prepare", timings.canvasCacheHit ? "cached" : `${timings.prepareCanvasMs.toFixed(1)} ms`),
-        stat("Match", `${timings.glyphMatchMs.toFixed(1)} ms`),
+        stat("Match", timings.resultCacheHit ? "cached" : `${timings.glyphMatchMs.toFixed(1)} ms`),
         stat("Smooth prep", `${timings.smoothingPrepareMs.toFixed(1)} ms`),
         stat("Smooth", `${timings.smoothingSearchMs.toFixed(1)} ms`),
         stat("Shapes", `${timings.shapeRefineMs.toFixed(1)} ms`),
         stat("Score", `${timings.finalScoreMs.toFixed(1)} ms`),
         stat("Encode", `${timings.encodeMs.toFixed(1)} ms`),
+        stat("Text", `${timings.overlayMs.toFixed(1)} ms`),
         stat("Preview", `${timings.previewMs.toFixed(1)} ms`),
         stat("UI/transfer", `${Math.max(0, elapsedMs - (result.workerRenderMs ?? elapsedMs)).toFixed(1)} ms`),
         stat(

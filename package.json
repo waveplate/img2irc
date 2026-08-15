@@ -4,6 +4,10 @@
     "build:wasm": "bash scripts/build-wasm.sh"
   },
   "dependencies": {
-    "@google/gemini-cli": "^0.42.0"
+    "@google/gemini-cli": "^0.42.0",
+    "@paddleocr/paddleocr-js": "0.4.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

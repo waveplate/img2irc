@@ -4,15 +4,23 @@ export class EditorState {
   result = undefined;
   fontKey = "local:cascadia";
   outputFontSize = 16;
+  sourceBlob = undefined;
+  sourceRevision = 0;
 
-  // This is deliberately part of the document state now. The text tool can
-  // add selection/drag behavior without moving overlay ownership into the DOM.
-  overlays = [];
+  manualOverlays = [];
+  ocrOverlays = [];
 
-  setSource(objectUrl) {
+  get overlays() {
+    return [...this.ocrOverlays, ...this.manualOverlays];
+  }
+
+  setSource(objectUrl, blob) {
     if (this.sourceObjectUrl) URL.revokeObjectURL(this.sourceObjectUrl);
     this.hasImage = true;
     this.sourceObjectUrl = objectUrl;
+    this.sourceBlob = blob;
+    this.sourceRevision += 1;
     this.result = undefined;
+    this.ocrOverlays = [];
   }
 }

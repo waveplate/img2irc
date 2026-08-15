@@ -7,6 +7,9 @@ import { collectRenderOptions, resetAdjustments, updateRangeOutput } from "./ren
 import { RendererClient } from "./renderer-client.js";
 import { RenderStatus } from "./render-status.js";
 import { OutputPreview } from "./output-preview.js";
+import { FigletService } from "./figlet-service.js";
+import { OcrService, ocrItemsToOverlays } from "./ocr-service.js";
+import { TextControls } from "./text-controls.js";
 
 const CASCADIA_URL = new URL("../assets/fonts/CascadiaCode-Regular.ttf", import.meta.url);
 const IOSEVKA_FIXED_URL = new URL("../assets/fonts/IosevkaFixed-Regular.ttf", import.meta.url);
@@ -14,11 +17,13 @@ const IOSEVKA_FIXED_EXTENDED_URL = new URL(
   "../assets/fonts/IosevkaFixed-Extended.ttf",
   import.meta.url,
 );
+const UNIFONT_URL = new URL("../assets/fonts/unifont-17.0.05.otf", import.meta.url);
 const GLYPH_CATALOG_URL = new URL("../glyphs.json", import.meta.url);
 const HOSTED_FONTS = new Map([
   ["local:cascadia", CASCADIA_URL],
   ["local:iosevka-fixed", IOSEVKA_FIXED_URL],
   ["local:iosevka-fixed-extended", IOSEVKA_FIXED_EXTENDED_URL],
+  ["local:unifont", UNIFONT_URL],
 ]);
 
 export class EditorApp {
@@ -33,7 +38,11 @@ export class EditorApp {
     document.querySelector("#output-placeholder"),
   );
   #renderer = new RendererClient();
+  #ocr = new OcrService();
+  #figlet = new FigletService(this.#renderer);
+  #textControls = new TextControls(this.#form, this.#state, () => this.#markRenderDirty());
   #rendererFontKey;
+  #rendererSourceKey;
   #fontLoadRevision = 0;
   #fontLoadKey;
   #fontLoadPromise;
@@ -42,12 +51,16 @@ export class EditorApp {
   #renderInFlight = false;
   #renderQueued = false;
   #renderTimer;
+  #ocrRefreshRevision = 0;
+  #ocrOverlayKey;
 
   async start() {
     initializeControlHelp(this.#form);
     const glyphGroups = await this.#glyphs.load();
     populateGlyphGroups(this.#element("glyph-groups"), glyphGroups);
+    this.#textControls.start();
     this.#bindEvents();
+    this.#selectControlTab("general");
     this.#updateOutputFontSize();
     await Promise.all([
       this.#fonts.populateGoogleFonts(this.#element("font"), this.#element("font-status")),
@@ -113,6 +126,49 @@ export class EditorApp {
     this.#renderTimer = setTimeout(() => this.render(), 350);
   }
 
+  #selectControlTab(tab) {
+    this.#form.querySelectorAll("[data-control-tab]").forEach((button) => {
+      button.setAttribute("aria-selected", String(button.dataset.controlTab === tab));
+    });
+    this.#form.querySelectorAll("[data-control-tab-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.controlTabPanel !== tab;
+    });
+  }
+
+  #ocrSettings() {
+    return {
+      minConfidence: Number(this.#element("ocr-confidence").value),
+      minAsciiRatio: Number(this.#element("ocr-ascii-ratio").value),
+      maxSideLength: Number(this.#element("ocr-max-side").value),
+      maxTextHeightRatio: Number(this.#element("ocr-max-height-ratio").value),
+      boxScoreThreshold: Number(this.#element("ocr-box-score").value),
+      boxThreshold: Number(this.#element("ocr-box-threshold").value),
+      unclipRatio: Number(this.#element("ocr-unclip-ratio").value),
+      refreshRevision: this.#ocrRefreshRevision,
+    };
+  }
+
+  #ocrFigletSettings() {
+    return {
+      enabled: this.#element("ocr-figlet").checked,
+      minHeight: Number(this.#element("ocr-figlet-min-height").value),
+      minHeightRatio: Number(this.#element("ocr-figlet-min-height-ratio").value),
+    };
+  }
+
+  #setOcrStatus(message, isError = false) {
+    const status = this.#element("ocr-status");
+    status.textContent = message;
+    status.dataset.error = String(isError);
+  }
+
+  async #ensureRendererSource(bytes, key) {
+    if (this.#rendererSourceKey === key) return;
+    const buffer = bytes instanceof Blob ? await bytes.arrayBuffer() : bytes.slice(0);
+    await this.#renderer.setImage(buffer);
+    this.#rendererSourceKey = key;
+  }
+
   #markRenderDirty() {
     this.#documentRevision += 1;
     this.#scheduleRender();
@@ -149,7 +205,11 @@ export class EditorApp {
       }
       return;
     }
-    this.#state.setSource(URL.createObjectURL(blob));
+    this.#state.setSource(URL.createObjectURL(blob), blob);
+    this.#rendererSourceKey = `original:${this.#state.sourceRevision}`;
+    this.#ocrOverlayKey = undefined;
+    this.#textControls.clearOcrOverlays();
+    this.#setOcrStatus("OCR loads only when enabled.");
     const sourcePreview = this.#element("source-preview");
     sourcePreview.src = this.#state.sourceObjectUrl;
     sourcePreview.alt = `Selected source: ${label}`;
@@ -173,12 +233,87 @@ export class EditorApp {
     const renderRevision = this.#documentRevision;
     this.#renderInFlight = true;
     try {
-      const options = collectRenderOptions(this.#form, this.#glyphs, this.#state.overlays);
+      const ocrEnabled = this.#element("ocr-enabled").checked;
+      let preparedOcr;
+      if (ocrEnabled) {
+        this.#setStatus("Preparing OCR…", false, true);
+        preparedOcr = await this.#ocr.prepare(
+          this.#state.sourceBlob,
+          this.#ocrSettings(),
+          (message) => {
+            this.#setStatus(message, false, true);
+            this.#setOcrStatus(message);
+          },
+        );
+        if (renderRevision !== this.#documentRevision) return;
+        const sourceKey = `ocr:${this.#state.sourceRevision}:${preparedOcr.key}`;
+        if (preparedOcr.processedBytes) {
+          await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
+        } else {
+          await this.#ensureRendererSource(
+            this.#state.sourceBlob,
+            `original:${this.#state.sourceRevision}`,
+          );
+        }
+      } else {
+        this.#textControls.clearOcrOverlays();
+        await this.#ensureRendererSource(
+          this.#state.sourceBlob,
+          `original:${this.#state.sourceRevision}`,
+        );
+      }
+      const options = collectRenderOptions(
+        this.#form,
+        this.#glyphs,
+        ocrEnabled ? this.#state.manualOverlays : this.#state.overlays,
+      );
       if (!await this.#ensureRenderer()) return;
       if (renderRevision !== this.#documentRevision) return;
       this.#setStatus("Rendering output…", false, true);
       const started = performance.now();
-      const { result, renderMs } = await this.#renderer.render(options);
+      const firstOptions = preparedOcr
+        ? { ...options, includePreview: false, includeCells: false }
+        : options;
+      let { result, renderMs } = await this.#renderer.render(firstOptions);
+      if (preparedOcr) {
+        const figletSettings = this.#ocrFigletSettings();
+        const overlayKey = JSON.stringify([
+          this.#state.sourceRevision,
+          preparedOcr.key,
+          result.columns,
+          result.rows,
+          figletSettings,
+        ]);
+        let figletResult;
+        if (this.#ocrOverlayKey !== overlayKey) {
+          const mapped = await ocrItemsToOverlays(
+            preparedOcr,
+            result.columns,
+            result.rows,
+            figletSettings,
+            (requests) => this.#figlet.render(requests, (message) => {
+              this.#setStatus(message, false, true);
+              this.#setOcrStatus(message);
+            }),
+          );
+          this.#textControls.setOcrOverlays(mapped.overlays);
+          this.#ocrOverlayKey = overlayKey;
+          figletResult = mapped.figlet;
+        }
+        const overlaid = await this.#renderer.render({ ...options, overlays: this.#state.overlays });
+        result = overlaid.result;
+        renderMs += overlaid.renderMs;
+        const cacheNote = preparedOcr.cacheHit ? " · cached" : "";
+        const figletCount = this.#state.ocrOverlays
+          .filter((overlay) => overlay.figletFont && overlay.figletFont !== "plain").length;
+        const figletNote = figletCount ? ` · ${figletCount} FIGlet` : "";
+        const unavailableNote = figletResult?.failed.length
+          ? ` · ${figletResult.failed.length} FIGlet fonts unavailable`
+          : "";
+        this.#setOcrStatus(
+          `${this.#state.ocrOverlays.length}/${preparedOcr.result.items.length} regions rendered · ${Math.round(preparedOcr.elapsedMs)} ms${cacheNote}${figletNote}${unavailableNote}`,
+        );
+      }
       if (renderRevision !== this.#documentRevision) {
         if (!this.#element("auto-render").checked
           && this.#element("status").textContent === "Rendering output…") {
@@ -204,6 +339,9 @@ export class EditorApp {
       status.dataset.totalMs = elapsed.toFixed(1);
     } catch (error) {
       if (renderRevision === this.#documentRevision) {
+        if (this.#element("ocr-enabled").checked) {
+          this.#setOcrStatus(`OCR failed: ${error}`, true);
+        }
         this.#setStatus(`Render failed: ${error}`, true);
       }
     } finally {
@@ -238,6 +376,15 @@ export class EditorApp {
         else clearTimeout(this.#renderTimer);
         return;
       }
+      if (event.target.id === "ocr-enabled") {
+        const enabled = event.target.checked;
+        this.#element("ocr-options").hidden = !enabled;
+        if (!enabled) {
+          this.#textControls.clearOcrOverlays();
+          this.#ocrOverlayKey = undefined;
+          this.#setOcrStatus("OCR loads only when enabled.");
+        }
+      }
       if (["font", "image", "glyph-search"].includes(event.target.id)) return;
       this.#markRenderDirty();
     });
@@ -246,6 +393,16 @@ export class EditorApp {
       const file = this.#element("image").files[0];
       if (!file) return;
       await this.#loadSourceImage(file, file.name);
+    });
+    this.#form.querySelectorAll("[data-control-tab]").forEach((button) => {
+      button.addEventListener("click", () => this.#selectControlTab(button.dataset.controlTab));
+    });
+    this.#element("ocr-refresh").addEventListener("click", () => {
+      this.#ocrRefreshRevision += 1;
+      this.#ocrOverlayKey = undefined;
+      this.#figlet.reload();
+      this.#markRenderDirty();
+      if (!this.#element("auto-render").checked && this.#state.hasImage) void this.render();
     });
     window.addEventListener("paste", (event) => {
       const imageItem = [...(event.clipboardData?.items ?? [])]
@@ -332,7 +489,10 @@ export class EditorApp {
     });
     this.#element("copy-output").addEventListener("click", () => this.#copyOutput());
     this.#element("download-output").addEventListener("click", () => this.#downloadOutput());
-    window.addEventListener("beforeunload", () => this.#renderer.terminate(), { once: true });
+    window.addEventListener("beforeunload", () => {
+      this.#renderer.terminate();
+      void this.#ocr.dispose();
+    }, { once: true });
   }
 
   async #copyOutput() {

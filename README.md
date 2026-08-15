@@ -48,28 +48,34 @@ To enable OCR explicitly in a feature-selected build, use
 
 ## WebAssembly / JavaScript
 
-The browser build accepts image and monospace-font bytes directly, so it does
-not depend on a browser filesystem or installed system fonts. OCR is not part of
-the WebAssembly build.
+The browser build accepts image and font bytes directly, so it does not depend
+on a browser filesystem or installed system fonts. Native OCR is not linked
+into the WebAssembly binary; the web editor provides optional browser OCR as a
+separate, lazily loaded PaddleOCR.js worker.
 
 Install the wasm target and the binding generator, then build the package:
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.127
+npm install
 npm run build:web
 ```
 
 This generates a complete web root in `dist/`, including `index.html`, the
 JavaScript/WASM package, the runtime `glyphs.json` catalog, hosted Cascadia Code,
-and Iosevka Fixed/Extended. Copy the contents of `dist/` directly to a static
-web server. To test it locally, run
+Iosevka Fixed/Extended, GNU Unifont, and local browser-OCR runtime/model assets.
+Copy the contents of `dist/` directly to a static web server. To test it locally, run
 `python3 -m http.server --directory dist 8080`, then open
 <http://localhost:8080/>.
 
 The browser interface includes the usable General controls, common image
 adjustments, selectable glyph groups and custom include/exclude characters or
-Unicode ranges. Images can be opened, pasted from the clipboard, or dropped
+Unicode ranges. Its Text tab provides editable text overlays and optional
+PP-OCRv6 detection with confidence, ASCII-ratio, input-size, height, and box
+controls. Large detected labels can use externally hosted FIGlet fonts listed
+in `figlet-fonts.json`; missing fonts fall back to ordinary one-row text.
+Images can be opened, pasted from the clipboard, or dropped
 anywhere on the page, and the encoded IRC/ANSI output can be copied or downloaded.
 Rendering runs in a Web Worker, so smoothing and large outputs do not block the
 interface; rapid changes are coalesced into one follow-up render using the
@@ -79,8 +85,9 @@ matcher and applies terminal foreground/background styles; bitmap mode remains
 the reference when browser font rasterization differs from a terminal.
 Additional monospace families are discovered through the same Google Fonts
 metadata source as `spotifm/player`; their TrueType bytes are fetched from
-Google when selected and passed directly to the WebAssembly renderer.
-The browser editor's module boundaries and planned text-overlay integration are
+Google when selected and passed directly to the WebAssembly renderer. GNU
+Unifont 17.0.05 and both Iosevka variants are hosted with the deployed site.
+The browser editor's module boundaries and OCR/text-overlay integration are
 documented in `web/README.md`.
 
 ```js

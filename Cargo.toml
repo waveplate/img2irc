@@ -33,15 +33,18 @@ default = ["ocr"]
 ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq"]
 web = [
     "dep:console_error_panic_hook",
+    "dep:figlet-rs",
     "dep:getrandom",
     "dep:js-sys",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen",
+    "dep:zip",
 ]
 vendored-openssl = ["dep:openssl"]
 
 [dependencies]
 photon-rs = "0.3.3"
+figlet-rs = { version = "1.0.0", optional = true }
 clap = { version = "4.2.0", features = ["cargo", "derive"] }
 once_cell = "1.21.3"
 swash = "0.1.19"
@@ -59,6 +62,7 @@ unicode-width = "0.2.0"
 unicode-linebreak = "0.1.5"
 educe = "0.6"
 regex = "1.11"
+zip = { version = "0.6", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ab_glyph = "0.2"
@@ -67,7 +71,6 @@ arboard = "3.4.1"
 atty = "0.2.14"
 base64 = "0.22.1"
 crossterm = "0.29"
-figlet-rs = { version = "1.0.0", optional = true }
 fontdb = "0.16"
 libc = { version = "0.2", optional = true }
 libz-sys = { version = "1", features = ["static"] }

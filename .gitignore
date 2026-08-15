@@ -7,6 +7,9 @@ img2irc.log
 /dist
 /.img2irc-web.*
 /deploy.sh
+/node_modules
 *.jpg
 *.png
 *.txt
+!/static/fonts/LICENSE-Unifont-OFL-1.1.txt
+!/static/ocr/LICENSE-PaddleOCR.txt

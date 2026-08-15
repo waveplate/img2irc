@@ -14,16 +14,19 @@ The web code instead follows a small functional-core / imperative-shell split:
 
 - `main.js` starts the editor; the render worker initializes WASM.
 - `js/editor-app.js` coordinates state, controls and render scheduling.
-- `js/editor-state.js` owns document state, including the future overlay list.
+- `js/editor-state.js` owns source, result, and manual/OCR overlay state.
 - `js/render-options.js` is the form-to-WASM options boundary.
 - `js/renderer-client.js` owns the typed main-thread/worker request protocol.
 - `js/render-worker.js` owns WASM, decoded-image state and renderer caches.
 - `js/control-help.js` owns accessible per-control explanations.
 - `js/font-service.js` owns hosted and Google font discovery/caching.
 - `js/glyph-catalog.js` loads and resolves the deployed glyph catalog.
-- `js/glyph-controls.js` builds the glyph-group browser from WASM metadata.
+- `js/glyph-controls.js` builds the glyph-group browser from the runtime catalog.
 - `js/output-preview.js` owns bitmap/browser-text display and cell hit-testing.
 - `js/render-status.js` formats the TUI-style post-render statistics line.
+- `js/text-controls.js` owns the Text tab and editable overlay list.
+- `js/ocr-service.js` lazily loads PaddleOCR, caches detections, removes source
+  text, and maps recognized regions into output cells.
 
 `npm run build:web` compiles the WASM module and stages these source files into
 `dist/`. The resulting directory is a complete static web root; deployment does
@@ -57,6 +60,10 @@ also retains the most recent prepared image canvas, so output-mode and smoothing
 changes skip repeated resizing, effects, and palette mapping. Image, font, and
 image-adjustment changes invalidate that canvas.
 
+The renderer separately caches the unoverlaid character grid. Text changes can
+therefore re-encode and repaint the cached grid without repeating glyph
+matching or smoothing. The profiling footer reports this as `Match: cached`.
+
 Every render reports timings for image preparation, glyph matching, smoothing
 preparation/search, optional shape refinement, final scoring, encoding, RGBA
 preview generation, and worker transfer/UI work. Contour-cache hit counts are
@@ -80,11 +87,28 @@ pixelization, and the existing filters. The prepared-canvas cache already makes
 unchanged adjustments show as `Prepare: cached`, while the stage timings show
 whether a future worker-side GPU path would justify that extra pipeline.
 
-## Text overlay direction
+## Text and browser OCR
 
-Text overlays should remain document data in `EditorState.overlays`, not DOM
-state. A text-tool module can use `OutputPreview.clientPointToCell()` for
-selection, placement, resizing and dragging. The app controller can pass the
-overlay list through `collectRenderOptions()` once the web binding accepts it.
-This keeps overlay editing independent of the control layout and avoids a later
-rewrite of the preview coordinate system.
+Manual and detected text are both ordinary overlay records in `EditorState`.
+The Text tab edits their text, cell position and box, optional foreground and
+background colours, wrapping, fitting, and IRC/ANSI style flags. The WASM API
+accepts those records independently of OCR, so embedding applications can use
+text overlays without loading an OCR runtime.
+
+Browser OCR is deliberately not linked into `img2irc_rs.wasm`. The pinned
+official PaddleOCR.js SDK runs PP-OCRv6 tiny in its own worker, using locally
+hosted ONNX models and an ONNX Runtime WASM binary. These large assets are
+dynamically imported only after OCR is enabled. Detections and their inpainted
+source bitmap are cached by source and inference settings; visual changes do
+not rerun OCR. Recognized regions are converted to editable overlays after the
+base output grid dimensions are known.
+
+FIGlet parsing and fitting use the same `figlet-rs` implementation as the
+native application, compiled into the existing img2irc WASM module. Font data
+is not embedded: `dist/figlet-fonts.json` is a runtime manifest whose URLs are
+resolved relative to that file. Host the listed `.flf` files under
+`dist/assets/figlet/`, or replace the URLs with same-origin or CORS-enabled
+locations. The manifest order is the preference order within a declared line
+height. Both plain FIGfont data and ZIP archives stored with an `.flf` filename
+are accepted. Unavailable fonts are reported in the OCR status and plain text
+remains the fallback.

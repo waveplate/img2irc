@@ -34,6 +34,17 @@ export class RendererClient {
     await this.#request("set-image", { bytes: imageBytes }, [imageBytes]);
   }
 
+  setFigletFonts(fonts) {
+    const transfer = fonts
+      .map((font) => font.data?.buffer)
+      .filter((buffer) => buffer instanceof ArrayBuffer);
+    return this.#request("set-figlet-fonts", { fonts }, transfer);
+  }
+
+  renderFiglet(requests) {
+    return this.#request("render-figlet", { requests });
+  }
+
   render(options) {
     return this.#request("render", { options });
   }

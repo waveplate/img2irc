@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "fonts": [
+    { "name": "phm-minecraft", "height": 2, "url": "./assets/figlet/phm-minecraft.flf" },
+    { "name": "phm-lcdmatrix", "height": 2, "url": "./assets/figlet/phm-lcdmatrix.flf" },
+    { "name": "phm-leds", "height": 2, "url": "./assets/figlet/phm-leds.flf" },
+    { "name": "phm-c64", "height": 2, "url": "./assets/figlet/phm-c64.flf" },
+    { "name": "phm-cga", "height": 2, "url": "./assets/figlet/phm-cga.flf" },
+    { "name": "phm-vga-square", "height": 2, "url": "./assets/figlet/phm-vga-square.flf" },
+    { "name": "phm-dos-square", "height": 2, "url": "./assets/figlet/phm-dos-square.flf" },
+    { "name": "1Row", "height": 2, "url": "./assets/figlet/1Row.flf" },
+    { "name": "Two Point", "height": 2, "url": "./assets/figlet/Two Point.flf" },
+    { "name": "konto", "height": 2, "url": "./assets/figlet/konto.flf" },
+    { "name": "kontoslant", "height": 2, "url": "./assets/figlet/kontoslant.flf" },
+    { "name": "Cybersmall", "height": 2, "url": "./assets/figlet/Cybersmall.flf" },
+    { "name": "phm-largetype", "height": 3, "url": "./assets/figlet/phm-largetype.flf" },
+    { "name": "hp2640-largetype", "height": 3, "url": "./assets/figlet/hp2640-largetype.flf" },
+    { "name": "phm-shinonome", "height": 3, "url": "./assets/figlet/phm-shinonome.flf" },
+    { "name": "Bigfig", "height": 3, "url": "./assets/figlet/Bigfig.flf" },
+    { "name": "Calvin S", "height": 3, "url": "./assets/figlet/Calvin S.flf" },
+    { "name": "Three Point", "height": 3, "url": "./assets/figlet/Three Point.flf" }
+  ]
+}

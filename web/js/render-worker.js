@@ -31,6 +31,13 @@ self.addEventListener("message", (event) => {
         requireRenderer().setImage(new Uint8Array(event.data.bytes));
         respond(id);
         break;
+      case "set-figlet-fonts":
+        requireRenderer().setFigletFonts(event.data.fonts);
+        respond(id);
+        break;
+      case "render-figlet":
+        respond(id, requireRenderer().renderFiglet(event.data.requests));
+        break;
       case "render": {
         const started = performance.now();
         const result = requireRenderer().renderCurrent(event.data.options);

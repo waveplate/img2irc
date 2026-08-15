@@ -37,7 +37,13 @@
             <p id="source-placeholder">Open, paste, or drop an image to begin.</p>
           </section>
 
-          <details class="control-panel" open>
+          <nav class="control-tabs" role="tablist" aria-label="Control groups">
+            <button type="button" role="tab" data-control-tab="general" aria-selected="true">General</button>
+            <button type="button" role="tab" data-control-tab="glyphs" aria-selected="false">Glyphs</button>
+            <button type="button" role="tab" data-control-tab="text" aria-selected="false">Text</button>
+          </nav>
+
+          <details class="control-panel" data-control-tab-panel="general" open>
             <summary>General</summary>
             <div class="control-grid">
               <label>
@@ -54,6 +60,7 @@
                   <option value="local:cascadia" selected>Cascadia Code (hosted)</option>
                   <option value="local:iosevka-fixed">Iosevka Fixed (hosted)</option>
                   <option value="local:iosevka-fixed-extended">Iosevka Fixed Extended (hosted)</option>
+                  <option value="local:unifont">GNU Unifont 17.0.05 (hosted)</option>
                 </select>
                 <small id="font-status">Loading Google Fonts list…</small>
               </label>
@@ -113,7 +120,7 @@
             </fieldset>
           </details>
 
-          <details class="control-panel" open>
+          <details class="control-panel" data-control-tab-panel="general" open>
             <summary>Image adjustments</summary>
             <div class="range-grid">
               <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
@@ -138,7 +145,7 @@
             <button id="reset-adjustments" type="button">Reset adjustments</button>
           </details>
 
-          <details class="control-panel glyph-panel" open>
+          <details class="control-panel glyph-panel" data-control-tab-panel="glyphs" open hidden>
             <summary>Glyphs</summary>
             <label class="inline-control">
               <input id="braille" type="checkbox" />
@@ -172,6 +179,104 @@
                 <label class="wide-control">
                   Exclude Unicode ranges
                   <textarea id="exclude-ranges" rows="2" placeholder="1F600-1F64F (one per line)"></textarea>
+                </label>
+              </div>
+            </div>
+          </details>
+
+          <details class="control-panel text-panel" data-control-tab-panel="text" open hidden>
+            <summary>Text overlays</summary>
+
+            <fieldset class="ocr-controls">
+              <legend>OCR</legend>
+              <label class="inline-control">
+                <input id="ocr-enabled" type="checkbox" />
+                Detect and preserve text with PP-OCRv6
+              </label>
+              <div id="ocr-options" class="control-grid conditional" hidden>
+                <label>
+                  Minimum confidence
+                  <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </label>
+                <label>
+                  Printable ASCII ratio
+                  <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </label>
+                <label>
+                  Maximum image side
+                  <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
+                </label>
+                <label>
+                  Maximum text-height ratio
+                  <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
+                </label>
+                <label class="inline-control">
+                  <input id="ocr-figlet" type="checkbox" checked />
+                  Use FIGlet for large text
+                </label>
+                <label>
+                  FIGlet minimum rows
+                  <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
+                </label>
+                <label>
+                  FIGlet minimum height ratio
+                  <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
+                </label>
+                <label>
+                  Box score threshold
+                  <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
+                </label>
+                <label>
+                  Binarization threshold
+                  <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
+                </label>
+                <label>
+                  Box expansion
+                  <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
+                </label>
+                <div class="wide-control ocr-action-row">
+                  <button id="ocr-refresh" type="button">Refresh detection</button>
+                  <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
+                </div>
+              </div>
+            </fieldset>
+
+            <div class="button-row">
+              <button id="overlay-add" type="button">Add text overlay</button>
+              <button id="overlay-delete" class="danger" type="button">Delete selected</button>
+            </div>
+            <label>
+              Overlays
+              <select id="overlay-list" class="overlay-list" size="5"></select>
+            </label>
+            <p id="overlay-empty" class="empty-note">Add an overlay or enable OCR to populate this list.</p>
+
+            <div id="overlay-editor" hidden>
+              <label class="wide-control">
+                Text
+                <textarea id="overlay-text" rows="4"></textarea>
+              </label>
+              <div class="control-grid">
+                <label>X <input id="overlay-x" type="number" step="1" value="0" /></label>
+                <label>Y <input id="overlay-y" type="number" step="1" value="0" /></label>
+                <label>Width <input id="overlay-width" type="number" min="0" step="1" value="1" /></label>
+                <label>Height <input id="overlay-height" type="number" min="0" step="1" value="1" /></label>
+              </div>
+              <div class="toggle-grid overlay-formatting">
+                <label><input id="overlay-auto-grow" type="checkbox" /> Fit to text</label>
+                <label><input id="overlay-wrap" type="checkbox" /> Wrap</label>
+                <label><input id="overlay-bold" type="checkbox" /> Bold</label>
+                <label><input id="overlay-italic" type="checkbox" /> Italic</label>
+                <label><input id="overlay-underline" type="checkbox" /> Underline</label>
+              </div>
+              <div class="overlay-colors">
+                <label>
+                  <input id="overlay-foreground-enabled" type="checkbox" /> Foreground
+                  <input id="overlay-foreground" type="color" value="#ffffff" />
+                </label>
+                <label>
+                  <input id="overlay-background-enabled" type="checkbox" /> Background
+                  <input id="overlay-background" type="color" value="#000000" />
                 </label>
               </div>
             </div>

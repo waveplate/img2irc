@@ -24,6 +24,11 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
+if [[ ! -x "$project_root/node_modules/.bin/esbuild" ]]; then
+    echo "web dependencies are missing; run npm install" >&2
+    exit 1
+fi
+
 wasm_bindgen_version=$(wasm-bindgen --version)
 if [[ "$wasm_bindgen_version" != "wasm-bindgen 0.2.127" ]]; then
     echo "wasm-bindgen-cli 0.2.127 is required (found: $wasm_bindgen_version); install it with:" >&2
@@ -44,10 +49,17 @@ wasm-bindgen \
     --target web \
     --typescript
 
-mkdir -p "$staging_dir/js" "$staging_dir/assets/fonts"
+mkdir -p \
+    "$staging_dir/js" \
+    "$staging_dir/assets/fonts" \
+    "$staging_dir/assets/figlet" \
+    "$staging_dir/assets/ocr" \
+    "$staging_dir/vendor/ort" \
+    "$staging_dir/vendor/paddleocr/assets"
 install -m 0644 web/index.html "$staging_dir/index.html"
 install -m 0644 web/main.js "$staging_dir/main.js"
 install -m 0644 web/styles.css "$staging_dir/styles.css"
+install -m 0644 static/figlet-fonts.json "$staging_dir/figlet-fonts.json"
 for source in web/js/*.js; do
     install -m 0644 "$source" "$staging_dir/js/$(basename "$source")"
 done
@@ -56,6 +68,38 @@ install -m 0644 static/CascadiaCode-Regular.ttf \
 for source in static/fonts/*; do
     install -m 0644 "$source" "$staging_dir/assets/fonts/$(basename "$source")"
 done
+for source in static/ocr/*; do
+    install -m 0644 "$source" "$staging_dir/assets/ocr/$(basename "$source")"
+done
+
+# PaddleOCR is an optional, lazily imported browser component. Bundle its
+# public SDK entry so the deployable web root has no bare npm imports, retain
+# the SDK's own inference worker, and host the exact ONNX Runtime binary used
+# by the pinned package version.
+"$project_root/node_modules/.bin/esbuild" \
+    "$project_root/node_modules/@paddleocr/paddleocr-js/dist/index.mjs" \
+    --bundle \
+    --format=esm \
+    --platform=browser \
+    --minify \
+    --define:require=undefined \
+    --outfile="$staging_dir/vendor/paddleocr/index.js"
+
+ocr_worker=$(find \
+    "$project_root/node_modules/@paddleocr/paddleocr-js/dist/assets" \
+    -maxdepth 1 -type f -name 'worker-entry-*.js' -print -quit)
+if [[ -z "$ocr_worker" ]]; then
+    echo "PaddleOCR worker asset was not found" >&2
+    exit 1
+fi
+install -m 0644 "$ocr_worker" \
+    "$staging_dir/vendor/paddleocr/assets/$(basename "$ocr_worker")"
+install -m 0644 \
+    "$project_root/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm" \
+    "$staging_dir/vendor/ort/ort-wasm-simd-threaded.wasm"
+install -m 0644 \
+    "$project_root/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs" \
+    "$staging_dir/vendor/ort/ort-wasm-simd-threaded.js"
 
 # Resolve the native TOML catalog into deployment data. The browser fetches
 # this file at runtime; none of these group definitions are embedded in WASM.
