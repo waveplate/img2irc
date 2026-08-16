@@ -118,7 +118,6 @@ impl ImageEffect {
                 | ImageEffect::CropBottom(_)
                 | ImageEffect::CropLeft(_)
                 | ImageEffect::CropRight(_)
-                | ImageEffect::Rotate(_)
                 | ImageEffect::ScaleX(_)
                 | ImageEffect::ScaleY(_)
         )

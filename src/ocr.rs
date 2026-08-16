@@ -432,8 +432,9 @@ fn figlet_font_dirs() -> Vec<PathBuf> {
         PathBuf::from("figfonts/fonts"),
     ]);
     if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/share/figlet/fonts"));
-        dirs.push(PathBuf::from(home).join(".local/share/figlet"));
+        let home_path = PathBuf::from(home);
+        dirs.push(home_path.join(".local/share/figlet/fonts"));
+        dirs.push(home_path.join(".local/share/figlet"));
     }
 
     let mut unique = Vec::new();

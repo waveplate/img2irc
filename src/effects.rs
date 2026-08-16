@@ -582,7 +582,7 @@ pub fn apply_effects(
             }
             Eyedropper => {} // Implementation comes later
             // Geometry effects applied inline
-            CropTop(v) | CropBottom(v) | CropLeft(v) | CropRight(v) => {
+            CropTop(_) | CropBottom(_) | CropLeft(_) | CropRight(_) => {
                 let w = photon_image.get_width();
                 let h = photon_image.get_height();
                 let (top, right, bottom, left) = match &effect {

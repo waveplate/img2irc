@@ -4094,7 +4094,7 @@ impl App {
 
         let mut inputs = Vec::new();
         for i in 0..24 {
-            let mut ta = if self.saved_auto_optimize_inputs.len() == 24 {
+            let ta = if self.saved_auto_optimize_inputs.len() == 24 {
                 TextArea::new(vec![self.saved_auto_optimize_inputs[i].clone()])
             } else {
                 if i % 3 == 2 {
@@ -4360,7 +4360,6 @@ impl App {
                     if tx_clone.is_closed()
                         || cancel_clone.load(std::sync::atomic::Ordering::Relaxed)
                     {
-                        aborted = true;
                         break;
                     }
                     let mut a = args.clone();
