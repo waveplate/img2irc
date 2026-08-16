@@ -59,6 +59,10 @@ mkdir -p \
 install -m 0644 web/index.html "$staging_dir/index.html"
 install -m 0644 web/main.js "$staging_dir/main.js"
 install -m 0644 web/styles.css "$staging_dir/styles.css"
+for icon in web/favicon* web/apple-touch-icon.png; do
+    [[ -f "$icon" ]] || continue
+    install -m 0644 "$icon" "$staging_dir/$(basename "$icon")"
+done
 python3 - "$project_root/figlet.toml" "$staging_dir/figlet-fonts.json" "$project_root/static/figlet" "$project_root/static/figlet-fonts.json" <<'PYTHON'
 import json
 import pathlib

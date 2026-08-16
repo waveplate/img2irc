@@ -15,3 +15,7 @@ img2irc.log
 *.zip
 !/static/fonts/LICENSE-Unifont-OFL-1.1.txt
 !/static/ocr/LICENSE-PaddleOCR.txt
+!img2irc_favicon.png
+!/web/favicon*.png
+!/web/apple-touch-icon.png
+!/static/favicon*.png
