@@ -68,6 +68,12 @@ install -m 0644 static/CascadiaCode-Regular.ttf \
 for source in static/fonts/*; do
     install -m 0644 "$source" "$staging_dir/assets/fonts/$(basename "$source")"
 done
+if [[ -d "$project_root/static/figlet" ]]; then
+    for source in "$project_root"/static/figlet/*; do
+        [[ -f "$source" ]] || continue
+        install -m 0644 "$source" "$staging_dir/assets/figlet/$(basename "$source")"
+    done
+fi
 for source in static/ocr/*; do
     install -m 0644 "$source" "$staging_dir/assets/ocr/$(basename "$source")"
 done

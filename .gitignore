@@ -11,5 +11,7 @@ img2irc.log
 *.jpg
 *.png
 *.txt
+*.irc
+*.zip
 !/static/fonts/LICENSE-Unifont-OFL-1.1.txt
 !/static/ocr/LICENSE-PaddleOCR.txt

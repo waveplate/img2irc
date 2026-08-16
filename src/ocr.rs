@@ -457,10 +457,17 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
             }
             let Some(path) = dirs
                 .iter()
-                .map(|dir| dir.join(format!("{name}.flf")))
+                .flat_map(|dir| {
+                    ["flf", "tlf"]
+                        .into_iter()
+                        .map(move |extension| dir.join(format!("{name}.{extension}")))
+                })
                 .find(|path| path.is_file())
             else {
-                log::debug!("OCR FIGfont {name:?} was not found for {} lines", list.height);
+                log::debug!(
+                    "OCR FIGlet/Toilet font {name:?} was not found for {} lines",
+                    list.height
+                );
                 continue;
             };
             let Some(path_str) = path.to_str() else {
@@ -504,6 +511,103 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
         );
     }
     fonts
+}
+
+thread_local! {
+    static INTERACTIVE_FIGLET_FONTS: std::cell::RefCell<Option<(
+        Vec<OcrFigletFontList>,
+        Vec<OcrFigletFont>,
+    )>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Rebuild a monolithic FIGlet overlay from its editable source text and box.
+/// The parsed font set is retained per UI thread so editing and resizing do not
+/// repeatedly read and parse every configured font.
+pub fn refresh_figlet_overlay(
+    overlay: &mut TextOverlay,
+    font_lists: &[OcrFigletFontList],
+) -> bool {
+    let Some(source) = overlay.source_text.clone() else {
+        return false;
+    };
+    overlay.transparent_spaces = true;
+    if source.trim().is_empty() {
+        overlay.text = source;
+        return true;
+    }
+    let max_width = overlay.w.max(1) as usize;
+    let max_height = overlay.h.max(1) as usize;
+    let requested_font = overlay
+        .figlet_font
+        .clone()
+        .filter(|name| !name.eq_ignore_ascii_case("plain"));
+    let art = INTERACTIVE_FIGLET_FONTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache
+            .as_ref()
+            .is_none_or(|(cached_lists, _)| cached_lists != font_lists)
+        {
+            *cache = Some((font_lists.to_vec(), load_ocr_figlet_fonts(font_lists)));
+        }
+        let (_, fonts) = cache.as_ref().expect("interactive FIGlet cache initialized");
+        if let Some(name) = requested_font.as_deref() {
+            fonts
+                .iter()
+                .find(|font| font.name == name)
+                .and_then(|font| render_figlet_text(font, &source))
+                .filter(|art| art.width() <= max_width && art.height() <= max_height)
+        } else {
+            choose_text_art_from_fonts(&source, max_width, max_height, font_lists, fonts)
+        }
+    });
+    if let Some(art) = art {
+        overlay.text = art
+            .lines
+            .iter()
+            .map(|line| line.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        overlay.figlet_font = Some(requested_font.unwrap_or(art.source));
+        true
+    } else {
+        overlay.text = source;
+        if requested_font.is_none() {
+            overlay.figlet_font = Some("plain".to_string());
+        }
+        false
+    }
+}
+
+fn text_art_overlay(
+    source_text: &str,
+    art: &TextArt,
+    figlet_enabled: bool,
+    x: i32,
+    y: i32,
+    fg: [u8; 3],
+) -> TextOverlay {
+    TextOverlay {
+        text: art
+            .lines
+            .iter()
+            .map(|line| line.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        source_text: figlet_enabled.then(|| source_text.to_string()),
+        figlet_font: figlet_enabled.then(|| art.source.clone()),
+        x,
+        y,
+        w: art.width() as i32,
+        h: art.height() as i32,
+        fg: Some(ColorSpec::Rgb(fg)),
+        bg: None,
+        wrap: false,
+        auto_grow: false,
+        transparent_spaces: figlet_enabled,
+        bold: false,
+        italic: false,
+        underline: false,
+    }
 }
 
 #[cfg(test)]
@@ -932,13 +1036,6 @@ pub fn detections_to_overlays(
             bounds,
             global_bg,
         );
-        let fallback_bg = dominant_rgb_in_rect(
-            &background_rgb,
-            background_source.get_width(),
-            background_source.get_height(),
-            bounds,
-        )
-        .unwrap_or(global_bg);
         if art.source != "plain" {
             log::debug!(
                 "OCR FIGfont {} ({}-line list) selected for {:?}: {}x{} in {}x{} cells",
@@ -951,19 +1048,14 @@ pub fn detections_to_overlays(
                 target_h
             );
         }
-        push_text_art_overlay_runs(
-            &mut overlays,
+        overlays.push(text_art_overlay(
+            &det.text,
             &art,
-            &background_rgb,
-            background_source.get_width(),
-            background_source.get_height(),
+            allow_figlet,
             art_x,
             art_y,
-            grid_w,
-            grid_h,
             fg,
-            fallback_bg,
-        );
+        ));
     }
 
     overlays.sort_by_key(|ov| (ov.y, ov.x));
@@ -1183,170 +1275,6 @@ fn photon_rgb(image: &PhotonImage) -> Vec<[u8; 3]> {
         .chunks_exact(4)
         .map(|px| [px[0], px[1], px[2]])
         .collect()
-}
-
-fn push_overlay_runs(
-    overlays: &mut Vec<TextOverlay>,
-    chars: &[char],
-    backgrounds: &[[u8; 3]],
-    x: i32,
-    y: i32,
-    grid_w: i32,
-    fg: [u8; 3],
-) {
-    let mut run_text = String::new();
-    let mut run_x = 0i32;
-    let mut run_bg: Option<[u8; 3]> = None;
-
-    let flush_run = |overlays: &mut Vec<TextOverlay>,
-                     run_text: &mut String,
-                     run_x: i32,
-                     run_bg: Option<[u8; 3]>| {
-        if run_text.is_empty() {
-            return;
-        }
-        let w = run_text.chars().count() as i32;
-        overlays.push(TextOverlay {
-            text: std::mem::take(run_text),
-            x: run_x,
-            y,
-            w,
-            h: 1,
-            fg: Some(ColorSpec::Rgb(fg)),
-            bg: run_bg.map(ColorSpec::Rgb),
-            wrap: false,
-            auto_grow: false,
-            bold: false,
-            italic: false,
-            underline: false,
-        });
-    };
-
-    for (idx, (&ch, &bg)) in chars.iter().zip(backgrounds.iter()).enumerate() {
-        if ch.is_control() {
-            continue;
-        }
-        let cell_x = x + idx as i32;
-        if cell_x < 0 || cell_x >= grid_w {
-            flush_run(overlays, &mut run_text, run_x, run_bg);
-            run_bg = None;
-            continue;
-        }
-        if run_text.is_empty() {
-            run_x = cell_x;
-            run_bg = Some(bg);
-        } else if run_bg != Some(bg) || run_x + run_text.chars().count() as i32 != cell_x {
-            flush_run(overlays, &mut run_text, run_x, run_bg);
-            run_x = cell_x;
-            run_bg = Some(bg);
-        }
-        run_text.push(ch);
-    }
-
-    flush_run(overlays, &mut run_text, run_x, run_bg);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_text_art_overlay_runs(
-    overlays: &mut Vec<TextOverlay>,
-    art: &TextArt,
-    background_rgb: &[[u8; 3]],
-    background_width: u32,
-    background_height: u32,
-    x: i32,
-    y: i32,
-    grid_w: i32,
-    grid_h: i32,
-    fg: [u8; 3],
-    fallback_bg: [u8; 3],
-) {
-    for (row_idx, chars) in art.lines.iter().enumerate() {
-        let cell_y = y + row_idx as i32;
-        if cell_y < 0 || cell_y >= grid_h {
-            continue;
-        }
-
-        let backgrounds = chars
-            .iter()
-            .enumerate()
-            .map(|(idx, _)| {
-                sample_cell_background(
-                    background_rgb,
-                    background_width,
-                    background_height,
-                    grid_w,
-                    grid_h,
-                    x + idx as i32,
-                    cell_y,
-                    fallback_bg,
-                )
-            })
-            .collect::<Vec<_>>();
-        push_overlay_runs(overlays, chars, &backgrounds, x, cell_y, grid_w, fg);
-    }
-}
-
-fn sample_cell_background(
-    rgb: &[[u8; 3]],
-    image_w: u32,
-    image_h: u32,
-    grid_w: i32,
-    grid_h: i32,
-    cell_x: i32,
-    cell_y: i32,
-    fallback: [u8; 3],
-) -> [u8; 3] {
-    if image_w == 0
-        || image_h == 0
-        || grid_w <= 0
-        || grid_h <= 0
-        || cell_x < 0
-        || cell_y < 0
-        || cell_x >= grid_w
-        || cell_y >= grid_h
-    {
-        return fallback;
-    }
-
-    let x0 = (cell_x as f64 * image_w as f64 / grid_w as f64).floor() as u32;
-    let x1 = ((cell_x + 1) as f64 * image_w as f64 / grid_w as f64).ceil() as u32;
-    let y0 = (cell_y as f64 * image_h as f64 / grid_h as f64).floor() as u32;
-    let y1 = ((cell_y + 1) as f64 * image_h as f64 / grid_h as f64).ceil() as u32;
-    dominant_rgb_in_rect(rgb, image_w, image_h, (x0, y0, x1, y1)).unwrap_or(fallback)
-}
-
-fn dominant_rgb_in_rect(
-    rgb: &[[u8; 3]],
-    image_w: u32,
-    image_h: u32,
-    (x0, y0, x1, y1): (u32, u32, u32, u32),
-) -> Option<[u8; 3]> {
-    if x1 <= x0 || y1 <= y0 || image_w == 0 || image_h == 0 {
-        return None;
-    }
-
-    let mut bins = std::collections::HashMap::<u16, (u32, [u64; 3])>::new();
-    for y in y0..y1.min(image_h) {
-        let row = y as usize * image_w as usize;
-        for x in x0..x1.min(image_w) {
-            let px = *rgb.get(row + x as usize)?;
-            let key = ((px[0] as u16 >> 4) << 8)
-                | ((px[1] as u16 >> 4) << 4)
-                | (px[2] as u16 >> 4);
-            let entry = bins.entry(key).or_insert((0, [0; 3]));
-            entry.0 += 1;
-            entry.1[0] += px[0] as u64;
-            entry.1[1] += px[1] as u64;
-            entry.1[2] += px[2] as u64;
-        }
-    }
-
-    let (_, (count, sum)) = bins.into_iter().max_by_key(|(_, (count, _))| *count)?;
-    Some([
-        (sum[0] / count as u64) as u8,
-        (sum[1] / count as u64) as u8,
-        (sum[2] / count as u64) as u8,
-    ])
 }
 
 fn fill_text_region_from_background_mask(
@@ -1899,29 +1827,20 @@ mod tests {
     }
 
     #[test]
-    fn multiline_text_art_creates_overlay_runs_on_each_row() {
-        let mut overlays = Vec::new();
-        let background = vec![[7, 8, 9]; 16];
-
-        push_text_art_overlay_runs(
-            &mut overlays,
+    fn multiline_figlet_art_is_one_editable_overlay() {
+        let overlay = text_art_overlay(
+            "Hello",
             &art("compact", &["AB", "CD"]),
-            &background,
-            4,
-            4,
+            true,
             1,
-            1,
-            4,
-            4,
+            2,
             [255, 255, 255],
-            [0, 0, 0],
         );
 
-        assert_eq!(overlays.len(), 2);
-        assert_eq!((overlays[0].text.as_str(), overlays[0].y), ("AB", 1));
-        assert_eq!((overlays[1].text.as_str(), overlays[1].y), ("CD", 2));
-        assert!(overlays
-            .iter()
-            .all(|overlay| overlay.bg == Some(ColorSpec::Rgb([7, 8, 9]))));
+        assert_eq!(overlay.text, "AB\nCD");
+        assert_eq!(overlay.source_text.as_deref(), Some("Hello"));
+        assert_eq!(overlay.figlet_font.as_deref(), Some("compact"));
+        assert_eq!((overlay.x, overlay.y, overlay.w, overlay.h), (1, 2, 2, 2));
+        assert_eq!(overlay.bg, None);
     }
 }

@@ -1,8 +1,8 @@
 const HELP = Object.freeze({
   render: "Selects the output encoding and colour palette: IRC colours, ANSI 256 colours, or ANSI 24-bit RGB.",
   "auto-render": "Automatically starts a new render shortly after a control changes.",
-  width: "Target output width in character cells. Leave blank to derive it from the height and source aspect ratio.",
-  height: "Target output height in character cells. Leave blank to derive it from the width and source aspect ratio.",
+  width: "Target output width in character cells. Enter zero or leave blank to derive it from the source dimensions and the selected glyph size.",
+  height: "Target output height in character cells. Leave blank to derive it from the width, source aspect ratio, and glyph size.",
   font: "The monospace font whose glyph shapes are used for matching. Google fonts are downloaded only when selected.",
   "font-size": "Raster resolution used to analyze and match glyph shapes. Larger values can preserve more detail but take longer; this does not set the displayed preview size.",
   filter: "Resampling algorithm used while resizing the source to the output grid. Sharper filters preserve detail; softer filters can reduce aliasing.",
@@ -35,7 +35,7 @@ const HELP = Object.freeze({
   exclude: "Removes these exact characters from the final glyph candidates.",
   "include-ranges": "Adds Unicode code-point ranges written as hexadecimal START-END values, one or more per line.",
   "exclude-ranges": "Removes Unicode code-point ranges written as hexadecimal START-END values.",
-  "preview-mode": "Shows either img2irc's bitmap preview or real selectable browser glyphs. Both use the renderer's font advance and line-height metrics.",
+  "preview-mode": "Shows either img2irc's bitmap preview or selectable native browser text. Both use the renderer's font advance and line-height metrics.",
   "output-font-size": "Changes only the displayed preview size. It does not rerender or change the encoded IRC/ANSI output.",
   "ocr-enabled": "Runs PP-OCRv6 in a dedicated browser worker, removes recognized text from the source, and restores it as editable character-cell overlays.",
   "ocr-confidence": "Rejects recognized lines below this confidence score. Higher values reduce false positives but may omit faint text.",
@@ -55,6 +55,8 @@ const HELP = Object.freeze({
   "overlay-height": "Height of the overlay box in character cells. It is managed automatically while Fit to text is enabled.",
   "overlay-auto-grow": "Sizes the overlay box to its text automatically.",
   "overlay-wrap": "Wraps text at the overlay box width using Unicode line-break opportunities.",
+  "overlay-figlet": "Treats the typed text as one movable FIGlet object. Choose its font below; OCR text continues to select a font automatically.",
+  "overlay-figlet-font": "Selects the exact hosted FIGlet font used by this manually created overlay. Resize the box if the selected font does not fit.",
   "overlay-foreground-enabled": "Overrides the foreground colour of characters in this overlay.",
   "overlay-background-enabled": "Fills the overlay box with the selected background colour.",
 });

@@ -28,10 +28,11 @@ function sameStyle(left, right) {
 }
 
 export class OutputPreview {
+  #stage;
   #canvas;
   #text;
   #placeholder;
-  #mode = "bitmap";
+  #mode = "text";
   #displayFontSize = DEFAULT_DISPLAY_FONT_SIZE;
   #fontFamily = "monospace";
   #bitmapMetrics;
@@ -39,7 +40,8 @@ export class OutputPreview {
   #hasText = false;
   #measurementContext = document.createElement("canvas").getContext("2d");
 
-  constructor(canvas, text, placeholder) {
+  constructor(stage, canvas, text, placeholder) {
+    this.#stage = stage;
     this.#canvas = canvas;
     this.#text = text;
     this.#placeholder = placeholder;
@@ -162,6 +164,7 @@ export class OutputPreview {
     const height = result.rows * result.lineHeight * scale;
     this.#canvas.style.width = `${width}px`;
     this.#canvas.style.height = `${height}px`;
+    if (this.#mode === "bitmap") this.#setStageSize(width, height);
   }
 
   #applyTextDisplayMetrics(result) {
@@ -179,6 +182,14 @@ export class OutputPreview {
     this.#text.style.width = `${result.columns * cellAdvance}px`;
     this.#text.style.height = `${result.rows * lineHeight}px`;
     this.#text.style.setProperty("--output-line-height", `${lineHeight}px`);
+    if (this.#mode === "text") {
+      this.#setStageSize(result.columns * cellAdvance, result.rows * lineHeight);
+    }
+  }
+
+  #setStageSize(width, height) {
+    this.#stage.style.width = `${width}px`;
+    this.#stage.style.height = `${height}px`;
   }
 
   #updateVisibility() {
@@ -186,8 +197,11 @@ export class OutputPreview {
     const showBitmap = this.#mode === "bitmap" && Boolean(this.#bitmapMetrics);
     this.#text.hidden = !showText;
     this.#canvas.hidden = !showBitmap;
+    if (showText && this.#textMetrics) this.#applyTextDisplayMetrics(this.#textMetrics);
+    else if (showBitmap && this.#bitmapMetrics) this.#applyBitmapDisplaySize(this.#bitmapMetrics);
+    else this.#setStageSize(0, 0);
     this.#placeholder.textContent = this.#mode === "text"
-      ? "Render once to create the browser-text preview."
+      ? "Render once to create the native-text preview."
       : "Rendered output will appear here.";
     this.#placeholder.hidden = showText || showBitmap;
   }
@@ -201,6 +215,7 @@ export class OutputPreview {
     this.#text.replaceChildren();
     this.#canvas.hidden = true;
     this.#text.hidden = true;
+    this.#setStageSize(0, 0);
     this.#placeholder.textContent = message;
     this.#placeholder.hidden = false;
   }
@@ -208,8 +223,8 @@ export class OutputPreview {
   // Future overlay tools should convert pointer coordinates through this
   // method so selection and drag logic stay independent of preview mode.
   clientPointToCell(clientX, clientY, columns, rows) {
-    const target = this.#mode === "text" ? this.#text : this.#canvas;
-    const bounds = target.getBoundingClientRect();
+    const bounds = this.#stage.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0 || columns <= 0 || rows <= 0) return undefined;
     return {
       x: Math.max(0, Math.min(columns - 1, Math.floor((clientX - bounds.left) * columns / bounds.width))),
       y: Math.max(0, Math.min(rows - 1, Math.floor((clientY - bounds.top) * rows / bounds.height))),

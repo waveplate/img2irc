@@ -24,7 +24,8 @@ The web code instead follows a small functional-core / imperative-shell split:
 - `js/glyph-controls.js` builds the glyph-group browser from the runtime catalog.
 - `js/output-preview.js` owns bitmap/browser-text display and cell hit-testing.
 - `js/render-status.js` formats the TUI-style post-render statistics line.
-- `js/text-controls.js` owns the Text tab and editable overlay list.
+- `js/text-controls.js` owns the Text tab, editable overlay list, and direct
+  creation/move/resize tools over either preview mode.
 - `js/ocr-service.js` lazily loads PaddleOCR, caches detections, removes source
   text, and maps recognized regions into output cells.
 
@@ -106,9 +107,15 @@ base output grid dimensions are known.
 FIGlet parsing and fitting use the same `figlet-rs` implementation as the
 native application, compiled into the existing img2irc WASM module. Font data
 is not embedded: `dist/figlet-fonts.json` is a runtime manifest whose URLs are
-resolved relative to that file. Host the listed `.flf` files under
-`dist/assets/figlet/`, or replace the URLs with same-origin or CORS-enabled
-locations. The manifest order is the preference order within a declared line
-height. Both plain FIGfont data and ZIP archives stored with an `.flf` filename
-are accepted. Unavailable fonts are reported in the OCR status and plain text
-remains the fallback.
+resolved relative to that file. Files checked into `static/figlet/` are copied
+to `dist/assets/figlet/`; they can also be hosted there independently, or the
+manifest URLs can point at same-origin or CORS-enabled locations. The manifest
+order is the OCR preference order within a declared line height; manual FIGlet
+overlays expose the full manifest as an explicit font selector. Plain
+FIGlet/Toilet data and ZIP archives are accepted. Run
+`scripts/import-figlet-fonts.sh` to refresh the selected assets from a system
+FIGlet installation. Unavailable fonts are reported and plain text remains the
+fallback. OCR and manual overlays retain the ordinary source text separately
+from generated FIGlet art, so a fitted banner remains one editable, movable
+object. Whitespace inside generated FIGlet art is transparent: only visible
+FIGlet strokes replace the image-derived cells beneath the overlay.

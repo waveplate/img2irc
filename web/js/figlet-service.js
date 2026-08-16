@@ -26,14 +26,22 @@ async function fetchFont(font) {
 
 export class FigletService {
   #renderer;
+  #manifestPromise;
   #loadPromise;
+  #artCache = new Map();
 
   constructor(renderer) {
     this.#renderer = renderer;
   }
 
   reload() {
+    this.#manifestPromise = undefined;
     this.#loadPromise = undefined;
+    this.#artCache.clear();
+  }
+
+  async fontOptions() {
+    return (await this.#manifest()).map(({ name, height }) => ({ name, height }));
   }
 
   async render(requests, status = () => {}) {
@@ -47,7 +55,24 @@ export class FigletService {
         loadResult = { loaded: 0, failed: [String(error)] };
       }
     }
-    const arts = await this.#renderer.renderFiglet(requests);
+    const arts = Array(requests.length);
+    const missing = [];
+    requests.forEach((request, index) => {
+      const key = JSON.stringify(request);
+      if (this.#artCache.has(key)) arts[index] = this.#artCache.get(key);
+      else missing.push({ request, index, key });
+    });
+    if (missing.length) {
+      const rendered = await this.#renderer.renderFiglet(missing.map(({ request }) => request));
+      missing.forEach(({ index, key }, renderedIndex) => {
+        const art = rendered[renderedIndex];
+        arts[index] = art;
+        if (this.#artCache.size >= 512) {
+          this.#artCache.delete(this.#artCache.keys().next().value);
+        }
+        this.#artCache.set(key, art);
+      });
+    }
     return { arts, ...loadResult };
   }
 
@@ -61,10 +86,25 @@ export class FigletService {
     return this.#loadPromise;
   }
 
+  async #manifest() {
+    if (!this.#manifestPromise) {
+      this.#manifestPromise = fetch(MANIFEST_URL)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Could not load FIGlet manifest: HTTP ${response.status}`);
+          }
+          return validateManifest(await response.json());
+        })
+        .catch((error) => {
+          this.#manifestPromise = undefined;
+          throw error;
+        });
+    }
+    return this.#manifestPromise;
+  }
+
   async #loadFonts() {
-    const response = await fetch(MANIFEST_URL);
-    if (!response.ok) throw new Error(`Could not load FIGlet manifest: HTTP ${response.status}`);
-    const manifest = validateManifest(await response.json());
+    const manifest = await this.#manifest();
     const fetched = await Promise.allSettled(manifest.map(fetchFont));
     const fonts = fetched
       .filter((result) => result.status === "fulfilled")

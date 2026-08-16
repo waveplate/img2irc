@@ -33,12 +33,13 @@
       <main class="workspace">
         <aside class="control-dock" aria-label="Render controls">
           <section class="source-panel">
-            <img id="source-preview" alt="Selected source image" hidden />
+            <a id="source-link" target="_blank" rel="noopener" hidden></a>
             <p id="source-placeholder">Open, paste, or drop an image to begin.</p>
           </section>
 
           <nav class="control-tabs" role="tablist" aria-label="Control groups">
             <button type="button" role="tab" data-control-tab="general" aria-selected="true">General</button>
+            <button type="button" role="tab" data-control-tab="adjustments" aria-selected="false">Adjustments</button>
             <button type="button" role="tab" data-control-tab="glyphs" aria-selected="false">Glyphs</button>
             <button type="button" role="tab" data-control-tab="text" aria-selected="false">Text</button>
           </nav>
@@ -47,19 +48,19 @@
             <summary>General</summary>
             <div class="control-grid">
               <label>
-                Width in cells
-                <input id="width" type="number" min="1" max="300" value="80" placeholder="Auto" />
+                Width (cells)
+                <input id="width" type="number" min="0" max="300" value="80" placeholder="Auto" />
               </label>
               <label>
-                Height in cells
+                Height (cells)
                 <input id="height" type="number" min="1" max="300" placeholder="Auto" />
               </label>
               <label class="wide-control">
                 Font
                 <select id="font">
-                  <option value="local:cascadia" selected>Cascadia Code (hosted)</option>
+                  <option value="local:cascadia">Cascadia Code (hosted)</option>
                   <option value="local:iosevka-fixed">Iosevka Fixed (hosted)</option>
-                  <option value="local:iosevka-fixed-extended">Iosevka Fixed Extended (hosted)</option>
+                  <option value="local:iosevka-fixed-extended" selected>Iosevka Fixed Extended (hosted)</option>
                   <option value="local:unifont">GNU Unifont 17.0.05 (hosted)</option>
                 </select>
                 <small id="font-status">Loading Google Fonts list…</small>
@@ -71,11 +72,11 @@
               <label>
                 Sampling filter
                 <select id="filter">
-                  <option value="nearest">Nearest</option>
+                  <option value="nearest" selected>Nearest</option>
                   <option value="triangle">Triangle</option>
                   <option value="catmull-rom">Catmull-Rom</option>
                   <option value="gaussian">Gaussian</option>
-                  <option value="lanczos3" selected>Lanczos3</option>
+                  <option value="lanczos3">Lanczos3</option>
                 </select>
               </label>
               <label>
@@ -93,13 +94,10 @@
               </label>
             </div>
 
-            <fieldset>
-              <legend>Smoothing</legend>
-              <label class="inline-control">
-                <input id="smooth" type="checkbox" />
-                Enable glyph smoothing
-              </label>
-              <div id="smoothing-options" class="control-grid conditional" hidden>
+            <details id="smoothing-section" class="smoothing-section">
+              <summary><span id="smoothing-summary">Smoothing (disabled, expand to enable)</span></summary>
+              <p class="performance-warning">Smoothing is computationally expensive and can dramatically increase render times.</p>
+              <div id="smoothing-options" class="control-grid">
                 <label>
                   Candidates
                   <input id="smooth-candidates" type="number" min="1" max="256" value="12" />
@@ -117,10 +115,64 @@
                   Protect neighbors
                 </label>
               </div>
+            </details>
+
+            <fieldset class="ocr-controls">
+              <legend>OCR</legend>
+              <label class="inline-control">
+                <input id="ocr-enabled" type="checkbox" />
+                Detect and preserve text with PP-OCRv6
+              </label>
+              <div id="ocr-options" class="control-grid conditional" hidden>
+                <label>
+                  Minimum confidence
+                  <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </label>
+                <label>
+                  Printable ASCII ratio
+                  <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </label>
+                <label>
+                  Maximum image side
+                  <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
+                </label>
+                <label>
+                  Maximum text-height ratio
+                  <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
+                </label>
+                <label class="inline-control">
+                  <input id="ocr-figlet" type="checkbox" checked />
+                  Use FIGlet for large text
+                </label>
+                <label>
+                  FIGlet minimum rows
+                  <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
+                </label>
+                <label>
+                  FIGlet minimum height ratio
+                  <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
+                </label>
+                <label>
+                  Box score threshold
+                  <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
+                </label>
+                <label>
+                  Binarization threshold
+                  <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
+                </label>
+                <label>
+                  Box expansion
+                  <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
+                </label>
+                <div class="wide-control ocr-action-row">
+                  <button id="ocr-refresh" type="button">Refresh detection</button>
+                  <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
+                </div>
+              </div>
             </fieldset>
           </details>
 
-          <details class="control-panel" data-control-tab-panel="general" open>
+          <details class="control-panel" data-control-tab-panel="adjustments" open hidden>
             <summary>Image adjustments</summary>
             <div class="range-grid">
               <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
@@ -186,65 +238,11 @@
 
           <details class="control-panel text-panel" data-control-tab-panel="text" open hidden>
             <summary>Text overlays</summary>
-
-            <fieldset class="ocr-controls">
-              <legend>OCR</legend>
-              <label class="inline-control">
-                <input id="ocr-enabled" type="checkbox" />
-                Detect and preserve text with PP-OCRv6
-              </label>
-              <div id="ocr-options" class="control-grid conditional" hidden>
-                <label>
-                  Minimum confidence
-                  <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
-                </label>
-                <label>
-                  Printable ASCII ratio
-                  <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
-                </label>
-                <label>
-                  Maximum image side
-                  <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
-                </label>
-                <label>
-                  Maximum text-height ratio
-                  <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
-                </label>
-                <label class="inline-control">
-                  <input id="ocr-figlet" type="checkbox" checked />
-                  Use FIGlet for large text
-                </label>
-                <label>
-                  FIGlet minimum rows
-                  <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
-                </label>
-                <label>
-                  FIGlet minimum height ratio
-                  <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
-                </label>
-                <label>
-                  Box score threshold
-                  <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
-                </label>
-                <label>
-                  Binarization threshold
-                  <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
-                </label>
-                <label>
-                  Box expansion
-                  <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
-                </label>
-                <div class="wide-control ocr-action-row">
-                  <button id="ocr-refresh" type="button">Refresh detection</button>
-                  <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
-                </div>
-              </div>
-            </fieldset>
-
             <div class="button-row">
               <button id="overlay-add" type="button">Add text overlay</button>
               <button id="overlay-delete" class="danger" type="button">Delete selected</button>
             </div>
+            <p class="overlay-instructions">Drag across empty output cells to create a text box. Drag a box to move it, or its corner handle to resize it.</p>
             <label>
               Overlays
               <select id="overlay-list" class="overlay-list" size="5"></select>
@@ -265,10 +263,16 @@
               <div class="toggle-grid overlay-formatting">
                 <label><input id="overlay-auto-grow" type="checkbox" /> Fit to text</label>
                 <label><input id="overlay-wrap" type="checkbox" /> Wrap</label>
+                <label><input id="overlay-figlet" type="checkbox" /> FIGlet</label>
                 <label><input id="overlay-bold" type="checkbox" /> Bold</label>
                 <label><input id="overlay-italic" type="checkbox" /> Italic</label>
                 <label><input id="overlay-underline" type="checkbox" /> Underline</label>
               </div>
+              <label id="overlay-figlet-font-control" hidden>
+                FIGlet font
+                <select id="overlay-figlet-font"></select>
+              </label>
+              <small id="overlay-figlet-status"></small>
               <div class="overlay-colors">
                 <label>
                   <input id="overlay-foreground-enabled" type="checkbox" /> Foreground
@@ -291,8 +295,8 @@
             <label class="preview-mode">
               Display
               <select id="preview-mode">
-                <option value="bitmap" selected>Bitmap</option>
-                <option value="text">Browser text</option>
+                <option value="bitmap">Bitmap</option>
+                <option value="text" selected>Native</option>
               </select>
             </label>
             <label class="output-font-size">
@@ -304,8 +308,11 @@
             <button id="download-output" type="button" disabled>Download</button>
           </div>
           <div class="canvas-viewport">
-            <canvas id="output-canvas" role="img" aria-label="Rendered terminal art"></canvas>
-            <div id="output-text" class="output-text" role="img" aria-label="Rendered terminal art as browser text" hidden></div>
+            <div id="preview-stage" class="preview-stage">
+              <canvas id="output-canvas" role="img" aria-label="Rendered terminal art" hidden></canvas>
+              <div id="output-text" class="output-text" role="img" aria-label="Rendered terminal art as native browser text"></div>
+              <div id="overlay-tools" class="overlay-tools" aria-label="Text overlay editor"></div>
+            </div>
             <p id="output-placeholder">Rendered output will appear here.</p>
           </div>
           <details class="raw-output-panel">

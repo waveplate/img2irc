@@ -92,16 +92,10 @@ pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
             fonts: [
                 "phm-minecraft",
                 "phm-lcdmatrix",
-                "phm-leds",
                 "phm-c64",
                 "phm-cga",
-                "phm-vga-square",
                 "phm-dos-square",
-                "1Row",
-                "Two Point",
-                "konto",
-                "kontoslant",
-                "Cybersmall",
+                "phm-vga-square",
             ]
             .into_iter()
             .map(str::to_string)
@@ -109,14 +103,28 @@ pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
         },
         OcrFigletFontList {
             height: 3,
-            fonts: [
-                "phm-largetype",
-                "hp2640-largetype",
-                "phm-shinonome",
-                "Bigfig",
-                "Calvin S",
-                "Three Point",
-            ]
+            fonts: ["phm-shinonome", "phm-largetype", "future"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 4,
+            fonts: ["phm-dos", "phm-dosv", "phm-hdos", "phm-vga", "smblock"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 5,
+            fonts: ["phm-beyondneo-mono"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 6,
+            fonts: ["phm-slanted", "abraxas"]
             .into_iter()
             .map(str::to_string)
             .collect(),
@@ -211,7 +219,13 @@ pub enum ColorSpec {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TextOverlay {
+    /// Text painted into the output grid. For FIGlet overlays this is the
+    /// generated banner, while `source_text` remains the editable input.
     pub text: String,
+    #[serde(default)]
+    pub source_text: Option<String>,
+    #[serde(default)]
+    pub figlet_font: Option<String>,
     pub x: i32,
     pub y: i32,
     pub w: i32,
@@ -222,12 +236,27 @@ pub struct TextOverlay {
     pub wrap: bool,
     #[serde(default)]
     pub auto_grow: bool,
+    /// Leave whitespace cells untouched instead of painting them over the
+    /// existing image. FIGlet overlays enable this so only banner strokes are
+    /// composited onto the output grid.
+    #[serde(default)]
+    pub transparent_spaces: bool,
     #[serde(default)]
     pub bold: bool,
     #[serde(default)]
     pub italic: bool,
     #[serde(default)]
     pub underline: bool,
+}
+
+impl TextOverlay {
+    pub fn editable_text(&self) -> &str {
+        self.source_text.as_deref().unwrap_or(&self.text)
+    }
+
+    pub fn figlet_enabled(&self) -> bool {
+        self.source_text.is_some()
+    }
 }
 
 // Struct used for actual rendering (all values resolved to f32)

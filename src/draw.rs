@@ -1408,6 +1408,11 @@ pub fn apply_overlays_to_result(
             for prepared in &prepared_overlays {
                 let ov = prepared.overlay;
                 if let Some(opt_c) = prepared.at(cx, cy) {
+                    if (ov.transparent_spaces || ov.figlet_enabled())
+                        && opt_c.is_none_or(|character| character.is_whitespace())
+                    {
+                        continue;
+                    }
                     if opt_c.is_none() && ov.bg.is_none() {
                         continue;
                     }
@@ -7706,6 +7711,8 @@ mod tests {
         };
         let overlay = crate::args::TextOverlay {
             text: "X".to_string(),
+            source_text: None,
+            figlet_font: None,
             x: 0,
             y: 0,
             w: 1,
@@ -7714,6 +7721,7 @@ mod tests {
             bg: None,
             wrap: true,
             auto_grow: true,
+            transparent_spaces: false,
             bold: true,
             italic: false,
             underline: true,
@@ -7726,6 +7734,65 @@ mod tests {
         assert_eq!(overlaid.grid[0][0].bg, Some([1, 2, 3]));
         assert!(overlaid.grid[0][0].bold);
         assert!(overlaid.grid[0][0].underline);
+    }
+
+    #[test]
+    fn transparent_overlay_spaces_preserve_the_complete_base_cell() {
+        let cells = ['a', 'b', 'c']
+            .into_iter()
+            .enumerate()
+            .map(|(index, character)| RenderedCell {
+                char: character,
+                fg: [10 + index as u8, 20, 30],
+                bg: Some([1, 2 + index as u8, 3]),
+                inverted: index == 1,
+                bold: index == 1,
+                italic: index == 1,
+                underline: index == 1,
+            })
+            .collect::<Vec<_>>();
+        let base = RenderResult {
+            content: "abc".to_string(),
+            save_content: None,
+            error_count: 0,
+            total_pixels: 3,
+            dynamic_scaling_count: 0,
+            grid: vec![cells],
+            score: 0.0,
+            longest_line_bytes: 3,
+            initial_time: std::time::Duration::ZERO,
+            profile: RenderProfile::default(),
+        };
+        let overlay = crate::args::TextOverlay {
+            text: "X X".to_string(),
+            source_text: Some("A".to_string()),
+            figlet_font: Some("test".to_string()),
+            x: 0,
+            y: 0,
+            w: 3,
+            h: 1,
+            fg: Some(crate::args::ColorSpec::Rgb([240, 230, 220])),
+            bg: Some(crate::args::ColorSpec::Rgb([8, 9, 10])),
+            wrap: false,
+            auto_grow: false,
+            transparent_spaces: true,
+            bold: false,
+            italic: false,
+            underline: false,
+        };
+
+        let overlaid = apply_overlays_to_result(&base, &[overlay], Render::Ansi24, true, 5);
+
+        assert_eq!(overlaid.grid[0][0].char, 'X');
+        assert_eq!(overlaid.grid[0][2].char, 'X');
+        let preserved = &overlaid.grid[0][1];
+        assert_eq!(preserved.char, 'b');
+        assert_eq!(preserved.fg, [11, 20, 30]);
+        assert_eq!(preserved.bg, Some([1, 3, 3]));
+        assert!(preserved.inverted);
+        assert!(preserved.bold);
+        assert!(preserved.italic);
+        assert!(preserved.underline);
     }
 
     #[test]

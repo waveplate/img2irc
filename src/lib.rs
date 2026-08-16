@@ -71,6 +71,17 @@ pub mod ocr {
         Vec::new()
     }
 
+    pub fn refresh_figlet_overlay(
+        overlay: &mut TextOverlay,
+        _font_lists: &[crate::args::OcrFigletFontList],
+    ) -> bool {
+        if let Some(source) = &overlay.source_text {
+            overlay.text = source.clone();
+            overlay.figlet_font = Some("plain".to_string());
+        }
+        false
+    }
+
     pub fn remove_detected_text(
         source: &PhotonImage,
         _args: &RenderArgs,

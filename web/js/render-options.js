@@ -4,7 +4,8 @@ const number = (root, id) => Number(value(root, id));
 
 function optionalPositiveInteger(root, id) {
   const input = value(root, id).trim();
-  return input === "" ? undefined : Number(input);
+  const parsed = Number(input);
+  return input === "" || parsed === 0 ? undefined : parsed;
 }
 
 function lines(root, id) {
@@ -59,7 +60,7 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     pixelize: number(root, "pixelize"),
     boxBlur: checked(root, "box-blur"),
     gaussianBlur: number(root, "gaussian-blur"),
-    smooth: checked(root, "smooth"),
+    smooth: root.querySelector("#smoothing-section").open,
     smoothCandidates: number(root, "smooth-candidates"),
     smoothOrders: number(root, "smooth-orders"),
     smoothShapes: checked(root, "smooth-shapes"),

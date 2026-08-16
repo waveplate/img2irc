@@ -83,6 +83,7 @@ export interface Img2IrcTextOverlay {
     background?: [number, number, number];
     wrap?: boolean;
     autoGrow?: boolean;
+    transparentSpaces?: boolean;
     bold?: boolean;
     italic?: boolean;
     underline?: boolean;
@@ -99,6 +100,7 @@ export interface Img2IrcFigletRequest {
     maxWidth: number;
     maxHeight: number;
     useFiglet?: boolean;
+    fontName?: string;
 }
 
 export interface Img2IrcFigletArt {
@@ -283,6 +285,7 @@ struct WebTextOverlay {
     background: Option<[u8; 3]>,
     wrap: bool,
     auto_grow: bool,
+    transparent_spaces: bool,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -311,6 +314,7 @@ struct WebFigletRequest {
     max_width: usize,
     max_height: usize,
     use_figlet: bool,
+    font_name: Option<String>,
 }
 
 impl Default for WebFigletRequest {
@@ -320,6 +324,7 @@ impl Default for WebFigletRequest {
             max_width: 1,
             max_height: 1,
             use_figlet: false,
+            font_name: None,
         }
     }
 }
@@ -361,6 +366,8 @@ impl WebTextOverlay {
         };
         TextOverlay {
             text: self.text,
+            source_text: None,
+            figlet_font: None,
             x: self.x,
             y: self.y,
             w: width,
@@ -369,6 +376,7 @@ impl WebTextOverlay {
             bg: self.background.map(ColorSpec::Rgb),
             wrap: self.wrap,
             auto_grow: self.auto_grow,
+            transparent_spaces: self.transparent_spaces,
             bold: self.bold,
             italic: self.italic,
             underline: self.underline,
@@ -423,8 +431,8 @@ impl Default for WebOptions {
 
 impl WebOptions {
     fn validate(&self) -> Result<(), JsValue> {
-        if self.width == Some(0) || self.height == Some(0) {
-            return Err(js_error("width and height must be greater than zero"));
+        if self.height == Some(0) {
+            return Err(js_error("height must be greater than zero"));
         }
         if !self.font_size.is_finite() || self.font_size < 6.0 || self.font_size > 256.0 {
             return Err(js_error("fontSize must be between 6 and 256"));
@@ -707,6 +715,16 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
         return None;
     }
     if request.use_figlet {
+        if let Some(font_name) = request.font_name.as_deref() {
+            return fonts
+                .iter()
+                .find(|font| font.name == font_name)
+                .and_then(|font| render_figlet_font(font, text))
+                .filter(|art| {
+                    art.width <= request.max_width && art.height <= request.max_height
+                })
+                .or_else(|| plain_figlet_art(text, request.max_width, request.max_height));
+        }
         let mut heights = fonts
             .iter()
             .map(|font| font.height)
@@ -876,8 +894,9 @@ impl WebRenderer {
         Ok(())
     }
 
-    /// Render a batch of text labels into the best fitting hosted FIGlet font,
-    /// falling back to ordinary one-row text when no configured font fits.
+    /// Render text labels with an explicitly requested hosted FIGlet font, or
+    /// automatically choose the best fit when no font name is supplied. Falls
+    /// back to ordinary one-row text when the requested rendering cannot fit.
     #[wasm_bindgen(js_name = renderFiglet)]
     pub fn render_figlet(&self, requests: JsValue) -> Result<JsValue, JsValue> {
         let requests: Vec<WebFigletRequest> = serde_wasm_bindgen::from_value(requests)
@@ -928,12 +947,15 @@ impl WebRenderer {
 
 impl WebRenderer {
     fn render_loaded(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
-        let options = if options.is_null() || options.is_undefined() {
+        let mut options = if options.is_null() || options.is_undefined() {
             WebOptions::default()
         } else {
             serde_wasm_bindgen::from_value(options)
                 .map_err(|error| js_error(format!("invalid render options: {error}")))?
         };
+        if options.width == Some(0) {
+            options.width = None;
+        }
         options.validate()?;
 
         if self.source_image.is_none() {

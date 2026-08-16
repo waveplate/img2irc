@@ -9,7 +9,8 @@ import { RenderStatus } from "./render-status.js";
 import { OutputPreview } from "./output-preview.js";
 import { FigletService } from "./figlet-service.js";
 import { OcrService, ocrItemsToOverlays } from "./ocr-service.js";
-import { TextControls } from "./text-controls.js";
+import { renderableOverlays, TextControls } from "./text-controls.js";
+import { initializeNumberScrubbers } from "./number-scrubber.js";
 
 const CASCADIA_URL = new URL("../assets/fonts/CascadiaCode-Regular.ttf", import.meta.url);
 const IOSEVKA_FIXED_URL = new URL("../assets/fonts/IosevkaFixed-Regular.ttf", import.meta.url);
@@ -33,6 +34,7 @@ export class EditorApp {
   #glyphs = new GlyphCatalog(GLYPH_CATALOG_URL);
   #renderStatus = new RenderStatus(document.querySelector("#render-stats"));
   #preview = new OutputPreview(
+    document.querySelector("#preview-stage"),
     document.querySelector("#output-canvas"),
     document.querySelector("#output-text"),
     document.querySelector("#output-placeholder"),
@@ -40,7 +42,12 @@ export class EditorApp {
   #renderer = new RendererClient();
   #ocr = new OcrService();
   #figlet = new FigletService(this.#renderer);
-  #textControls = new TextControls(this.#form, this.#state, () => this.#markRenderDirty());
+  #textControls = new TextControls(
+    this.#form,
+    this.#state,
+    () => this.#markRenderDirty(),
+    this.#preview,
+  );
   #rendererFontKey;
   #rendererSourceKey;
   #fontLoadRevision = 0;
@@ -56,15 +63,20 @@ export class EditorApp {
 
   async start() {
     initializeControlHelp(this.#form);
+    initializeNumberScrubbers(this.#form);
     const glyphGroups = await this.#glyphs.load();
     populateGlyphGroups(this.#element("glyph-groups"), glyphGroups);
     this.#textControls.start();
     this.#bindEvents();
     this.#selectControlTab("general");
+    this.#preview.setMode(this.#element("preview-mode").value);
     this.#updateOutputFontSize();
     await Promise.all([
       this.#fonts.populateGoogleFonts(this.#element("font"), this.#element("font-status")),
       this.#ensureRenderer(),
+      this.#figlet.fontOptions()
+        .then((fonts) => this.#textControls.setFigletFonts(fonts))
+        .catch(() => this.#textControls.setFigletFonts([])),
     ]);
     this.#setStatus("Ready — open, paste, or drop an image");
   }
@@ -133,6 +145,7 @@ export class EditorApp {
     this.#form.querySelectorAll("[data-control-tab-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.controlTabPanel !== tab;
     });
+    this.#textControls.setInteractive(tab === "text");
   }
 
   #ocrSettings() {
@@ -160,6 +173,35 @@ export class EditorApp {
     const status = this.#element("ocr-status");
     status.textContent = message;
     status.dataset.error = String(isError);
+  }
+
+  async #resolveFigletOverlays(columns, rows) {
+    const candidates = this.#state.overlays.filter((overlay) => overlay.figlet
+      && (!overlay.renderedText || !overlay.figletFont || overlay.figletFont === "plain"));
+    if (candidates.length === 0) return undefined;
+    const requests = candidates.map((overlay) => ({
+      text: overlay.text,
+      maxWidth: Math.max(1, Math.min(
+        Number(overlay.width) || 1,
+        columns - Math.max(0, Number(overlay.x) || 0),
+      )),
+      maxHeight: Math.max(1, Math.min(
+        Number(overlay.height) || 1,
+        rows - Math.max(0, Number(overlay.y) || 0),
+      )),
+      useFiglet: true,
+      fontName: overlay.kind === "manual" ? overlay.figletFontChoice : undefined,
+    }));
+    const rendered = await this.#figlet.render(requests, (message) => {
+      this.#setStatus(message, false, true);
+    });
+    candidates.forEach((overlay, index) => {
+      const art = rendered.arts[index];
+      overlay.renderedText = art?.text ?? overlay.text;
+      overlay.figletFont = art?.source ?? "plain";
+    });
+    this.#textControls.refresh();
+    return rendered;
   }
 
   async #ensureRendererSource(bytes, key) {
@@ -210,10 +252,11 @@ export class EditorApp {
     this.#ocrOverlayKey = undefined;
     this.#textControls.clearOcrOverlays();
     this.#setOcrStatus("OCR loads only when enabled.");
-    const sourcePreview = this.#element("source-preview");
-    sourcePreview.src = this.#state.sourceObjectUrl;
-    sourcePreview.alt = `Selected source: ${label}`;
-    sourcePreview.hidden = false;
+    const sourceLink = this.#element("source-link");
+    sourceLink.href = this.#state.sourceObjectUrl;
+    sourceLink.textContent = label;
+    sourceLink.title = `Open ${label} in a new tab`;
+    sourceLink.hidden = false;
     this.#element("source-placeholder").hidden = true;
     if (this.#element("auto-render").checked) this.#scheduleRender();
     else this.#setStatus("Image ready — click Render");
@@ -262,19 +305,17 @@ export class EditorApp {
           `original:${this.#state.sourceRevision}`,
         );
       }
-      const options = collectRenderOptions(
-        this.#form,
-        this.#glyphs,
-        ocrEnabled ? this.#state.manualOverlays : this.#state.overlays,
-      );
+      const options = collectRenderOptions(this.#form, this.#glyphs, []);
       if (!await this.#ensureRenderer()) return;
       if (renderRevision !== this.#documentRevision) return;
       this.#setStatus("Rendering output…", false, true);
       const started = performance.now();
-      const firstOptions = preparedOcr
+      const needsOverlayPass = Boolean(preparedOcr) || this.#state.overlays.length > 0;
+      const firstOptions = needsOverlayPass
         ? { ...options, includePreview: false, includeCells: false }
         : options;
       let { result, renderMs } = await this.#renderer.render(firstOptions);
+      let ocrFigletResult;
       if (preparedOcr) {
         const figletSettings = this.#ocrFigletSettings();
         const overlayKey = JSON.stringify([
@@ -284,7 +325,6 @@ export class EditorApp {
           result.rows,
           figletSettings,
         ]);
-        let figletResult;
         if (this.#ocrOverlayKey !== overlayKey) {
           const mapped = await ocrItemsToOverlays(
             preparedOcr,
@@ -298,17 +338,29 @@ export class EditorApp {
           );
           this.#textControls.setOcrOverlays(mapped.overlays);
           this.#ocrOverlayKey = overlayKey;
-          figletResult = mapped.figlet;
+          ocrFigletResult = mapped.figlet;
         }
-        const overlaid = await this.#renderer.render({ ...options, overlays: this.#state.overlays });
+      }
+      const overlayFigletResult = await this.#resolveFigletOverlays(result.columns, result.rows);
+      if (needsOverlayPass) {
+        const overlaid = await this.#renderer.render({
+          ...options,
+          overlays: renderableOverlays(this.#state.overlays),
+        });
         result = overlaid.result;
         renderMs += overlaid.renderMs;
+      }
+      const figletFailures = new Set([
+        ...(ocrFigletResult?.failed ?? []),
+        ...(overlayFigletResult?.failed ?? []),
+      ]);
+      if (preparedOcr) {
         const cacheNote = preparedOcr.cacheHit ? " · cached" : "";
         const figletCount = this.#state.ocrOverlays
           .filter((overlay) => overlay.figletFont && overlay.figletFont !== "plain").length;
         const figletNote = figletCount ? ` · ${figletCount} FIGlet` : "";
-        const unavailableNote = figletResult?.failed.length
-          ? ` · ${figletResult.failed.length} FIGlet fonts unavailable`
+        const unavailableNote = figletFailures.size
+          ? ` · ${figletFailures.size} FIGlet fonts unavailable`
           : "";
         this.#setOcrStatus(
           `${this.#state.ocrOverlays.length}/${preparedOcr.result.items.length} regions rendered · ${Math.round(preparedOcr.elapsedMs)} ms${cacheNote}${figletNote}${unavailableNote}`,
@@ -327,13 +379,17 @@ export class EditorApp {
       this.#element("download-output").disabled = false;
       this.#element("output-size").textContent = `${result.columns} × ${result.rows} cells`;
       this.#preview.draw(result);
+      this.#textControls.setGrid(result.columns, result.rows);
       // The canvas owns the painted pixels now; keep the document result small
       // instead of retaining a multi-megabyte RGBA transfer until next render.
       delete result.previewRgba;
       result.workerRenderMs = renderMs;
       const elapsed = performance.now() - started;
       this.#renderStatus.update(result, elapsed);
-      this.#setStatus(`${result.columns} × ${result.rows} cells · ${Math.round(elapsed)} ms`);
+      const figletNote = figletFailures.size
+        ? ` · ${figletFailures.size} FIGlet files unavailable`
+        : "";
+      this.#setStatus(`${result.columns} × ${result.rows} cells · ${Math.round(elapsed)} ms${figletNote}`);
       const status = this.#element("status");
       status.dataset.renderMs = renderMs.toFixed(1);
       status.dataset.totalMs = elapsed.toFixed(1);
@@ -465,8 +521,12 @@ export class EditorApp {
         this.#setStatus(`Font failed: ${error}`, true);
       }
     });
-    this.#element("smooth").addEventListener("change", () => {
-      this.#element("smoothing-options").hidden = !this.#element("smooth").checked;
+    this.#element("smoothing-section").addEventListener("toggle", (event) => {
+      const enabled = event.currentTarget.open;
+      this.#element("smoothing-summary").textContent = enabled
+        ? "Smoothing (enabled, collapse to disable)"
+        : "Smoothing (disabled, expand to enable)";
+      this.#markRenderDirty();
     });
     this.#element("braille").addEventListener("change", () => {
       const disabled = this.#element("braille").checked;

@@ -74,7 +74,9 @@ adjustments, selectable glyph groups and custom include/exclude characters or
 Unicode ranges. Its Text tab provides editable text overlays and optional
 PP-OCRv6 detection with confidence, ASCII-ratio, input-size, height, and box
 controls. Large detected labels can use externally hosted FIGlet fonts listed
-in `figlet-fonts.json`; missing fonts fall back to ordinary one-row text.
+in `figlet-fonts.json`; manual FIGlet overlays choose an exact font from that
+catalog, while OCR selects one automatically. Missing fonts fall back to
+ordinary one-row text.
 Images can be opened, pasted from the clipboard, or dropped
 anywhere on the page, and the encoded IRC/ANSI output can be copied or downloaded.
 Rendering runs in a Web Worker, so smoothing and large outputs do not block the

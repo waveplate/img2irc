@@ -2,7 +2,7 @@ export class EditorState {
   hasImage = false;
   sourceObjectUrl = undefined;
   result = undefined;
-  fontKey = "local:cascadia";
+  fontKey = "local:iosevka-fixed-extended";
   outputFontSize = 16;
   sourceBlob = undefined;
   sourceRevision = 0;

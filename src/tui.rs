@@ -1550,6 +1550,8 @@ enum TextFieldFocus {
     ClearBgButton,
     WrapButton,
     FitButton,
+    FigletButton,
+    FigletFontButton,
     BoldButton,
     ItalicButton,
     UnderlineButton,
@@ -1565,6 +1567,8 @@ const TEXT_FOCUS_ORDER: &[TextFieldFocus] = &[
     TextFieldFocus::ClearBgButton,
     TextFieldFocus::WrapButton,
     TextFieldFocus::FitButton,
+    TextFieldFocus::FigletButton,
+    TextFieldFocus::FigletFontButton,
     TextFieldFocus::BoldButton,
     TextFieldFocus::ItalicButton,
     TextFieldFocus::UnderlineButton,
@@ -2055,7 +2059,9 @@ impl App {
             } else if self.has_selected_text_overlay() {
                 self.text_field_focus = TextFieldFocus::TextInput;
                 self.value_edit_buffer =
-                    self.render_args.overlays[self.text_selected.unwrap() - 1].text.clone();
+                    self.render_args.overlays[self.text_selected.unwrap() - 1]
+                        .editable_text()
+                        .to_string();
                 self.input_mode = InputMode::TextEdit;
             }
             return;
@@ -2068,7 +2074,9 @@ impl App {
         let selected = self.text_selected.unwrap() - 1;
         match self.text_field_focus {
             TextFieldFocus::TextInput => {
-                self.value_edit_buffer = self.render_args.overlays[selected].text.clone();
+                self.value_edit_buffer = self.render_args.overlays[selected]
+                    .editable_text()
+                    .to_string();
                 self.input_mode = InputMode::TextEdit;
             }
             TextFieldFocus::FgButton => {
@@ -2097,15 +2105,23 @@ impl App {
                 self.reapply_overlays();
             }
             TextFieldFocus::WrapButton => {
-                self.render_args.overlays[selected].wrap =
-                    !self.render_args.overlays[selected].wrap;
+                let overlay = &mut self.render_args.overlays[selected];
+                if !overlay.figlet_enabled() {
+                    overlay.wrap = !overlay.wrap;
+                }
                 self.reapply_overlays();
             }
             TextFieldFocus::FitButton => {
                 let overlay = &mut self.render_args.overlays[selected];
-                overlay.auto_grow = !overlay.auto_grow;
-                sync_text_overlay_auto_grow(overlay);
+                if !overlay.figlet_enabled() {
+                    overlay.auto_grow = !overlay.auto_grow;
+                    sync_text_overlay_auto_grow(overlay);
+                }
                 self.reapply_overlays();
+            }
+            TextFieldFocus::FigletButton => toggle_text_overlay_figlet(self, selected),
+            TextFieldFocus::FigletFontButton => {
+                cycle_text_overlay_figlet_font(self, selected, 1)
             }
             TextFieldFocus::BoldButton => {
                 self.render_args.overlays[selected].bold =
@@ -2637,7 +2653,7 @@ pub(crate) struct App {
     base_grid: Option<Vec<Vec<crate::draw::RenderedCell>>>,
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
-    text_btn_areas: Vec<Rect>,   // wrap, fit, styles, delete, and colour actions
+    text_btn_areas: Vec<Rect>,   // wrap, fit, FIGlet, styles, delete, and colour actions
     color_picker_state: Option<crate::colorpicker::ColorPickerState>,
 }
 
@@ -7681,7 +7697,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if let Some(sel) = app.text_selected {
                                     if sel > 0 && sel <= app.render_args.overlays.len() {
                                         app.value_edit_buffer =
-                                            app.render_args.overlays[sel - 1].text.clone();
+                                            app.render_args.overlays[sel - 1]
+                                                .editable_text()
+                                                .to_string();
                                         app.text_field_focus = TextFieldFocus::TextInput;
                                         app.input_mode = InputMode::TextEdit;
                                     }
@@ -7737,18 +7755,29 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 y: mouse.row,
                             };
 
-                            if app.current_tab == 3 && app.text_btn_areas.len() >= 10 {
-                                if app.text_btn_areas[6].contains(pos) {
+                            if app.current_tab == 3 && app.text_btn_areas.len() >= 11 {
+                                if app
+                                    .text_btn_areas
+                                    .get(11)
+                                    .is_some_and(|area| area.contains(pos))
+                                {
+                                    app.text_field_focus = TextFieldFocus::FigletFontButton;
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            cycle_text_overlay_figlet_font(&mut app, sel - 1, 1);
+                                        }
+                                    }
+                                } else if app.text_btn_areas[7].contains(pos) {
                                     if let Some(cp) = app.color_picker_state.as_mut() {
                                         cp.editing_fg = true;
                                     }
                                     app.text_field_focus = TextFieldFocus::FgButton;
-                                } else if app.text_btn_areas[7].contains(pos) {
+                                } else if app.text_btn_areas[8].contains(pos) {
                                     if let Some(cp) = app.color_picker_state.as_mut() {
                                         cp.editing_fg = false;
                                     }
                                     app.text_field_focus = TextFieldFocus::BgButton;
-                                } else if app.text_btn_areas[8].contains(pos) {
+                                } else if app.text_btn_areas[9].contains(pos) {
                                     app.text_field_focus = TextFieldFocus::ClearFgButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7759,7 +7788,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.reapply_overlays();
                                         }
                                     }
-                                } else if app.text_btn_areas[9].contains(pos) {
+                                } else if app.text_btn_areas[10].contains(pos) {
                                     app.text_field_focus = TextFieldFocus::ClearBgButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7771,8 +7800,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.reapply_overlays();
                                         }
                                     }
-                                } else if app.text_btn_areas[5].contains(pos) {
-                                    // Delete button (index 5)
+                                } else if app.text_btn_areas[6].contains(pos) {
+                                    // Delete button (index 6)
                                     app.current_tab = 3;
                                     app.text_field_focus = TextFieldFocus::DeleteButton;
                                     app.delete_selected_text_overlay();
@@ -7782,8 +7811,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.text_field_focus = TextFieldFocus::WrapButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            app.render_args.overlays[sel - 1].wrap =
-                                                !app.render_args.overlays[sel - 1].wrap;
+                                            let overlay = &mut app.render_args.overlays[sel - 1];
+                                            if !overlay.figlet_enabled() {
+                                                overlay.wrap = !overlay.wrap;
+                                            }
                                             app.reapply_overlays();
                                         }
                                     }
@@ -7793,13 +7824,23 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             let overlay = &mut app.render_args.overlays[sel - 1];
-                                            overlay.auto_grow = !overlay.auto_grow;
-                                            sync_text_overlay_auto_grow(overlay);
+                                            if !overlay.figlet_enabled() {
+                                                overlay.auto_grow = !overlay.auto_grow;
+                                                sync_text_overlay_auto_grow(overlay);
+                                            }
                                             app.reapply_overlays();
                                         }
                                     }
                                 } else if app.text_btn_areas[2].contains(pos) {
-                                    // Bold (index 2)
+                                    // FIGlet (index 2)
+                                    app.text_field_focus = TextFieldFocus::FigletButton;
+                                    if let Some(sel) = app.text_selected {
+                                        if sel > 0 && sel <= app.render_args.overlays.len() {
+                                            toggle_text_overlay_figlet(&mut app, sel - 1);
+                                        }
+                                    }
+                                } else if app.text_btn_areas[3].contains(pos) {
+                                    // Bold (index 3)
                                     app.text_field_focus = TextFieldFocus::BoldButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7808,8 +7849,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.reapply_overlays();
                                         }
                                     }
-                                } else if app.text_btn_areas[3].contains(pos) {
-                                    // Italic (index 3)
+                                } else if app.text_btn_areas[4].contains(pos) {
+                                    // Italic (index 4)
                                     app.text_field_focus = TextFieldFocus::ItalicButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7818,8 +7859,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.reapply_overlays();
                                         }
                                     }
-                                } else if app.text_btn_areas[4].contains(pos) {
-                                    // Underline (index 4)
+                                } else if app.text_btn_areas[5].contains(pos) {
+                                    // Underline (index 5)
                                     app.text_field_focus = TextFieldFocus::UnderlineButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
@@ -7865,11 +7906,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     if sel > 0
                                                         && sel <= app.render_args.overlays.len()
                                                     {
+                                                        let index = sel - 1;
                                                         let cell_x = c_x;
                                                         let cell_y = c_y;
-
-                                                        let ov =
-                                                            &mut app.render_args.overlays[sel - 1];
                                                         if app.text_drag_mode
                                                             == TextDragMode::Moving
                                                         {
@@ -7877,6 +7916,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             if let Some((sx, sy)) =
                                                                 app.text_drag_start
                                                             {
+                                                                let ov = &mut app.render_args
+                                                                    .overlays[index];
                                                                 ov.x = cell_x - sx;
                                                                 ov.y = cell_y - sy;
                                                                 app.reapply_overlays();
@@ -7888,9 +7929,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                             if let Some((ox, oy)) =
                                                                 app.text_drag_start
                                                             {
-                                                                ov.auto_grow = false;
-                                                                ov.w = (cell_x - ox + 1).max(1);
-                                                                ov.h = (cell_y - oy + 1).max(1);
+                                                                let figlet = {
+                                                                    let ov = &mut app.render_args
+                                                                        .overlays[index];
+                                                                    ov.auto_grow = false;
+                                                                    ov.w =
+                                                                        (cell_x - ox + 1).max(1);
+                                                                    ov.h =
+                                                                        (cell_y - oy + 1).max(1);
+                                                                    ov.figlet_enabled()
+                                                                };
+                                                                if figlet {
+                                                                    refresh_text_overlay_figlet(
+                                                                        &mut app, index,
+                                                                    );
+                                                                }
                                                                 app.reapply_overlays();
                                                             }
                                                         }
@@ -8204,23 +8257,24 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         if app.current_tab == 3 {
                             if let Some(sel) = app.text_selected {
                                 if sel > 0 && sel <= app.render_args.overlays.len() {
+                                    let index = sel - 1;
+                                    let figlet = app.render_args.overlays[index].figlet_enabled();
                                     let mut handled = true;
                                     {
-                                        let ov = &mut app.render_args.overlays[sel - 1];
+                                        let ov = &mut app.render_args.overlays[index];
+                                        let text = ov.source_text.as_mut().unwrap_or(&mut ov.text);
                                         match key.code {
                                             KeyCode::Backspace
                                                 if app.text_field_focus
                                                     == TextFieldFocus::TextInput =>
                                             {
-                                                ov.text.pop();
-                                                sync_text_overlay_auto_grow(ov);
+                                                text.pop();
                                             }
                                             KeyCode::Enter
                                                 if app.text_field_focus
                                                     == TextFieldFocus::TextInput =>
                                             {
-                                                ov.text.push('\n');
-                                                sync_text_overlay_auto_grow(ov);
+                                                text.push('\n');
                                             }
                                             KeyCode::Char(c)
                                                 if (app.text_field_focus
@@ -8233,8 +8287,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     ) =>
                                             {
                                                 app.text_field_focus = TextFieldFocus::TextInput;
-                                                ov.text.push(c);
-                                                sync_text_overlay_auto_grow(ov);
+                                                text.push(c);
                                             }
                                             KeyCode::Esc => {
                                                 app.text_selected = None;
@@ -8245,6 +8298,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                     }
                                     if handled {
+                                        if figlet {
+                                            refresh_text_overlay_figlet(&mut app, index);
+                                        } else {
+                                            sync_text_overlay_auto_grow(
+                                                &mut app.render_args.overlays[index],
+                                            );
+                                        }
                                         app.reapply_overlays();
                                         continue;
                                     }
@@ -8547,7 +8607,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Left | KeyCode::Char('h') => {
                                 if app.current_tab == 3 {
-                                    if matches!(
+                                    if app.text_field_focus == TextFieldFocus::FigletFontButton {
+                                        if let Some(sel) = app.text_selected {
+                                            if sel > 0 && sel <= app.render_args.overlays.len() {
+                                                cycle_text_overlay_figlet_font(
+                                                    &mut app,
+                                                    sel - 1,
+                                                    -1,
+                                                );
+                                            }
+                                        }
+                                    } else if matches!(
                                         app.text_field_focus,
                                         TextFieldFocus::FgButton
                                             | TextFieldFocus::ClearFgButton
@@ -8629,7 +8699,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                             KeyCode::Right | KeyCode::Char('l') => {
                                 if app.current_tab == 3 {
-                                    if matches!(
+                                    if app.text_field_focus == TextFieldFocus::FigletFontButton {
+                                        if let Some(sel) = app.text_selected {
+                                            if sel > 0 && sel <= app.render_args.overlays.len() {
+                                                cycle_text_overlay_figlet_font(
+                                                    &mut app,
+                                                    sel - 1,
+                                                    1,
+                                                );
+                                            }
+                                        }
+                                    } else if matches!(
                                         app.text_field_focus,
                                         TextFieldFocus::FgButton
                                             | TextFieldFocus::ClearFgButton
@@ -9693,6 +9773,8 @@ fn new_text_overlay(
 ) -> crate::args::TextOverlay {
     crate::args::TextOverlay {
         text: String::new(),
+        source_text: None,
+        figlet_font: None,
         x,
         y,
         w: 1,
@@ -9701,6 +9783,7 @@ fn new_text_overlay(
         bg: None,
         wrap: true,
         auto_grow,
+        transparent_spaces: false,
         bold: false,
         italic: false,
         underline: false,
@@ -9724,6 +9807,101 @@ fn begin_auto_growing_text_at_anchor(app: &mut App, initial_text: String) {
     app.reapply_overlays();
 }
 
+fn figlet_font_lists(app: &App) -> Vec<crate::args::OcrFigletFontList> {
+    if app.render_args.ocr_figlet_fonts.is_empty() {
+        crate::args::default_ocr_figlet_font_lists()
+    } else {
+        app.render_args.ocr_figlet_fonts.clone()
+    }
+}
+
+fn figlet_font_names(app: &App) -> Vec<String> {
+    let mut names = Vec::new();
+    for font in figlet_font_lists(app)
+        .into_iter()
+        .flat_map(|list| list.fonts)
+    {
+        if !font.eq_ignore_ascii_case("plain") && !names.contains(&font) {
+            names.push(font);
+        }
+    }
+    names
+}
+
+fn refresh_text_overlay_figlet(app: &mut App, index: usize) {
+    let font_lists = figlet_font_lists(app);
+    if let Some(overlay) = app.render_args.overlays.get_mut(index) {
+        crate::ocr::refresh_figlet_overlay(overlay, &font_lists);
+    }
+}
+
+fn toggle_text_overlay_figlet(app: &mut App, index: usize) {
+    if !cfg!(feature = "ocr") {
+        return;
+    }
+    let Some(overlay) = app.render_args.overlays.get(index) else {
+        return;
+    };
+    let enabled = overlay.figlet_enabled();
+    let was_auto_grow = overlay.auto_grow;
+    let default_font = figlet_font_names(app).into_iter().next();
+    let available = app.cached_result.as_ref().map(|result| {
+        (
+            result.grid.first().map_or(1, Vec::len) as i32,
+            result.grid.len() as i32,
+        )
+    });
+
+    let overlay = &mut app.render_args.overlays[index];
+    if enabled {
+        if let Some(source) = overlay.source_text.take() {
+            overlay.text = source;
+        }
+        overlay.figlet_font = None;
+        overlay.auto_grow = true;
+        overlay.wrap = true;
+        overlay.transparent_spaces = false;
+        sync_text_overlay_auto_grow(overlay);
+    } else {
+        overlay.source_text = Some(overlay.text.clone());
+        overlay.figlet_font = default_font;
+        overlay.auto_grow = false;
+        overlay.wrap = false;
+        overlay.transparent_spaces = true;
+        if was_auto_grow {
+            let (grid_w, grid_h) = available.unwrap_or((40, 8));
+            overlay.w = overlay.w.max(24.min((grid_w - overlay.x).max(1)));
+            overlay.h = overlay.h.max(6.min((grid_h - overlay.y).max(1)));
+        }
+    }
+    if !enabled {
+        refresh_text_overlay_figlet(app, index);
+    }
+    app.reapply_overlays();
+}
+
+fn cycle_text_overlay_figlet_font(app: &mut App, index: usize, delta: i32) {
+    let names = figlet_font_names(app);
+    if names.is_empty()
+        || !app
+            .render_args
+            .overlays
+            .get(index)
+            .is_some_and(crate::args::TextOverlay::figlet_enabled)
+    {
+        return;
+    }
+    let current = app.render_args.overlays[index]
+        .figlet_font
+        .as_deref()
+        .and_then(|font| names.iter().position(|candidate| candidate == font))
+        .unwrap_or(0) as i32;
+    let next = (current + delta).rem_euclid(names.len() as i32) as usize;
+    app.render_args.overlays[index].figlet_font = Some(names[next].clone());
+    refresh_text_overlay_figlet(app, index);
+    app.reapply_overlays();
+}
+
 fn sync_text_overlay_auto_grow(overlay: &mut crate::args::TextOverlay) {
     if overlay.auto_grow {
         let (width, height) = text_content_dimensions(&overlay.text, None);
@@ -9739,9 +9917,18 @@ fn apply_text_edit_buffer(app: &mut App) {
     if sel == 0 || sel > app.render_args.overlays.len() {
         return;
     }
-    let overlay = &mut app.render_args.overlays[sel - 1];
-    overlay.text = app.value_edit_buffer.clone();
-    sync_text_overlay_auto_grow(overlay);
+    let index = sel - 1;
+    let figlet = app.render_args.overlays[index].figlet_enabled();
+    let overlay = &mut app.render_args.overlays[index];
+    if figlet {
+        overlay.source_text = Some(app.value_edit_buffer.clone());
+    } else {
+        overlay.text = app.value_edit_buffer.clone();
+        sync_text_overlay_auto_grow(overlay);
+    }
+    if figlet {
+        refresh_text_overlay_figlet(app, index);
+    }
     app.reapply_overlays();
 }
 

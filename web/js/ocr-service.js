@@ -268,7 +268,8 @@ export async function ocrItemsToOverlays(
     cells.forEach((cell) => occupied.add(cell));
     overlays.push({
       kind: "ocr",
-      text: art.text,
+      text: item.text,
+      renderedText: art.text,
       x,
       y,
       width: art.width,
@@ -277,6 +278,7 @@ export async function ocrItemsToOverlays(
       background: undefined,
       wrap: false,
       autoGrow: false,
+      figlet: requests[index].useFiglet,
       bold: false,
       italic: false,
       underline: false,
