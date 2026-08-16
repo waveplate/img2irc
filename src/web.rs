@@ -19,7 +19,6 @@ const MAX_FIGLET_FONTS: usize = 128;
 const MAX_FIGLET_FONT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FIGLET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FIGLET_REQUESTS: usize = 1024;
-const PREFERRED_OCR_FIGLET_FONTS: &[&str] = &["phm-minecraft", "phm-largetype", "phm-lcdmatrix"];
 
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
@@ -748,28 +747,14 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
         heights.dedup();
 
         for height in heights {
-            let fitting = fonts
-                .iter()
-                .filter(|font| font.height == height)
-                .filter_map(|font| render_figlet_font(font, text))
-                .filter(|art| art.width <= request.max_width && art.height <= request.max_height)
-                .collect::<Vec<_>>();
-            let has_preferred = fitting.iter().any(|art| {
-                PREFERRED_OCR_FIGLET_FONTS
-                    .iter()
-                    .any(|preferred| *preferred == art.source)
-            });
-            if let Some(selected) = fitting
-                .into_iter()
-                .filter(|art| {
-                    !has_preferred
-                        || PREFERRED_OCR_FIGLET_FONTS
-                            .iter()
-                            .any(|preferred| *preferred == art.source)
-                })
-                .max_by_key(WebFigletArt::fill_key)
-            {
-                return Some(selected);
+            for font in fonts.iter().filter(|f| f.height == height) {
+                if let Some(rendered) = render_figlet_font(font, text) {
+                    if rendered.width <= request.max_width
+                        && rendered.height <= request.max_height
+                    {
+                        return Some(rendered);
+                    }
+                }
             }
         }
     }

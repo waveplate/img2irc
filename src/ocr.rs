@@ -360,9 +360,6 @@ fn median_f32(values: &mut Vec<f32>) -> Option<f32> {
     Some(values[values.len() / 2])
 }
 
-const PREFERRED_OCR_FIGLET_FONTS: &[&str] =
-    &["phm-minecraft", "phm-largetype", "phm-lcdmatrix"];
-
 #[derive(Debug)]
 struct OcrFigletFont {
     name: String,
@@ -727,30 +724,14 @@ fn select_best_text_art(
     max_width: usize,
     max_height: usize,
 ) -> Option<TextArt> {
-    let fitting = candidates
+    candidates
         .into_iter()
-        .filter(|art| {
+        .find(|art| {
             art.width() > 0
                 && art.height() > 0
                 && art.width() <= max_width
                 && art.height() <= max_height
         })
-        .collect::<Vec<_>>();
-    let has_preferred = fitting.iter().any(|art| {
-        PREFERRED_OCR_FIGLET_FONTS
-            .iter()
-            .any(|font| *font == art.source)
-    });
-
-    fitting
-        .into_iter()
-        .filter(|art| {
-            !has_preferred
-                || PREFERRED_OCR_FIGLET_FONTS
-                    .iter()
-                    .any(|font| *font == art.source)
-        })
-        .max_by_key(TextArt::fill_key)
 }
 
 #[cfg(test)]
@@ -781,36 +762,42 @@ fn choose_text_art_from_fonts(
     heights.dedup();
 
     for height in heights {
-        let mut candidates = fonts
-            .iter()
-            .filter(|font| font.configured_height == height)
-            .filter_map(|font| render_figlet_text(font, text))
-            .collect::<Vec<_>>();
-
-        if height == 1 && text.chars().count() <= max_width {
-            if let Some(priority) = font_lists
-                .iter()
-                .filter(|list| list.height == 1)
-                .flat_map(|list| list.fonts.iter())
-                .position(|font| font.eq_ignore_ascii_case("plain"))
-            {
-                if let Some(plain) = normalize_text_art_with_metadata(
-                    "plain",
-                    1,
-                    priority,
-                    vec![text.to_string()],
-                ) {
-                    candidates.push(plain);
+        if let Some(list) = font_lists.iter().find(|l| l.height == height) {
+            for name in &list.fonts {
+                if name.eq_ignore_ascii_case("plain") {
+                    if height == 1 && text.chars().count() <= max_width {
+                        if let Some(plain) = normalize_text_art_with_metadata(
+                            "plain",
+                            1,
+                            0,
+                            vec![text.to_string()],
+                        ) {
+                            return Some(plain);
+                        }
+                    }
+                } else if let Some(font) = fonts
+                    .iter()
+                    .find(|f| f.configured_height == height && f.name.eq_ignore_ascii_case(name))
+                {
+                    if let Some(rendered) = render_figlet_text(font, text) {
+                        if rendered.width() > 0
+                            && rendered.height() > 0
+                            && rendered.width() <= max_width
+                            && rendered.height() <= max_height
+                        {
+                            return Some(rendered);
+                        }
+                    }
                 }
             }
         }
-
-        if let Some(selected) = select_best_text_art(candidates, max_width, max_height) {
-            return Some(selected);
-        }
     }
 
-    None
+    if text.chars().count() <= max_width {
+        plain_text_art(text, max_width)
+    } else {
+        None
+    }
 }
 
 fn plain_text_art(text: &str, max_width: usize) -> Option<TextArt> {
@@ -1851,26 +1838,24 @@ mod tests {
     }
 
     #[test]
-    fn installed_preferred_font_is_selected_for_a_large_enough_box() {
+    fn first_fitting_font_in_list_is_selected() {
         let font_lists = crate::args::default_ocr_figlet_font_lists();
         let fonts = load_ocr_figlet_fonts(&font_lists);
-        if !fonts.iter().any(|font| {
-            PREFERRED_OCR_FIGLET_FONTS
-                .iter()
-                .any(|preferred| *preferred == font.name)
-        }) {
+        let Some(first_3_font) = font_lists
+            .iter()
+            .find(|l| l.height == 3)
+            .and_then(|l| l.fonts.first())
+        else {
+            return;
+        };
+
+        if !fonts.iter().any(|f| f.name == *first_3_font) {
             return;
         }
 
         let rendered =
             choose_text_art_from_fonts("Hello", 512, 3, &font_lists, &fonts).unwrap();
-        assert!(
-            PREFERRED_OCR_FIGLET_FONTS
-                .iter()
-                .any(|preferred| *preferred == rendered.source),
-            "selected {}",
-            rendered.source
-        );
+        assert_eq!(rendered.source, *first_3_font);
     }
 
     #[test]
