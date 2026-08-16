@@ -30,7 +30,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["ocr"]
-ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq"]
+ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq", "dep:zip"]
 web = [
     "dep:console_error_panic_hook",
     "dep:figlet-rs",

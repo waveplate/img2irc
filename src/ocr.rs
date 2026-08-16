@@ -425,13 +425,18 @@ fn figlet_font_dirs() -> Vec<PathBuf> {
 
     dirs.extend([
         PathBuf::from("/usr/share/figlet/fonts"),
+        PathBuf::from("/usr/share/figlet"),
         PathBuf::from("/usr/local/share/figlet/fonts"),
+        PathBuf::from("/usr/local/share/figlet"),
         PathBuf::from("/opt/homebrew/share/figlet/fonts"),
+        PathBuf::from("/opt/homebrew/share/figlet"),
+        PathBuf::from("static/figlet"),
         PathBuf::from("FIGfonts/fonts"),
         PathBuf::from("figfonts/fonts"),
     ]);
     if let Some(home) = std::env::var_os("HOME") {
         dirs.push(PathBuf::from(home).join(".local/share/figlet/fonts"));
+        dirs.push(PathBuf::from(home).join(".local/share/figlet"));
     }
 
     let mut unique = Vec::new();
@@ -441,6 +446,32 @@ fn figlet_font_dirs() -> Vec<PathBuf> {
         }
     }
     unique
+}
+
+fn load_figlet_from_path(path: &Path) -> Result<FIGlet, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if bytes.starts_with(b"PK\x03\x04") {
+        #[cfg(feature = "zip")]
+        {
+            use std::io::Read;
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes))
+                .map_err(|e| e.to_string())?;
+            if archive.is_empty() {
+                return Err("ZIP archive is empty".to_string());
+            }
+            let mut file = archive.by_index(0).map_err(|e| e.to_string())?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents).map_err(|e| e.to_string())?;
+            FIGlet::from_content(&contents).map_err(|e| e.to_string())
+        }
+        #[cfg(not(feature = "zip"))]
+        {
+            Err("ZIP-compressed FIGlet fonts require zip feature".to_string())
+        }
+    } else {
+        let contents = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+        FIGlet::from_content(&contents).map_err(|e| e.to_string())
+    }
 }
 
 fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont> {
@@ -455,12 +486,21 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
             {
                 continue;
             }
+            let name_variants = [
+                name.clone(),
+                name.replace('_', " "),
+                name.replace('_', "-"),
+                name.replace('-', " "),
+                name.replace('-', "_"),
+            ];
             let Some(path) = dirs
                 .iter()
                 .flat_map(|dir| {
-                    ["flf", "tlf"]
-                        .into_iter()
-                        .map(move |extension| dir.join(format!("{name}.{extension}")))
+                    name_variants.iter().flat_map(move |variant| {
+                        ["flf", "tlf"]
+                            .into_iter()
+                            .map(move |extension| dir.join(format!("{variant}.{extension}")))
+                    })
                 })
                 .find(|path| path.is_file())
             else {
@@ -470,11 +510,8 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
                 );
                 continue;
             };
-            let Some(path_str) = path.to_str() else {
-                continue;
-            };
 
-            match FIGlet::from_file(path_str) {
+            match load_figlet_from_path(&path) {
                 Ok(font) if font.header_line.height as u32 == list.height => {
                     fonts.push(OcrFigletFont {
                         name: name.clone(),

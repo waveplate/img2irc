@@ -72,9 +72,9 @@
       "url": "./assets/figlet/smblock.tlf"
     },
     {
-      "name": "phm-beyondneo-mono",
+      "name": "ansi_regular",
       "height": 5,
-      "url": "./assets/figlet/phm-beyondneo-mono.flf"
+      "url": "./assets/figlet/ansi_regular.flf"
     },
     {
       "name": "phm-slanted",
@@ -82,9 +82,34 @@
       "url": "./assets/figlet/phm-slanted.flf"
     },
     {
-      "name": "abraxas",
-      "height": 6,
-      "url": "./assets/figlet/abraxas.flf"
+      "name": "smmono9",
+      "height": 7,
+      "url": "./assets/figlet/smmono9.tlf"
+    },
+    {
+      "name": "mono9",
+      "height": 7,
+      "url": "./assets/figlet/mono9.tlf"
+    },
+    {
+      "name": "blocky",
+      "height": 7,
+      "url": "./assets/figlet/blocky.flf"
+    },
+    {
+      "name": "smmono12",
+      "height": 8,
+      "url": "./assets/figlet/smmono12.tlf"
+    },
+    {
+      "name": "mono12",
+      "height": 8,
+      "url": "./assets/figlet/mono12.tlf"
+    },
+    {
+      "name": "dos_rebel",
+      "height": 11,
+      "url": "./assets/figlet/dos_rebel.flf"
     }
   ]
 }

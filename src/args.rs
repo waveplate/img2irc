@@ -133,14 +133,35 @@ pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
         },
         OcrFigletFontList {
             height: 5,
-            fonts: ["phm-beyondneo-mono"]
+            fonts: ["ansi_regular"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
         },
         OcrFigletFontList {
             height: 6,
-            fonts: ["phm-slanted", "abraxas"]
+            fonts: ["phm-slanted"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 7,
+            fonts: ["smmono9", "mono9", "blocky"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 8,
+            fonts: ["smmono12", "mono12"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        },
+        OcrFigletFontList {
+            height: 11,
+            fonts: ["dos_rebel"]
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
