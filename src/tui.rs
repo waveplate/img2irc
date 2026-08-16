@@ -1268,12 +1268,11 @@ mod ui_layout_tests {
     use clap::Parser;
 
     #[test]
-    fn visual_slider_changes_do_not_invalidate_ocr_inference() {
+    fn layout_changes_do_not_invalidate_ocr_inference() {
         let parsed = crate::args::Args::parse_from(["img2irc"]);
         let mut args = crate::args_to_render_args(&parsed);
         let original = OcrInferenceKey::from(&args);
 
-        args.brightness = 20.0;
         args.width = Some(120);
         args.ocr_figlet = false;
         args.ocr_figlet_min_height = 4.0;
@@ -1281,6 +1280,9 @@ mod ui_layout_tests {
         assert_eq!(OcrInferenceKey::from(&args), original);
 
         args.ocr_model_tier = OcrModelTier::Small;
+        assert_ne!(OcrInferenceKey::from(&args), original);
+
+        args.brightness = 20.0;
         assert_ne!(OcrInferenceKey::from(&args), original);
     }
 
@@ -5717,6 +5719,23 @@ struct OcrInferenceKey {
     box_score_threshold: u32,
     box_threshold: u32,
     unclip_ratio: u32,
+    pipeline: String,
+    rotate: u32,
+    fliph: bool,
+    flipv: bool,
+    scale: Option<(u32, u32)>,
+    brightness: u32,
+    contrast: u32,
+    gamma: u32,
+    saturation: u32,
+    hue: u32,
+    invert: bool,
+    dither: u32,
+    grayscale: bool,
+    nograyscale: bool,
+    pixelize: i32,
+    box_blur: bool,
+    gaussian_blur: i32,
 }
 
 impl From<&RenderArgs> for OcrInferenceKey {
@@ -5738,6 +5757,23 @@ impl From<&RenderArgs> for OcrInferenceKey {
             box_score_threshold: args.ocr_box_score_threshold.to_bits(),
             box_threshold: args.ocr_box_threshold.to_bits(),
             unclip_ratio: args.ocr_unclip_ratio.to_bits(),
+            pipeline: format!("{:?}", args.pipeline),
+            rotate: args.rotate.to_bits(),
+            fliph: args.fliph,
+            flipv: args.flipv,
+            scale: args.scale.map(|(x, y)| (x.to_bits(), y.to_bits())),
+            brightness: args.brightness.to_bits(),
+            contrast: args.contrast.to_bits(),
+            gamma: args.gamma.to_bits(),
+            saturation: args.saturation.to_bits(),
+            hue: args.hue.to_bits(),
+            invert: args.invert,
+            dither: args.dither,
+            grayscale: args.grayscale,
+            nograyscale: args.nograyscale,
+            pixelize: args.pixelize,
+            box_blur: args.box_blur,
+            gaussian_blur: args.gaussian_blur,
         }
     }
 }
@@ -5911,6 +5947,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
+            let effect_image = crate::effects::apply_effects(&effective_args, &arc_glyphs, (*arc_image).clone());
             let ocr_detections = if effective_args.ocr {
                 let inference_key = OcrInferenceKey::from(&effective_args);
                 let cached = ocr_detection_cache
@@ -5923,7 +5960,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     log::debug!("Reusing cached OCR detections");
                     Ok(detections)
                 } else {
-                    let detection_image = arc_image.clone();
+                    let detection_image = Arc::new(effect_image.clone());
                     let detection_args = effective_args.clone();
                     match tokio::task::spawn_blocking(move || {
                         crate::ocr::detect_text(&detection_image, &detection_args)
@@ -5947,8 +5984,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                         if !crate::ocr::has_renderable_detections(
                             &detections,
                             &effective_args,
-                            arc_image.get_width(),
-                            arc_image.get_height(),
+                            effect_image.get_width(),
+                            effect_image.get_height(),
                         ) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
@@ -5957,7 +5994,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             crate::ocr::choose_text_font_size(
                                 &mut effective_args,
                                 &detections,
-                                arc_image.get_height(),
+                                effect_image.get_height(),
                             );
                             detections
                         }
@@ -5971,7 +6008,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 Vec::new()
             };
             if !effective_args.ocr {
-                crate::resolve_auto_font_size(&mut effective_args, &arc_image, &arc_glyphs);
+                crate::resolve_auto_font_size(&mut effective_args, &effect_image, &arc_glyphs);
             }
 
             if effective_args.font != last_font
@@ -6016,21 +6053,21 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             if effective_args.ocr {
                 crate::ocr::choose_text_render_geometry(
                     &mut effective_args,
-                    &arc_image,
+                    &effect_image,
                     &arc_glyphs,
                     &ocr_detections,
                 );
             }
 
             let render_image = if effective_args.ocr {
-                crate::ocr::remove_detected_text(&arc_image, &effective_args, &ocr_detections)
+                crate::ocr::remove_detected_text(&effect_image, &effective_args, &ocr_detections)
             } else {
-                (*arc_image).clone()
+                effect_image.clone()
             };
 
             let ocr_overlays = if effective_args.ocr {
                 crate::ocr::detections_to_overlays(
-                    &arc_image,
+                    &effect_image,
                     &render_image,
                     &effective_args,
                     &arc_glyphs,
@@ -6044,8 +6081,27 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             let glyphs = fast_glyphs_store.as_ref().unwrap();
             log::info!("Starting render optimization... ({} glyphs)", glyphs.len());
             let start = Instant::now();
+            let mut output_args = effective_args.clone();
+            output_args.pipeline.clear();
+            output_args.rotate = 0.0;
+            output_args.fliph = false;
+            output_args.flipv = false;
+            output_args.scale = None;
+            output_args.brightness = 0.0;
+            output_args.contrast = 0.0;
+            output_args.gamma = 0.0;
+            output_args.saturation = 0.0;
+            output_args.hue = 0.0;
+            output_args.invert = false;
+            output_args.dither = 0;
+            output_args.grayscale = false;
+            output_args.nograyscale = false;
+            output_args.pixelize = 0;
+            output_args.box_blur = false;
+            output_args.gaussian_blur = 0;
+
             let result = crate::render_output(
-                effective_args,
+                output_args,
                 &arc_glyphs,
                 render_image,
                 glyphs,

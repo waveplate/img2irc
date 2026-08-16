@@ -1,21 +1,90 @@
 {
   "version": 1,
   "fonts": [
-    { "name": "phm-minecraft", "height": 2, "url": "./assets/figlet/phm-minecraft.flf" },
-    { "name": "phm-lcdmatrix", "height": 2, "url": "./assets/figlet/phm-lcdmatrix.flf" },
-    { "name": "phm-c64", "height": 2, "url": "./assets/figlet/phm-c64.flf" },
-    { "name": "phm-cga", "height": 2, "url": "./assets/figlet/phm-cga.flf" },
-    { "name": "phm-dos-square", "height": 2, "url": "./assets/figlet/phm-dos-square.flf" },
-    { "name": "phm-vga-square", "height": 2, "url": "./assets/figlet/phm-vga-square.flf" },
-    { "name": "phm-shinonome", "height": 3, "url": "./assets/figlet/phm-shinonome.flf" },
-    { "name": "phm-largetype", "height": 3, "url": "./assets/figlet/phm-largetype.flf" },
-    { "name": "future", "height": 3, "url": "./assets/figlet/future.tlf" },
-    { "name": "phm-dos", "height": 4, "url": "./assets/figlet/phm-dos.flf" },
-    { "name": "phm-dosv", "height": 4, "url": "./assets/figlet/phm-dosv.flf" },
-    { "name": "phm-hdos", "height": 4, "url": "./assets/figlet/phm-hdos.flf" },
-    { "name": "phm-vga", "height": 4, "url": "./assets/figlet/phm-vga.flf" },
-    { "name": "smblock", "height": 4, "url": "./assets/figlet/smblock.tlf" },
-    { "name": "phm-beyondneo-mono", "height": 5, "url": "./assets/figlet/phm-beyondneo-mono.flf" },
-    { "name": "phm-slanted", "height": 6, "url": "./assets/figlet/phm-slanted.flf" }
+    {
+      "name": "phm-minecraft",
+      "height": 2,
+      "url": "./assets/figlet/phm-minecraft.flf"
+    },
+    {
+      "name": "phm-lcdmatrix",
+      "height": 2,
+      "url": "./assets/figlet/phm-lcdmatrix.flf"
+    },
+    {
+      "name": "phm-c64",
+      "height": 2,
+      "url": "./assets/figlet/phm-c64.flf"
+    },
+    {
+      "name": "phm-cga",
+      "height": 2,
+      "url": "./assets/figlet/phm-cga.flf"
+    },
+    {
+      "name": "phm-dos-square",
+      "height": 2,
+      "url": "./assets/figlet/phm-dos-square.flf"
+    },
+    {
+      "name": "phm-vga-square",
+      "height": 2,
+      "url": "./assets/figlet/phm-vga-square.flf"
+    },
+    {
+      "name": "phm-shinonome",
+      "height": 3,
+      "url": "./assets/figlet/phm-shinonome.flf"
+    },
+    {
+      "name": "phm-largetype",
+      "height": 3,
+      "url": "./assets/figlet/phm-largetype.flf"
+    },
+    {
+      "name": "future",
+      "height": 3,
+      "url": "./assets/figlet/future.tlf"
+    },
+    {
+      "name": "phm-dos",
+      "height": 4,
+      "url": "./assets/figlet/phm-dos.flf"
+    },
+    {
+      "name": "phm-dosv",
+      "height": 4,
+      "url": "./assets/figlet/phm-dosv.flf"
+    },
+    {
+      "name": "phm-hdos",
+      "height": 4,
+      "url": "./assets/figlet/phm-hdos.flf"
+    },
+    {
+      "name": "phm-vga",
+      "height": 4,
+      "url": "./assets/figlet/phm-vga.flf"
+    },
+    {
+      "name": "smblock",
+      "height": 4,
+      "url": "./assets/figlet/smblock.tlf"
+    },
+    {
+      "name": "phm-beyondneo-mono",
+      "height": 5,
+      "url": "./assets/figlet/phm-beyondneo-mono.flf"
+    },
+    {
+      "name": "phm-slanted",
+      "height": 6,
+      "url": "./assets/figlet/phm-slanted.flf"
+    },
+    {
+      "name": "abraxas",
+      "height": 6,
+      "url": "./assets/figlet/abraxas.flf"
+    }
   ]
 }

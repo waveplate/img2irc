@@ -277,11 +277,61 @@ export class EditorApp {
     this.#renderInFlight = true;
     try {
       const ocrEnabled = this.#element("ocr-enabled").checked;
+      const options = collectRenderOptions(this.#form, this.#glyphs, []);
+      if (!await this.#ensureRenderer()) return;
+
       let preparedOcr;
+      let effectiveRenderOptions = options;
+      let effectKey = "";
+
       if (ocrEnabled) {
+        this.#setStatus("Preparing transformed image for OCR…", false, true);
+        await this.#ensureRendererSource(
+          this.#state.sourceBlob,
+          `original:${this.#state.sourceRevision}`,
+        );
+        if (renderRevision !== this.#documentRevision) return;
+
+        const transformed = await this.#renderer.getTransformedImage(options);
+        if (renderRevision !== this.#documentRevision) return;
+
+        const canvas = typeof OffscreenCanvas === "function"
+          ? new OffscreenCanvas(transformed.width, transformed.height)
+          : Object.assign(document.createElement("canvas"), { width: transformed.width, height: transformed.height });
+        const ctx = canvas.getContext("2d");
+        const imgData = new ImageData(
+          new Uint8ClampedArray(transformed.rgba.buffer, transformed.rgba.byteOffset, transformed.rgba.byteLength),
+          transformed.width,
+          transformed.height,
+        );
+        ctx.putImageData(imgData, 0, 0);
+        const transformedBlob = await (typeof canvas.convertToBlob === "function"
+          ? canvas.convertToBlob({ type: "image/png" })
+          : new Promise((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error("blob failed")), "image/png")));
+
+        effectKey = JSON.stringify({
+          r: options.rotate,
+          fh: options.flipHorizontal,
+          fv: options.flipVertical,
+          sx: options.scaleX,
+          sy: options.scaleY,
+          br: options.brightness,
+          co: options.contrast,
+          ga: options.gamma,
+          sa: options.saturation,
+          hu: options.hue,
+          inv: options.invert,
+          dit: options.dither,
+          gs: options.grayscale,
+          ngs: options.noGrayscale,
+          pix: options.pixelize,
+          bb: options.boxBlur,
+          gb: options.gaussianBlur,
+        });
+
         this.#setStatus("Preparing OCR…", false, true);
         preparedOcr = await this.#ocr.prepare(
-          this.#state.sourceBlob,
+          transformedBlob,
           this.#ocrSettings(),
           (message) => {
             this.#setStatus(message, false, true);
@@ -289,14 +339,55 @@ export class EditorApp {
           },
         );
         if (renderRevision !== this.#documentRevision) return;
-        const sourceKey = `ocr:${this.#state.sourceRevision}:${preparedOcr.key}`;
+
+        const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
         if (preparedOcr.processedBytes) {
           await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
+          effectiveRenderOptions = {
+            ...options,
+            rotate: 0,
+            flipHorizontal: false,
+            flipVertical: false,
+            scaleX: 1,
+            scaleY: 1,
+            brightness: 0,
+            contrast: 0,
+            gamma: 0,
+            saturation: 0,
+            hue: 0,
+            invert: false,
+            dither: 0,
+            grayscale: false,
+            noGrayscale: false,
+            pixelize: 0,
+            boxBlur: false,
+            gaussianBlur: 0,
+          };
         } else {
           await this.#ensureRendererSource(
-            this.#state.sourceBlob,
-            `original:${this.#state.sourceRevision}`,
+            transformedBlob,
+            `transformed:${this.#state.sourceRevision}:${effectKey}`,
           );
+          effectiveRenderOptions = {
+            ...options,
+            rotate: 0,
+            flipHorizontal: false,
+            flipVertical: false,
+            scaleX: 1,
+            scaleY: 1,
+            brightness: 0,
+            contrast: 0,
+            gamma: 0,
+            saturation: 0,
+            hue: 0,
+            invert: false,
+            dither: 0,
+            grayscale: false,
+            noGrayscale: false,
+            pixelize: 0,
+            boxBlur: false,
+            gaussianBlur: 0,
+          };
         }
       } else {
         this.#textControls.clearOcrOverlays();
@@ -305,21 +396,20 @@ export class EditorApp {
           `original:${this.#state.sourceRevision}`,
         );
       }
-      const options = collectRenderOptions(this.#form, this.#glyphs, []);
-      if (!await this.#ensureRenderer()) return;
       if (renderRevision !== this.#documentRevision) return;
       this.#setStatus("Rendering output…", false, true);
       const started = performance.now();
       const needsOverlayPass = Boolean(preparedOcr) || this.#state.overlays.length > 0;
       const firstOptions = needsOverlayPass
-        ? { ...options, includePreview: false, includeCells: false }
-        : options;
+        ? { ...effectiveRenderOptions, includePreview: false, includeCells: false }
+        : effectiveRenderOptions;
       let { result, renderMs } = await this.#renderer.render(firstOptions);
       let ocrFigletResult;
       if (preparedOcr) {
         const figletSettings = this.#ocrFigletSettings();
         const overlayKey = JSON.stringify([
           this.#state.sourceRevision,
+          effectKey,
           preparedOcr.key,
           result.columns,
           result.rows,
@@ -344,7 +434,7 @@ export class EditorApp {
       const overlayFigletResult = await this.#resolveFigletOverlays(result.columns, result.rows);
       if (needsOverlayPass) {
         const overlaid = await this.#renderer.render({
-          ...options,
+          ...effectiveRenderOptions,
           overlays: renderableOverlays(this.#state.overlays),
         });
         result = overlaid.result;

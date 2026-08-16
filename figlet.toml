@@ -1,0 +1,35 @@
+# FIGlet font mapping by line height for OCR and manual overlays.
+
+1 = ["plain"]
+
+2 = [
+    "phm-minecraft",
+    "phm-lcdmatrix",
+    "phm-c64",
+    "phm-cga",
+    "phm-dos-square",
+    "phm-vga-square",
+]
+
+3 = [
+    "phm-shinonome",
+    "phm-largetype",
+    "future",
+]
+
+4 = [
+    "phm-dos",
+    "phm-dosv",
+    "phm-hdos",
+    "phm-vga",
+    "smblock",
+]
+
+5 = [
+    "phm-beyondneo-mono",
+]
+
+6 = [
+    "phm-slanted",
+    "abraxas",
+]

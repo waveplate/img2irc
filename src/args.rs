@@ -82,6 +82,22 @@ fn default_ocr_figlet_min_height_ratio() -> f32 {
 }
 
 pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(config) = crate::config::load_figlet_config() {
+        let lists: Vec<OcrFigletFontList> = config
+            .into_iter()
+            .filter_map(|(height, fonts): (String, Vec<String>)| match height.parse::<u32>() {
+                Ok(h) if h > 0 => Some(OcrFigletFontList {
+                    height: h,
+                    fonts,
+                }),
+                _ => None,
+            })
+            .collect();
+        if !lists.is_empty() {
+            return lists;
+        }
+    }
     vec![
         OcrFigletFontList {
             height: 1,
@@ -125,9 +141,9 @@ pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
         OcrFigletFontList {
             height: 6,
             fonts: ["phm-slanted", "abraxas"]
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
         },
     ]
 }

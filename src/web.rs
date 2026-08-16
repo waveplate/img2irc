@@ -156,11 +156,18 @@ export interface Img2IrcRenderTimings {
     contourCacheMisses: number;
 }
 
+export interface Img2IrcTransformedImage {
+    width: number;
+    height: number;
+    rgba: Uint8Array;
+}
+
 export interface Img2Irc {
     setFont(fontData: Uint8Array): void;
     setImage(imageData: Uint8Array): void;
     setFigletFonts(fonts: Img2IrcFigletFont[]): void;
     renderFiglet(requests: Img2IrcFigletRequest[]): (Img2IrcFigletArt | undefined)[];
+    getTransformedImage(options: Img2IrcRenderOptions): Img2IrcTransformedImage;
     clearCache(): void;
     renderCurrent(options: Img2IrcRenderOptions): Img2IrcRenderResult;
     render(imageData: Uint8Array, options: Img2IrcRenderOptions): Img2IrcRenderResult;
@@ -573,6 +580,13 @@ struct WebRenderResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct WebTransformedImage {
+    width: u32,
+    height: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WebRenderTimings {
     canvas_cache_hit: bool,
     result_cache_hit: bool,
@@ -921,6 +935,60 @@ impl WebRenderer {
             .map_err(|error| js_error(format!("could not serialize FIGlet output: {error}")))
     }
 
+    /// Return the image with all configured pipeline effects (rotation, crop,
+    /// scale, brightness, contrast, hue, saturation, etc.) applied.
+    #[wasm_bindgen(js_name = getTransformedImage)]
+    pub fn get_transformed_image(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
+        let mut options = if options.is_null() || options.is_undefined() {
+            WebOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|error| js_error(format!("invalid render options: {error}")))?
+        };
+        if options.width == Some(0) {
+            options.width = None;
+        }
+        options.validate()?;
+
+        let Some(source) = self.source_image.clone() else {
+            return Err(js_error("no image is loaded; call setImage first"));
+        };
+
+        let args = self.options_to_render_args(&options);
+        let key = options.glyph_cache_key();
+        let store = if let Some(cache) = self.glyph_caches.iter().find(|cache| cache.key == key) {
+            cache.store.clone()
+        } else {
+            font::glyph_store_from_font_bytes(
+                &self.font_data,
+                &args.blocks,
+                &args.exclude_range,
+                &args.exclude,
+                &args.include_range,
+                args.include.as_ref(),
+                args.font_size,
+                false,
+            )
+            .map_err(js_error)?
+        };
+
+        let transformed = crate::effects::apply_effects(&args, &store, source.clone());
+        let width = transformed.get_width();
+        let height = transformed.get_height();
+        let rgba = transformed.get_raw_pixels();
+
+        let result = WebTransformedImage {
+            width,
+            height,
+        };
+        let value = serde_wasm_bindgen::to_value(&result)
+            .map_err(|error| js_error(format!("could not serialize transformed image: {error}")))?;
+        let bytes = js_sys::Uint8Array::from(rgba.as_slice());
+        js_sys::Reflect::set(&value, &JsValue::from_str("rgba"), &bytes)
+            .map_err(|_| js_error("could not attach transformed image pixels"))?;
+        Ok(value)
+    }
+
     /// Render the image most recently supplied to `setImage`.
     #[wasm_bindgen(js_name = renderCurrent)]
     pub fn render_current(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
@@ -946,22 +1014,7 @@ impl WebRenderer {
 }
 
 impl WebRenderer {
-    fn render_loaded(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
-        let mut options = if options.is_null() || options.is_undefined() {
-            WebOptions::default()
-        } else {
-            serde_wasm_bindgen::from_value(options)
-                .map_err(|error| js_error(format!("invalid render options: {error}")))?
-        };
-        if options.width == Some(0) {
-            options.width = None;
-        }
-        options.validate()?;
-
-        if self.source_image.is_none() {
-            return Err(js_error("no image is loaded; call setImage first"));
-        }
-
+    fn options_to_render_args(&mut self, options: &WebOptions) -> crate::RenderArgs {
         let cli = &mut self.cli;
         cli.width = options.width.map(|value| Param::Fixed(value as f32));
         cli.height = options.height.map(|value| Param::Fixed(value as f32));
@@ -1014,6 +1067,26 @@ impl WebRenderer {
             .into_iter()
             .map(WebTextOverlay::into_render_overlay)
             .collect();
+        args
+    }
+
+    fn render_loaded(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
+        let mut options = if options.is_null() || options.is_undefined() {
+            WebOptions::default()
+        } else {
+            serde_wasm_bindgen::from_value(options)
+                .map_err(|error| js_error(format!("invalid render options: {error}")))?
+        };
+        if options.width == Some(0) {
+            options.width = None;
+        }
+        options.validate()?;
+
+        if self.source_image.is_none() {
+            return Err(js_error("no image is loaded; call setImage first"));
+        }
+
+        let args = self.options_to_render_args(&options);
 
         let key = options.glyph_cache_key();
         if let Some(position) = self.glyph_caches.iter().position(|cache| cache.key == key) {

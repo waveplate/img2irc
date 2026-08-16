@@ -59,7 +59,58 @@ mkdir -p \
 install -m 0644 web/index.html "$staging_dir/index.html"
 install -m 0644 web/main.js "$staging_dir/main.js"
 install -m 0644 web/styles.css "$staging_dir/styles.css"
-install -m 0644 static/figlet-fonts.json "$staging_dir/figlet-fonts.json"
+python3 - "$project_root/figlet.toml" "$staging_dir/figlet-fonts.json" "$project_root/static/figlet" "$project_root/static/figlet-fonts.json" <<'PYTHON'
+import json
+import pathlib
+import sys
+import tomllib
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+figlet_dir = pathlib.Path(sys.argv[3])
+static_json = pathlib.Path(sys.argv[4]) if len(sys.argv) > 4 else None
+
+with source.open("rb") as handle:
+    raw = tomllib.load(handle)
+
+fonts_dict = raw.get("fonts", raw.get("ocr_figlet_fonts", raw))
+font_list = []
+
+for height_str, font_names in sorted(fonts_dict.items(), key=lambda item: int(item[0]) if str(item[0]).isdigit() else 999):
+    if not str(height_str).isdigit():
+        continue
+    height = int(height_str)
+    for name in font_names:
+        if name.lower() == "plain":
+            continue
+        ext = None
+        for candidate in ["flf", "tlf"]:
+            if (figlet_dir / f"{name}.{candidate}").exists():
+                ext = candidate
+                break
+        if ext is None:
+            print(f"Warning: FIGlet font file for '{name}' not found in {figlet_dir}", file=sys.stderr)
+            continue
+        font_list.append({
+            "name": name,
+            "height": height,
+            "url": f"./assets/figlet/{name}.{ext}"
+        })
+
+manifest = {
+    "version": 1,
+    "fonts": font_list
+}
+
+with destination.open("w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2)
+    handle.write("\n")
+
+if static_json:
+    with static_json.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
+PYTHON
 for source in web/js/*.js; do
     install -m 0644 "$source" "$staging_dir/js/$(basename "$source")"
 done

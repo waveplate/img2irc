@@ -140,11 +140,12 @@ async fn main() {
         .await
     {
         Ok(image) => {
+            let effect_image = img2irc_rs::effects::apply_effects(&render_args, &initial_glyph_store, image);
             let ocr_detections = if render_args.ocr {
-                match img2irc_rs::ocr::detect_text(&image, &render_args) {
+                match img2irc_rs::ocr::detect_text(&effect_image, &render_args) {
                     Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
-                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, image.get_width(), image.get_height()) {
+                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, effect_image.get_width(), effect_image.get_height()) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             render_args.ocr = false;
                             None
@@ -152,7 +153,7 @@ async fn main() {
                             img2irc_rs::ocr::choose_text_font_size(
                                 &mut render_args,
                                 &detections,
-                                image.get_height(),
+                                effect_image.get_height(),
                             );
                             Some(detections)
                         }
@@ -168,7 +169,7 @@ async fn main() {
 
             // 2. Resolve auto font size based on loaded image unless OCR chose it.
             if !render_args.ocr {
-                img2irc_rs::resolve_auto_font_size(&mut render_args, &image, &initial_glyph_store);
+                img2irc_rs::resolve_auto_font_size(&mut render_args, &effect_image, &initial_glyph_store);
             }
 
             // 3. Final glyph store with resolved font size
@@ -187,7 +188,7 @@ async fn main() {
             if let Some(detections) = &ocr_detections {
                 img2irc_rs::ocr::choose_text_render_geometry(
                     &mut render_args,
-                    &image,
+                    &effect_image,
                     &glyph_store,
                     detections,
                 );
@@ -205,14 +206,14 @@ async fn main() {
             }
 
             let render_image = if let Some(detections) = &ocr_detections {
-                img2irc_rs::ocr::remove_detected_text(&image, &render_args, detections)
+                img2irc_rs::ocr::remove_detected_text(&effect_image, &render_args, detections)
             } else {
-                image.clone()
+                effect_image.clone()
             };
 
             if let Some(detections) = &ocr_detections {
                 let overlays = img2irc_rs::ocr::detections_to_overlays(
-                    &image,
+                    &effect_image,
                     &render_image,
                     &render_args,
                     &glyph_store,
@@ -233,8 +234,27 @@ async fn main() {
             let glyphs = draw::prepare_glyphs(&glyph_store, &render_args);
             log::info!("Prepared {} optimized glyphs", glyphs.len());
 
+            let mut output_args = render_args.clone();
+            output_args.pipeline.clear();
+            output_args.rotate = 0.0;
+            output_args.fliph = false;
+            output_args.flipv = false;
+            output_args.scale = None;
+            output_args.brightness = 0.0;
+            output_args.contrast = 0.0;
+            output_args.gamma = 0.0;
+            output_args.saturation = 0.0;
+            output_args.hue = 0.0;
+            output_args.invert = false;
+            output_args.dither = 0;
+            output_args.grayscale = false;
+            output_args.nograyscale = false;
+            output_args.pixelize = 0;
+            output_args.box_blur = false;
+            output_args.gaussian_blur = 0;
+
             let result = img2irc_rs::render_output(
-                render_args.clone(),
+                output_args,
                 &glyph_store,
                 render_image,
                 &glyphs,

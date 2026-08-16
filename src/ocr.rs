@@ -805,10 +805,7 @@ impl ScaledTextBox {
         ((self.bottom - self.top + 1e-9).floor() as usize).max(1)
     }
 
-    fn place(self, art_height: usize) -> (i32, i32) {
-        // The OCR box's left edge is the layout anchor. Centering each FIGlet
-        // rendering independently makes text that was aligned in the source
-        // drift according to the selected font's width.
+    fn place(self, _art_width: usize, art_height: usize) -> (i32, i32) {
         let x = self.left.round();
         let y = (self.top + (self.bottom - self.top - art_height as f64) * 0.5).round();
         (x as i32, y as i32)
@@ -829,60 +826,6 @@ fn figlet_allowed(
     min_ratio <= 0.0
         || median_detection_height <= 0.0
         || detection_height >= median_detection_height * min_ratio
-}
-
-fn boxes_overlap_vertically(a: ScaledTextBox, b: ScaledTextBox) -> bool {
-    a.bottom.min(b.bottom) > a.top.max(b.top)
-}
-
-fn available_layout_width(
-    index: usize,
-    boxes: &[ScaledTextBox],
-    grid_width: i32,
-) -> usize {
-    let text_box = boxes[index];
-    let right_limit = boxes
-        .iter()
-        .enumerate()
-        .filter(|(other_index, other)| {
-            *other_index != index
-                && other.left >= text_box.right
-                && boxes_overlap_vertically(text_box, **other)
-        })
-        .map(|(_, other)| other.left)
-        .fold(grid_width.max(1) as f64, f64::min);
-
-    ((right_limit - text_box.left + 1e-9).floor() as usize)
-        .max(text_box.available_width())
-        .max(1)
-}
-
-fn removed_text_left_edge(
-    source: &[[u8; 3]],
-    background: &[[u8; 3]],
-    image_width: u32,
-    bounds: (u32, u32, u32, u32),
-) -> Option<u32> {
-    let (x0, y0, x1, y1) = bounds;
-    for x in x0..x1 {
-        for y in y0..y1 {
-            let index = y as usize * image_width as usize + x as usize;
-            let (Some(source), Some(background)) =
-                (source.get(index), background.get(index))
-            else {
-                continue;
-            };
-            let distance = source
-                .iter()
-                .zip(background)
-                .map(|(a, b)| (*a as i32 - *b as i32).pow(2) as u32)
-                .sum::<u32>();
-            if distance >= 8 * 8 {
-                return Some(x);
-            }
-        }
-    }
-    None
 }
 
 fn scale_image_box_to_grid(
@@ -907,7 +850,7 @@ fn scale_image_box_to_grid(
 
 pub fn detections_to_overlays(
     source: &PhotonImage,
-    background_source: &PhotonImage,
+    _background_source: &PhotonImage,
     args: &RenderArgs,
     glyphs: &GlyphStore,
     detections: &[OcrDetection],
@@ -922,7 +865,6 @@ pub fn detections_to_overlays(
     let grid_w = args.width.unwrap_or(fallback_cols as u32).max(1) as i32;
     let grid_h = args.height.unwrap_or(fallback_rows as u32).max(1) as i32;
     let rgb = photon_rgb(source);
-    let background_rgb = photon_rgb(background_source);
     let global_bg = rgb.first().copied().unwrap_or([0, 0, 0]);
     let figlet_fonts = if args.ocr_figlet {
         load_ocr_figlet_fonts(&args.ocr_figlet_fonts)
@@ -941,22 +883,13 @@ pub fn detections_to_overlays(
     .into_iter()
     .filter_map(|det| {
         let bounds = polygon_bounds(&det.polygon, source.get_width(), source.get_height())?;
-        let mut text_box = scale_image_box_to_grid(
+        let text_box = scale_image_box_to_grid(
             bounds,
             source.get_width(),
             source.get_height(),
             grid_w,
             grid_h,
         );
-        if let Some(left) = removed_text_left_edge(
-            &rgb,
-            &background_rgb,
-            source.get_width(),
-            bounds,
-        ) {
-            text_box.left = left as f64 * grid_w.max(1) as f64
-                / source.get_width().max(1) as f64;
-        }
         Some((det, bounds, text_box))
     })
     .collect::<Vec<_>>();
@@ -974,13 +907,9 @@ pub fn detections_to_overlays(
     } else {
         0.0
     };
-    let layout_boxes = renderable
-        .iter()
-        .map(|(_, _, text_box)| *text_box)
-        .collect::<Vec<_>>();
 
-    for (index, (det, bounds, text_box)) in renderable.into_iter().enumerate() {
-        let target_w = available_layout_width(index, &layout_boxes, grid_w);
+    for (det, bounds, text_box) in renderable {
+        let target_w = text_box.available_width();
         let target_h = text_box.available_height();
         let detection_height = bounds.3.saturating_sub(bounds.1) as f32;
         let allow_figlet = figlet_allowed(
@@ -1011,7 +940,10 @@ pub fn detections_to_overlays(
         };
         let art_w = art.width() as i32;
         let art_h = art.height() as i32;
-        let (art_x, art_y) = text_box.place(art_h as usize);
+        if art_w as usize > target_w || art_h as usize > target_h {
+            continue;
+        }
+        let (art_x, art_y) = text_box.place(art_w as usize, art_h as usize);
         let art_x = art_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
         let art_y = art_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
         let art_cells = art
@@ -1534,64 +1466,182 @@ fn estimate_text_color(
 ) -> [u8; 3] {
     let (x0, y0, x1, y1) = bounds;
     if x1 <= x0 || y1 <= y0 || image_w == 0 || image_h == 0 {
-        return [0, 0, 0];
+        return [255, 255, 255];
     }
+    let pad = ((((y1 - y0) as f32) * 0.08).ceil() as u32).clamp(1, 3);
+    let erase_x0 = x0.saturating_sub(pad);
+    let erase_y0 = y0.saturating_sub(pad);
+    let erase_x1 = (x1 + pad).min(image_w);
+    let erase_y1 = (y1 + pad).min(image_h);
+    let ring = (((y1 - y0) / 4) as u32).clamp(3, 8);
+    let sample_x0 = erase_x0.saturating_sub(ring);
+    let sample_y0 = erase_y0.saturating_sub(ring);
+    let sample_x1 = (erase_x1 + ring).min(image_w);
+    let sample_y1 = (erase_y1 + ring).min(image_h);
 
-    let mut pixels = Vec::with_capacity(((x1 - x0) * (y1 - y0)) as usize);
+    let mut bg_pixels = Vec::new();
+    for y in sample_y0..sample_y1 {
+        for x in sample_x0..sample_x1 {
+            let inside = x >= erase_x0 && x < erase_x1 && y >= erase_y0 && y < erase_y1;
+            if !inside {
+                let idx = (y as usize) * (image_w as usize) + (x as usize);
+                if let Some(px) = rgb.get(idx) {
+                    bg_pixels.push(*px);
+                }
+            }
+        }
+    }
+    let bg = if !bg_pixels.is_empty() {
+        dominant_rgb(&bg_pixels)
+    } else {
+        global_bg
+    };
+
+    let mut fg_candidates = Vec::new();
     for y in y0..y1 {
         for x in x0..x1 {
-            if let Some(px) = rgb
-                .get((y as usize).saturating_mul(image_w as usize) + x as usize)
-                .copied()
-            {
-                pixels.push(px);
+            let idx = (y as usize) * (image_w as usize) + (x as usize);
+            if let Some(px) = rgb.get(idx).copied() {
+                let dr = px[0] as i32 - bg[0] as i32;
+                let dg = px[1] as i32 - bg[1] as i32;
+                let db = px[2] as i32 - bg[2] as i32;
+                let dist_sq = (dr * dr + dg * dg + db * db) as u32;
+                fg_candidates.push((dist_sq, px));
             }
         }
     }
 
-    if pixels.is_empty() {
-        return global_bg;
+    if fg_candidates.is_empty() {
+        return [255, 255, 255];
     }
 
-    let bg = median_rgb(&pixels);
-    let mut ranked: Vec<(u32, [u8; 3])> = pixels
-        .into_iter()
-        .map(|px| {
-            let dr = px[0] as i32 - bg[0] as i32;
-            let dg = px[1] as i32 - bg[1] as i32;
-            let db = px[2] as i32 - bg[2] as i32;
-            ((dr * dr + dg * dg + db * db) as u32, px)
-        })
+    fg_candidates.sort_unstable_by_key(|(dist_sq, _)| std::cmp::Reverse(*dist_sq));
+    let threshold = 25 * 25;
+    let mut distinct_pixels: Vec<[u8; 3]> = fg_candidates
+        .iter()
+        .filter(|(d, _)| *d >= threshold)
+        .map(|(_, px)| *px)
         .collect();
-    ranked.sort_unstable_by_key(|(distance, _)| std::cmp::Reverse(*distance));
-    let keep = ((ranked.len() as f32) * 0.15).ceil().max(1.0) as usize;
-    let mut sum = [0u64; 3];
-    for (_, px) in ranked.iter().take(keep) {
-        sum[0] += px[0] as u64;
-        sum[1] += px[1] as u64;
-        sum[2] += px[2] as u64;
+
+    if distinct_pixels.len() < (fg_candidates.len() / 20).max(4) {
+        let take = ((fg_candidates.len() as f32) * 0.25).ceil().max(1.0) as usize;
+        distinct_pixels = fg_candidates.iter().take(take).map(|(_, px)| *px).collect();
     }
-    [
-        (sum[0] / keep as u64) as u8,
-        (sum[1] / keep as u64) as u8,
-        (sum[2] / keep as u64) as u8,
-    ]
+
+    best_contrast_foreground_color(&distinct_pixels, bg)
 }
 
-fn median_rgb(pixels: &[[u8; 3]]) -> [u8; 3] {
-    let mut r = Vec::with_capacity(pixels.len());
-    let mut g = Vec::with_capacity(pixels.len());
-    let mut b = Vec::with_capacity(pixels.len());
-    for px in pixels {
-        r.push(px[0]);
-        g.push(px[1]);
-        b.push(px[2]);
+fn dominant_rgb(pixels: &[[u8; 3]]) -> [u8; 3] {
+    if pixels.is_empty() {
+        return [0, 0, 0];
     }
-    r.sort_unstable();
-    g.sort_unstable();
-    b.sort_unstable();
-    let mid = pixels.len() / 2;
-    [r[mid], g[mid], b[mid]]
+    let mut bins: std::collections::HashMap<(u8, u8, u8), (usize, [u64; 3])> =
+        std::collections::HashMap::new();
+    for px in pixels {
+        let key = (px[0] >> 4, px[1] >> 4, px[2] >> 4);
+        let entry = bins.entry(key).or_insert((0, [0, 0, 0]));
+        entry.0 += 1;
+        entry.1[0] += px[0] as u64;
+        entry.1[1] += px[1] as u64;
+        entry.1[2] += px[2] as u64;
+    }
+    bins.into_values()
+        .max_by_key(|(count, _)| *count)
+        .map(|(count, sums)| [
+            (sums[0] / count as u64) as u8,
+            (sums[1] / count as u64) as u8,
+            (sums[2] / count as u64) as u8,
+        ])
+        .unwrap_or(pixels[0])
+}
+
+fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
+    if pixels.is_empty() {
+        let bg_lum = relative_luminance(bg);
+        return if bg_lum < 0.5 {
+            [255, 255, 255]
+        } else {
+            [0, 0, 0]
+        };
+    }
+
+    let mut bins: std::collections::HashMap<(u8, u8, u8), (usize, [u64; 3])> =
+        std::collections::HashMap::new();
+    for px in pixels {
+        let key = (px[0] >> 4, px[1] >> 4, px[2] >> 4);
+        let entry = bins.entry(key).or_insert((0, [0, 0, 0]));
+        entry.0 += 1;
+        entry.1[0] += px[0] as u64;
+        entry.1[1] += px[1] as u64;
+        entry.1[2] += px[2] as u64;
+    }
+
+    let bg_lum = relative_luminance(bg);
+    let total_pixels = pixels.len() as f32;
+    let mut best_color = pixels[0];
+    let mut best_score = -1.0f32;
+
+    for (count, sums) in bins.values() {
+        let avg_px = [
+            (sums[0] / *count as u64) as u8,
+            (sums[1] / *count as u64) as u8,
+            (sums[2] / *count as u64) as u8,
+        ];
+        let fraction = *count as f32 / total_pixels;
+        if fraction < 0.03 && *count < 5 {
+            continue;
+        }
+
+        let lum = relative_luminance(avg_px);
+        let lum_diff = (lum - bg_lum).abs();
+        let dr = avg_px[0] as f32 - bg[0] as f32;
+        let dg = avg_px[1] as f32 - bg[1] as f32;
+        let db = avg_px[2] as f32 - bg[2] as f32;
+        let color_dist = (dr * dr + dg * dg + db * db).sqrt();
+
+        let score = (fraction.powf(0.5)) * color_dist * (1.0 + 3.0 * lum_diff);
+        if score > best_score {
+            best_score = score;
+            best_color = avg_px;
+        }
+    }
+
+    ensure_contrast(best_color, bg)
+}
+
+fn relative_luminance(rgb: [u8; 3]) -> f32 {
+    let r = rgb[0] as f32 / 255.0;
+    let g = rgb[1] as f32 / 255.0;
+    let b = rgb[2] as f32 / 255.0;
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+fn ensure_contrast(fg: [u8; 3], bg: [u8; 3]) -> [u8; 3] {
+    let fg_lum = relative_luminance(fg);
+    let bg_lum = relative_luminance(bg);
+    let lum_diff = (fg_lum - bg_lum).abs();
+    let dr = fg[0] as f32 - bg[0] as f32;
+    let dg = fg[1] as f32 - bg[1] as f32;
+    let db = fg[2] as f32 - bg[2] as f32;
+    let color_dist = (dr * dr + dg * dg + db * db).sqrt();
+
+    if lum_diff < 0.25 && color_dist < 60.0 {
+        if bg_lum < 0.5 {
+            [
+                fg[0].saturating_add(60).max(180),
+                fg[1].saturating_add(60).max(180),
+                fg[2].saturating_add(60).max(180),
+            ]
+        } else {
+            [
+                fg[0].saturating_sub(60).min(60),
+                fg[1].saturating_sub(60).min(60),
+                fg[2].saturating_sub(60).min(60),
+            ]
+        }
+    } else {
+        fg
+    }
 }
 
 #[cfg(test)]
@@ -1715,48 +1765,8 @@ mod tests {
             right: 30.0,
             bottom: 8.0,
         });
-        assert_eq!(small.place(2), (5, 2));
-        assert_eq!(large.place(4), (10, 4));
-    }
-
-    #[test]
-    fn horizontal_fit_uses_space_until_the_next_aligned_text_box() {
-        let boxes = [
-            ScaledTextBox {
-                left: 10.0,
-                top: 5.0,
-                right: 30.0,
-                bottom: 8.0,
-            },
-            ScaledTextBox {
-                left: 60.0,
-                top: 6.0,
-                right: 75.0,
-                bottom: 9.0,
-            },
-            ScaledTextBox {
-                left: 40.0,
-                top: 12.0,
-                right: 55.0,
-                bottom: 14.0,
-            },
-        ];
-
-        assert_eq!(available_layout_width(0, &boxes, 90), 50);
-        assert_eq!(available_layout_width(1, &boxes, 90), 30);
-    }
-
-    #[test]
-    fn overlay_anchor_uses_the_removed_text_edge_not_detector_padding() {
-        let background = vec![[10, 20, 30]; 10];
-        let mut source = background.clone();
-        source[2] = [240, 240, 240];
-        source[7] = [240, 240, 240];
-
-        assert_eq!(
-            removed_text_left_edge(&source, &background, 5, (0, 0, 5, 2)),
-            Some(2)
-        );
+        assert_eq!(small.place(10, 2), (5, 2));
+        assert_eq!(large.place(20, 4), (10, 4));
     }
 
     #[test]

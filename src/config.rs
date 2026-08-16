@@ -57,6 +57,22 @@ impl UiLayout {
     }
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+enum FigletConfigFile {
+    Direct(BTreeMap<String, Vec<String>>),
+    NestedFonts { fonts: BTreeMap<String, Vec<String>> },
+    NestedOcr { ocr_figlet_fonts: BTreeMap<String, Vec<String>> },
+}
+
+pub fn load_figlet_config() -> Option<BTreeMap<String, Vec<String>>> {
+    load_toml::<FigletConfigFile>("figlet.toml").map(|cfg| match cfg {
+        FigletConfigFile::Direct(m) => m,
+        FigletConfigFile::NestedFonts { fonts } => fonts,
+        FigletConfigFile::NestedOcr { ocr_figlet_fonts } => ocr_figlet_fonts,
+    })
+}
+
 fn load_toml<T: DeserializeOwned>(filename: &str) -> Option<T> {
     find_config_file(filename)
         .and_then(|path| fs::read_to_string(path).ok())

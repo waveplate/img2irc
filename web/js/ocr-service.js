@@ -78,6 +78,33 @@ function quantizedKey(pixel) {
   return `${pixel[0] >> 4},${pixel[1] >> 4},${pixel[2] >> 4}`;
 }
 
+function relativeLuminance(rgb) {
+  return 0.2126 * (rgb[0] / 255) + 0.7152 * (rgb[1] / 255) + 0.0722 * (rgb[2] / 255);
+}
+
+function ensureContrast(fg, bg) {
+  const fgLum = relativeLuminance(fg);
+  const bgLum = relativeLuminance(bg);
+  const lumDiff = Math.abs(fgLum - bgLum);
+  const dist = Math.sqrt(colorDistanceSquared(fg, bg));
+  if (lumDiff < 0.25 && dist < 60) {
+    if (bgLum < 0.5) {
+      return [
+        Math.max(180, Math.min(255, fg[0] + 60)),
+        Math.max(180, Math.min(255, fg[1] + 60)),
+        Math.max(180, Math.min(255, fg[2] + 60)),
+      ];
+    } else {
+      return [
+        Math.min(60, Math.max(0, fg[0] - 60)),
+        Math.min(60, Math.max(0, fg[1] - 60)),
+        Math.min(60, Math.max(0, fg[2] - 60)),
+      ];
+    }
+  }
+  return fg;
+}
+
 function dominantColor(pixels) {
   const bins = new Map();
   for (const pixel of pixels) {
@@ -93,6 +120,43 @@ function dominantColor(pixels) {
   }
   if (!winner) return [0, 0, 0, 255];
   return winner.sums.map((sum) => Math.round(sum / winner.count));
+}
+
+function bestContrastForeground(pixels, background) {
+  if (pixels.length === 0) {
+    const bgLum = relativeLuminance(background);
+    return bgLum < 0.5 ? [255, 255, 255] : [0, 0, 0];
+  }
+  const bins = new Map();
+  for (const pixel of pixels) {
+    const key = quantizedKey(pixel);
+    const bin = bins.get(key) ?? { count: 0, sums: [0, 0, 0, 0] };
+    bin.count += 1;
+    for (let channel = 0; channel < 4; channel += 1) bin.sums[channel] += pixel[channel];
+    bins.set(key, bin);
+  }
+  const bgLum = relativeLuminance(background);
+  let bestColor = pixels[0].slice(0, 3);
+  let bestScore = -1;
+  const total = pixels.length;
+  for (const bin of bins.values()) {
+    const fraction = bin.count / total;
+    if (fraction < 0.03 && bin.count < 5) continue;
+    const avg = [
+      Math.round(bin.sums[0] / bin.count),
+      Math.round(bin.sums[1] / bin.count),
+      Math.round(bin.sums[2] / bin.count),
+    ];
+    const lum = relativeLuminance(avg);
+    const lumDiff = Math.abs(lum - bgLum);
+    const colorDist = Math.sqrt(colorDistanceSquared(avg, background));
+    const score = Math.sqrt(fraction) * colorDist * (1.0 + 3.0 * lumDiff);
+    if (score > bestScore) {
+      bestScore = score;
+      bestColor = avg;
+    }
+  }
+  return ensureContrast(bestColor, background);
 }
 
 function regionAnalysis(raw, imageWidth, imageHeight, bounds) {
@@ -155,7 +219,7 @@ function regionAnalysis(raw, imageWidth, imageHeight, bounds) {
     mask: dilated,
     maskWidth,
     background,
-    foreground: dominantColor(foregroundPixels).slice(0, 3),
+    foreground: bestContrastForeground(foregroundPixels, background),
   };
 }
 
@@ -231,22 +295,16 @@ export async function ocrItemsToOverlays(
   const heights = ordered.map((item) => item.bounds.height).sort((left, right) => left - right);
   const normalHeight = heights.length >= 3 ? median(heights) : 0;
   const requests = ordered.map((item) => {
-    const nextLeft = scaled
-      .filter((other) => other !== item
-        && other.left >= item.right
-        && Math.min(other.bottom, item.bottom) > Math.max(other.top, item.top))
-      .reduce((limit, other) => Math.min(limit, other.left), columns);
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
-    const maxWidth = Math.max(ownWidth, Math.floor(nextLeft - item.left + 1e-9), 1);
-    const maxHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
-    const meetsAbsoluteHeight = maxHeight >= figletSettings.minHeight;
+    const ownHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
+    const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
     const meetsRelativeHeight = figletSettings.minHeightRatio <= 0
       || normalHeight <= 0
       || item.bounds.height >= normalHeight * figletSettings.minHeightRatio;
     return {
       text: item.text,
-      maxWidth,
-      maxHeight,
+      maxWidth: ownWidth,
+      maxHeight: ownHeight,
       useFiglet: figletSettings.enabled && meetsAbsoluteHeight && meetsRelativeHeight,
     };
   });
@@ -254,8 +312,9 @@ export async function ocrItemsToOverlays(
   const overlays = [];
   for (let index = 0; index < ordered.length; index += 1) {
     const item = ordered[index];
+    const req = requests[index];
     const art = figlet.arts[index];
-    if (!art || art.width > columns || art.height > rows) continue;
+    if (!art || art.width > req.maxWidth || art.height > req.maxHeight || art.width > columns || art.height > rows) continue;
     const x = Math.max(0, Math.min(columns - art.width, Math.round(item.left)));
     const centeredY = item.top + (item.bottom - item.top - art.height) * 0.5;
     const y = Math.max(0, Math.min(rows - art.height, Math.round(centeredY)));
