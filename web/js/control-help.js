@@ -40,6 +40,7 @@ const HELP = Object.freeze({
   "ocr-enabled": "Runs PP-OCRv6 in a dedicated browser worker, removes recognized text from the source, and restores it as editable character-cell overlays.",
   "ocr-confidence": "Rejects recognized lines below this confidence score. Higher values reduce false positives but may omit faint text.",
   "ocr-ascii-ratio": "Rejects lines whose text contains too few printable ASCII characters. Lower this when preserving non-Latin text.",
+  "ocr-width": "Resizes the image to this pixel width before feeding into OCR detection and text removal. Set to 0 to use the full image width.",
   "ocr-max-side": "Resizes large images to this maximum side length for detection. Larger values can find smaller text but cost more memory and time.",
   "ocr-max-height-ratio": "Rejects text regions taller than this multiple of the median detected line. Zero disables this filter.",
   "ocr-figlet": "Uses hosted FIGlet fonts when a detected label is large enough to fit multi-row text. Ordinary one-row text remains the fallback.",

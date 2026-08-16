@@ -125,6 +125,20 @@ pub fn valid_detections<'a>(
     })
 }
 
+fn box_iou(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> f32 {
+    let x0 = a.0.max(b.0);
+    let y0 = a.1.max(b.1);
+    let x1 = a.2.min(b.2);
+    let y1 = a.3.min(b.3);
+    if x1 <= x0 || y1 <= y0 {
+        return 0.0;
+    }
+    let inter = ((x1 - x0) * (y1 - y0)) as f32;
+    let area_a = ((a.2 - a.0) * (a.3 - a.1)) as f32;
+    let area_b = ((b.2 - b.0) * (b.3 - b.1)) as f32;
+    inter / (area_a + area_b - inter)
+}
+
 fn renderable_detections<'a>(
     detections: &'a [OcrDetection],
     args: &'a RenderArgs,
@@ -132,24 +146,38 @@ fn renderable_detections<'a>(
     image_h: u32,
 ) -> Vec<&'a OcrDetection> {
     let mut filtered: Vec<&OcrDetection> = valid_detections(detections, args).collect();
-    if args.ocr_max_text_height_ratio <= 0.0 || filtered.len() < 2 {
-        return filtered;
+    if args.ocr_max_text_height_ratio > 0.0 && filtered.len() >= 2 {
+        let mut heights = filtered
+            .iter()
+            .filter_map(|det| ocr_detection_height(det, image_w, image_h))
+            .collect::<Vec<_>>();
+        if let Some(median_height) = median_f32(&mut heights) {
+            let max_height = median_height * args.ocr_max_text_height_ratio.max(0.0);
+            filtered.retain(|det| {
+                ocr_detection_height(det, image_w, image_h)
+                    .map(|height| height <= max_height)
+                    .unwrap_or(false)
+            });
+        }
     }
 
-    let mut heights = filtered
-        .iter()
-        .filter_map(|det| ocr_detection_height(det, image_w, image_h))
-        .collect::<Vec<_>>();
-    let Some(median_height) = median_f32(&mut heights) else {
-        return filtered;
-    };
-    let max_height = median_height * args.ocr_max_text_height_ratio.max(0.0);
-    filtered.retain(|det| {
-        ocr_detection_height(det, image_w, image_h)
-            .map(|height| height <= max_height)
-            .unwrap_or(false)
-    });
-    filtered
+    filtered.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+    let mut deduped: Vec<&OcrDetection> = Vec::new();
+    for det in filtered {
+        let bounds = polygon_bounds(&det.polygon, image_w, image_h);
+        if let Some(b) = bounds {
+            if !deduped.iter().any(|kept| {
+                polygon_bounds(&kept.polygon, image_w, image_h)
+                    .map(|kb| box_iou(kb, b) > 0.75)
+                    .unwrap_or(false)
+            }) {
+                deduped.push(det);
+            }
+        } else {
+            deduped.push(det);
+        }
+    }
+    deduped
 }
 
 fn ocr_detection_height(det: &OcrDetection, image_w: u32, image_h: u32) -> Option<f32> {
@@ -840,17 +868,10 @@ impl ScaledTextBox {
 fn figlet_allowed(
     args: &RenderArgs,
     text_box: ScaledTextBox,
-    detection_height: f32,
-    median_detection_height: f32,
+    _detection_height: f32,
+    _median_detection_height: f32,
 ) -> bool {
-    if !args.ocr_figlet || text_box.height() < args.ocr_figlet_min_height.max(0.0) as f64 {
-        return false;
-    }
-
-    let min_ratio = args.ocr_figlet_min_height_ratio.max(0.0);
-    min_ratio <= 0.0
-        || median_detection_height <= 0.0
-        || detection_height >= median_detection_height * min_ratio
+    args.ocr_figlet && text_box.height() >= args.ocr_figlet_min_height.max(0.0) as f64
 }
 
 fn scale_image_box_to_grid(
@@ -880,15 +901,19 @@ pub fn detections_to_overlays(
     glyphs: &GlyphStore,
     detections: &[OcrDetection],
 ) -> Vec<TextOverlay> {
-    let (gw, gh) = glyphs.metrics;
-    let fallback_cols = (source.get_width() as f32 / gw.max(1) as f32)
-        .ceil()
-        .max(1.0) as i32;
-    let fallback_rows = (source.get_height() as f32 / gh.max(1) as f32)
-        .ceil()
-        .max(1.0) as i32;
-    let grid_w = args.width.unwrap_or(fallback_cols as u32).max(1) as i32;
-    let grid_h = args.height.unwrap_or(fallback_rows as u32).max(1) as i32;
+    let (dim_w, dim_h) = crate::effects::calculate_dimensions(
+        args,
+        glyphs,
+        source.get_width() as f32,
+        source.get_height() as f32,
+    );
+    let (gw, gh) = if args.braille {
+        (2, 4)
+    } else {
+        glyphs.metrics
+    };
+    let grid_w = (dim_w / gw.max(1) as u32).max(1) as i32;
+    let grid_h = (dim_h / gh.max(1) as u32).max(1) as i32;
     let rgb = photon_rgb(source);
     let global_bg = rgb.first().copied().unwrap_or([0, 0, 0]);
     let figlet_fonts = if args.ocr_figlet {
@@ -898,7 +923,6 @@ pub fn detections_to_overlays(
     };
 
     let mut overlays = Vec::new();
-    let mut occupied_cells = std::collections::HashSet::new();
     let mut renderable = renderable_detections(
         detections,
         args,
@@ -924,9 +948,6 @@ pub fn detections_to_overlays(
         .map(|(_, bounds, _)| bounds.3.saturating_sub(bounds.1) as f32)
         .filter(|height| *height > 0.0)
         .collect::<Vec<_>>();
-    // A relative threshold is useful only when the page has enough lines to
-    // establish a typical text height. For one-off labels, the absolute grid
-    // height remains the deciding gate.
     let median_detection_height = if detection_heights.len() >= 3 {
         median_f32(&mut detection_heights).unwrap_or(0.0)
     } else {
@@ -971,21 +992,6 @@ pub fn detections_to_overlays(
         let (art_x, art_y) = text_box.place(art_w as usize, art_h as usize);
         let art_x = art_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
         let art_y = art_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
-        let art_cells = art
-            .lines
-            .iter()
-            .enumerate()
-            .flat_map(|(row, line)| {
-                line.iter()
-                    .enumerate()
-                    .map(move |(col, _)| (art_x + col as i32, art_y + row as i32))
-            })
-            .collect::<Vec<_>>();
-        if art_cells.iter().any(|cell| occupied_cells.contains(cell)) {
-            log::debug!("Skipping overlapping OCR rendering for {:?}", det.text);
-            continue;
-        }
-        occupied_cells.extend(art_cells);
         let fg = estimate_text_color(
             &rgb,
             source.get_width(),

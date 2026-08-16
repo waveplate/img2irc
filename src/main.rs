@@ -141,11 +141,18 @@ async fn main() {
     {
         Ok(image) => {
             let effect_image = img2irc_rs::effects::apply_effects(&render_args, &initial_glyph_store, image);
+            let ocr_image = match render_args.ocr_width {
+                Some(w) if w > 0 && w != effect_image.get_width() => {
+                    let h = ((w as f32 * effect_image.get_height() as f32) / effect_image.get_width() as f32).round().max(1.0) as u32;
+                    photon_rs::transform::resize(&effect_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
+                }
+                _ => effect_image.clone(),
+            };
             let ocr_detections = if render_args.ocr {
-                match img2irc_rs::ocr::detect_text(&effect_image, &render_args) {
+                match img2irc_rs::ocr::detect_text(&ocr_image, &render_args) {
                     Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
-                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, effect_image.get_width(), effect_image.get_height()) {
+                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, ocr_image.get_width(), ocr_image.get_height()) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             render_args.ocr = false;
                             None
@@ -153,7 +160,7 @@ async fn main() {
                             img2irc_rs::ocr::choose_text_font_size(
                                 &mut render_args,
                                 &detections,
-                                effect_image.get_height(),
+                                ocr_image.get_height(),
                             );
                             Some(detections)
                         }
@@ -169,7 +176,7 @@ async fn main() {
 
             // 2. Resolve auto font size based on loaded image unless OCR chose it.
             if !render_args.ocr {
-                img2irc_rs::resolve_auto_font_size(&mut render_args, &effect_image, &initial_glyph_store);
+                img2irc_rs::resolve_auto_font_size(&mut render_args, &ocr_image, &initial_glyph_store);
             }
 
             // 3. Final glyph store with resolved font size
@@ -188,7 +195,7 @@ async fn main() {
             if let Some(detections) = &ocr_detections {
                 img2irc_rs::ocr::choose_text_render_geometry(
                     &mut render_args,
-                    &effect_image,
+                    &ocr_image,
                     &glyph_store,
                     detections,
                 );
@@ -206,14 +213,14 @@ async fn main() {
             }
 
             let render_image = if let Some(detections) = &ocr_detections {
-                img2irc_rs::ocr::remove_detected_text(&effect_image, &render_args, detections)
+                img2irc_rs::ocr::remove_detected_text(&ocr_image, &render_args, detections)
             } else {
-                effect_image.clone()
+                ocr_image.clone()
             };
 
             if let Some(detections) = &ocr_detections {
                 let overlays = img2irc_rs::ocr::detections_to_overlays(
-                    &effect_image,
+                    &ocr_image,
                     &render_image,
                     &render_args,
                     &glyph_store,

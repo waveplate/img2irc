@@ -5714,6 +5714,7 @@ struct OcrInferenceKey {
     doc_orientation_model: Option<String>,
     doc_unwarping: bool,
     threads: usize,
+    ocr_width: Option<u32>,
     max_side_len: u32,
     box_score_threshold: u32,
     box_threshold: u32,
@@ -5752,6 +5753,7 @@ impl From<&RenderArgs> for OcrInferenceKey {
             doc_orientation_model: args.ocr_doc_orientation_model.clone(),
             doc_unwarping: args.ocr_doc_unwarping,
             threads: args.ocr_threads,
+            ocr_width: args.ocr_width,
             max_side_len: args.ocr_max_side_len,
             box_score_threshold: args.ocr_box_score_threshold.to_bits(),
             box_threshold: args.ocr_box_threshold.to_bits(),
@@ -5947,6 +5949,13 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             // Reload font/glyphs if changed
             let mut effective_args = current_args.clone();
             let effect_image = crate::effects::apply_effects(&effective_args, &arc_glyphs, (*arc_image).clone());
+            let ocr_image = match effective_args.ocr_width {
+                Some(w) if w > 0 && w != effect_image.get_width() => {
+                    let h = ((w as f32 * effect_image.get_height() as f32) / effect_image.get_width() as f32).round().max(1.0) as u32;
+                    photon_rs::transform::resize(&effect_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
+                }
+                _ => effect_image.clone(),
+            };
             let ocr_detections = if effective_args.ocr {
                 let inference_key = OcrInferenceKey::from(&effective_args);
                 let cached = ocr_detection_cache
@@ -5959,7 +5968,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     log::debug!("Reusing cached OCR detections");
                     Ok(detections)
                 } else {
-                    let detection_image = Arc::new(effect_image.clone());
+                    let detection_image = Arc::new(ocr_image.clone());
                     let detection_args = effective_args.clone();
                     match tokio::task::spawn_blocking(move || {
                         crate::ocr::detect_text(&detection_image, &detection_args)
@@ -5983,8 +5992,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                         if !crate::ocr::has_renderable_detections(
                             &detections,
                             &effective_args,
-                            effect_image.get_width(),
-                            effect_image.get_height(),
+                            ocr_image.get_width(),
+                            ocr_image.get_height(),
                         ) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
@@ -5993,7 +6002,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             crate::ocr::choose_text_font_size(
                                 &mut effective_args,
                                 &detections,
-                                effect_image.get_height(),
+                                ocr_image.get_height(),
                             );
                             detections
                         }
@@ -6007,7 +6016,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 Vec::new()
             };
             if !effective_args.ocr {
-                crate::resolve_auto_font_size(&mut effective_args, &effect_image, &arc_glyphs);
+                crate::resolve_auto_font_size(&mut effective_args, &ocr_image, &arc_glyphs);
             }
 
             if effective_args.font != last_font
@@ -6052,21 +6061,21 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             if effective_args.ocr {
                 crate::ocr::choose_text_render_geometry(
                     &mut effective_args,
-                    &effect_image,
+                    &ocr_image,
                     &arc_glyphs,
                     &ocr_detections,
                 );
             }
 
             let render_image = if effective_args.ocr {
-                crate::ocr::remove_detected_text(&effect_image, &effective_args, &ocr_detections)
+                crate::ocr::remove_detected_text(&ocr_image, &effective_args, &ocr_detections)
             } else {
-                effect_image.clone()
+                ocr_image.clone()
             };
 
             let ocr_overlays = if effective_args.ocr {
                 crate::ocr::detections_to_overlays(
-                    &effect_image,
+                    &ocr_image,
                     &render_image,
                     &effective_args,
                     &arc_glyphs,

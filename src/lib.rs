@@ -253,6 +253,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_doc_orientation_model: args.ocr_doc_orientation_model.clone(),
         ocr_doc_unwarping: args.ocr_doc_unwarping,
         ocr_threads: args.ocr_threads,
+        ocr_width: args.ocr_width,
         ocr_max_side_len: args.ocr_max_side_len,
         ocr_max_text_height_ratio: args.ocr_max_text_height_ratio,
         ocr_figlet: args.ocr_figlet,

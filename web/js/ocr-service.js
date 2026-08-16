@@ -41,6 +41,18 @@ function printableAsciiRatio(text) {
   }).length / characters.length;
 }
 
+function boxIoU(a, b) {
+  const x0 = Math.max(a.x0, b.x0);
+  const y0 = Math.max(a.y0, b.y0);
+  const x1 = Math.min(a.x1, b.x1);
+  const y1 = Math.min(a.y1, b.y1);
+  if (x1 <= x0 || y1 <= y0) return 0;
+  const inter = (x1 - x0) * (y1 - y0);
+  const areaA = (a.x1 - a.x0) * (a.y1 - a.y0);
+  const areaB = (b.x1 - b.x0) * (b.y1 - b.y0);
+  return inter / (areaA + areaB - inter);
+}
+
 function filterItems(result, settings) {
   const image = result.image;
   let items = result.items
@@ -59,7 +71,15 @@ function filterItems(result, settings) {
     const maximum = normalHeight * settings.maxTextHeightRatio;
     items = items.filter((item) => item.bounds.height <= maximum);
   }
-  return items;
+
+  const deduped = [];
+  const sorted = [...items].sort((a, b) => b.score - a.score);
+  for (const item of sorted) {
+    if (!deduped.some((kept) => boxIoU(kept.bounds, item.bounds) > 0.75)) {
+      deduped.push(item);
+    }
+  }
+  return deduped;
 }
 
 function rgbaAt(raw, imageWidth, x, y) {
@@ -290,22 +310,16 @@ export async function ocrItemsToOverlays(
     top: item.bounds.y0 * rows / imageHeight,
     bottom: item.bounds.y1 * rows / imageHeight,
   }));
-  const occupied = new Set();
   const ordered = [...scaled].sort((left, right) => right.score - left.score);
-  const heights = ordered.map((item) => item.bounds.height).sort((left, right) => left - right);
-  const normalHeight = heights.length >= 3 ? median(heights) : 0;
   const requests = ordered.map((item) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
     const ownHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
     const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
-    const meetsRelativeHeight = figletSettings.minHeightRatio <= 0
-      || normalHeight <= 0
-      || item.bounds.height >= normalHeight * figletSettings.minHeightRatio;
     return {
       text: item.text,
       maxWidth: ownWidth,
       maxHeight: ownHeight,
-      useFiglet: figletSettings.enabled && meetsAbsoluteHeight && meetsRelativeHeight,
+      useFiglet: figletSettings.enabled && meetsAbsoluteHeight,
     };
   });
   const figlet = await renderFiglet(requests);
@@ -318,13 +332,6 @@ export async function ocrItemsToOverlays(
     const x = Math.max(0, Math.min(columns - art.width, Math.round(item.left)));
     const centeredY = item.top + (item.bottom - item.top - art.height) * 0.5;
     const y = Math.max(0, Math.min(rows - art.height, Math.round(centeredY)));
-    const cells = Array.from({ length: art.width * art.height }, (_, cellIndex) => {
-      const cellX = x + cellIndex % art.width;
-      const cellY = y + Math.floor(cellIndex / art.width);
-      return `${cellX},${cellY}`;
-    });
-    if (cells.some((cell) => occupied.has(cell))) continue;
-    cells.forEach((cell) => occupied.add(cell));
     overlays.push({
       kind: "ocr",
       text: item.text,
@@ -374,11 +381,28 @@ export class OcrService {
   }
 
   async #prepare(blob, settings, status) {
+    let ocrBlob = blob;
+    if (settings.ocrWidth > 0) {
+      status("Rescaling image for OCR…");
+      const bitmap = await createImageBitmap(blob);
+      try {
+        const targetW = Math.max(32, settings.ocrWidth);
+        const targetH = Math.max(32, Math.round(targetW * bitmap.height / bitmap.width));
+        const canvas = typeof OffscreenCanvas === "function"
+          ? new OffscreenCanvas(targetW, targetH)
+          : Object.assign(document.createElement("canvas"), { width: targetW, height: targetH });
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+        ocrBlob = await canvasBlob(canvas);
+      } finally {
+        bitmap.close();
+      }
+    }
     status("Loading browser OCR…");
     const ocr = await this.#instance();
     status("Detecting text…");
     const started = performance.now();
-    const [result] = await ocr.predict(blob, {
+    const [result] = await ocr.predict(ocrBlob, {
       textDetLimitSideLen: settings.maxSideLength,
       textDetLimitType: "max",
       textDetMaxSideLimit: settings.maxSideLength,
@@ -388,7 +412,7 @@ export class OcrService {
       textRecScoreThresh: settings.minConfidence,
     });
     status("Removing detected text…");
-    const background = await prepareBackground(blob, result, settings);
+    const background = await prepareBackground(ocrBlob, result, settings);
     return {
       result,
       ...background,

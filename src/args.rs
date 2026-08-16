@@ -422,6 +422,8 @@ pub struct RenderArgs {
     #[serde(default)]
     pub ocr_doc_unwarping: bool,
     pub ocr_threads: usize,
+    #[serde(default)]
+    pub ocr_width: Option<u32>,
     pub ocr_max_side_len: u32,
     #[serde(default = "default_ocr_max_text_height_ratio")]
     pub ocr_max_text_height_ratio: f32,
@@ -954,6 +956,11 @@ pub struct Args {
     #[arg(long = "ocr-threads", default_value_t = 4)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_threads: usize,
+
+    /// scale image to this width before OCR detection and text removal; 0 or omitted uses original
+    #[arg(long = "ocr-width", value_name = "PIXELS")]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_width: Option<u32>,
 
     /// maximum side length for OCR detection preprocessing
     #[arg(long = "ocr-max-side-len", default_value_t = 3000)]
