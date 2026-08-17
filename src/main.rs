@@ -141,18 +141,36 @@ async fn main() {
     {
         Ok(image) => {
             let effect_image = img2irc_rs::effects::apply_effects(&render_args, &initial_glyph_store, image);
-            let ocr_image = match render_args.ocr_width {
-                Some(w) if w > 0 && w != effect_image.get_width() => {
-                    let h = ((w as f32 * effect_image.get_height() as f32) / effect_image.get_width() as f32).round().max(1.0) as u32;
-                    photon_rs::transform::resize(&effect_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
-                }
-                _ => effect_image.clone(),
-            };
             let ocr_detections = if render_args.ocr {
+                let ocr_image = match render_args.ocr_width {
+                    Some(w) if w > 0 && w != effect_image.get_width() => {
+                        let h = ((w as f32 * effect_image.get_height() as f32) / effect_image.get_width() as f32).round().max(1.0) as u32;
+                        photon_rs::transform::resize(&effect_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
+                    }
+                    _ => effect_image.clone(),
+                };
+                let eff_w = effect_image.get_width() as f32;
+                let eff_h = effect_image.get_height() as f32;
+                let ocr_w = ocr_image.get_width() as f32;
+                let ocr_h = ocr_image.get_height() as f32;
                 match img2irc_rs::ocr::detect_text(&ocr_image, &render_args) {
-                    Ok(detections) => {
+                    Ok(raw_detections) => {
+                        let detections: Vec<img2irc_rs::ocr::OcrDetection> = if (ocr_w - eff_w).abs() > 0.5 || (ocr_h - eff_h).abs() > 0.5 {
+                            raw_detections
+                                .into_iter()
+                                .map(|mut d| {
+                                    for pt in &mut d.polygon {
+                                        pt[0] = pt[0] * eff_w / ocr_w;
+                                        pt[1] = pt[1] * eff_h / ocr_h;
+                                    }
+                                    d
+                                })
+                                .collect()
+                        } else {
+                            raw_detections
+                        };
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
-                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, ocr_image.get_width(), ocr_image.get_height()) {
+                        if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, effect_image.get_width(), effect_image.get_height()) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             render_args.ocr = false;
                             None
@@ -171,7 +189,7 @@ async fn main() {
 
             // 2. Resolve auto font size based on loaded image if not explicitly set (> 0)
             if render_args.font_size == 0.0 {
-                img2irc_rs::resolve_auto_font_size(&mut render_args, &ocr_image, &initial_glyph_store);
+                img2irc_rs::resolve_auto_font_size(&mut render_args, &effect_image, &initial_glyph_store);
             }
 
             // 3. Final glyph store with resolved font size
@@ -188,14 +206,14 @@ async fn main() {
             );
 
             let render_image = if let Some(detections) = &ocr_detections {
-                img2irc_rs::ocr::remove_detected_text(&ocr_image, &render_args, detections)
+                img2irc_rs::ocr::remove_detected_text(&effect_image, &render_args, detections)
             } else {
-                ocr_image.clone()
+                effect_image.clone()
             };
 
             if let Some(detections) = &ocr_detections {
                 let overlays = img2irc_rs::ocr::detections_to_overlays(
-                    &ocr_image,
+                    &effect_image,
                     &render_image,
                     &render_args,
                     &glyph_store,

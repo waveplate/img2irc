@@ -5958,8 +5958,28 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 } else {
                     let detection_image = Arc::new(ocr_image.clone());
                     let detection_args = effective_args.clone();
+                    let eff_w = effect_image.get_width() as f32;
+                    let eff_h = effect_image.get_height() as f32;
+                    let ocr_w = ocr_image.get_width() as f32;
+                    let ocr_h = ocr_image.get_height() as f32;
                     match tokio::task::spawn_blocking(move || {
                         crate::ocr::detect_text(&detection_image, &detection_args)
+                            .map(|raw_detections| {
+                                if (ocr_w - eff_w).abs() > 0.5 || (ocr_h - eff_h).abs() > 0.5 {
+                                    raw_detections
+                                        .into_iter()
+                                        .map(|mut d| {
+                                            for pt in &mut d.polygon {
+                                                pt[0] = pt[0] * eff_w / ocr_w;
+                                                pt[1] = pt[1] * eff_h / ocr_h;
+                                            }
+                                            d
+                                        })
+                                        .collect()
+                                } else {
+                                    raw_detections
+                                }
+                            })
                             .map_err(|error| error.to_string())
                     })
                     .await
@@ -5980,8 +6000,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                         if !crate::ocr::has_renderable_detections(
                             &detections,
                             &effective_args,
-                            ocr_image.get_width(),
-                            ocr_image.get_height(),
+                            effect_image.get_width(),
+                            effect_image.get_height(),
                         ) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
@@ -5999,7 +6019,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 Vec::new()
             };
             if effective_args.font_size == 0.0 {
-                crate::resolve_auto_font_size(&mut effective_args, &ocr_image, &arc_glyphs);
+                crate::resolve_auto_font_size(&mut effective_args, &effect_image, &arc_glyphs);
             }
 
             if effective_args.font != last_font
@@ -6042,14 +6062,14 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             }
 
             let render_image = if effective_args.ocr {
-                crate::ocr::remove_detected_text(&ocr_image, &effective_args, &ocr_detections)
+                crate::ocr::remove_detected_text(&effect_image, &effective_args, &ocr_detections)
             } else {
-                ocr_image.clone()
+                effect_image.clone()
             };
 
             let ocr_overlays = if effective_args.ocr {
                 crate::ocr::detections_to_overlays(
-                    &ocr_image,
+                    &effect_image,
                     &render_image,
                     &effective_args,
                     &arc_glyphs,

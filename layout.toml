@@ -20,6 +20,7 @@ order = [
     "ocr-figlet-min-height",
     "ocr-figlet-min-height-ratio",
     "ocr-confidence",
+    "ocr-width",
     "ocr-model",
     "ocr-max-side",
     "ocr-max-height",

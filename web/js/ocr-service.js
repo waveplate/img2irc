@@ -414,7 +414,7 @@ export class OcrService {
     const ocr = await this.#instance();
     status("Detecting text…");
     const started = performance.now();
-    const [result] = await ocr.predict(ocrBlob, {
+    const [rawResult] = await ocr.predict(ocrBlob, {
       textDetLimitSideLen: settings.maxSideLength,
       textDetLimitType: "max",
       textDetMaxSideLimit: settings.maxSideLength,
@@ -423,8 +423,26 @@ export class OcrService {
       textDetUnclipRatio: settings.unclipRatio,
       textRecScoreThresh: settings.minConfidence,
     });
+
+    const origBitmap = await createImageBitmap(blob);
+    const origW = origBitmap.width;
+    const origH = origBitmap.height;
+    origBitmap.close();
+
+    const ocrW = rawResult.image.width;
+    const ocrH = rawResult.image.height;
+    const result = {
+      image: { width: origW, height: origH },
+      items: rawResult.items.map((item) => ({
+        ...item,
+        poly: (ocrW !== origW || ocrH !== origH)
+          ? item.poly.map(([x, y]) => [x * origW / ocrW, y * origH / ocrH])
+          : item.poly,
+      })),
+    };
+
     status("Removing detected text…");
-    const background = await prepareBackground(ocrBlob, result, settings);
+    const background = await prepareBackground(blob, result, settings);
     return {
       result,
       ...background,
