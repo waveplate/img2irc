@@ -107,20 +107,8 @@ function ensureContrast(fg, bg) {
   const bgLum = relativeLuminance(bg);
   const lumDiff = Math.abs(fgLum - bgLum);
   const dist = Math.sqrt(colorDistanceSquared(fg, bg));
-  if (lumDiff < 0.25 && dist < 60) {
-    if (bgLum < 0.5) {
-      return [
-        Math.max(180, Math.min(255, fg[0] + 60)),
-        Math.max(180, Math.min(255, fg[1] + 60)),
-        Math.max(180, Math.min(255, fg[2] + 60)),
-      ];
-    } else {
-      return [
-        Math.min(60, Math.max(0, fg[0] - 60)),
-        Math.min(60, Math.max(0, fg[1] - 60)),
-        Math.min(60, Math.max(0, fg[2] - 60)),
-      ];
-    }
+  if (lumDiff < 0.35 || dist < 80) {
+    return bgLum < 0.5 ? [255, 255, 255] : [0, 0, 0];
   }
   return fg;
 }
@@ -310,10 +298,26 @@ export async function ocrItemsToOverlays(
     top: item.bounds.y0 * rows / imageHeight,
     bottom: item.bounds.y1 * rows / imageHeight,
   }));
-  const ordered = [...scaled].sort((left, right) => right.score - left.score);
-  const requests = ordered.map((item) => {
+  const ordered = [...scaled].sort((left, right) => left.top - right.top || left.left - right.left);
+  const maxAllowedHeights = ordered.map((item, i) => {
+    let maxH = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
+    for (let j = i + 1; j < ordered.length; j += 1) {
+      const next = ordered[j];
+      const horizOverlap = !(next.right <= item.left || next.left >= item.right);
+      if (horizOverlap && next.top > item.top) {
+        const dist = Math.floor(next.top - item.top);
+        if (dist > 0) {
+          maxH = Math.min(maxH, dist);
+        }
+        break;
+      }
+    }
+    return Math.max(1, maxH);
+  });
+
+  const requests = ordered.map((item, i) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
-    const ownHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
+    const ownHeight = maxAllowedHeights[i];
     const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
     return {
       text: item.text,
@@ -323,6 +327,7 @@ export async function ocrItemsToOverlays(
     };
   });
   const figlet = await renderFiglet(requests);
+  const colBottoms = new Array(columns).fill(0);
   const overlays = [];
   for (let index = 0; index < ordered.length; index += 1) {
     const item = ordered[index];
@@ -330,8 +335,15 @@ export async function ocrItemsToOverlays(
     const art = figlet.arts[index];
     if (!art || art.width > req.maxWidth || art.height > req.maxHeight || art.width > columns || art.height > rows) continue;
     const x = Math.max(0, Math.min(columns - art.width, Math.round(item.left)));
+    let minFreeY = 0;
+    for (let c = x; c < x + art.width && c < columns; c += 1) {
+      minFreeY = Math.max(minFreeY, colBottoms[c]);
+    }
     const centeredY = item.top + (item.bottom - item.top - art.height) * 0.5;
-    const y = Math.max(0, Math.min(rows - art.height, Math.round(centeredY)));
+    const y = Math.max(minFreeY, Math.min(rows - art.height, Math.round(centeredY)));
+    for (let c = x; c < x + art.width && c < columns; c += 1) {
+      colBottoms[c] = y + art.height;
+    }
     overlays.push({
       kind: "ocr",
       text: item.text,

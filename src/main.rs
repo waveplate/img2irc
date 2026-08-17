@@ -157,11 +157,6 @@ async fn main() {
                             render_args.ocr = false;
                             None
                         } else {
-                            img2irc_rs::ocr::choose_text_font_size(
-                                &mut render_args,
-                                &detections,
-                                ocr_image.get_height(),
-                            );
                             Some(detections)
                         }
                     }
@@ -174,13 +169,13 @@ async fn main() {
                 None
             };
 
-            // 2. Resolve auto font size based on loaded image unless OCR chose it.
-            if !render_args.ocr {
+            // 2. Resolve auto font size based on loaded image if not explicitly set (> 0)
+            if render_args.font_size == 0.0 {
                 img2irc_rs::resolve_auto_font_size(&mut render_args, &ocr_image, &initial_glyph_store);
             }
 
             // 3. Final glyph store with resolved font size
-            let mut glyph_store = font::glyph_store(
+            let glyph_store = font::glyph_store(
                 &render_args.blocks,
                 &render_args.exclude_range,
                 &render_args.exclude,
@@ -191,26 +186,6 @@ async fn main() {
                 false,
                 None,
             );
-
-            if let Some(detections) = &ocr_detections {
-                img2irc_rs::ocr::choose_text_render_geometry(
-                    &mut render_args,
-                    &ocr_image,
-                    &glyph_store,
-                    detections,
-                );
-                glyph_store = font::glyph_store(
-                    &render_args.blocks,
-                    &render_args.exclude_range,
-                    &render_args.exclude,
-                    &render_args.include_range,
-                    render_args.include.as_ref(),
-                    &render_args.font,
-                    render_args.font_size,
-                    false,
-                    None,
-                );
-            }
 
             let render_image = if let Some(detections) = &ocr_detections {
                 img2irc_rs::ocr::remove_detected_text(&ocr_image, &render_args, detections)

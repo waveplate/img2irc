@@ -942,7 +942,31 @@ pub fn detections_to_overlays(
         Some((det, bounds, text_box))
     })
     .collect::<Vec<_>>();
-    renderable.sort_by(|a, b| b.0.confidence.total_cmp(&a.0.confidence));
+    renderable.sort_by(|a, b| {
+        a.2.top.total_cmp(&b.2.top).then_with(|| a.2.left.total_cmp(&b.2.left))
+    });
+
+    let mut max_allowed_heights = Vec::with_capacity(renderable.len());
+    for i in 0..renderable.len() {
+        let mut max_h = renderable[i].2.available_height();
+        for j in (i + 1)..renderable.len() {
+            let left_i = renderable[i].2.left;
+            let right_i = renderable[i].2.right;
+            let left_j = renderable[j].2.left;
+            let right_j = renderable[j].2.right;
+            let horiz_overlap = !(right_j <= left_i || left_j >= right_i);
+            if horiz_overlap && renderable[j].2.top > renderable[i].2.top {
+                let dist = (renderable[j].2.top - renderable[i].2.top).floor() as usize;
+                if dist > 0 {
+                    max_h = max_h.min(dist);
+                }
+                break;
+            }
+        }
+        max_allowed_heights.push(max_h.max(1));
+    }
+
+    let mut col_next_free_row = vec![0i32; grid_w as usize];
     let mut detection_heights = renderable
         .iter()
         .map(|(_, bounds, _)| bounds.3.saturating_sub(bounds.1) as f32)
@@ -954,16 +978,16 @@ pub fn detections_to_overlays(
         0.0
     };
 
-    for (det, bounds, text_box) in renderable {
+    for (index, (det, bounds, text_box)) in renderable.into_iter().enumerate() {
         let target_w = text_box.available_width();
-        let target_h = text_box.available_height();
+        let target_h = max_allowed_heights[index];
         let detection_height = bounds.3.saturating_sub(bounds.1) as f32;
         let allow_figlet = figlet_allowed(
             args,
             text_box,
             detection_height,
             median_detection_height,
-        );
+        ) && target_h >= args.ocr_figlet_min_height as usize;
         let art = if allow_figlet {
             choose_text_art_from_fonts(
                 &det.text,
@@ -989,9 +1013,16 @@ pub fn detections_to_overlays(
         if art_w as usize > target_w || art_h as usize > target_h {
             continue;
         }
-        let (art_x, art_y) = text_box.place(art_w as usize, art_h as usize);
-        let art_x = art_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
-        let art_y = art_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
+        let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize);
+        let art_x = placed_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
+        let mut min_free_y = 0i32;
+        for c in art_x..(art_x + art_w).min(grid_w) {
+            min_free_y = min_free_y.max(col_next_free_row[c as usize]);
+        }
+        let art_y = placed_y.max(min_free_y).clamp(0, grid_h.saturating_sub(art_h).max(0));
+        for c in art_x..(art_x + art_w).min(grid_w) {
+            col_next_free_row[c as usize] = art_y + art_h;
+        }
         let fg = estimate_text_color(
             &rgb,
             source.get_width(),
@@ -1308,12 +1339,11 @@ fn dominant_background_color(
     raw: &[u8],
     image_w: u32,
     image_h: u32,
-    bounds: (u32, u32, u32, u32),
+    _bounds: (u32, u32, u32, u32),
     erase_bounds: (u32, u32, u32, u32),
 ) -> Option<[u8; 4]> {
-    let (x0, y0, x1, y1) = bounds;
     let (ex0, ey0, ex1, ey1) = erase_bounds;
-    let ring = (y1.saturating_sub(y0) / 4).clamp(3, 8);
+    let ring = (erase_bounds.3.saturating_sub(erase_bounds.1) / 3).clamp(3, 16);
     let sx0 = ex0.saturating_sub(ring);
     let sy0 = ey0.saturating_sub(ring);
     let sx1 = ex1.saturating_add(ring).min(image_w);
@@ -1322,9 +1352,7 @@ fn dominant_background_color(
     let mut bins = std::collections::HashMap::<u16, (u32, [u64; 4])>::new();
     for y in sy0..sy1 {
         for x in sx0..sx1 {
-            let in_erased_rect = x >= ex0 && x < ex1 && y >= ey0 && y < ey1;
-            let in_original_rect = x >= x0 && x < x1 && y >= y0 && y < y1;
-            if in_erased_rect && !in_original_rect {
+            if x >= ex0 && x < ex1 && y >= ey0 && y < ey1 {
                 continue;
             }
             let Some(px) = rgba_at(raw, image_w, x, y) else {
@@ -1340,13 +1368,16 @@ fn dominant_background_color(
         }
     }
 
-    let (_, (count, sum)) = bins.into_iter().max_by_key(|(_, (count, _))| *count)?;
-    Some([
-        (sum[0] / count as u64) as u8,
-        (sum[1] / count as u64) as u8,
-        (sum[2] / count as u64) as u8,
-        (sum[3] / count as u64) as u8,
-    ])
+    if let Some((_, (count, sum))) = bins.into_iter().max_by_key(|(_, (count, _))| *count) {
+        Some([
+            (sum[0] / count as u64) as u8,
+            (sum[1] / count as u64) as u8,
+            (sum[2] / count as u64) as u8,
+            (sum[3] / count as u64) as u8,
+        ])
+    } else {
+        rgba_at(raw, image_w, 0, 0).or(Some([0, 0, 0, 255]))
+    }
 }
 
 fn foreground_threshold(
@@ -1656,19 +1687,11 @@ fn ensure_contrast(fg: [u8; 3], bg: [u8; 3]) -> [u8; 3] {
     let db = fg[2] as f32 - bg[2] as f32;
     let color_dist = (dr * dr + dg * dg + db * db).sqrt();
 
-    if lum_diff < 0.25 && color_dist < 60.0 {
+    if lum_diff < 0.35 || color_dist < 80.0 {
         if bg_lum < 0.5 {
-            [
-                fg[0].saturating_add(60).max(180),
-                fg[1].saturating_add(60).max(180),
-                fg[2].saturating_add(60).max(180),
-            ]
+            [255, 255, 255]
         } else {
-            [
-                fg[0].saturating_sub(60).min(60),
-                fg[1].saturating_sub(60).min(60),
-                fg[2].saturating_sub(60).min(60),
-            ]
+            [0, 0, 0]
         }
     } else {
         fg

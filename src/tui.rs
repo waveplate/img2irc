@@ -107,6 +107,7 @@ enum ControlId {
     RenderMode,
     GraphicsPreview,
     Ocr,
+    OcrWidth,
     OcrFiglet,
     OcrFigletMinHeight,
     OcrFigletMinHeightRatio,
@@ -193,6 +194,7 @@ impl ControlId {
             ControlId::RenderMode => "mode",
             ControlId::GraphicsPreview => "graphics-preview",
             ControlId::Ocr => "ocr",
+            ControlId::OcrWidth => "ocr-width",
             ControlId::OcrFiglet => "ocr-figlet",
             ControlId::OcrFigletMinHeight => "ocr-figlet-min-height",
             ControlId::OcrFigletMinHeightRatio => "ocr-figlet-min-height-ratio",
@@ -273,7 +275,8 @@ impl ControlId {
     fn requires_ocr(self) -> bool {
         matches!(
             self,
-            ControlId::OcrFiglet
+            ControlId::OcrWidth
+                | ControlId::OcrFiglet
                 | ControlId::OcrFigletMinHeight
                 | ControlId::OcrFigletMinHeightRatio
                 | ControlId::OcrMinConfidence
@@ -423,6 +426,15 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             min: 0,
             max: 100,
             default: 70,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrWidth,
+        label: "OCR Width",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 8192,
+            default: 0,
         },
     },
     ControlDef {
@@ -2498,6 +2510,7 @@ pub(crate) struct App {
     ocr_figlet_min_height: i32,
     ocr_figlet_min_height_ratio: i32,
     ocr_min_confidence: i32,
+    ocr_width: i32,
     ocr_model_tier_idx: usize,
     ocr_max_side_len: i32,
     ocr_max_text_height_ratio: i32,
@@ -3186,6 +3199,7 @@ impl App {
             ocr_figlet_min_height_ratio:
                 (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32,
             ocr_min_confidence: (render_args.ocr_min_confidence * 100.0).round() as i32,
+            ocr_width: render_args.ocr_width.unwrap_or(0) as i32,
             ocr_model_tier_idx: match render_args.ocr_model_tier {
                 OcrModelTier::Tiny => 0,
                 OcrModelTier::Small => 1,
@@ -3419,6 +3433,7 @@ impl App {
         self.ocr_figlet_min_height_ratio =
             (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32;
         self.ocr_min_confidence = (render_args.ocr_min_confidence * 100.0).round() as i32;
+        self.ocr_width = render_args.ocr_width.unwrap_or(0) as i32;
         self.ocr_model_tier_idx = match render_args.ocr_model_tier {
             OcrModelTier::Tiny => 0,
             OcrModelTier::Small => 1,
@@ -3741,6 +3756,7 @@ impl App {
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height,
             ControlId::OcrFigletMinHeightRatio => self.ocr_figlet_min_height_ratio,
             ControlId::OcrMinConfidence => self.ocr_min_confidence,
+            ControlId::OcrWidth => self.ocr_width,
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
             ControlId::OcrMaxSideLen => self.ocr_max_side_len,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio,
@@ -3844,6 +3860,7 @@ impl App {
                 self.ocr_figlet_min_height_ratio = val.clamp(0, 500)
             }
             ControlId::OcrMinConfidence => self.ocr_min_confidence = val.clamp(0, 100),
+            ControlId::OcrWidth => self.ocr_width = val.max(0),
             ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
             ControlId::OcrMaxSideLen => self.ocr_max_side_len = val.max(32),
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio = val.clamp(0, 1000),
@@ -4462,6 +4479,11 @@ impl App {
         self.render_args.ocr_figlet_min_height_ratio =
             self.ocr_figlet_min_height_ratio.max(0) as f32 / 100.0;
         self.render_args.ocr_min_confidence = self.ocr_min_confidence as f32 / 100.0;
+        self.render_args.ocr_width = if self.ocr_width > 0 {
+            Some(self.ocr_width as u32)
+        } else {
+            None
+        };
         self.render_args.ocr_model_tier = match self.ocr_model_tier_idx {
             0 => OcrModelTier::Tiny,
             1 => OcrModelTier::Small,
@@ -5719,23 +5741,6 @@ struct OcrInferenceKey {
     box_score_threshold: u32,
     box_threshold: u32,
     unclip_ratio: u32,
-    pipeline: String,
-    rotate: u32,
-    fliph: bool,
-    flipv: bool,
-    scale: Option<(u32, u32)>,
-    brightness: u32,
-    contrast: u32,
-    gamma: u32,
-    saturation: u32,
-    hue: u32,
-    invert: bool,
-    dither: u32,
-    grayscale: bool,
-    nograyscale: bool,
-    pixelize: i32,
-    box_blur: bool,
-    gaussian_blur: i32,
 }
 
 impl From<&RenderArgs> for OcrInferenceKey {
@@ -5758,23 +5763,6 @@ impl From<&RenderArgs> for OcrInferenceKey {
             box_score_threshold: args.ocr_box_score_threshold.to_bits(),
             box_threshold: args.ocr_box_threshold.to_bits(),
             unclip_ratio: args.ocr_unclip_ratio.to_bits(),
-            pipeline: format!("{:?}", args.pipeline),
-            rotate: args.rotate.to_bits(),
-            fliph: args.fliph,
-            flipv: args.flipv,
-            scale: args.scale.map(|(x, y)| (x.to_bits(), y.to_bits())),
-            brightness: args.brightness.to_bits(),
-            contrast: args.contrast.to_bits(),
-            gamma: args.gamma.to_bits(),
-            saturation: args.saturation.to_bits(),
-            hue: args.hue.to_bits(),
-            invert: args.invert,
-            dither: args.dither,
-            grayscale: args.grayscale,
-            nograyscale: args.nograyscale,
-            pixelize: args.pixelize,
-            box_blur: args.box_blur,
-            gaussian_blur: args.gaussian_blur,
         }
     }
 }
@@ -5999,11 +5987,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             effective_args.ocr = false;
                             Vec::new()
                         } else {
-                            crate::ocr::choose_text_font_size(
-                                &mut effective_args,
-                                &detections,
-                                ocr_image.get_height(),
-                            );
+                        } else {
                             detections
                         }
                     }
@@ -6015,7 +5999,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             } else {
                 Vec::new()
             };
-            if !effective_args.ocr {
+            if effective_args.font_size == 0.0 {
                 crate::resolve_auto_font_size(&mut effective_args, &ocr_image, &arc_glyphs);
             }
 
@@ -6056,15 +6040,6 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             if fast_glyphs_store.is_none() {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &effective_args));
-            }
-
-            if effective_args.ocr {
-                crate::ocr::choose_text_render_geometry(
-                    &mut effective_args,
-                    &ocr_image,
-                    &arc_glyphs,
-                    &ocr_detections,
-                );
             }
 
             let render_image = if effective_args.ocr {
