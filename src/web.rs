@@ -317,6 +317,8 @@ struct WebFigletFont {
 #[serde(default, rename_all = "camelCase")]
 struct WebFigletRequest {
     text: String,
+    base_width: usize,
+    base_height: usize,
     max_width: usize,
     max_height: usize,
     use_figlet: bool,
@@ -327,6 +329,8 @@ impl Default for WebFigletRequest {
     fn default() -> Self {
         Self {
             text: String::new(),
+            base_width: 0,
+            base_height: 0,
             max_width: 1,
             max_height: 1,
             use_figlet: false,
@@ -727,6 +731,9 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
     if text.is_empty() || request.max_width == 0 || request.max_height == 0 {
         return None;
     }
+    let base_w = if request.base_width > 0 { request.base_width } else { request.max_width };
+    let base_h = if request.base_height > 0 { request.base_height } else { request.max_height };
+
     if request.use_figlet {
         if let Some(font_name) = request.font_name.as_deref() {
             return fonts
@@ -738,23 +745,51 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
                 })
                 .or_else(|| plain_figlet_art(text, request.max_width, request.max_height));
         }
-        let mut heights = fonts
+
+        // Step 1: Check if any FIGlet font fits in original base box without enlargement
+        let mut original_heights = fonts
             .iter()
             .map(|font| font.height)
-            .filter(|height| *height > 0 && *height as usize <= request.max_height)
+            .filter(|height| *height > 0 && *height as usize <= base_h)
             .collect::<Vec<_>>();
-        heights.sort_unstable_by(|left, right| right.cmp(left));
-        heights.dedup();
+        original_heights.sort_unstable_by(|left, right| right.cmp(left));
+        original_heights.dedup();
 
-        for height in heights {
-            for font in fonts.iter().filter(|f| f.height == height) {
+        for height in original_heights {
+            let mut list_fonts = fonts.iter().filter(|f| f.height == height).collect::<Vec<_>>();
+            list_fonts.sort_by_key(|f| f.priority);
+            for font in list_fonts {
                 if let Some(rendered) = render_figlet_font(font, text) {
-                    if rendered.width <= request.max_width
-                        && rendered.height <= request.max_height
-                    {
+                    if rendered.width <= base_w && rendered.height <= base_h {
                         return Some(rendered);
                     }
                 }
+            }
+        }
+
+        // Step 2: Only if no font fit in original box, check candidate fonts up to max_width x max_height
+        if request.max_width > base_w || request.max_height > base_h {
+            let mut candidates = Vec::new();
+            for font in fonts {
+                if font.height == 0 || font.height as usize > request.max_height {
+                    continue;
+                }
+                if let Some(rendered) = render_figlet_font(font, text) {
+                    if rendered.width <= request.max_width && rendered.height <= request.max_height {
+                        let expand_w = rendered.width.saturating_sub(base_w);
+                        let expand_h = rendered.height.saturating_sub(base_h);
+                        candidates.push((rendered, expand_w, expand_h, font.height, font.priority));
+                    }
+                }
+            }
+            if !candidates.is_empty() {
+                candidates.sort_by(|a, b| {
+                    (a.1 + a.2)
+                        .cmp(&(b.1 + b.2))
+                        .then_with(|| b.3.cmp(&a.3))
+                        .then_with(|| a.4.cmp(&b.4))
+                });
+                return Some(candidates.into_iter().next().unwrap().0);
             }
         }
     }

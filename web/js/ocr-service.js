@@ -303,11 +303,39 @@ export async function ocrItemsToOverlays(
   const maxWRatio = figletSettings.maxWidthRatio ?? 0.5;
   const maxHRatio = figletSettings.maxHeightRatio ?? 0.5;
 
-  const requests = ordered.map((item) => {
+  const requests = ordered.map((item, i) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
     const ownHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
-    const maxAllowedW = Math.max(ownWidth, Math.floor(ownWidth * (1.0 + Math.max(0, maxWRatio))));
-    const maxAllowedH = Math.max(ownHeight, Math.floor(ownHeight * (1.0 + Math.max(0, maxHRatio))));
+    const leftI = Math.min(columns, Math.round(item.left));
+    const topI = Math.min(rows, Math.round(item.top));
+    const rightI = Math.min(columns, Math.round(item.right));
+    const bottomI = Math.min(rows, Math.round(item.bottom));
+
+    const canvasMaxW = Math.max(1, columns - leftI);
+    const canvasMaxH = Math.max(1, rows - topI);
+
+    let maxAllowedW = Math.min(canvasMaxW, Math.max(ownWidth, Math.floor(ownWidth * (1.0 + Math.max(0, maxWRatio)))));
+    let maxAllowedH = Math.min(canvasMaxH, Math.max(ownHeight, Math.floor(ownHeight * (1.0 + Math.max(0, maxHRatio)))));
+
+    for (let j = 0; j < ordered.length; j += 1) {
+      if (i === j) continue;
+      const other = ordered[j];
+      const leftJ = Math.min(columns, Math.round(other.left));
+      const topJ = Math.min(rows, Math.round(other.top));
+      const rightJ = Math.min(columns, Math.round(other.right));
+      const bottomJ = Math.min(rows, Math.round(other.bottom));
+
+      const horizOverlap = !(rightJ <= leftI || leftJ >= rightI);
+      const vertOverlap = !(bottomJ <= topI || topJ >= bottomI);
+
+      if (horizOverlap && topJ >= bottomI) {
+        maxAllowedH = Math.min(maxAllowedH, Math.max(1, topJ - topI));
+      }
+      if (vertOverlap && leftJ >= rightI) {
+        maxAllowedW = Math.min(maxAllowedW, Math.max(1, leftJ - leftI));
+      }
+    }
+
     const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
     return {
       text: item.text,
@@ -320,6 +348,8 @@ export async function ocrItemsToOverlays(
   });
   const figlet = await renderFiglet(requests);
   const overlays = [];
+  const occupied = Array.from({ length: rows }, () => new Array(columns).fill(false));
+
   for (let index = 0; index < ordered.length; index += 1) {
     const item = ordered[index];
     const req = requests[index];
@@ -329,26 +359,54 @@ export async function ocrItemsToOverlays(
     const boxH = Math.max(1, item.bottom - item.top);
     const x = art.width <= boxW ? item.left : Math.max(0, item.left - (art.width - boxW) * 0.5);
     const y = art.height <= boxH ? item.top : Math.max(0, item.top - (art.height - boxH) * 0.5);
-    const clampedX = Math.max(0, Math.min(columns - art.width, Math.round(x)));
-    const clampedY = Math.max(0, Math.min(rows - art.height, Math.round(y)));
+    let clampedX = Math.max(0, Math.min(columns - art.width, Math.round(x)));
+    let clampedY = Math.max(0, Math.min(rows - art.height, Math.round(y)));
+    let currentArt = art;
+
+    let hasOverlap = false;
+    for (let r = clampedY; r < clampedY + currentArt.height && r < rows; r += 1) {
+      for (let c = clampedX; c < clampedX + currentArt.width && c < columns; c += 1) {
+        if (occupied[r][c]) {
+          hasOverlap = true;
+          break;
+        }
+      }
+      if (hasOverlap) break;
+    }
+
+    if (hasOverlap && currentArt.source !== "plain") {
+      const plainLen = item.text.length;
+      if (plainLen <= req.maxWidth) {
+        currentArt = { text: item.text, width: plainLen, height: 1, source: "plain" };
+        clampedX = Math.max(0, Math.min(columns - plainLen, Math.round(item.left)));
+        clampedY = Math.max(0, Math.min(rows - 1, Math.round(item.top)));
+      }
+    }
+
+    for (let r = clampedY; r < clampedY + currentArt.height && r < rows; r += 1) {
+      for (let c = clampedX; c < clampedX + currentArt.width && c < columns; c += 1) {
+        occupied[r][c] = true;
+      }
+    }
+
     overlays.push({
       kind: "ocr",
       text: item.text,
-      renderedText: art.text,
+      renderedText: currentArt.text,
       x: clampedX,
       y: clampedY,
-      width: art.width,
-      height: art.height,
+      width: currentArt.width,
+      height: currentArt.height,
       foreground: item.foreground,
       background: undefined,
       wrap: false,
       autoGrow: false,
-      figlet: requests[index].useFiglet,
+      figlet: req.useFiglet && currentArt.source !== "plain",
       bold: false,
       italic: false,
       underline: false,
       confidence: item.score,
-      figletFont: art.source,
+      figletFont: currentArt.source,
     });
   }
   return {
