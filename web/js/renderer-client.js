@@ -49,6 +49,10 @@ export class RendererClient {
     return this.#request("render", { options });
   }
 
+  getTransformedImage(options) {
+    return this.#request("get-transformed-image", { options });
+  }
+
   clearCache() {
     return this.#request("clear-cache");
   }

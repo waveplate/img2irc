@@ -46,6 +46,12 @@ self.addEventListener("message", (event) => {
         respond(id, { result, renderMs }, transfer);
         break;
       }
+      case "get-transformed-image": {
+        const result = requireRenderer().getTransformedImage(event.data.options);
+        const transfer = result.rgba?.buffer ? [result.rgba.buffer] : [];
+        respond(id, result, transfer);
+        break;
+      }
       case "clear-cache":
         requireRenderer().clearCache();
         respond(id);
