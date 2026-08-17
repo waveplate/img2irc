@@ -2,7 +2,6 @@
 name = "img2irc-rs"
 version = "2.0.0-alpha"
 authors = ["waveplate"]
-github = "https://github.com/waveplate/img2irc"
 repository = "https://github.com/waveplate/img2irc"
 description = "CLI utility to convert images to halfblock ANSI or IRC art with various optional post-processing filters"
 license = "GPL-3.0-only"
@@ -30,7 +29,8 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["ocr"]
-ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq", "dep:zip"]
+ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq", "zip"]
+zip = ["dep:zip"]
 web = [
     "dep:console_error_panic_hook",
     "dep:figlet-rs",
@@ -38,7 +38,7 @@ web = [
     "dep:js-sys",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen",
-    "dep:zip",
+    "zip",
 ]
 vendored-openssl = ["dep:openssl"]
 

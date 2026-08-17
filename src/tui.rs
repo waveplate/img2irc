@@ -3,10 +3,10 @@ pub mod general;
 pub mod glyphs;
 pub mod pipeline;
 pub mod text;
-pub use general::*;
-pub use glyphs::*;
-pub use pipeline::*;
-pub use text::*;
+pub(crate) use general::*;
+pub(crate) use glyphs::*;
+pub(crate) use pipeline::*;
+pub(crate) use text::*;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -5986,7 +5986,6 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
                             effective_args.ocr = false;
                             Vec::new()
-                        } else {
                         } else {
                             detections
                         }
