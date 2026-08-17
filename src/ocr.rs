@@ -620,7 +620,7 @@ pub fn refresh_figlet_overlay(
                 .and_then(|font| render_figlet_text(font, &source))
                 .filter(|art| art.width() <= max_width && art.height() <= max_height)
         } else {
-            choose_text_art_from_fonts(&source, max_width, max_height, font_lists, fonts)
+            choose_text_art_from_fonts(&source, max_width, max_height, 0.0, 0.0, font_lists, fonts)
         }
     });
     if let Some(art) = art {
@@ -1891,7 +1891,7 @@ mod tests {
         }
 
         let rendered =
-            choose_text_art_from_fonts("Hello", 512, 3, &font_lists, &fonts).unwrap();
+            choose_text_art_from_fonts("Hello", 512, 3, 0.0, 0.0, &font_lists, &fonts).unwrap();
         assert_eq!(rendered.source, *first_3_font);
     }
 
