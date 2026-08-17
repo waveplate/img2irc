@@ -111,6 +111,8 @@ enum ControlId {
     OcrFiglet,
     OcrFigletMinHeight,
     OcrFigletMinHeightRatio,
+    OcrFigletMaxWidthRatio,
+    OcrFigletMaxHeightRatio,
     OcrMinConfidence,
     OcrModelTier,
     OcrMaxSideLen,
@@ -198,6 +200,8 @@ impl ControlId {
             ControlId::OcrFiglet => "ocr-figlet",
             ControlId::OcrFigletMinHeight => "ocr-figlet-min-height",
             ControlId::OcrFigletMinHeightRatio => "ocr-figlet-min-height-ratio",
+            ControlId::OcrFigletMaxWidthRatio => "ocr-figlet-max-width-ratio",
+            ControlId::OcrFigletMaxHeightRatio => "ocr-figlet-max-height-ratio",
             ControlId::OcrMinConfidence => "ocr-confidence",
             ControlId::OcrModelTier => "ocr-model",
             ControlId::OcrMaxSideLen => "ocr-max-side",
@@ -279,6 +283,8 @@ impl ControlId {
                 | ControlId::OcrFiglet
                 | ControlId::OcrFigletMinHeight
                 | ControlId::OcrFigletMinHeightRatio
+                | ControlId::OcrFigletMaxWidthRatio
+                | ControlId::OcrFigletMaxHeightRatio
                 | ControlId::OcrMinConfidence
                 | ControlId::OcrModelTier
                 | ControlId::OcrMaxSideLen
@@ -294,7 +300,10 @@ impl ControlId {
     fn requires_figlet(self) -> bool {
         matches!(
             self,
-            ControlId::OcrFigletMinHeight | ControlId::OcrFigletMinHeightRatio
+            ControlId::OcrFigletMinHeight
+                | ControlId::OcrFigletMinHeightRatio
+                | ControlId::OcrFigletMaxWidthRatio
+                | ControlId::OcrFigletMaxHeightRatio
         )
     }
 
@@ -417,6 +426,24 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             min: 0,
             max: 500,
             default: 125,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrFigletMaxWidthRatio,
+        label: "FIG Max W %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 200,
+            default: 50,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrFigletMaxHeightRatio,
+        label: "FIG Max H %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 200,
+            default: 50,
         },
     },
     ControlDef {
@@ -2509,6 +2536,8 @@ pub(crate) struct App {
     ocr_figlet: bool,
     ocr_figlet_min_height: i32,
     ocr_figlet_min_height_ratio: i32,
+    ocr_figlet_max_width_ratio: i32,
+    ocr_figlet_max_height_ratio: i32,
     ocr_min_confidence: i32,
     ocr_width: i32,
     ocr_model_tier_idx: usize,
@@ -3198,6 +3227,10 @@ impl App {
             ocr_figlet_min_height: render_args.ocr_figlet_min_height.ceil() as i32,
             ocr_figlet_min_height_ratio:
                 (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32,
+            ocr_figlet_max_width_ratio:
+                (render_args.ocr_figlet_max_width_ratio * 100.0).round() as i32,
+            ocr_figlet_max_height_ratio:
+                (render_args.ocr_figlet_max_height_ratio * 100.0).round() as i32,
             ocr_min_confidence: (render_args.ocr_min_confidence * 100.0).round() as i32,
             ocr_width: render_args.ocr_width.unwrap_or(0) as i32,
             ocr_model_tier_idx: match render_args.ocr_model_tier {
@@ -3432,6 +3465,10 @@ impl App {
         self.ocr_figlet_min_height = render_args.ocr_figlet_min_height.ceil() as i32;
         self.ocr_figlet_min_height_ratio =
             (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32;
+        self.ocr_figlet_max_width_ratio =
+            (render_args.ocr_figlet_max_width_ratio * 100.0).round() as i32;
+        self.ocr_figlet_max_height_ratio =
+            (render_args.ocr_figlet_max_height_ratio * 100.0).round() as i32;
         self.ocr_min_confidence = (render_args.ocr_min_confidence * 100.0).round() as i32;
         self.ocr_width = render_args.ocr_width.unwrap_or(0) as i32;
         self.ocr_model_tier_idx = match render_args.ocr_model_tier {
@@ -3755,6 +3792,8 @@ impl App {
             ControlId::OcrFiglet => self.ocr_figlet as i32,
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height,
             ControlId::OcrFigletMinHeightRatio => self.ocr_figlet_min_height_ratio,
+            ControlId::OcrFigletMaxWidthRatio => self.ocr_figlet_max_width_ratio,
+            ControlId::OcrFigletMaxHeightRatio => self.ocr_figlet_max_height_ratio,
             ControlId::OcrMinConfidence => self.ocr_min_confidence,
             ControlId::OcrWidth => self.ocr_width,
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
@@ -3858,6 +3897,12 @@ impl App {
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height = val.clamp(0, 12),
             ControlId::OcrFigletMinHeightRatio => {
                 self.ocr_figlet_min_height_ratio = val.clamp(0, 500)
+            }
+            ControlId::OcrFigletMaxWidthRatio => {
+                self.ocr_figlet_max_width_ratio = val.clamp(0, 200)
+            }
+            ControlId::OcrFigletMaxHeightRatio => {
+                self.ocr_figlet_max_height_ratio = val.clamp(0, 200)
             }
             ControlId::OcrMinConfidence => self.ocr_min_confidence = val.clamp(0, 100),
             ControlId::OcrWidth => self.ocr_width = val.max(0),
@@ -4478,6 +4523,10 @@ impl App {
         self.render_args.ocr_figlet_min_height = self.ocr_figlet_min_height.max(0) as f32;
         self.render_args.ocr_figlet_min_height_ratio =
             self.ocr_figlet_min_height_ratio.max(0) as f32 / 100.0;
+        self.render_args.ocr_figlet_max_width_ratio =
+            self.ocr_figlet_max_width_ratio.max(0) as f32 / 100.0;
+        self.render_args.ocr_figlet_max_height_ratio =
+            self.ocr_figlet_max_height_ratio.max(0) as f32 / 100.0;
         self.render_args.ocr_min_confidence = self.ocr_min_confidence as f32 / 100.0;
         self.render_args.ocr_width = if self.ocr_width > 0 {
             Some(self.ocr_width as u32)

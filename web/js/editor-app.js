@@ -167,6 +167,8 @@ export class EditorApp {
       enabled: this.#element("ocr-figlet").checked,
       minHeight: Number(this.#element("ocr-figlet-min-height").value),
       minHeightRatio: Number(this.#element("ocr-figlet-min-height-ratio").value),
+      maxWidthRatio: Number(this.#element("ocr-figlet-max-width-ratio")?.value || 0.5),
+      maxHeightRatio: Number(this.#element("ocr-figlet-max-height-ratio")?.value || 0.5),
     };
   }
 

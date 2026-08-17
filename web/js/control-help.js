@@ -46,6 +46,8 @@ const HELP = Object.freeze({
   "ocr-figlet": "Uses hosted FIGlet fonts when a detected label is large enough to fit multi-row text. Ordinary one-row text remains the fallback.",
   "ocr-figlet-min-height": "Minimum number of output rows in a detected text box before FIGlet may be used.",
   "ocr-figlet-min-height-ratio": "Requires a detected label to be this much taller than the median text line before FIGlet may be used. Zero disables the relative check.",
+  "ocr-figlet-max-width-ratio": "Maximum ratio by which a bounding box's width may be enlarged to fit a FIGlet font (e.g. 0.5 allows up to 50% wider). Prefers enlarging as little as possible.",
+  "ocr-figlet-max-height-ratio": "Maximum ratio by which a bounding box's height may be enlarged to fit a FIGlet font (e.g. 0.5 allows up to 50% taller). Prefers enlarging as little as possible.",
   "ocr-box-score": "Minimum confidence for a detected text region before recognition is attempted.",
   "ocr-box-threshold": "Pixel threshold used by PaddleOCR while constructing text regions.",
   "ocr-unclip-ratio": "Expands detected text boxes before recognition. Larger values include more surrounding context.",

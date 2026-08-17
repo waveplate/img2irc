@@ -81,6 +81,14 @@ fn default_ocr_figlet_min_height_ratio() -> f32 {
     1.25
 }
 
+fn default_ocr_figlet_max_width_ratio() -> f32 {
+    0.50
+}
+
+fn default_ocr_figlet_max_height_ratio() -> f32 {
+    0.50
+}
+
 pub fn default_ocr_figlet_font_lists() -> Vec<OcrFigletFontList> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(config) = crate::config::load_figlet_config() {
@@ -433,6 +441,10 @@ pub struct RenderArgs {
     pub ocr_figlet_min_height: f32,
     #[serde(default = "default_ocr_figlet_min_height_ratio")]
     pub ocr_figlet_min_height_ratio: f32,
+    #[serde(default = "default_ocr_figlet_max_width_ratio")]
+    pub ocr_figlet_max_width_ratio: f32,
+    #[serde(default = "default_ocr_figlet_max_height_ratio")]
+    pub ocr_figlet_max_height_ratio: f32,
     #[serde(default = "default_ocr_figlet_font_lists")]
     pub ocr_figlet_fonts: Vec<OcrFigletFontList>,
     pub ocr_box_score_threshold: f32,
@@ -986,6 +998,16 @@ pub struct Args {
     #[arg(long = "ocr-figlet-min-height-ratio", default_value_t = 1.25)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_min_height_ratio: f32,
+
+    /// maximum enlargement ratio allowed for FIGlet bounding box width (e.g. 0.5 for up to 50%)
+    #[arg(long = "ocr-figlet-max-width-ratio", default_value_t = 0.5)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_figlet_max_width_ratio: f32,
+
+    /// maximum enlargement ratio allowed for FIGlet bounding box height (e.g. 0.5 for up to 50%)
+    #[arg(long = "ocr-figlet-max-height-ratio", default_value_t = 0.5)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_figlet_max_height_ratio: f32,
 
     /// OCR FIGlet fonts allowed at a declared line height; repeat for other heights
     #[arg(long = "ocr-figlet-fonts", value_name = "LINES=FONT1,FONT2")]

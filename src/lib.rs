@@ -259,6 +259,8 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_figlet: args.ocr_figlet,
         ocr_figlet_min_height: args.ocr_figlet_min_height,
         ocr_figlet_min_height_ratio: args.ocr_figlet_min_height_ratio,
+        ocr_figlet_max_width_ratio: args.ocr_figlet_max_width_ratio,
+        ocr_figlet_max_height_ratio: args.ocr_figlet_max_height_ratio,
         ocr_figlet_fonts: if args.ocr_figlet_fonts.is_empty() {
             crate::args::default_ocr_figlet_font_lists()
         } else {

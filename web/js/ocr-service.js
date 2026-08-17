@@ -299,57 +299,44 @@ export async function ocrItemsToOverlays(
     bottom: item.bounds.y1 * rows / imageHeight,
   }));
   const ordered = [...scaled].sort((left, right) => left.top - right.top || left.left - right.left);
-  const maxAllowedHeights = ordered.map((item, i) => {
-    let maxH = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
-    for (let j = i + 1; j < ordered.length; j += 1) {
-      const next = ordered[j];
-      const horizOverlap = !(next.right <= item.left || next.left >= item.right);
-      if (horizOverlap && next.top > item.top) {
-        const dist = Math.floor(next.top - item.top);
-        if (dist > 0) {
-          maxH = Math.min(maxH, dist);
-        }
-        break;
-      }
-    }
-    return Math.max(1, maxH);
-  });
 
-  const requests = ordered.map((item, i) => {
+  const maxWRatio = figletSettings.maxWidthRatio ?? 0.5;
+  const maxHRatio = figletSettings.maxHeightRatio ?? 0.5;
+
+  const requests = ordered.map((item) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
-    const ownHeight = maxAllowedHeights[i];
+    const ownHeight = Math.max(1, Math.floor(item.bottom - item.top + 1e-9));
+    const maxAllowedW = Math.max(ownWidth, Math.floor(ownWidth * (1.0 + Math.max(0, maxWRatio))));
+    const maxAllowedH = Math.max(ownHeight, Math.floor(ownHeight * (1.0 + Math.max(0, maxHRatio))));
     const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
     return {
       text: item.text,
-      maxWidth: ownWidth,
-      maxHeight: ownHeight,
+      baseWidth: ownWidth,
+      baseHeight: ownHeight,
+      maxWidth: maxAllowedW,
+      maxHeight: maxAllowedH,
       useFiglet: figletSettings.enabled && meetsAbsoluteHeight,
     };
   });
   const figlet = await renderFiglet(requests);
-  const colBottoms = new Array(columns).fill(0);
   const overlays = [];
   for (let index = 0; index < ordered.length; index += 1) {
     const item = ordered[index];
     const req = requests[index];
     const art = figlet.arts[index];
     if (!art || art.width > req.maxWidth || art.height > req.maxHeight || art.width > columns || art.height > rows) continue;
-    const x = Math.max(0, Math.min(columns - art.width, Math.round(item.left)));
-    let minFreeY = 0;
-    for (let c = x; c < x + art.width && c < columns; c += 1) {
-      minFreeY = Math.max(minFreeY, colBottoms[c]);
-    }
-    const centeredY = item.top + (item.bottom - item.top - art.height) * 0.5;
-    const y = Math.max(minFreeY, Math.min(rows - art.height, Math.round(centeredY)));
-    for (let c = x; c < x + art.width && c < columns; c += 1) {
-      colBottoms[c] = y + art.height;
-    }
+    const boxW = Math.max(1, item.right - item.left);
+    const boxH = Math.max(1, item.bottom - item.top);
+    const x = art.width <= boxW ? item.left : Math.max(0, item.left - (art.width - boxW) * 0.5);
+    const y = art.height <= boxH ? item.top : Math.max(0, item.top - (art.height - boxH) * 0.5);
+    const clampedX = Math.max(0, Math.min(columns - art.width, Math.round(x)));
+    const clampedY = Math.max(0, Math.min(rows - art.height, Math.round(y)));
     overlays.push({
       kind: "ocr",
       text: item.text,
       renderedText: art.text,
-      x,
-      y,
+      x: clampedX,
+      y: clampedY,
       width: art.width,
       height: art.height,
       foreground: item.foreground,

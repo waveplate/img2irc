@@ -762,46 +762,63 @@ fn select_best_text_art(
                 && art.height() <= max_height
         })
 }
-
 #[cfg(test)]
-fn choose_text_art(text: &str, max_width: usize, max_height: usize) -> Option<TextArt> {
+fn choose_text_art(text: &str, base_width: usize, base_height: usize) -> Option<TextArt> {
     let font_lists = crate::args::default_ocr_figlet_font_lists();
     let fonts = load_ocr_figlet_fonts(&font_lists);
-    choose_text_art_from_fonts(text, max_width, max_height, &font_lists, &fonts)
+    choose_text_art_from_fonts(
+        text,
+        base_width,
+        base_height,
+        0.0,
+        0.0,
+        &font_lists,
+        &fonts,
+    )
 }
 
 fn choose_text_art_from_fonts(
     text: &str,
-    max_width: usize,
-    max_height: usize,
+    base_width: usize,
+    base_height: usize,
+    max_w_ratio: f32,
+    max_h_ratio: f32,
     font_lists: &[OcrFigletFontList],
     fonts: &[OcrFigletFont],
 ) -> Option<TextArt> {
     let text = text.trim();
-    if text.is_empty() || max_width == 0 || max_height == 0 {
+    if text.is_empty() || base_width == 0 || base_height == 0 {
         return None;
     }
+
+    let max_w_allowed = ((base_width as f32 * (1.0 + max_w_ratio.max(0.0))).floor() as usize).max(base_width);
+    let max_h_allowed = ((base_height as f32 * (1.0 + max_h_ratio.max(0.0))).floor() as usize).max(base_height);
 
     let mut heights = font_lists
         .iter()
         .map(|list| list.height)
-        .filter(|height| *height > 0 && *height as usize <= max_height)
+        .filter(|height| *height > 0 && *height as usize <= max_h_allowed)
         .collect::<Vec<_>>();
     heights.sort_unstable_by(|a, b| b.cmp(a));
     heights.dedup();
 
     for height in heights {
         if let Some(list) = font_lists.iter().find(|l| l.height == height) {
+            let mut candidates = Vec::new();
             for name in &list.fonts {
                 if name.eq_ignore_ascii_case("plain") {
-                    if height == 1 && text.chars().count() <= max_width {
+                    if height == 1 && text.chars().count() <= max_w_allowed {
                         if let Some(plain) = normalize_text_art_with_metadata(
                             "plain",
                             1,
                             0,
                             vec![text.to_string()],
                         ) {
-                            return Some(plain);
+                            let art_w = plain.width();
+                            let art_h = plain.height();
+                            let expand_w = if art_w > base_width { (art_w - base_width) as f32 / base_width as f32 } else { 0.0 };
+                            let expand_h = if art_h > base_height { (art_h - base_height) as f32 / base_height as f32 } else { 0.0 };
+                            candidates.push((plain, expand_w, expand_h));
                         }
                     }
                 } else if let Some(font) = fonts
@@ -809,21 +826,29 @@ fn choose_text_art_from_fonts(
                     .find(|f| f.configured_height == height && f.name.eq_ignore_ascii_case(name))
                 {
                     if let Some(rendered) = render_figlet_text(font, text) {
-                        if rendered.width() > 0
-                            && rendered.height() > 0
-                            && rendered.width() <= max_width
-                            && rendered.height() <= max_height
-                        {
-                            return Some(rendered);
+                        let art_w = rendered.width();
+                        let art_h = rendered.height();
+                        if art_w > 0 && art_h > 0 && art_w <= max_w_allowed && art_h <= max_h_allowed {
+                            let expand_w = if art_w > base_width { (art_w - base_width) as f32 / base_width as f32 } else { 0.0 };
+                            let expand_h = if art_h > base_height { (art_h - base_height) as f32 / base_height as f32 } else { 0.0 };
+                            candidates.push((rendered, expand_w, expand_h));
                         }
                     }
                 }
             }
+
+            if !candidates.is_empty() {
+                if let Some((best, _, _)) = candidates.iter().find(|(_, ew, eh)| *ew <= 0.0 && *eh <= 0.0) {
+                    return Some(best.clone());
+                }
+                candidates.sort_by(|a, b| (a.1 + a.2).total_cmp(&(b.1 + b.2)));
+                return Some(candidates.into_iter().next().unwrap().0);
+            }
         }
     }
 
-    if text.chars().count() <= max_width {
-        plain_text_art(text, max_width)
+    if text.chars().count() <= max_w_allowed {
+        plain_text_art(text, max_w_allowed)
     } else {
         None
     }
@@ -858,10 +883,20 @@ impl ScaledTextBox {
         ((self.bottom - self.top + 1e-9).floor() as usize).max(1)
     }
 
-    fn place(self, _art_width: usize, art_height: usize) -> (i32, i32) {
-        let x = self.left.round();
-        let y = (self.top + (self.bottom - self.top - art_height as f64) * 0.5).round();
-        (x as i32, y as i32)
+    fn place(self, art_width: usize, art_height: usize) -> (i32, i32) {
+        let box_w = (self.right - self.left).max(1.0);
+        let box_h = (self.bottom - self.top).max(1.0);
+        let x = if art_width as f64 <= box_w {
+            self.left
+        } else {
+            (self.left - (art_width as f64 - box_w) * 0.5).max(0.0)
+        };
+        let y = if art_height as f64 <= box_h {
+            self.top
+        } else {
+            (self.top - (art_height as f64 - box_h) * 0.5).max(0.0)
+        };
+        (x.round() as i32, y.round() as i32)
     }
 }
 
@@ -946,27 +981,6 @@ pub fn detections_to_overlays(
         a.2.top.total_cmp(&b.2.top).then_with(|| a.2.left.total_cmp(&b.2.left))
     });
 
-    let mut max_allowed_heights = Vec::with_capacity(renderable.len());
-    for i in 0..renderable.len() {
-        let mut max_h = renderable[i].2.available_height();
-        for j in (i + 1)..renderable.len() {
-            let left_i = renderable[i].2.left;
-            let right_i = renderable[i].2.right;
-            let left_j = renderable[j].2.left;
-            let right_j = renderable[j].2.right;
-            let horiz_overlap = !(right_j <= left_i || left_j >= right_i);
-            if horiz_overlap && renderable[j].2.top > renderable[i].2.top {
-                let dist = (renderable[j].2.top - renderable[i].2.top).floor() as usize;
-                if dist > 0 {
-                    max_h = max_h.min(dist);
-                }
-                break;
-            }
-        }
-        max_allowed_heights.push(max_h.max(1));
-    }
-
-    let mut col_next_free_row = vec![0i32; grid_w as usize];
     let mut detection_heights = renderable
         .iter()
         .map(|(_, bounds, _)| bounds.3.saturating_sub(bounds.1) as f32)
@@ -978,9 +992,9 @@ pub fn detections_to_overlays(
         0.0
     };
 
-    for (index, (det, bounds, text_box)) in renderable.into_iter().enumerate() {
+    for (det, bounds, text_box) in renderable {
         let target_w = text_box.available_width();
-        let target_h = max_allowed_heights[index];
+        let target_h = text_box.available_height();
         let detection_height = bounds.3.saturating_sub(bounds.1) as f32;
         let allow_figlet = figlet_allowed(
             args,
@@ -993,11 +1007,14 @@ pub fn detections_to_overlays(
                 &det.text,
                 target_w,
                 target_h,
+                args.ocr_figlet_max_width_ratio,
+                args.ocr_figlet_max_height_ratio,
                 &args.ocr_figlet_fonts,
                 &figlet_fonts,
             )
         } else {
-            plain_text_art(&det.text, target_w)
+            let max_w_allowed = ((target_w as f32 * (1.0 + args.ocr_figlet_max_width_ratio.max(0.0))).floor() as usize).max(target_w);
+            plain_text_art(&det.text, max_w_allowed)
         };
         let Some(art) = art else {
             log::debug!(
@@ -1010,19 +1027,9 @@ pub fn detections_to_overlays(
         };
         let art_w = art.width() as i32;
         let art_h = art.height() as i32;
-        if art_w as usize > target_w || art_h as usize > target_h {
-            continue;
-        }
         let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize);
         let art_x = placed_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
-        let mut min_free_y = 0i32;
-        for c in art_x..(art_x + art_w).min(grid_w) {
-            min_free_y = min_free_y.max(col_next_free_row[c as usize]);
-        }
-        let art_y = placed_y.max(min_free_y).clamp(0, grid_h.saturating_sub(art_h).max(0));
-        for c in art_x..(art_x + art_w).min(grid_w) {
-            col_next_free_row[c as usize] = art_y + art_h;
-        }
+        let art_y = placed_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
         let fg = estimate_text_color(
             &rgb,
             source.get_width(),
