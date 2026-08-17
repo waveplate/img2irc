@@ -357,8 +357,8 @@ export async function ocrItemsToOverlays(
     if (!art || art.width > req.maxWidth || art.height > req.maxHeight || art.width > columns || art.height > rows) continue;
     const boxW = Math.max(1, item.right - item.left);
     const boxH = Math.max(1, item.bottom - item.top);
-    const x = art.width <= boxW ? item.left : Math.max(0, item.left - (art.width - boxW) * 0.5);
-    const y = art.height <= boxH ? item.top : Math.max(0, item.top - (art.height - boxH) * 0.5);
+    const x = item.left + (boxW - art.width) * 0.5;
+    const y = item.top + (boxH - art.height) * 0.5;
     let clampedX = Math.max(0, Math.min(columns - art.width, Math.round(x)));
     let clampedY = Math.max(0, Math.min(rows - art.height, Math.round(y)));
     let currentArt = art;
@@ -378,8 +378,10 @@ export async function ocrItemsToOverlays(
       const plainLen = item.text.length;
       if (plainLen <= req.maxWidth) {
         currentArt = { text: item.text, width: plainLen, height: 1, source: "plain" };
-        clampedX = Math.max(0, Math.min(columns - plainLen, Math.round(item.left)));
-        clampedY = Math.max(0, Math.min(rows - 1, Math.round(item.top)));
+        const px = item.left + (boxW - plainLen) * 0.5;
+        const py = item.top + (boxH - 1) * 0.5;
+        clampedX = Math.max(0, Math.min(columns - plainLen, Math.round(px)));
+        clampedY = Math.max(0, Math.min(rows - 1, Math.round(py)));
       }
     }
 

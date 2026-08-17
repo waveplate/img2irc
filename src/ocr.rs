@@ -901,16 +901,8 @@ impl ScaledTextBox {
     fn place(self, art_width: usize, art_height: usize) -> (i32, i32) {
         let box_w = (self.right - self.left).max(1.0);
         let box_h = (self.bottom - self.top).max(1.0);
-        let x = if art_width as f64 <= box_w {
-            self.left
-        } else {
-            (self.left - (art_width as f64 - box_w) * 0.5).max(0.0)
-        };
-        let y = if art_height as f64 <= box_h {
-            self.top
-        } else {
-            (self.top - (art_height as f64 - box_h) * 0.5).max(0.0)
-        };
+        let x = self.left + (box_w - art_width as f64) * 0.5;
+        let y = self.top + (box_h - art_height as f64) * 0.5;
         (x.round() as i32, y.round() as i32)
     }
 }
