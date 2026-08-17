@@ -227,7 +227,7 @@ async fn main() {
                 render_args.overlays.extend(overlays);
             }
 
-            let effect_image = img2irc_rs::effects::apply_effects(&render_args, &glyph_store, base_image);
+            let render_image = img2irc_rs::effects::apply_effects(&render_args, &glyph_store, base_image);
 
             log::info!("Loaded {} glyphs", glyph_store.glyphs.len());
             log::info!(
