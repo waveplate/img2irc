@@ -420,15 +420,6 @@ impl TextArt {
     fn height(&self) -> usize {
         self.lines.len()
     }
-
-    fn fill_key(&self) -> (usize, usize, usize, std::cmp::Reverse<usize>) {
-        (
-            self.width() * self.height(),
-            self.height(),
-            self.width(),
-            std::cmp::Reverse(self.priority),
-        )
-    }
 }
 
 fn figlet_font_dirs() -> Vec<PathBuf> {
@@ -620,7 +611,7 @@ pub fn refresh_figlet_overlay(
                 .and_then(|font| render_figlet_text(font, &source))
                 .filter(|art| art.width() <= max_width && art.height() <= max_height)
         } else {
-            choose_text_art_from_fonts(&source, max_width, max_height, 0.0, 0.0, font_lists, fonts)
+            choose_text_art_from_fonts(&source, max_width, max_height, max_width, max_height, font_lists, fonts)
         }
     });
     if let Some(art) = art {
@@ -748,20 +739,6 @@ fn render_figlet_text(font: &OcrFigletFont, text: &str) -> Option<TextArt> {
     )
 }
 
-fn select_best_text_art(
-    candidates: impl IntoIterator<Item = TextArt>,
-    max_width: usize,
-    max_height: usize,
-) -> Option<TextArt> {
-    candidates
-        .into_iter()
-        .find(|art| {
-            art.width() > 0
-                && art.height() > 0
-                && art.width() <= max_width
-                && art.height() <= max_height
-        })
-}
 #[cfg(test)]
 fn choose_text_art(text: &str, base_width: usize, base_height: usize) -> Option<TextArt> {
     let font_lists = crate::args::default_ocr_figlet_font_lists();
@@ -2003,7 +1980,7 @@ mod tests {
         }
 
         let rendered =
-            choose_text_art_from_fonts("Hello", 512, 3, 0.0, 0.0, &font_lists, &fonts).unwrap();
+            choose_text_art_from_fonts("Hello", 512, 3, 512, 3, &font_lists, &fonts).unwrap();
         assert_eq!(rendered.source, *first_3_font);
     }
 
