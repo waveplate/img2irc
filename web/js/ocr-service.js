@@ -79,44 +79,7 @@ function filterItems(result, settings) {
       deduped.push(item);
     }
   }
-
-  const merged = [];
-  const lineSorted = [...deduped].sort((a, b) => a.bounds.y0 - b.bounds.y0 || a.bounds.x0 - b.bounds.x0);
-  for (const item of lineSorted) {
-    let wasMerged = false;
-    for (const m of merged) {
-      const h1 = item.bounds.height;
-      const h2 = m.bounds.height;
-      const vOverlap = Math.min(item.bounds.y1, m.bounds.y1) - Math.max(item.bounds.y0, m.bounds.y0);
-      const minH = Math.min(h1, h2);
-      const maxH = Math.max(h1, h2);
-      const sameLine = vOverlap >= 0.45 * minH && (minH / maxH) >= 0.45;
-      const hGap = item.bounds.x0 >= m.bounds.x1
-        ? item.bounds.x0 - m.bounds.x1
-        : (m.bounds.x0 >= item.bounds.x1 ? m.bounds.x0 - item.bounds.x1 : 0);
-      const maxAllowedGap = Math.max(10, maxH * 1.5);
-      if (sameLine && hGap <= maxAllowedGap) {
-        const first = m.bounds.x0 <= item.bounds.x0 ? m : item;
-        const second = m.bounds.x0 <= item.bounds.x0 ? item : m;
-        const combinedText = first.text.endsWith("-") || second.text.startsWith("-")
-          ? `${first.text.replace(/-+$/, "")}${second.text.replace(/^-+/, "")}`
-          : `${first.text} ${second.text}`;
-        m.text = combinedText;
-        m.score = (m.score + item.score) * 0.5;
-        const x0 = Math.min(m.bounds.x0, item.bounds.x0);
-        const y0 = Math.min(m.bounds.y0, item.bounds.y0);
-        const x1 = Math.max(m.bounds.x1, item.bounds.x1);
-        const y1 = Math.max(m.bounds.y1, item.bounds.y1);
-        m.bounds = { x0, y0, x1, y1, width: x1 - x0, height: y1 - y0 };
-        wasMerged = true;
-        break;
-      }
-    }
-    if (!wasMerged) {
-      merged.push({ ...item });
-    }
-  }
-  return merged;
+  return deduped;
 }
 
 function rgbaAt(raw, imageWidth, x, y) {

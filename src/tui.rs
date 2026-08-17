@@ -5979,11 +5979,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                                 } else {
                                     raw_detections
                                 };
-                                crate::ocr::merge_same_line_detections(
-                                    scaled_detections,
-                                    orig_w as u32,
-                                    orig_h as u32,
-                                )
+                                scaled_detections
                             })
                             .map_err(|error| error.to_string())
                     })

@@ -168,11 +168,7 @@ async fn main() {
                         } else {
                             raw_detections
                         };
-                        let detections = img2irc_rs::ocr::merge_same_line_detections(
-                            scaled_detections,
-                            loaded_image.get_width(),
-                            loaded_image.get_height(),
-                        );
+                        let detections = scaled_detections;
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
                         if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, loaded_image.get_width(), loaded_image.get_height()) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
