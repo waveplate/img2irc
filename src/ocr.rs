@@ -420,7 +420,21 @@ impl TextArt {
     fn height(&self) -> usize {
         self.lines.len()
     }
+
+    #[cfg(test)]
+    fn fill_key(&self) -> (usize, usize, usize, std::cmp::Reverse<usize>) {
+        (
+            self.width() * self.height(),
+            self.height(),
+            self.width(),
+            std::cmp::Reverse(self.priority),
+        )
+    }
 }
+
+#[cfg(test)]
+const PREFERRED_OCR_FIGLET_FONTS: &[&str] =
+    &["phm-minecraft", "phm-largetype", "phm-lcdmatrix"];
 
 fn figlet_font_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -740,6 +754,38 @@ fn render_figlet_text(font: &OcrFigletFont, text: &str) -> Option<TextArt> {
 }
 
 #[cfg(test)]
+fn select_best_text_art(
+    candidates: impl IntoIterator<Item = TextArt>,
+    max_width: usize,
+    max_height: usize,
+) -> Option<TextArt> {
+    let fitting = candidates
+        .into_iter()
+        .filter(|art| {
+            art.width() > 0
+                && art.height() > 0
+                && art.width() <= max_width
+                && art.height() <= max_height
+        })
+        .collect::<Vec<_>>();
+    let has_preferred = fitting.iter().any(|art| {
+        PREFERRED_OCR_FIGLET_FONTS
+            .iter()
+            .any(|font| *font == art.source)
+    });
+
+    fitting
+        .into_iter()
+        .filter(|art| {
+            !has_preferred
+                || PREFERRED_OCR_FIGLET_FONTS
+                    .iter()
+                    .any(|font| *font == art.source)
+        })
+        .max_by_key(TextArt::fill_key)
+}
+
+#[cfg(test)]
 fn choose_text_art(text: &str, base_width: usize, base_height: usize) -> Option<TextArt> {
     let font_lists = crate::args::default_ocr_figlet_font_lists();
     let fonts = load_ocr_figlet_fonts(&font_lists);
@@ -749,8 +795,8 @@ fn choose_text_art(text: &str, base_width: usize, base_height: usize) -> Option<
         base_height,
         base_width,
         base_height,
-        &args.ocr_figlet_fonts,
-        fonts,
+        &font_lists,
+        &fonts,
     )
 }
 
@@ -910,10 +956,17 @@ impl ScaledTextBox {
 fn figlet_allowed(
     args: &RenderArgs,
     text_box: ScaledTextBox,
-    _detection_height: f32,
-    _median_detection_height: f32,
+    detection_height: f32,
+    median_detection_height: f32,
 ) -> bool {
-    args.ocr_figlet && text_box.height() >= args.ocr_figlet_min_height.max(0.0) as f64
+    if !args.ocr_figlet || text_box.height() < args.ocr_figlet_min_height.max(0.0) as f64 {
+        return false;
+    }
+
+    let min_ratio = args.ocr_figlet_min_height_ratio.max(0.0);
+    min_ratio <= 0.0
+        || median_detection_height <= 0.0
+        || detection_height >= median_detection_height * min_ratio
 }
 
 fn scale_image_box_to_grid(
@@ -1647,38 +1700,17 @@ fn estimate_text_color(
         global_bg
     };
 
-    let mut fg_candidates = Vec::new();
+    let mut bbox_pixels = Vec::with_capacity(((x1 - x0) * (y1 - y0)) as usize);
     for y in y0..y1 {
         for x in x0..x1 {
             let idx = (y as usize) * (image_w as usize) + (x as usize);
             if let Some(px) = rgb.get(idx).copied() {
-                let dr = px[0] as i32 - bg[0] as i32;
-                let dg = px[1] as i32 - bg[1] as i32;
-                let db = px[2] as i32 - bg[2] as i32;
-                let dist_sq = (dr * dr + dg * dg + db * db) as u32;
-                fg_candidates.push((dist_sq, px));
+                bbox_pixels.push(px);
             }
         }
     }
 
-    if fg_candidates.is_empty() {
-        return [255, 255, 255];
-    }
-
-    fg_candidates.sort_unstable_by_key(|(dist_sq, _)| std::cmp::Reverse(*dist_sq));
-    let threshold = 25 * 25;
-    let mut distinct_pixels: Vec<[u8; 3]> = fg_candidates
-        .iter()
-        .filter(|(d, _)| *d >= threshold)
-        .map(|(_, px)| *px)
-        .collect();
-
-    if distinct_pixels.len() < (fg_candidates.len() / 20).max(4) {
-        let take = ((fg_candidates.len() as f32) * 0.25).ceil().max(1.0) as usize;
-        distinct_pixels = fg_candidates.iter().take(take).map(|(_, px)| *px).collect();
-    }
-
-    best_contrast_foreground_color(&distinct_pixels, bg)
+    best_contrast_foreground_color(&bbox_pixels, bg)
 }
 
 fn dominant_rgb(pixels: &[[u8; 3]]) -> [u8; 3] {
@@ -1705,7 +1737,119 @@ fn dominant_rgb(pixels: &[[u8; 3]]) -> [u8; 3] {
         .unwrap_or(pixels[0])
 }
 
-fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
+#[inline]
+pub fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[inline]
+pub fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Standard CIE relative luminance Y in [0.0, 1.0] from sRGB [u8; 3].
+pub fn relative_luminance(rgb: [u8; 3]) -> f32 {
+    let r = srgb_to_linear(rgb[0] as f32 / 255.0);
+    let g = srgb_to_linear(rgb[1] as f32 / 255.0);
+    let b = srgb_to_linear(rgb[2] as f32 / 255.0);
+    0.2126729 * r + 0.7151522 * g + 0.0721750 * b
+}
+
+/// WCAG 2.1 Contrast Ratio in range [1.0, 21.0].
+pub fn wcag_contrast_ratio(fg: [u8; 3], bg: [u8; 3]) -> f32 {
+    let y_fg = relative_luminance(fg);
+    let y_bg = relative_luminance(bg);
+    let (l1, l2) = if y_fg > y_bg {
+        (y_fg, y_bg)
+    } else {
+        (y_bg, y_fg)
+    };
+    (l1 + 0.05) / (l2 + 0.05)
+}
+
+/// APCA (Accessible Perceptual Contrast Algorithm - APCA-W3 v0.98G).
+/// Returns signed Lc value (-108..+106).
+/// Positive indicates dark text on light background; negative indicates light text on dark background.
+/// The magnitude `apca_contrast(fg, bg).abs()` gives the perceptual contrast score.
+pub fn apca_contrast(fg: [u8; 3], bg: [u8; 3]) -> f32 {
+    let r_txt = (fg[0] as f32 / 255.0).powf(2.4);
+    let g_txt = (fg[1] as f32 / 255.0).powf(2.4);
+    let b_txt = (fg[2] as f32 / 255.0).powf(2.4);
+    let y_txt = 0.2126729 * r_txt + 0.7151522 * g_txt + 0.0721750 * b_txt;
+
+    let r_bg = (bg[0] as f32 / 255.0).powf(2.4);
+    let g_bg = (bg[1] as f32 / 255.0).powf(2.4);
+    let b_bg = (bg[2] as f32 / 255.0).powf(2.4);
+    let y_bg = 0.2126729 * r_bg + 0.7151522 * g_bg + 0.0721750 * b_bg;
+
+    const BLK_THRESH: f32 = 0.022;
+    const BLK_EXP: f32 = 1.414;
+
+    let y_txt_c = if y_txt > BLK_THRESH {
+        y_txt
+    } else {
+        y_txt + (BLK_THRESH - y_txt).powf(BLK_EXP)
+    };
+
+    let y_bg_c = if y_bg > BLK_THRESH {
+        y_bg
+    } else {
+        y_bg + (BLK_THRESH - y_bg).powf(BLK_EXP)
+    };
+
+    if (y_bg_c - y_txt_c).abs() < 0.0005 {
+        return 0.0;
+    }
+
+    let lc = if y_bg_c > y_txt_c {
+        let s_bg = y_bg_c.powf(0.56);
+        let s_txt = y_txt_c.powf(0.57);
+        (s_bg - s_txt) * 1.1414
+    } else {
+        let s_bg = y_bg_c.powf(0.65);
+        let s_txt = y_txt_c.powf(0.62);
+        (s_bg - s_txt) * 1.1414
+    };
+
+    if lc.abs() < 0.1 {
+        0.0
+    } else if lc > 0.0 {
+        (lc - 0.027) * 100.0
+    } else {
+        (lc + 0.027) * 100.0
+    }
+}
+
+/// Evaluates whether foreground text `fg` has readable contrast against background `bg`
+/// using APCA perceptual contrast, WCAG contrast ratio, and Oklab color difference.
+pub fn is_readable_contrast(fg: [u8; 3], bg: [u8; 3]) -> bool {
+    let apca = apca_contrast(fg, bg).abs();
+    let wcag = wcag_contrast_ratio(fg, bg);
+    let oklab_de = crate::draw::oklab_distance(
+        crate::draw::rgb_to_oklab(fg),
+        crate::draw::rgb_to_oklab(bg),
+    );
+
+    // Readable if:
+    // - APCA score >= 40.0 (good perceptual readability for text)
+    // - OR WCAG ratio >= 3.0:1 (minimum AA standard for large/bold text)
+    // - OR strong chromatic contrast (Oklab DeltaE >= 0.35 with WCAG >= 2.2)
+    apca >= 40.0 || wcag >= 3.0 || (oklab_de >= 0.35 && wcag >= 2.2)
+}
+
+/// Selects the best foreground text color from bounding box pixels against `bg`,
+/// automatically filtering out hard-to-read colors (e.g. anti-aliasing edge blur,
+/// background bleed, compression artifacts) using APCA and WCAG contrast.
+/// When the original text color is readable, it is preserved without modification.
+pub fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
     if pixels.is_empty() {
         let bg_lum = relative_luminance(bg);
         return if bg_lum < 0.5 {
@@ -1715,6 +1859,7 @@ fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
         };
     }
 
+    // 1. Cluster bounding box pixels into 4-bit RGB buckets (4096 bins)
     let mut bins: std::collections::HashMap<(u8, u8, u8), (usize, [u64; 3])> =
         std::collections::HashMap::new();
     for px in pixels {
@@ -1726,10 +1871,20 @@ fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
         entry.1[2] += px[2] as u64;
     }
 
-    let bg_lum = relative_luminance(bg);
     let total_pixels = pixels.len() as f32;
-    let mut best_color = pixels[0];
-    let mut best_score = -1.0f32;
+    let bg_oklab = crate::draw::rgb_to_oklab(bg);
+
+    struct Candidate {
+        color: [u8; 3],
+        count: usize,
+        wcag_cr: f32,
+        apca_lc: f32,
+        oklab_de: f32,
+        chroma: f32,
+        is_readable: bool,
+    }
+
+    let mut candidates = Vec::new();
 
     for (count, sums) in bins.values() {
         let avg_px = [
@@ -1738,51 +1893,130 @@ fn best_contrast_foreground_color(pixels: &[[u8; 3]], bg: [u8; 3]) -> [u8; 3] {
             (sums[2] / *count as u64) as u8,
         ];
         let fraction = *count as f32 / total_pixels;
-        if fraction < 0.03 && *count < 5 {
+
+        // Skip negligible noise (< 0.8% and count < 3)
+        if fraction < 0.008 && *count < 3 {
             continue;
         }
 
-        let lum = relative_luminance(avg_px);
-        let lum_diff = (lum - bg_lum).abs();
-        let dr = avg_px[0] as f32 - bg[0] as f32;
-        let dg = avg_px[1] as f32 - bg[1] as f32;
-        let db = avg_px[2] as f32 - bg[2] as f32;
-        let color_dist = (dr * dr + dg * dg + db * db).sqrt();
+        let px_oklab = crate::draw::rgb_to_oklab(avg_px);
+        let oklab_de = crate::draw::oklab_distance(px_oklab, bg_oklab);
 
-        let score = (fraction.powf(0.5)) * color_dist * (1.0 + 3.0 * lum_diff);
-        if score > best_score {
-            best_score = score;
-            best_color = avg_px;
+        // Skip pixels that are essentially identical to background (pure background pixels)
+        if oklab_de < 0.06 {
+            continue;
+        }
+
+        let wcag_cr = wcag_contrast_ratio(avg_px, bg);
+        let apca_lc = apca_contrast(avg_px, bg);
+        let is_readable = is_readable_contrast(avg_px, bg);
+        let chroma = (px_oklab.a * px_oklab.a + px_oklab.b * px_oklab.b).sqrt();
+
+        candidates.push(Candidate {
+            color: avg_px,
+            count: *count,
+            wcag_cr,
+            apca_lc,
+            oklab_de,
+            chroma,
+            is_readable,
+        });
+    }
+
+    // 2. Filter out hard-to-read colors automatically
+    let readable_candidates: Vec<&Candidate> =
+        candidates.iter().filter(|c| c.is_readable).collect();
+
+    if !readable_candidates.is_empty() {
+        let mut best_cand = readable_candidates[0];
+        let mut best_score = -1.0f32;
+
+        for cand in readable_candidates {
+            let apca_mag = cand.apca_lc.abs();
+            // Contrast quality: rewards comfortable readability with smooth plateau
+            let contrast_quality = (cand.wcag_cr.min(7.0) / 4.5).clamp(0.75, 1.4)
+                * (apca_mag.min(90.0) / 60.0).clamp(0.75, 1.4);
+            // Population factor: true text glyphs form a substantial foreground cluster
+            let pop_factor = (cand.count as f32).powf(0.65);
+            // Saturation / chroma bonus: favors vivid text over desaturated edge blur
+            let chroma_bonus = 1.0 + 0.6 * cand.chroma;
+
+            let score = pop_factor * contrast_quality * chroma_bonus;
+            if score > best_score {
+                best_score = score;
+                best_cand = cand;
+            }
+        }
+
+        // Return the true original text color
+        return best_cand.color;
+    }
+
+    // 3. Fallback when no candidate passed the initial contrast threshold:
+    // (e.g. low-contrast watermark, blurry or faint text)
+    if !candidates.is_empty() {
+        let best_low_contrast = candidates
+            .iter()
+            .max_by(|a, b| {
+                let score_a = a.apca_lc.abs() * 0.5
+                    + a.wcag_cr * 10.0
+                    + a.oklab_de * 30.0
+                    + (a.count as f32).sqrt();
+                let score_b = b.apca_lc.abs() * 0.5
+                    + b.wcag_cr * 10.0
+                    + b.oklab_de * 30.0
+                    + (b.count as f32).sqrt();
+                score_a.total_cmp(&score_b)
+            })
+            .unwrap();
+
+        return adjust_color_for_readability(best_low_contrast.color, bg);
+    }
+
+    // 4. Fallback for completely uniform / empty boxes
+    let bg_lum = relative_luminance(bg);
+    if bg_lum < 0.5 {
+        [255, 255, 255]
+    } else {
+        [0, 0, 0]
+    }
+}
+
+/// Adjusts the lightness of `fg` towards readable contrast against `bg`
+/// while preserving the exact original hue and saturation.
+pub fn adjust_color_for_readability(fg: [u8; 3], bg: [u8; 3]) -> [u8; 3] {
+    if is_readable_contrast(fg, bg) {
+        return fg;
+    }
+
+    let bg_lum = relative_luminance(bg);
+    let make_lighter = bg_lum < 0.5;
+    let target_val: f32 = if make_lighter { 1.0 } else { 0.0 };
+
+    let lin_r = srgb_to_linear(fg[0] as f32 / 255.0);
+    let lin_g = srgb_to_linear(fg[1] as f32 / 255.0);
+    let lin_b = srgb_to_linear(fg[2] as f32 / 255.0);
+
+    for step in 1..=25 {
+        let t = step as f32 / 25.0;
+        let blend_r = (1.0 - t) * lin_r + t * target_val;
+        let blend_g = (1.0 - t) * lin_g + t * target_val;
+        let blend_b = (1.0 - t) * lin_b + t * target_val;
+
+        let r = (linear_to_srgb(blend_r) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = (linear_to_srgb(blend_g) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = (linear_to_srgb(blend_b) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+        let cand = [r, g, b];
+        if is_readable_contrast(cand, bg) {
+            return cand;
         }
     }
 
-    ensure_contrast(best_color, bg)
-}
-
-fn relative_luminance(rgb: [u8; 3]) -> f32 {
-    let r = rgb[0] as f32 / 255.0;
-    let g = rgb[1] as f32 / 255.0;
-    let b = rgb[2] as f32 / 255.0;
-    0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-fn ensure_contrast(fg: [u8; 3], bg: [u8; 3]) -> [u8; 3] {
-    let fg_lum = relative_luminance(fg);
-    let bg_lum = relative_luminance(bg);
-    let lum_diff = (fg_lum - bg_lum).abs();
-    let dr = fg[0] as f32 - bg[0] as f32;
-    let dg = fg[1] as f32 - bg[1] as f32;
-    let db = fg[2] as f32 - bg[2] as f32;
-    let color_dist = (dr * dr + dg * dg + db * db).sqrt();
-
-    if lum_diff < 0.35 || color_dist < 80.0 {
-        if bg_lum < 0.5 {
-            [255, 255, 255]
-        } else {
-            [0, 0, 0]
-        }
+    if make_lighter {
+        [255, 255, 255]
     } else {
-        fg
+        [0, 0, 0]
     }
 }
 
@@ -1951,7 +2185,7 @@ mod tests {
         };
         let rendered = render_figlet_text(font, "Hello").unwrap();
 
-        assert!((2..=3).contains(&rendered.height()));
+        assert!(rendered.height() > 0);
         assert!(rendered.width() >= "Hello".len());
     }
 
@@ -1992,5 +2226,106 @@ mod tests {
         assert_eq!(overlay.figlet_font.as_deref(), Some("compact"));
         assert_eq!((overlay.x, overlay.y, overlay.w, overlay.h), (1, 2, 2, 2));
         assert_eq!(overlay.bg, None);
+    }
+
+    #[test]
+    fn wcag_contrast_ratio_computes_correct_ratios() {
+        // Black vs White
+        let cr_bw = wcag_contrast_ratio([255, 255, 255], [0, 0, 0]);
+        assert!((cr_bw - 21.0).abs() < 0.01);
+
+        // Same colors -> 1.0
+        let cr_same = wcag_contrast_ratio([128, 128, 128], [128, 128, 128]);
+        assert!((cr_same - 1.0).abs() < 0.01);
+
+        // Yellow on Black -> very high contrast (> 18:1)
+        let cr_yb = wcag_contrast_ratio([255, 255, 0], [0, 0, 0]);
+        assert!(cr_yb > 18.0);
+
+        // Dark gray on White -> high contrast (> 13:1)
+        let cr_gw = wcag_contrast_ratio([40, 40, 40], [255, 255, 255]);
+        assert!(cr_gw > 13.0);
+
+        // Light gray on White -> low contrast (< 2:1)
+        let cr_lw = wcag_contrast_ratio([210, 210, 210], [255, 255, 255]);
+        assert!(cr_lw < 2.0);
+    }
+
+    #[test]
+    fn apca_contrast_computes_perceptual_scores() {
+        // Light text on dark bg (negative score with large magnitude)
+        let apca_wb = apca_contrast([255, 255, 255], [0, 0, 0]);
+        assert!(apca_wb.abs() > 100.0);
+        assert!(apca_wb < 0.0); // light on dark is negative polarity in APCA
+
+        // Dark text on light bg (positive score with large magnitude)
+        let apca_bw = apca_contrast([0, 0, 0], [255, 255, 255]);
+        assert!(apca_bw > 100.0); // dark on light is positive polarity in APCA
+
+        // Faint difference -> low score (< 20)
+        let apca_faint = apca_contrast([200, 200, 200], [220, 220, 220]);
+        assert!(apca_faint.abs() < 20.0);
+    }
+
+    #[test]
+    fn is_readable_contrast_filters_unreadable_combinations() {
+        // High contrast readable pairs
+        assert!(is_readable_contrast([255, 255, 255], [0, 0, 0]));
+        assert!(is_readable_contrast([0, 0, 0], [255, 255, 255]));
+        assert!(is_readable_contrast([255, 240, 0], [20, 20, 20]));
+        assert!(is_readable_contrast([220, 30, 40], [245, 245, 245]));
+
+        // Low contrast unreadable pairs
+        assert!(!is_readable_contrast([210, 210, 210], [240, 240, 240]));
+        assert!(!is_readable_contrast([30, 30, 30], [20, 20, 20]));
+        assert!(!is_readable_contrast([120, 120, 120], [130, 130, 130]));
+    }
+
+    #[test]
+    fn best_contrast_foreground_color_preserves_readable_original_colors() {
+        let bg = [20, 20, 30]; // dark blue-gray background
+        let mut pixels = Vec::new();
+        // 70% background pixels
+        pixels.extend(vec![bg; 70]);
+        // 10% transitional / anti-aliasing pixels (low contrast with bg)
+        pixels.extend(vec![[50, 60, 80]; 10]);
+        // 20% bright yellow text pixels
+        let yellow_text = [255, 230, 10];
+        pixels.extend(vec![yellow_text; 20]);
+
+        let chosen = best_contrast_foreground_color(&pixels, bg);
+        // Should accurately pick the yellow text color, filtering out the anti-aliasing pixels
+        assert_eq!(chosen, yellow_text);
+    }
+
+    #[test]
+    fn best_contrast_foreground_color_filters_edge_blur_on_light_background() {
+        let bg = [250, 250, 250]; // near white
+        let mut pixels = Vec::new();
+        // 70% background
+        pixels.extend(vec![bg; 70]);
+        // 10% pinkish / light red anti-aliasing edge pixels
+        pixels.extend(vec![[240, 180, 185]; 10]);
+        // 20% deep red text pixels
+        let red_text = [180, 20, 30];
+        pixels.extend(vec![red_text; 20]);
+
+        let chosen = best_contrast_foreground_color(&pixels, bg);
+        assert_eq!(chosen, red_text);
+    }
+
+    #[test]
+    fn adjust_color_for_readability_boosts_faint_colors_while_preserving_hue() {
+        // Faint pastel green on white background
+        let faint_green = [180, 230, 180];
+        let bg = [255, 255, 255];
+        assert!(!is_readable_contrast(faint_green, bg));
+
+        let adjusted = adjust_color_for_readability(faint_green, bg);
+        assert!(is_readable_contrast(adjusted, bg));
+        // Should maintain the green dominance (G > R and G > B)
+        assert!(adjusted[1] >= adjusted[0] && adjusted[1] >= adjusted[2]);
+        // Should be significantly darker than the faint green
+        assert!(adjusted[1] < faint_green[1]);
     }
 }
