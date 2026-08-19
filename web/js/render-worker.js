@@ -1,6 +1,7 @@
 import init, { Img2Irc } from "../pkg/img2irc_rs.js";
 
 let renderer;
+let pendingFigletFonts;
 
 function errorMessage(error) {
   if (error instanceof Error) return error.message;
@@ -24,6 +25,10 @@ self.addEventListener("message", (event) => {
         const bytes = new Uint8Array(event.data.bytes);
         if (renderer) renderer.setFont(bytes);
         else renderer = new Img2Irc(bytes);
+        if (pendingFigletFonts) {
+          renderer.setFigletFonts(pendingFigletFonts);
+          pendingFigletFonts = null;
+        }
         respond(id);
         break;
       }
@@ -32,7 +37,11 @@ self.addEventListener("message", (event) => {
         respond(id);
         break;
       case "set-figlet-fonts":
-        requireRenderer().setFigletFonts(event.data.fonts);
+        if (renderer) {
+          renderer.setFigletFonts(event.data.fonts);
+        } else {
+          pendingFigletFonts = event.data.fonts;
+        }
         respond(id);
         break;
       case "render-figlet":

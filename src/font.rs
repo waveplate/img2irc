@@ -716,9 +716,21 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
 
 fn find_glyphs_toml_path() -> Option<PathBuf> {
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join("glyphs.toml");
-        if path.exists() {
-            return Some(path);
+        let p = Path::new(&config_dir);
+        if p.is_file() {
+            if p.file_name().and_then(|n| n.to_str()) == Some("glyphs.toml") {
+                return Some(p.to_path_buf());
+            } else if let Some(parent) = p.parent() {
+                let candidate = parent.join("glyphs.toml");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        } else {
+            let path = p.join("glyphs.toml");
+            if path.exists() {
+                return Some(path);
+            }
         }
     }
     let path = PathBuf::from("glyphs.toml");

@@ -279,6 +279,8 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         score: args.score,
         pipeline: Vec::new(),
         overlays: Vec::new(),
+        config_dir: args.config_dir.clone(),
+        figlet_dir: args.figlet_dir.clone(),
     }
 }
 
@@ -739,6 +741,36 @@ mod tests {
             .expect("BUILD_NUMBER must be a valid u64");
         assert!(build_num > 0);
         assert!(crate::VERSION.contains(&format!("+{}", build_num)));
+    }
+
+    #[test]
+    fn test_cli_config_dir_and_figlet_dir_args() {
+        use clap::Parser;
+        let args = crate::args::Args::parse_from([
+            "img2irc",
+            "--config-dir",
+            "/tmp/custom_config",
+            "--figlet-dir",
+            "/tmp/custom_fonts",
+        ]);
+        assert_eq!(
+            args.config_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/custom_config"))
+        );
+        assert_eq!(
+            args.figlet_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/custom_fonts"))
+        );
+
+        let render_args = crate::args_to_render_args(&args);
+        assert_eq!(
+            render_args.config_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/custom_config"))
+        );
+        assert_eq!(
+            render_args.figlet_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/custom_fonts"))
+        );
     }
 }
 

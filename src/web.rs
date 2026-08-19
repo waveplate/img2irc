@@ -4,7 +4,6 @@ use clap::Parser;
 use figlet_rs::FIGlet;
 use photon_rs::PhotonImage;
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Cursor, Read};
@@ -346,19 +345,6 @@ struct WebFigletArt {
     text: String,
     width: usize,
     height: usize,
-    #[serde(skip)]
-    priority: usize,
-}
-
-impl WebFigletArt {
-    fn fill_key(&self) -> (usize, usize, usize, Reverse<usize>) {
-        (
-            self.width * self.height,
-            self.height,
-            self.width,
-            Reverse(self.priority),
-        )
-    }
 }
 
 impl WebTextOverlay {
@@ -628,7 +614,7 @@ struct ResultCache {
     result: draw::RenderResult,
 }
 
-fn normalize_figlet_art(source: String, priority: usize, rendered: &str) -> Option<WebFigletArt> {
+fn normalize_figlet_art(source: String, rendered: &str) -> Option<WebFigletArt> {
     let rows = rendered
         .lines()
         .map(|line| line.chars().collect::<Vec<_>>())
@@ -674,7 +660,6 @@ fn normalize_figlet_art(source: String, priority: usize, rendered: &str) -> Opti
         text: lines.join("\n"),
         width: max_x - min_x + 1,
         height: max_y - min_y + 1,
-        priority,
     })
 }
 
@@ -689,7 +674,6 @@ fn plain_figlet_art(text: &str, max_width: usize, max_height: usize) -> Option<W
         text: text.to_string(),
         width,
         height: 1,
-        priority: usize::MAX,
     })
 }
 
@@ -698,7 +682,7 @@ fn render_figlet_font(font: &WebFigletFont, text: &str) -> Option<WebFigletArt> 
     if figure.characters.len() != text.chars().count() {
         return None;
     }
-    normalize_figlet_art(font.name.clone(), font.priority, &figure.as_str())
+    normalize_figlet_art(font.name.clone(), &figure.as_str())
 }
 
 fn decode_figlet_font(data: &[u8]) -> Result<String, String> {
@@ -736,9 +720,12 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
 
     if request.use_figlet {
         if let Some(font_name) = request.font_name.as_deref() {
+            if font_name.eq_ignore_ascii_case("plain") {
+                return plain_figlet_art(text, request.max_width, request.max_height);
+            }
             return fonts
                 .iter()
-                .find(|font| font.name == font_name)
+                .find(|font| font.name.eq_ignore_ascii_case(font_name))
                 .and_then(|font| render_figlet_font(font, text))
                 .filter(|art| {
                     art.width <= request.max_width && art.height <= request.max_height
@@ -911,15 +898,10 @@ impl WebRenderer {
             let font = FIGlet::from_content(&contents).map_err(|error| {
                 js_error(format!("could not parse FIGlet font {name:?}: {error}"))
             })?;
-            if font.header_line.height as u32 != input.height {
-                return Err(js_error(format!(
-                    "FIGlet font {name:?} declares {} rows, but the manifest says {}",
-                    font.header_line.height, input.height
-                )));
-            }
+            let actual_height = font.header_line.height as u32;
             parsed.push(WebFigletFont {
                 name: name.to_string(),
-                height: input.height,
+                height: actual_height,
                 priority,
                 font,
             });

@@ -33,6 +33,13 @@ async fn main() {
     );
     let blocks_from_cli = !args.blocks.is_empty();
 
+    if let Some(config_dir) = &args.config_dir {
+        std::env::set_var("IMG2IRC_CONFIG_DIR", config_dir);
+    }
+    if let Some(figlet_dir) = &args.figlet_dir {
+        std::env::set_var("IMG2IRC_FIGLET_FONT_DIR", figlet_dir);
+    }
+
     // Load config
     if let Some(config) = img2irc_rs::config::Config::load() {
         if args.font.is_empty() {

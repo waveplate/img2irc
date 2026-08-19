@@ -457,6 +457,10 @@ pub struct RenderArgs {
     pub pipeline: Vec<crate::pipeline::ImageEffect>,
     #[serde(default)]
     pub overlays: Vec<TextOverlay>,
+    #[serde(default)]
+    pub config_dir: Option<std::path::PathBuf>,
+    #[serde(default)]
+    pub figlet_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -1036,6 +1040,25 @@ pub struct Args {
     /// maximum width in columns for auto-resized grids (OCR, etc.)
     #[arg(long = "max-width")]
     pub max_width: Option<u32>,
+
+    /// directory containing configuration files (config.toml, layout.toml, glyphs.toml, figlet.toml)
+    #[arg(
+        long = "config-dir",
+        visible_alias = "config",
+        visible_alias = "config-path",
+        value_name = "DIR"
+    )]
+    pub config_dir: Option<std::path::PathBuf>,
+
+    /// directory containing FIGlet font files (.flf, .tlf)
+    #[arg(
+        long = "figlet-dir",
+        visible_alias = "figlet-font-dir",
+        visible_alias = "figlet-fonts-dir",
+        value_name = "DIR"
+    )]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub figlet_dir: Option<std::path::PathBuf>,
 }
 
 pub fn parse_args() -> Args {

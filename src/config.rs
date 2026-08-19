@@ -84,9 +84,23 @@ fn find_config_file(filename: &str) -> Option<PathBuf> {
 
     // 1. Check IMG2IRC_CONFIG_DIR
     if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
-        let path = Path::new(&config_dir).join(filename);
-        if path.exists() {
-            toml_path = Some(path);
+        let p = Path::new(&config_dir);
+        if p.is_file() {
+            if filename == "config.toml"
+                || p.file_name().and_then(|n| n.to_str()) == Some(filename)
+            {
+                toml_path = Some(p.to_path_buf());
+            } else if let Some(parent) = p.parent() {
+                let candidate = parent.join(filename);
+                if candidate.exists() {
+                    toml_path = Some(candidate);
+                }
+            }
+        } else {
+            let path = p.join(filename);
+            if path.exists() {
+                toml_path = Some(path);
+            }
         }
     }
 

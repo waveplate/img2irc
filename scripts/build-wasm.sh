@@ -95,9 +95,24 @@ for height_str, font_names in sorted(fonts_dict.items(), key=lambda item: int(it
         if ext is None:
             print(f"Warning: FIGlet font file for '{name}' not found in {figlet_dir}", file=sys.stderr)
             continue
+        font_path = figlet_dir / f"{name}.{ext}"
+        actual_height = height
+        try:
+            import io, zipfile
+            raw_bytes = font_path.read_bytes()
+            if raw_bytes.startswith(b"PK\x03\x04"):
+                with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                    header = zf.read(zf.namelist()[0]).decode("utf-8", errors="ignore").split("\n")[0]
+            else:
+                header = raw_bytes.decode("utf-8", errors="ignore").split("\n")[0]
+            parts = header.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                actual_height = int(parts[1])
+        except Exception:
+            pass
         font_list.append({
             "name": name,
-            "height": height,
+            "height": actual_height,
             "url": f"./assets/figlet/{name}.{ext}"
         })
 

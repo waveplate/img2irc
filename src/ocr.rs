@@ -543,20 +543,15 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
             };
 
             match load_figlet_from_path(&path) {
-                Ok(font) if font.header_line.height as u32 == list.height => {
+                Ok(font) => {
+                    let actual_height = font.header_line.height as u32;
                     fonts.push(OcrFigletFont {
                         name: name.clone(),
-                        configured_height: list.height,
+                        configured_height: actual_height,
                         priority,
                         font,
                     });
                 }
-                Ok(font) => log::warn!(
-                    "Ignoring OCR FIGfont {} in the {}-line list because it declares {} lines",
-                    name,
-                    list.height,
-                    font.header_line.height
-                ),
                 Err(error) => log::debug!(
                     "Ignoring OCR FIGfont {} at {}: {}",
                     name,
@@ -621,7 +616,7 @@ pub fn refresh_figlet_overlay(
         if let Some(name) = requested_font.as_deref() {
             fonts
                 .iter()
-                .find(|font| font.name == name)
+                .find(|font| font.name.eq_ignore_ascii_case(name))
                 .and_then(|font| render_figlet_text(font, &source))
                 .filter(|art| art.width() <= max_width && art.height() <= max_height)
         } else {
@@ -819,36 +814,44 @@ fn choose_text_art_from_fonts(
     // Check if ANY configured FIGlet font fits in the UNMODIFIED bounding box.
     // Heights are checked descending (largest font that fits in the original box first).
     // ─────────────────────────────────────────────────────────────────────────
-    let mut original_heights = font_lists
+    let mut candidate_heights = fonts
         .iter()
-        .map(|list| list.height)
-        .filter(|height| *height > 0 && *height as usize <= base_height)
+        .map(|f| f.configured_height)
+        .chain(font_lists.iter().map(|l| l.height))
+        .filter(|&h| h > 0 && h as usize <= base_height)
         .collect::<Vec<_>>();
-    original_heights.sort_unstable_by(|a, b| b.cmp(a));
-    original_heights.dedup();
+    candidate_heights.sort_unstable_by(|a, b| b.cmp(a));
+    candidate_heights.dedup();
 
-    for height in original_heights {
-        if let Some(list) = font_lists.iter().find(|l| l.height == height) {
-            for name in &list.fonts {
-                if name.eq_ignore_ascii_case("plain") {
-                    if height == 1 && text.chars().count() <= base_width {
-                        if let Some(plain) = normalize_text_art_with_metadata("plain", 1, 0, vec![text.to_string()]) {
-                            return Some(plain);
-                        }
-                    }
-                } else if let Some(font) = fonts
-                    .iter()
-                    .find(|f| f.configured_height == height && f.name.eq_ignore_ascii_case(name))
+    for height in candidate_heights {
+        if height == 1
+            && font_lists.iter().any(|l| {
+                l.height == 1 && l.fonts.iter().any(|n| n.eq_ignore_ascii_case("plain"))
+            })
+        {
+            if text.chars().count() <= base_width {
+                if let Some(plain) =
+                    normalize_text_art_with_metadata("plain", 1, 0, vec![text.to_string()])
                 {
-                    if let Some(rendered) = render_figlet_text(font, text) {
-                        if rendered.width() > 0
-                            && rendered.height() > 0
-                            && rendered.width() <= base_width
-                            && rendered.height() <= base_height
-                        {
-                            return Some(rendered);
-                        }
-                    }
+                    return Some(plain);
+                }
+            }
+        }
+
+        let mut list_fonts: Vec<&OcrFigletFont> = fonts
+            .iter()
+            .filter(|f| f.configured_height == height)
+            .collect();
+        list_fonts.sort_by_key(|f| f.priority);
+
+        for font in list_fonts {
+            if let Some(rendered) = render_figlet_text(font, text) {
+                if rendered.width() > 0
+                    && rendered.height() > 0
+                    && rendered.width() <= base_width
+                    && rendered.height() <= base_height
+                {
+                    return Some(rendered);
                 }
             }
         }
@@ -862,34 +865,23 @@ fn choose_text_art_from_fonts(
     // ─────────────────────────────────────────────────────────────────────────
     if max_w_allowed > base_width || max_h_allowed > base_height {
         let mut candidates = Vec::new();
-        for list in font_lists {
-            if list.height == 0 || list.height as usize > max_h_allowed {
+        for font in fonts {
+            if font.configured_height == 0 || font.configured_height as usize > max_h_allowed {
                 continue;
             }
-            for name in &list.fonts {
-                if name.eq_ignore_ascii_case("plain") {
-                    if list.height == 1 && text.chars().count() <= max_w_allowed {
-                        if let Some(plain) = normalize_text_art_with_metadata("plain", 1, 0, vec![text.to_string()]) {
-                            let art_w = plain.width();
-                            let art_h = plain.height();
-                            let expand_w = art_w.saturating_sub(base_width);
-                            let expand_h = art_h.saturating_sub(base_height);
-                            candidates.push((plain, expand_w, expand_h, list.height));
-                        }
-                    }
-                } else if let Some(font) = fonts
-                    .iter()
-                    .find(|f| f.configured_height == list.height && f.name.eq_ignore_ascii_case(name))
-                {
-                    if let Some(rendered) = render_figlet_text(font, text) {
-                        let art_w = rendered.width();
-                        let art_h = rendered.height();
-                        if art_w > 0 && art_h > 0 && art_w <= max_w_allowed && art_h <= max_h_allowed {
-                            let expand_w = art_w.saturating_sub(base_width);
-                            let expand_h = art_h.saturating_sub(base_height);
-                            candidates.push((rendered, expand_w, expand_h, list.height));
-                        }
-                    }
+            if let Some(rendered) = render_figlet_text(font, text) {
+                let art_w = rendered.width();
+                let art_h = rendered.height();
+                if art_w > 0 && art_h > 0 && art_w <= max_w_allowed && art_h <= max_h_allowed {
+                    let expand_w = art_w.saturating_sub(base_width);
+                    let expand_h = art_h.saturating_sub(base_height);
+                    candidates.push((
+                        rendered,
+                        expand_w,
+                        expand_h,
+                        font.configured_height,
+                        font.priority,
+                    ));
                 }
             }
         }
@@ -899,6 +891,7 @@ fn choose_text_art_from_fonts(
                 (a.1 + a.2)
                     .cmp(&(b.1 + b.2))
                     .then_with(|| b.3.cmp(&a.3))
+                    .then_with(|| a.4.cmp(&b.4))
             });
             return Some(candidates.into_iter().next().unwrap().0);
         }
@@ -2208,6 +2201,38 @@ mod tests {
         let rendered =
             choose_text_art_from_fonts("Hello", 512, 3, 512, 3, &font_lists, &fonts).unwrap();
         assert_eq!(rendered.source, *first_3_font);
+    }
+
+    #[test]
+    fn figlet_font_renders_in_taller_box_as_long_as_it_fits() {
+        let font_lists = crate::args::default_ocr_figlet_font_lists();
+        let fonts = load_ocr_figlet_fonts(&font_lists);
+        let Some(font) = fonts.iter().find(|f| f.name == "phm-minecraft") else {
+            return;
+        };
+
+        let mut overlay = TextOverlay {
+            text: "Hello".to_string(),
+            source_text: Some("Hello".to_string()),
+            x: 0,
+            y: 0,
+            w: 40,
+            h: 10, // Much taller than phm-minecraft (height 2)
+            fg: None,
+            bg: None,
+            transparent_spaces: true,
+            wrap: false,
+            auto_grow: false,
+            bold: false,
+            italic: false,
+            underline: false,
+            figlet_font: Some("phm-minecraft".to_string()),
+        };
+
+        let refreshed = refresh_figlet_overlay(&mut overlay, &font_lists);
+        assert!(refreshed);
+        assert_eq!(overlay.figlet_font.as_deref(), Some("phm-minecraft"));
+        assert!(overlay.text.contains('\n')); // Multi-line FIGlet rendered text
     }
 
     #[test]

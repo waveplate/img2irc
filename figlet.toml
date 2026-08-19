@@ -25,21 +25,21 @@
     "smblock",
 ]
 
-5 = [
-    "ansi_regular",
-]
-
 6 = [
     "phm-slanted",
 ]
 
 7 = [
-    "smmono9",
-    "mono9",
+    "ansi_regular",
     "blocky",
 ]
 
 8 = [
+    "smmono9",
+    "mono9",
+]
+
+10 = [
     "smmono12",
     "mono12",
 ]
@@ -47,3 +47,4 @@
 11 = [
     "dos_rebel",
 ]
+
