@@ -281,12 +281,46 @@ async function prepareBackground(blob, result, settings) {
   }
 }
 
+function snapBoxAlignments(items, snapThreshold = 1.5) {
+  if (items.length < 2) return;
+  const sorted = items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => a.item.left - b.item.left);
+
+  const clusters = [];
+  for (const entry of sorted) {
+    const left = entry.item.left;
+    if (clusters.length > 0) {
+      const lastCluster = clusters[clusters.length - 1];
+      const firstLeft = lastCluster[0].item.left;
+      const prevLeft = lastCluster[lastCluster.length - 1].item.left;
+      if (Math.abs(left - firstLeft) <= snapThreshold && Math.abs(left - prevLeft) <= snapThreshold) {
+        lastCluster.push(entry);
+        continue;
+      }
+    }
+    clusters.push([entry]);
+  }
+
+  for (const cluster of clusters) {
+    if (cluster.length >= 2) {
+      const lefts = cluster.map((entry) => entry.item.left).sort((a, b) => a - b);
+      const medianLeft = lefts[Math.floor(lefts.length / 2)];
+      for (const entry of cluster) {
+        const width = entry.item.right - entry.item.left;
+        entry.item.left = medianLeft;
+        entry.item.right = medianLeft + width;
+      }
+    }
+  }
+}
+
 export async function ocrItemsToOverlays(
   prepared,
   columns,
   rows,
-  figletSettings,
-  renderFiglet,
+  figletSettings = { enabled: true, minHeight: 3, maxWidthRatio: 0.5, maxHeightRatio: 0.5 },
+  renderFiglet = async () => ({ arts: [], fonts: {} }),
 ) {
   const { result, items } = prepared;
   const imageWidth = Math.max(1, result.image.width);
@@ -299,6 +333,7 @@ export async function ocrItemsToOverlays(
     bottom: item.bounds.y1 * rows / imageHeight,
   }));
   const ordered = [...scaled].sort((left, right) => left.top - right.top || left.left - right.left);
+  snapBoxAlignments(ordered, 1.5);
 
   const maxWRatio = figletSettings.maxWidthRatio ?? 0.5;
   const maxHRatio = figletSettings.maxHeightRatio ?? 0.5;
@@ -331,7 +366,7 @@ export async function ocrItemsToOverlays(
       if (horizOverlap && topJ >= bottomI) {
         maxAllowedH = Math.min(maxAllowedH, Math.max(1, topJ - topI));
       }
-      if (vertOverlap && leftJ >= rightI) {
+      if vertOverlap && leftJ >= rightI) {
         maxAllowedW = Math.min(maxAllowedW, Math.max(1, leftJ - leftI));
       }
     }
@@ -357,7 +392,10 @@ export async function ocrItemsToOverlays(
     if (!art || art.width > req.maxWidth || art.height > req.maxHeight || art.width > columns || art.height > rows) continue;
     const boxW = Math.max(1, item.right - item.left);
     const boxH = Math.max(1, item.bottom - item.top);
-    const x = item.left + (boxW - art.width) * 0.5;
+    const gridCenterX = columns * 0.5;
+    const boxCenterX = (item.left + item.right) * 0.5;
+    const isCentered = Math.abs(boxCenterX - gridCenterX) <= columns * 0.15;
+    const x = isCentered ? item.left + (boxW - art.width) * 0.5 : item.left;
     const y = item.top + (boxH - art.height) * 0.5;
     let clampedX = Math.max(0, Math.min(columns - art.width, Math.round(x)));
     let clampedY = Math.max(0, Math.min(rows - art.height, Math.round(y)));
@@ -378,7 +416,7 @@ export async function ocrItemsToOverlays(
       const plainLen = item.text.length;
       if (plainLen <= req.maxWidth) {
         currentArt = { text: item.text, width: plainLen, height: 1, source: "plain" };
-        const px = item.left + (boxW - plainLen) * 0.5;
+        const px = isCentered ? item.left + (boxW - plainLen) * 0.5 : item.left;
         const py = item.top + (boxH - 1) * 0.5;
         clampedX = Math.max(0, Math.min(columns - plainLen, Math.round(px)));
         clampedY = Math.max(0, Math.min(rows - 1, Math.round(py)));

@@ -937,12 +937,56 @@ impl ScaledTextBox {
         ((self.bottom - self.top + 1e-9).floor() as usize).max(1)
     }
 
-    fn place(self, art_width: usize, art_height: usize) -> (i32, i32) {
+    fn place(self, art_width: usize, art_height: usize, grid_w: i32) -> (i32, i32) {
         let box_w = (self.right - self.left).max(1.0);
         let box_h = (self.bottom - self.top).max(1.0);
-        let x = self.left + (box_w - art_width as f64) * 0.5;
+        let grid_center_x = (grid_w.max(1) as f64) * 0.5;
+        let box_center_x = (self.left + self.right) * 0.5;
+        let is_centered = (box_center_x - grid_center_x).abs() <= (grid_w.max(1) as f64) * 0.15;
+        let x = if is_centered {
+            self.left + (box_w - art_width as f64) * 0.5
+        } else {
+            self.left
+        };
         let y = self.top + (box_h - art_height as f64) * 0.5;
         (x.round() as i32, y.round() as i32)
+    }
+}
+
+fn snap_box_alignments(boxes: &mut [ScaledTextBox], snap_threshold: f64) {
+    if boxes.len() < 2 {
+        return;
+    }
+    let mut indices: Vec<usize> = (0..boxes.len()).collect();
+    indices.sort_by(|&a, &b| boxes[a].left.total_cmp(&boxes[b].left));
+
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+    for &idx in &indices {
+        let left = boxes[idx].left;
+        if let Some(cluster) = clusters.last_mut() {
+            let first_left = boxes[cluster[0]].left;
+            let last_left = boxes[*cluster.last().unwrap()].left;
+            if (left - first_left).abs() <= snap_threshold
+                && (left - last_left).abs() <= snap_threshold
+            {
+                cluster.push(idx);
+                continue;
+            }
+        }
+        clusters.push(vec![idx]);
+    }
+
+    for cluster in clusters {
+        if cluster.len() >= 2 {
+            let mut lefts: Vec<f64> = cluster.iter().map(|&i| boxes[i].left).collect();
+            lefts.sort_by(|a, b| a.total_cmp(b));
+            let median_left = lefts[lefts.len() / 2];
+            for &idx in &cluster {
+                let width = boxes[idx].right - boxes[idx].left;
+                boxes[idx].left = median_left;
+                boxes[idx].right = median_left + width;
+            }
+        }
     }
 }
 
@@ -1034,6 +1078,12 @@ pub fn detections_to_overlays(
         a.2.top.total_cmp(&b.2.top).then_with(|| a.2.left.total_cmp(&b.2.left))
     });
 
+    let mut text_boxes: Vec<ScaledTextBox> = renderable.iter().map(|(_, _, b)| *b).collect();
+    snap_box_alignments(&mut text_boxes, 1.5);
+    for (i, (_, _, b)) in renderable.iter_mut().enumerate() {
+        *b = text_boxes[i];
+    }
+
     let mut detection_heights = renderable
         .iter()
         .map(|(_, bounds, _)| bounds.3.saturating_sub(bounds.1) as f32)
@@ -1120,7 +1170,7 @@ pub fn detections_to_overlays(
         };
         let art_w = art.width() as i32;
         let art_h = art.height() as i32;
-        let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize);
+        let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize, grid_w);
         let art_x = placed_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
         let art_y = placed_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
 
@@ -1142,7 +1192,7 @@ pub fn detections_to_overlays(
             if let Some(plain) = plain_text_art(&det.text, max_w_allowed) {
                 let pw = plain.width() as i32;
                 let ph = plain.height() as i32;
-                let (px, py) = text_box.place(pw as usize, ph as usize);
+                let (px, py) = text_box.place(pw as usize, ph as usize, grid_w);
                 (plain, px.clamp(0, grid_w.saturating_sub(pw).max(0)), py.clamp(0, grid_h.saturating_sub(ph).max(0)), pw, ph)
             } else {
                 (art, art_x, art_y, art_w, art_h)
@@ -2134,8 +2184,46 @@ mod tests {
             right: 30.0,
             bottom: 8.0,
         });
-        assert_eq!(small.place(10, 2), (5, 2));
-        assert_eq!(large.place(20, 4), (10, 4));
+        // small is centered in a 20-col grid (center = 10, box center = 10)
+        assert_eq!(small.place(10, 2, 20), (5, 2));
+        // large is centered in a 40-col grid (center = 20, box center = 20)
+        assert_eq!(large.place(20, 4, 40), (10, 4));
+    }
+
+    #[test]
+    fn test_alignment_snapping_and_selective_centering() {
+        // Centered box in 80-col grid (center = 40)
+        let centered_box = ScaledTextBox {
+            left: 30.0,
+            top: 5.0,
+            right: 50.0,
+            bottom: 9.0,
+        };
+        // Box center is 40.0. Art width 10 will be centered horizontally inside box (30 + (20 - 10)/2 = 35)
+        assert_eq!(centered_box.place(10, 4, 80), (35, 5));
+
+        // Off-center column box in 80-col grid (center = 40)
+        let left_box_a = ScaledTextBox {
+            left: 5.2,
+            top: 10.0,
+            right: 18.0,
+            bottom: 11.0,
+        };
+        let left_box_b = ScaledTextBox {
+            left: 4.8,
+            top: 12.0,
+            right: 25.0,
+            bottom: 13.0,
+        };
+        // Box centers ~ 11.6 and 14.9 are far from 40, so they are left-aligned
+        assert_eq!(left_box_a.place(8, 1, 80), (5, 10));
+        assert_eq!(left_box_b.place(15, 1, 80), (5, 12));
+
+        // Snap alignments
+        let mut boxes = vec![left_box_a, left_box_b];
+        snap_box_alignments(&mut boxes, 1.5);
+        assert_eq!(boxes[0].left, 5.2); // Median left of cluster
+        assert_eq!(boxes[1].left, 5.2);
     }
 
     #[test]
