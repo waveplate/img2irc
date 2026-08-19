@@ -232,6 +232,12 @@ include = [
     "hb",
 ]
 
+[ui]
+enabled_sets = [
+    "ascii.space",
+    "default",
+]
+
 [vb]
 ranges = [[
     0x2581,

@@ -460,7 +460,7 @@ pub struct RenderArgs {
 }
 
 #[derive(Parser, Clone, Debug)]
-#[command(name = "img2irc", author, version, about, long_about = None)]
+#[command(name = "img2irc", author, version = env!("IMG2IRC_VERSION"), about, long_about = None)]
 pub struct Args {
     /// print all configured glyph characters grouped by glyph set
     #[arg(long, default_value_t = false)]

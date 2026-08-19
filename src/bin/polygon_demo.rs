@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version,
+    version = env!("IMG2IRC_VERSION"),
     about = "Generate contiguous smooth shapes using the polygon glyph block"
 )]
 struct DemoArgs {

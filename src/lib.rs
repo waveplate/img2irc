@@ -1,3 +1,6 @@
+pub const VERSION: &str = env!("IMG2IRC_VERSION");
+pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER");
+
 pub mod args;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod config;
@@ -726,4 +729,16 @@ mod tests {
         let duration4 = start4.elapsed();
         println!("Warm render (diff crop) took: {:?}", duration4);
     }
+
+    #[test]
+    fn test_version_contains_build_number() {
+        assert!(!crate::VERSION.is_empty());
+        assert!(!crate::BUILD_NUMBER.is_empty());
+        let build_num: u64 = crate::BUILD_NUMBER
+            .parse()
+            .expect("BUILD_NUMBER must be a valid u64");
+        assert!(build_num > 0);
+        assert!(crate::VERSION.contains(&format!("+{}", build_num)));
+    }
 }
+

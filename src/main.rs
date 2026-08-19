@@ -31,6 +31,7 @@ async fn main() {
         log_config,
         File::create("img2irc.log").unwrap(),
     );
+    let blocks_from_cli = !args.blocks.is_empty();
 
     // Load config
     if let Some(config) = img2irc_rs::config::Config::load() {
@@ -65,6 +66,24 @@ async fn main() {
     }
 
     if args.tui {
+        if !blocks_from_cli {
+            if let Some(persisted) = img2irc_rs::font::load_enabled_glyph_sets() {
+                let (catalog, _) = img2irc_rs::font::load_blocks_config_unfiltered();
+                let known: std::collections::HashSet<&str> =
+                    catalog.keys().map(String::as_str).collect();
+                let restored: Vec<String> = persisted
+                    .into_iter()
+                    .filter(|name| known.contains(name.as_str()))
+                    .collect();
+                if !restored.is_empty() {
+                    log::info!(
+                        "Restoring {} enabled glyph set(s) from glyphs.toml",
+                        restored.len()
+                    );
+                    args.blocks = restored;
+                }
+            }
+        }
         let render_args = img2irc_rs::args_to_render_args(&args);
         if let Err(e) = img2irc_rs::tui::run(render_args).await {
             log::error!("Error running TUI: {}", e);

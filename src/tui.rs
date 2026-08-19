@@ -2220,6 +2220,7 @@ impl App {
                     }
                 }
             }
+            crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
             self.mark_args_dirty();
         }
     }
@@ -2288,6 +2289,7 @@ impl App {
                     .blocks
                     .retain(|block| !leaves.contains(block));
             }
+            crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
             self.mark_args_dirty();
             return;
         }
@@ -2440,6 +2442,7 @@ impl App {
         self.tree_state = TreeState::new(&self.available_blocks);
         self.glyph_list_state = ListState::default();
         self.last_glyph_list_key = None;
+        crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
         self.mark_args_dirty();
         log::info!("Removed Unicode range: {}", name);
     }

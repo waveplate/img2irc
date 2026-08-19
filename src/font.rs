@@ -714,6 +714,106 @@ pub fn save_blocks_config(block_name: &str, exclude: &[char]) {
     fs::write(toml_path, new_toml).expect("Failed to write glyphs.toml");
 }
 
+fn find_glyphs_toml_path() -> Option<PathBuf> {
+    if let Ok(config_dir) = env::var("IMG2IRC_CONFIG_DIR") {
+        let path = Path::new(&config_dir).join("glyphs.toml");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    let path = PathBuf::from("glyphs.toml");
+    if path.exists() {
+        return Some(path);
+    }
+    let config_home = env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()) + "/.config");
+    let path = Path::new(&config_home).join("img2irc").join("glyphs.toml");
+    if path.exists() {
+        return Some(path);
+    }
+    if let Ok(home) = env::var("HOME") {
+        let path = Path::new(&home)
+            .join(".config")
+            .join("img2irc")
+            .join("glyphs.toml");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn enabled_sets_from_config(root: &toml::map::Map<String, Value>) -> Option<Vec<String>> {
+    let table = root.get("ui")?.as_table()?;
+    let array = table.get("enabled_sets")?.as_array()?;
+    let sets = array
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (!sets.is_empty()).then_some(sets)
+}
+
+fn upsert_enabled_sets(root: &mut toml::map::Map<String, Value>, sets: &[String]) {
+    let ui_table = root
+        .entry("ui")
+        .or_insert_with(|| Value::Table(toml::map::Map::new()));
+    let Some(table) = ui_table.as_table_mut() else {
+        return;
+    };
+    let mut sorted_sets = sets.to_vec();
+    sorted_sets.sort();
+    sorted_sets.dedup();
+    table.insert(
+        "enabled_sets".to_string(),
+        Value::Array(sorted_sets.into_iter().map(Value::String).collect()),
+    );
+}
+
+fn format_glyphs_toml(raw_config: toml::map::Map<String, Value>) -> String {
+    let new_toml =
+        toml::to_string_pretty(&Value::Table(raw_config)).expect("Failed to serialize TOML");
+    let re = Regex::new(r"([ \[,]| = )(\d{3,9})").unwrap();
+    re.replace_all(&new_toml, |caps: &regex::Captures| {
+        let val: i64 = caps[2].parse().unwrap();
+        if val > 127 {
+            format!("{}0x{:04X}", &caps[1], val)
+        } else {
+            caps[0].to_string()
+        }
+    })
+    .to_string()
+}
+
+/// Load the glyph-set selection persisted by the TUI, if any.
+pub fn load_enabled_glyph_sets() -> Option<Vec<String>> {
+    let toml_path = find_glyphs_toml_path()?;
+    let toml_str = fs::read_to_string(&toml_path).ok()?;
+    let root: toml::map::Map<String, Value> = toml::from_str(&toml_str).ok()?;
+    enabled_sets_from_config(&root)
+}
+
+/// Persist the TUI glyph-set selection so it is restored on the next launch.
+pub fn save_enabled_glyph_sets(sets: &[String]) {
+    let Some(toml_path) = find_glyphs_toml_path() else {
+        log::warn!("No glyphs.toml found; enabled glyph sets were not saved");
+        return;
+    };
+    let Ok(toml_str) = fs::read_to_string(&toml_path) else {
+        log::warn!("Failed to read glyphs.toml; enabled glyph sets were not saved");
+        return;
+    };
+    let Ok(mut root) = toml::from_str::<toml::map::Map<String, Value>>(&toml_str) else {
+        log::warn!("Invalid glyphs.toml; enabled glyph sets were not saved");
+        return;
+    };
+    upsert_enabled_sets(&mut root, sets);
+    match fs::write(&toml_path, format_glyphs_toml(root)) {
+        Ok(()) => {}
+        Err(error) => log::warn!("Failed to write glyphs.toml: {error}"),
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn load_blocks_config_impl(_apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
     // Browser callers provide their selected characters explicitly from the
@@ -2067,5 +2167,53 @@ mod tests {
             .iter()
             .skip(1)
             .any(|face| font_supports_terminal_char(face, '⇠')));
+    }
+
+    #[test]
+    fn enabled_sets_round_trip_through_the_ui_table() {
+        let mut root = toml::map::Map::new();
+        root.insert(
+            "blocks.half".to_string(),
+            Value::Table(toml::map::Map::from_iter([(
+                "glyphs".to_string(),
+                Value::Array(vec![Value::Integer(0x2580)]),
+            )])),
+        );
+
+        upsert_enabled_sets(
+            &mut root,
+            &["blocks.half".to_string(), "default".to_string(), "blocks.half".to_string()],
+        );
+        assert_eq!(
+            enabled_sets_from_config(&root),
+            Some(vec!["blocks.half".to_string(), "default".to_string()])
+        );
+
+        upsert_enabled_sets(&mut root, &["geo".to_string()]);
+        assert_eq!(
+            enabled_sets_from_config(&root),
+            Some(vec!["geo".to_string()])
+        );
+
+        let serialized = format_glyphs_toml(root.clone());
+        let reloaded: toml::map::Map<String, Value> = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            enabled_sets_from_config(&reloaded),
+            Some(vec!["geo".to_string()])
+        );
+        assert!(reloaded.get("blocks.half").is_some());
+    }
+
+    #[test]
+    fn enabled_sets_are_absent_without_a_ui_table() {
+        let mut root = toml::map::Map::new();
+        root.insert(
+            "half".to_string(),
+            Value::Table(toml::map::Map::from_iter([(
+                "glyphs".to_string(),
+                Value::Array(vec![Value::Integer(0x2580)]),
+            )])),
+        );
+        assert!(enabled_sets_from_config(&root).is_none());
     }
 }
