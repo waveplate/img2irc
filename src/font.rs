@@ -1199,7 +1199,7 @@ fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<Gly
 /// Generate terminal block geometry procedurally. Font outlines for these
 /// characters can use a fallback font with metrics unrelated to the main
 /// terminal cell, causing clipping and size-dependent shape changes.
-fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
+pub fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
     let code = ch as u32;
     if code < 0x2580 || code > 0x259F {
         return None;
@@ -1693,6 +1693,12 @@ fn get_block_glyphs(
     let mut glyphs = Vec::new();
 
     for &ch in chars {
+        if ch == ' ' {
+            let bitmap = vec![vec![0u8; metrics.cell_width.max(1)]; metrics.cell_height.max(1)];
+            glyphs.push((ch, bitmap, "Space".to_string()));
+            continue;
+        }
+
         let mut found = false;
 
         if ctx.missing_chars.contains(&ch) {
@@ -1716,6 +1722,13 @@ fn get_block_glyphs(
             let bitmap = render_glyph_from_font(&*font, ch, metrics);
             glyphs.push((ch, bitmap, font_name));
             found = true;
+        } else {
+            let main_font = ctx.get_main_font();
+            if main_font.font_ref().charmap().map(ch) != 0 {
+                let bitmap = render_glyph_from_font(&*main_font, ch, metrics);
+                glyphs.push((ch, bitmap, main_font.source_path.clone()));
+                found = true;
+            }
         }
 
         if !found {

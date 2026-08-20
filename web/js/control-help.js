@@ -38,6 +38,7 @@ const HELP = Object.freeze({
   "preview-mode": "Shows either img2irc's bitmap preview or selectable native browser text. Both use the renderer's font advance and line-height metrics.",
   "output-font-size": "Changes only the displayed preview size. It does not rerender or change the encoded IRC/ANSI output.",
   "ocr-enabled": "Runs PP-OCRv6 in a dedicated browser worker, removes recognized text from the source, and restores it as editable character-cell overlays.",
+  "ocr-lock": "Freezes current OCR detections, cleaned background, and overlays so changes to settings/font do not regenerate or overwrite your text overlay edits.",
   "ocr-confidence": "Rejects recognized lines below this confidence score. Higher values reduce false positives but may omit faint text.",
   "ocr-ascii-ratio": "Rejects lines whose text contains too few printable ASCII characters. Lower this when preserving non-Latin text.",
   "ocr-width": "Resizes the image to this pixel width before feeding into OCR detection and text removal. Set to 0 to use the full image width.",

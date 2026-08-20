@@ -7490,6 +7490,39 @@ pub fn prepare_glyph_bitmap_index(glyphs: &GlyphStore) -> GlyphBitmapIndex {
     }
 }
 
+fn procedural_braille_bitmap(ch: char, w: usize, h: usize) -> Option<Vec<Vec<u8>>> {
+    let code = ch as u32;
+    if !(0x2800..=0x28FF).contains(&code) {
+        return None;
+    }
+    let mask = code - 0x2800;
+    let mut cell = vec![vec![0u8; w]; h];
+    let dots = [
+        (0, 0, 0x01),
+        (0, 1, 0x02),
+        (0, 2, 0x04),
+        (1, 0, 0x08),
+        (1, 1, 0x10),
+        (1, 2, 0x20),
+        (0, 3, 0x40),
+        (1, 3, 0x80),
+    ];
+    for &(col, row, bit) in &dots {
+        if mask & bit != 0 {
+            let y_start = (row * h) / 4;
+            let y_end = ((row + 1) * h) / 4;
+            let x_start = (col * w) / 2;
+            let x_end = ((col + 1) * w) / 2;
+            for y in y_start..y_end.min(h) {
+                for x in x_start..x_end.min(w) {
+                    cell[y][x] = 1;
+                }
+            }
+        }
+    }
+    Some(cell)
+}
+
 fn render_result_pixels_indexed<const CHANNELS: usize>(
     result: &RenderResult,
     glyphs: &GlyphStore,
@@ -7515,13 +7548,23 @@ fn render_result_pixels_indexed<const CHANNELS: usize>(
     let mut pixels = vec![255; width.checked_mul(height)?.checked_mul(CHANNELS)?];
     for (row_idx, row) in result.grid.iter().enumerate() {
         for (col_idx, cell) in row.iter().take(cols).enumerate() {
-            let bitmap = bitmap_index
-                .indices
-                .get(&cell.char)
-                .copied()
-                .or(bitmap_index.fallback)
-                .and_then(|index| glyphs.glyphs.get(index))
-                .map(|(_, bitmap, _)| bitmap);
+            let procedural_storage;
+            let bitmap: Option<&[Vec<u8>]> = if cell.char == ' ' || cell.char == '\0' {
+                None
+            } else if let Some(index) = bitmap_index.indices.get(&cell.char) {
+                glyphs.glyphs.get(*index).map(|(_, bitmap, _)| bitmap.as_slice())
+            } else if let Some(pb) = crate::font::procedural_block_bitmap(cell.char, gw, gh) {
+                procedural_storage = pb;
+                Some(procedural_storage.as_slice())
+            } else if let Some(pb) = procedural_braille_bitmap(cell.char, gw, gh) {
+                procedural_storage = pb;
+                Some(procedural_storage.as_slice())
+            } else {
+                bitmap_index
+                    .fallback
+                    .and_then(|index| glyphs.glyphs.get(index))
+                    .map(|(_, bitmap, _)| bitmap.as_slice())
+            };
             let background = cell.bg.unwrap_or([0, 0, 0]);
             for y in 0..gh {
                 let output_start =

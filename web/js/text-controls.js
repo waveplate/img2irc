@@ -174,16 +174,6 @@ export class TextControls {
     this.#render();
   }
 
-  persistOcrOverlaysAsManual() {
-    if (this.#state.ocrOverlays.length === 0) return;
-    for (const overlay of this.#state.ocrOverlays) {
-      overlay.kind = "manual";
-      this.#state.manualOverlays.push(overlay);
-    }
-    this.#state.ocrOverlays = [];
-    this.#render();
-  }
-
   refresh() {
     this.#render();
   }

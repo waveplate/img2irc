@@ -107,6 +107,7 @@ enum ControlId {
     RenderMode,
     GraphicsPreview,
     Ocr,
+    OcrLock,
     OcrWidth,
     OcrFiglet,
     OcrFigletMinHeight,
@@ -196,6 +197,7 @@ impl ControlId {
             ControlId::RenderMode => "mode",
             ControlId::GraphicsPreview => "graphics-preview",
             ControlId::Ocr => "ocr",
+            ControlId::OcrLock => "ocr-lock",
             ControlId::OcrWidth => "ocr-width",
             ControlId::OcrFiglet => "ocr-figlet",
             ControlId::OcrFigletMinHeight => "ocr-figlet-min-height",
@@ -279,7 +281,8 @@ impl ControlId {
     fn requires_ocr(self) -> bool {
         matches!(
             self,
-            ControlId::OcrWidth
+            ControlId::OcrLock
+                | ControlId::OcrWidth
                 | ControlId::OcrFiglet
                 | ControlId::OcrFigletMinHeight
                 | ControlId::OcrFigletMinHeightRatio
@@ -403,6 +406,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     ControlDef {
         id: ControlId::Ocr,
         label: "OCR",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::OcrLock,
+        label: "Lock OCR",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
@@ -2536,6 +2544,7 @@ pub(crate) struct App {
     width: i32,
     render_mode_idx: usize,
     ocr: bool,
+    ocr_lock: bool,
     ocr_figlet: bool,
     ocr_figlet_min_height: i32,
     ocr_figlet_min_height_ratio: i32,
@@ -3226,6 +3235,7 @@ impl App {
             ocr_overlay_count: 0,
             width: render_args.width.unwrap_or(0) as i32,
             ocr: render_args.ocr,
+            ocr_lock: render_args.ocr_lock,
             ocr_figlet: render_args.ocr_figlet,
             ocr_figlet_min_height: render_args.ocr_figlet_min_height.ceil() as i32,
             ocr_figlet_min_height_ratio:
@@ -3464,6 +3474,7 @@ impl App {
         self.render_args.font_size = ui_font_size;
         self.width = render_args.width.unwrap_or(0) as i32;
         self.ocr = render_args.ocr;
+        self.ocr_lock = render_args.ocr_lock;
         self.ocr_figlet = render_args.ocr_figlet;
         self.ocr_figlet_min_height = render_args.ocr_figlet_min_height.ceil() as i32;
         self.ocr_figlet_min_height_ratio =
@@ -3792,6 +3803,7 @@ impl App {
             ControlId::RenderMode => self.render_mode_idx as i32,
             ControlId::GraphicsPreview => self.graphics_preview as i32,
             ControlId::Ocr => self.ocr as i32,
+            ControlId::OcrLock => self.ocr_lock as i32,
             ControlId::OcrFiglet => self.ocr_figlet as i32,
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height,
             ControlId::OcrFigletMinHeightRatio => self.ocr_figlet_min_height_ratio,
@@ -3896,6 +3908,7 @@ impl App {
                 }
             }
             ControlId::Ocr => self.ocr = val != 0,
+            ControlId::OcrLock => self.ocr_lock = val != 0,
             ControlId::OcrFiglet => self.ocr_figlet = val != 0,
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height = val.clamp(0, 12),
             ControlId::OcrFigletMinHeightRatio => {
@@ -4522,6 +4535,7 @@ impl App {
         self.render_args.hue = self.hue as f32;
         self.render_args.width = render_width_from_tui(self.width);
         self.render_args.ocr = self.ocr;
+        self.render_args.ocr_lock = self.ocr_lock;
         self.render_args.ocr_figlet = self.ocr_figlet;
         self.render_args.ocr_figlet_min_height = self.ocr_figlet_min_height.max(0) as f32;
         self.render_args.ocr_figlet_min_height_ratio =
@@ -5918,7 +5932,6 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
     let initial_image_path = render_args.image.clone();
     let thread_render_args = render_args.clone();
-
     tokio::spawn(async move {
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
         let mut arc_image = arc_image;
@@ -5940,6 +5953,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         let mut last_include_range = thread_render_args.include_range.clone();
         let mut last_include = thread_render_args.include.clone();
         let mut glyphs_loaded = initial_glyphs_loaded;
+        let mut last_locked_ocr_detections: Option<Vec<crate::ocr::OcrDetection>> = None;
+        let mut last_locked_base_image: Option<photon_rs::PhotonImage> = None;
 
         loop {
             // Signal rendering start
@@ -5959,6 +5974,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     current_image_path = current_args.image.clone();
                     image_revision = image_revision.wrapping_add(1);
                     ocr_detection_cache = None;
+                    last_locked_ocr_detections = None;
+                    last_locked_base_image = None;
                 }
                 rendering_flag2.store(false, Ordering::Relaxed);
                 if rx_args.changed().await.is_err() {
@@ -5977,6 +5994,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             current_image_path = Some(path.clone());
                             image_revision = image_revision.wrapping_add(1);
                             ocr_detection_cache = None;
+                            last_locked_ocr_detections = None;
+                            last_locked_base_image = None;
                         }
                         Err(e) => {
                             log::info!("Failed to reload image: {}", e);
@@ -5990,91 +6009,108 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             let mut effective_args = current_args.clone();
             let raw_image = (*arc_image).clone();
             let ocr_detections = if effective_args.ocr {
-                let inference_key = OcrInferenceKey::from(&effective_args);
-                let cached = ocr_detection_cache
-                    .as_ref()
-                    .filter(|(revision, key, _)| {
-                        *revision == image_revision && *key == inference_key
-                    })
-                    .map(|(_, _, detections)| detections.clone());
-                let detection_result = if let Some(detections) = cached {
-                    log::debug!("Reusing cached OCR detections");
-                    Ok(detections)
+                if effective_args.ocr_lock && last_locked_ocr_detections.is_some() {
+                    last_locked_ocr_detections.clone().unwrap()
                 } else {
-                    let ocr_image = match effective_args.ocr_width {
-                        Some(w) if w > 0 && w != raw_image.get_width() => {
-                            let h = ((w as f32 * raw_image.get_height() as f32) / raw_image.get_width() as f32).round().max(1.0) as u32;
-                            photon_rs::transform::resize(&raw_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
+                    let inference_key = OcrInferenceKey::from(&effective_args);
+                    let cached = ocr_detection_cache
+                        .as_ref()
+                        .filter(|(revision, key, _)| {
+                            *revision == image_revision && *key == inference_key
+                        })
+                        .map(|(_, _, detections)| detections.clone());
+                    let detection_result = if let Some(detections) = cached {
+                        log::debug!("Reusing cached OCR detections");
+                        Ok(detections)
+                    } else {
+                        let ocr_image = match effective_args.ocr_width {
+                            Some(w) if w > 0 && w != raw_image.get_width() => {
+                                let h = ((w as f32 * raw_image.get_height() as f32) / raw_image.get_width() as f32).round().max(1.0) as u32;
+                                photon_rs::transform::resize(&raw_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
+                            }
+                            _ => raw_image.clone(),
+                        };
+                        let detection_image = Arc::new(ocr_image.clone());
+                        let detection_args = effective_args.clone();
+                        let orig_w = raw_image.get_width() as f32;
+                        let orig_h = raw_image.get_height() as f32;
+                        let ocr_w = ocr_image.get_width() as f32;
+                        let ocr_h = ocr_image.get_height() as f32;
+                        match tokio::task::spawn_blocking(move || {
+                            crate::ocr::detect_text(&detection_image, &detection_args)
+                                .map(|raw_detections| {
+                                    let scaled_detections: Vec<crate::ocr::OcrDetection> = if (ocr_w - orig_w).abs() > 0.5 || (ocr_h - orig_h).abs() > 0.5 {
+                                        raw_detections
+                                            .into_iter()
+                                            .map(|mut d| {
+                                                for pt in &mut d.polygon {
+                                                    pt[0] = pt[0] * orig_w / ocr_w;
+                                                    pt[1] = pt[1] * orig_h / ocr_h;
+                                                }
+                                                d
+                                            })
+                                            .collect()
+                                    } else {
+                                        raw_detections
+                                    };
+                                    scaled_detections
+                                })
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(error) => Err(format!("OCR worker failed: {error}")),
                         }
-                        _ => raw_image.clone(),
                     };
-                    let detection_image = Arc::new(ocr_image.clone());
-                    let detection_args = effective_args.clone();
-                    let orig_w = raw_image.get_width() as f32;
-                    let orig_h = raw_image.get_height() as f32;
-                    let ocr_w = ocr_image.get_width() as f32;
-                    let ocr_h = ocr_image.get_height() as f32;
-                    match tokio::task::spawn_blocking(move || {
-                        crate::ocr::detect_text(&detection_image, &detection_args)
-                            .map(|raw_detections| {
-                                let scaled_detections: Vec<crate::ocr::OcrDetection> = if (ocr_w - orig_w).abs() > 0.5 || (ocr_h - orig_h).abs() > 0.5 {
-                                    raw_detections
-                                        .into_iter()
-                                        .map(|mut d| {
-                                            for pt in &mut d.polygon {
-                                                pt[0] = pt[0] * orig_w / ocr_w;
-                                                pt[1] = pt[1] * orig_h / ocr_h;
-                                            }
-                                            d
-                                        })
-                                        .collect()
-                                } else {
-                                    raw_detections
-                                };
-                                scaled_detections
-                            })
-                            .map_err(|error| error.to_string())
-                    })
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(error) => Err(format!("OCR worker failed: {error}")),
-                    }
-                };
 
-                match detection_result {
-                    Ok(detections) => {
-                        ocr_detection_cache = Some((
-                            image_revision,
-                            inference_key,
-                            detections.clone(),
-                        ));
-                        crate::ocr::log_detections(&detections, &effective_args);
-                        if !crate::ocr::has_renderable_detections(
-                            &detections,
-                            &effective_args,
-                            raw_image.get_width(),
-                            raw_image.get_height(),
-                        ) {
-                            log::info!("No renderable text detected via OCR. Falling back to standard render.");
-                            effective_args.ocr = false;
-                            Vec::new()
-                        } else {
-                            detections
+                    match detection_result {
+                        Ok(detections) => {
+                            ocr_detection_cache = Some((
+                                image_revision,
+                                inference_key,
+                                detections.clone(),
+                            ));
+                            crate::ocr::log_detections(&detections, &effective_args);
+                            if !crate::ocr::has_renderable_detections(
+                                &detections,
+                                &effective_args,
+                                raw_image.get_width(),
+                                raw_image.get_height(),
+                            ) {
+                                log::info!("No renderable text detected via OCR. Falling back to standard render.");
+                                effective_args.ocr = false;
+                                Vec::new()
+                            } else {
+                                detections
+                            }
                         }
-                    }
-                    Err(e) => {
-                        log::error!("OCR text detection failed: {}", e);
-                        Vec::new()
+                        Err(e) => {
+                            log::error!("OCR text detection failed: {}", e);
+                            Vec::new()
+                        }
                     }
                 }
             } else {
+                last_locked_ocr_detections = None;
+                last_locked_base_image = None;
                 Vec::new()
             };
 
             let base_image = if effective_args.ocr {
-                crate::ocr::remove_detected_text(&raw_image, &effective_args, &ocr_detections)
+                if effective_args.ocr_lock && last_locked_base_image.is_some() {
+                    last_locked_base_image.clone().unwrap()
+                } else {
+                    let cleaned = crate::ocr::remove_detected_text(&raw_image, &effective_args, &ocr_detections);
+                    if effective_args.ocr_lock {
+                        last_locked_ocr_detections = Some(ocr_detections.clone());
+                        last_locked_base_image = Some(cleaned.clone());
+                    }
+                    cleaned
+                }
             } else {
+                last_locked_ocr_detections = None;
+                last_locked_base_image = None;
                 raw_image.clone()
             };
 
@@ -6254,18 +6290,20 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             if result.content == "Cancelled" {
                 continue;
             }
-            if app.ocr_overlay_count > 0 {
-                let keep = app
-                    .render_args
-                    .overlays
-                    .len()
-                    .saturating_sub(app.ocr_overlay_count);
-                app.render_args.overlays.truncate(keep);
-                app.ocr_overlay_count = 0;
-            }
-            if !ocr_overlays.is_empty() {
-                app.ocr_overlay_count = ocr_overlays.len();
-                app.render_args.overlays.extend(ocr_overlays);
+            if !app.render_args.ocr_lock {
+                if app.ocr_overlay_count > 0 {
+                    let keep = app
+                        .render_args
+                        .overlays
+                        .len()
+                        .saturating_sub(app.ocr_overlay_count);
+                    app.render_args.overlays.truncate(keep);
+                    app.ocr_overlay_count = 0;
+                }
+                if !ocr_overlays.is_empty() {
+                    app.ocr_overlay_count = ocr_overlays.len();
+                    app.render_args.overlays.extend(ocr_overlays);
+                }
             }
             // Store the raw result (no overlays) and apply overlays as a fast post-process
             let render = match app.render_mode_idx {

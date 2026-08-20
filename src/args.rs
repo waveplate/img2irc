@@ -451,6 +451,8 @@ pub struct RenderArgs {
     pub ocr_box_threshold: f32,
     pub ocr_unclip_ratio: f32,
     #[serde(default)]
+    pub ocr_lock: bool,
+    #[serde(default)]
     pub min_width: Option<u32>,
     #[serde(default)]
     pub max_width: Option<u32>,
@@ -902,6 +904,11 @@ pub struct Args {
     #[arg(long = "ocr", default_value_t = false)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr: bool,
+
+    /// lock OCR detections and overlays so subsequent parameter changes do not regenerate them
+    #[arg(long = "ocr-lock", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_lock: bool,
 
     /// minimum OCR confidence for text overlays
     #[arg(long = "ocr-min-confidence", default_value_t = 0.0)]

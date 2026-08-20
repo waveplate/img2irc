@@ -60,6 +60,9 @@ export class EditorApp {
   #renderTimer;
   #ocrRefreshRevision = 0;
   #ocrOverlayKey;
+  #lockedOcr;
+  #lockedRenderOptions;
+  #lockedEffectKey;
 
   async start() {
     initializeControlHelp(this.#form);
@@ -253,6 +256,11 @@ export class EditorApp {
     this.#state.setSource(URL.createObjectURL(blob), blob);
     this.#rendererSourceKey = `original:${this.#state.sourceRevision}`;
     this.#ocrOverlayKey = undefined;
+    this.#lockedOcr = undefined;
+    this.#lockedRenderOptions = undefined;
+    this.#lockedEffectKey = undefined;
+    const ocrLock = this.#element("ocr-lock");
+    if (ocrLock) ocrLock.checked = false;
     this.#textControls.clearOcrOverlays();
     this.#setOcrStatus("OCR loads only when enabled.");
     const sourceLink = this.#element("source-link");
@@ -280,6 +288,7 @@ export class EditorApp {
     this.#renderInFlight = true;
     try {
       const ocrEnabled = this.#element("ocr-enabled").checked;
+      const ocrLock = ocrEnabled && Boolean(this.#element("ocr-lock")?.checked);
       const options = collectRenderOptions(this.#form, this.#glyphs, []);
       if (!await this.#ensureRenderer()) return;
 
@@ -288,112 +297,128 @@ export class EditorApp {
       let effectKey = "";
 
       if (ocrEnabled) {
-        this.#setStatus("Preparing transformed image for OCR…", false, true);
-        await this.#ensureRendererSource(
-          this.#state.sourceBlob,
-          `original:${this.#state.sourceRevision}`,
-        );
-        if (renderRevision !== this.#documentRevision) return;
-
-        const transformed = await this.#renderer.getTransformedImage(options);
-        if (renderRevision !== this.#documentRevision) return;
-
-        const canvas = typeof OffscreenCanvas === "function"
-          ? new OffscreenCanvas(transformed.width, transformed.height)
-          : Object.assign(document.createElement("canvas"), { width: transformed.width, height: transformed.height });
-        const ctx = canvas.getContext("2d");
-        const imgData = new ImageData(
-          new Uint8ClampedArray(transformed.rgba.buffer, transformed.rgba.byteOffset, transformed.rgba.byteLength),
-          transformed.width,
-          transformed.height,
-        );
-        ctx.putImageData(imgData, 0, 0);
-        const transformedBlob = await (typeof canvas.convertToBlob === "function"
-          ? canvas.convertToBlob({ type: "image/png" })
-          : new Promise((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error("blob failed")), "image/png")));
-
-        effectKey = JSON.stringify({
-          r: options.rotate,
-          fh: options.flipHorizontal,
-          fv: options.flipVertical,
-          sx: options.scaleX,
-          sy: options.scaleY,
-          br: options.brightness,
-          co: options.contrast,
-          ga: options.gamma,
-          sa: options.saturation,
-          hu: options.hue,
-          inv: options.invert,
-          dit: options.dither,
-          gs: options.grayscale,
-          ngs: options.noGrayscale,
-          pix: options.pixelize,
-          bb: options.boxBlur,
-          gb: options.gaussianBlur,
-        });
-
-        this.#setStatus("Preparing OCR…", false, true);
-        preparedOcr = await this.#ocr.prepare(
-          transformedBlob,
-          this.#ocrSettings(),
-          (message) => {
-            this.#setStatus(message, false, true);
-            this.#setOcrStatus(message);
-          },
-        );
-        if (renderRevision !== this.#documentRevision) return;
-
-        const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
-        if (preparedOcr.processedBytes) {
-          await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
-          effectiveRenderOptions = {
-            ...options,
-            rotate: 0,
-            flipHorizontal: false,
-            flipVertical: false,
-            scaleX: 1,
-            scaleY: 1,
-            brightness: 0,
-            contrast: 0,
-            gamma: 0,
-            saturation: 0,
-            hue: 0,
-            invert: false,
-            dither: 0,
-            grayscale: false,
-            noGrayscale: false,
-            pixelize: 0,
-            boxBlur: false,
-            gaussianBlur: 0,
-          };
+        if (ocrLock && this.#lockedOcr) {
+          preparedOcr = this.#lockedOcr;
+          effectiveRenderOptions = this.#lockedRenderOptions ?? options;
+          effectKey = this.#lockedEffectKey ?? "";
+          const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
+          if (preparedOcr.processedBytes) {
+            await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
+          }
         } else {
+          this.#setStatus("Preparing transformed image for OCR…", false, true);
           await this.#ensureRendererSource(
-            transformedBlob,
-            `transformed:${this.#state.sourceRevision}:${effectKey}`,
+            this.#state.sourceBlob,
+            `original:${this.#state.sourceRevision}`,
           );
-          effectiveRenderOptions = {
-            ...options,
-            rotate: 0,
-            flipHorizontal: false,
-            flipVertical: false,
-            scaleX: 1,
-            scaleY: 1,
-            brightness: 0,
-            contrast: 0,
-            gamma: 0,
-            saturation: 0,
-            hue: 0,
-            invert: false,
-            dither: 0,
-            grayscale: false,
-            noGrayscale: false,
-            pixelize: 0,
-            boxBlur: false,
-            gaussianBlur: 0,
-          };
+          if (renderRevision !== this.#documentRevision) return;
+
+          const transformed = await this.#renderer.getTransformedImage(options);
+          if (renderRevision !== this.#documentRevision) return;
+
+          const canvas = typeof OffscreenCanvas === "function"
+            ? new OffscreenCanvas(transformed.width, transformed.height)
+            : Object.assign(document.createElement("canvas"), { width: transformed.width, height: transformed.height });
+          const ctx = canvas.getContext("2d");
+          const imgData = new ImageData(
+            new Uint8ClampedArray(transformed.rgba.buffer, transformed.rgba.byteOffset, transformed.rgba.byteLength),
+            transformed.width,
+            transformed.height,
+          );
+          ctx.putImageData(imgData, 0, 0);
+          const transformedBlob = await (typeof canvas.convertToBlob === "function"
+            ? canvas.convertToBlob({ type: "image/png" })
+            : new Promise((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error("blob failed")), "image/png")));
+
+          effectKey = JSON.stringify({
+            r: options.rotate,
+            fh: options.flipHorizontal,
+            fv: options.flipVertical,
+            sx: options.scaleX,
+            sy: options.scaleY,
+            br: options.brightness,
+            co: options.contrast,
+            ga: options.gamma,
+            sa: options.saturation,
+            hu: options.hue,
+            inv: options.invert,
+            dit: options.dither,
+            gs: options.grayscale,
+            ngs: options.noGrayscale,
+            pix: options.pixelize,
+            bb: options.boxBlur,
+            gb: options.gaussianBlur,
+          });
+
+          this.#setStatus("Preparing OCR…", false, true);
+          preparedOcr = await this.#ocr.prepare(
+            transformedBlob,
+            this.#ocrSettings(),
+            (message) => {
+              this.#setStatus(message, false, true);
+              this.#setOcrStatus(message);
+            },
+          );
+          if (renderRevision !== this.#documentRevision) return;
+
+          const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
+          if (preparedOcr.processedBytes) {
+            await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
+            effectiveRenderOptions = {
+              ...options,
+              rotate: 0,
+              flipHorizontal: false,
+              flipVertical: false,
+              scaleX: 1,
+              scaleY: 1,
+              brightness: 0,
+              contrast: 0,
+              gamma: 0,
+              saturation: 0,
+              hue: 0,
+              invert: false,
+              dither: 0,
+              grayscale: false,
+              noGrayscale: false,
+              pixelize: 0,
+              boxBlur: false,
+              gaussianBlur: 0,
+            };
+          } else {
+            await this.#ensureRendererSource(
+              transformedBlob,
+              `transformed:${this.#state.sourceRevision}:${effectKey}`,
+            );
+            effectiveRenderOptions = {
+              ...options,
+              rotate: 0,
+              flipHorizontal: false,
+              flipVertical: false,
+              scaleX: 1,
+              scaleY: 1,
+              brightness: 0,
+              contrast: 0,
+              gamma: 0,
+              saturation: 0,
+              hue: 0,
+              invert: false,
+              dither: 0,
+              grayscale: false,
+              noGrayscale: false,
+              pixelize: 0,
+              boxBlur: false,
+              gaussianBlur: 0,
+            };
+          }
+          this.#lockedOcr = preparedOcr;
+          this.#lockedRenderOptions = effectiveRenderOptions;
+          this.#lockedEffectKey = effectKey;
         }
       } else {
-        this.#textControls.persistOcrOverlaysAsManual();
+        this.#lockedOcr = undefined;
+        this.#lockedRenderOptions = undefined;
+        this.#lockedEffectKey = undefined;
+        this.#textControls.clearOcrOverlays();
         await this.#ensureRendererSource(
           this.#state.sourceBlob,
           `original:${this.#state.sourceRevision}`,
@@ -408,7 +433,7 @@ export class EditorApp {
         : effectiveRenderOptions;
       let { result, renderMs } = await this.#renderer.render(firstOptions);
       let ocrFigletResult;
-      if (preparedOcr) {
+      if (preparedOcr && !ocrLock) {
         const figletSettings = this.#ocrFigletSettings();
         const overlayKey = JSON.stringify([
           this.#state.sourceRevision,
@@ -528,9 +553,22 @@ export class EditorApp {
         const enabled = event.target.checked;
         this.#element("ocr-options").hidden = !enabled;
         if (!enabled) {
-          this.#textControls.persistOcrOverlaysAsManual();
+          this.#textControls.clearOcrOverlays();
           this.#ocrOverlayKey = undefined;
-          this.#setOcrStatus("OCR disabled; current overlays saved as manual.");
+          this.#lockedOcr = undefined;
+          this.#lockedRenderOptions = undefined;
+          this.#lockedEffectKey = undefined;
+          const ocrLock = this.#element("ocr-lock");
+          if (ocrLock) ocrLock.checked = false;
+          this.#setOcrStatus("OCR loads only when enabled.");
+        }
+      }
+      if (event.target.id === "ocr-lock") {
+        if (!event.target.checked) {
+          this.#ocrOverlayKey = undefined;
+          this.#lockedOcr = undefined;
+          this.#lockedRenderOptions = undefined;
+          this.#lockedEffectKey = undefined;
         }
       }
       if (["font", "image", "glyph-search"].includes(event.target.id)) return;
@@ -546,6 +584,11 @@ export class EditorApp {
       button.addEventListener("click", () => this.#selectControlTab(button.dataset.controlTab));
     });
     this.#element("ocr-refresh").addEventListener("click", () => {
+      const ocrLock = this.#element("ocr-lock");
+      if (ocrLock) ocrLock.checked = false;
+      this.#lockedOcr = undefined;
+      this.#lockedRenderOptions = undefined;
+      this.#lockedEffectKey = undefined;
       this.#ocrRefreshRevision += 1;
       this.#ocrOverlayKey = undefined;
       this.#figlet.reload();
@@ -599,6 +642,7 @@ export class EditorApp {
 
     this.#element("font").addEventListener("change", async () => {
       this.#documentRevision += 1;
+      this.#rendererSourceKey = undefined;
       clearTimeout(this.#renderTimer);
       try {
         if (!await this.#ensureRenderer()) return;
