@@ -366,7 +366,7 @@ export async function ocrItemsToOverlays(
       if (horizOverlap && topJ >= bottomI) {
         maxAllowedH = Math.min(maxAllowedH, Math.max(1, topJ - topI));
       }
-      if vertOverlap && leftJ >= rightI) {
+      if (vertOverlap && leftJ >= rightI) {
         maxAllowedW = Math.min(maxAllowedW, Math.max(1, leftJ - leftI));
       }
     }
