@@ -180,7 +180,7 @@ export class EditorApp {
 
   async #resolveFigletOverlays(columns, rows) {
     const candidates = this.#state.overlays.filter((overlay) => overlay.figlet
-      && (!overlay.renderedText || !overlay.figletFont || overlay.figletFont === "plain"));
+      && (!overlay.renderedText || !overlay.figletFont || overlay.figletFont === "plain" || (overlay.figletFontChoice && overlay.figletFont !== overlay.figletFontChoice)));
     if (candidates.length === 0) return undefined;
     const requests = candidates.map((overlay) => ({
       text: overlay.text,
@@ -193,7 +193,7 @@ export class EditorApp {
         rows - Math.max(0, Number(overlay.y) || 0),
       )),
       useFiglet: true,
-      fontName: overlay.kind === "manual" ? overlay.figletFontChoice : undefined,
+      fontName: overlay.figletFontChoice || undefined,
     }));
     const rendered = await this.#figlet.render(requests, (message) => {
       this.#setStatus(message, false, true);
@@ -393,7 +393,7 @@ export class EditorApp {
           };
         }
       } else {
-        this.#textControls.clearOcrOverlays();
+        this.#textControls.persistOcrOverlaysAsManual();
         await this.#ensureRendererSource(
           this.#state.sourceBlob,
           `original:${this.#state.sourceRevision}`,
@@ -470,7 +470,6 @@ export class EditorApp {
       this.#element("raw-output").value = result.content;
       this.#element("copy-output").disabled = false;
       this.#element("download-output").disabled = false;
-      this.#element("output-size").textContent = `${result.columns} × ${result.rows} cells`;
       this.#preview.draw(result);
       this.#textControls.setGrid(result.columns, result.rows);
       // The canvas owns the painted pixels now; keep the document result small
@@ -529,9 +528,9 @@ export class EditorApp {
         const enabled = event.target.checked;
         this.#element("ocr-options").hidden = !enabled;
         if (!enabled) {
-          this.#textControls.clearOcrOverlays();
+          this.#textControls.persistOcrOverlaysAsManual();
           this.#ocrOverlayKey = undefined;
-          this.#setOcrStatus("OCR loads only when enabled.");
+          this.#setOcrStatus("OCR disabled; current overlays saved as manual.");
         }
       }
       if (["font", "image", "glyph-search"].includes(event.target.id)) return;

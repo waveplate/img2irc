@@ -4,6 +4,10 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed=build.rs");
+
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let build_number_file = Path::new(&manifest_dir).join("build_number");
 

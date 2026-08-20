@@ -373,6 +373,42 @@ button.danger { color: #ffaaaa; }
 }
 .render-stat { white-space: nowrap; }
 .render-stat strong { color: #f0f3f9; font-weight: 650; }
+.render-stat-prominent {
+  background: #1f2937;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 4px;
+  color: #93c5fd;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+}
+.render-stat-prominent strong {
+  color: #60a5fa;
+  font-weight: 700;
+}
+.render-stats-toggle {
+  background: transparent;
+  border: 1px solid #465064;
+  border-radius: 4px;
+  color: #9aa5b8;
+  cursor: pointer;
+  font-size: 0.75rem;
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+.render-stats-toggle:hover {
+  border-color: #72809a;
+  color: #f0f3f9;
+}
+.render-stats-details {
+  border-top: 1px solid #363f4e;
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.8rem;
+  margin-top: 0.2rem;
+  padding-top: 0.35rem;
+}
 
 @media (max-width: 62rem) {
   html, body { height: auto; min-height: 100%; overflow: auto; }

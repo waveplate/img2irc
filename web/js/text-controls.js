@@ -174,6 +174,16 @@ export class TextControls {
     this.#render();
   }
 
+  persistOcrOverlaysAsManual() {
+    if (this.#state.ocrOverlays.length === 0) return;
+    for (const overlay of this.#state.ocrOverlays) {
+      overlay.kind = "manual";
+      this.#state.manualOverlays.push(overlay);
+    }
+    this.#state.ocrOverlays = [];
+    this.#render();
+  }
+
   refresh() {
     this.#render();
   }
@@ -250,11 +260,13 @@ export class TextControls {
     this.#element("overlay-auto-grow").checked = overlay.autoGrow;
     this.#element("overlay-figlet").checked = Boolean(overlay.figlet);
     const figletFontControl = this.#element("overlay-figlet-font-control");
-    const choosesFont = overlay.kind === "manual" && Boolean(overlay.figlet);
+    const choosesFont = Boolean(overlay.figlet);
     figletFontControl.hidden = !choosesFont;
     const figletFont = this.#element("overlay-figlet-font");
     if (choosesFont) {
-      figletFont.value = overlay.figletFontChoice ?? this.#figletFonts[0]?.name ?? "";
+      figletFont.value = overlay.figletFontChoice
+        ?? (this.#figletFonts.some((f) => f.name === overlay.figletFont) ? overlay.figletFont : this.#figletFonts[0]?.name)
+        ?? "";
     }
     this.#element("overlay-bold").checked = overlay.bold;
     this.#element("overlay-italic").checked = overlay.italic;
@@ -267,7 +279,7 @@ export class TextControls {
     figletStatus.textContent = overlay.figlet
       ? overlay.figletFont && overlay.figletFont !== "plain"
         ? `Rendered with ${overlay.figletFont}.`
-        : overlay.kind === "manual" && overlay.figletFontChoice
+        : overlay.figletFontChoice
           ? `${overlay.figletFontChoice} does not currently fit this box; plain text is used.`
           : "No hosted FIGlet font currently fits this box; plain text is used."
       : "";
@@ -306,10 +318,10 @@ export class TextControls {
     overlay.wrap = this.#element("overlay-wrap").checked;
     overlay.autoGrow = this.#element("overlay-auto-grow").checked;
     overlay.figlet = this.#element("overlay-figlet").checked;
-    if (overlay.kind === "manual" && overlay.figlet) {
+    if (overlay.figlet) {
       overlay.figletFontChoice = this.#element("overlay-figlet-font").value
         || overlay.figletFontChoice
-        || this.#figletFonts[0]?.name;
+        || (this.#figletFonts.some((f) => f.name === overlay.figletFont) ? overlay.figletFont : this.#figletFonts[0]?.name);
     }
     if (overlay.figlet && !wasFiglet) {
       overlay.autoGrow = false;

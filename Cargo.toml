@@ -13,13 +13,13 @@ build = "build.rs"
 incremental = true
 
 [profile.release]
-lto = true
-codegen-units = 1
+#lto = true
+#codegen-units = 1
 #opt-level = "z"
-#strip = true  # Automatically strip symbols from the binary.
-split-debuginfo = "unpacked"
-opt-level = 3
-incremental = true
+strip = true  # Automatically strip symbols from the binary.
+#split-debuginfo = "unpacked"
+#opt-level = 3
+#incremental = true
 
 [profile.release.package."*"]
 opt-level = 3
@@ -33,7 +33,6 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["ocr"]
-gpu = []
 ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq", "zip"]
 zip = ["dep:zip"]
 web = [
