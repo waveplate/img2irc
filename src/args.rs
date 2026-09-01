@@ -453,6 +453,8 @@ pub struct RenderArgs {
     #[serde(default)]
     pub ocr_lock: bool,
     #[serde(default)]
+    pub ocr_debug_boxes: bool,
+    #[serde(default)]
     pub min_width: Option<u32>,
     #[serde(default)]
     pub max_width: Option<u32>,
@@ -909,6 +911,11 @@ pub struct Args {
     #[arg(long = "ocr-lock", default_value_t = false)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_lock: bool,
+
+    /// visualize OCR detection bounding boxes and log their coordinates
+    #[arg(long = "ocr-debug-boxes", default_value_t = false)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_debug_boxes: bool,
 
     /// minimum OCR confidence for text overlays
     #[arg(long = "ocr-min-confidence", default_value_t = 0.0)]

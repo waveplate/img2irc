@@ -937,13 +937,10 @@ impl ScaledTextBox {
         ((self.bottom - self.top + 1e-9).floor() as usize).max(1)
     }
 
-    fn place(self, art_width: usize, art_height: usize, grid_w: i32) -> (i32, i32) {
+    fn place(self, art_width: usize, art_height: usize, center_in_box: bool) -> (i32, i32) {
         let box_w = (self.right - self.left).max(1.0);
         let box_h = (self.bottom - self.top).max(1.0);
-        let grid_center_x = (grid_w.max(1) as f64) * 0.5;
-        let box_center_x = (self.left + self.right) * 0.5;
-        let is_centered = (box_center_x - grid_center_x).abs() <= (grid_w.max(1) as f64) * 0.15;
-        let x = if is_centered {
+        let x = if center_in_box && box_w > art_width as f64 {
             self.left + (box_w - art_width as f64) * 0.5
         } else {
             self.left
@@ -1170,7 +1167,7 @@ pub fn detections_to_overlays(
         };
         let art_w = art.width() as i32;
         let art_h = art.height() as i32;
-        let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize, grid_w);
+        let (placed_x, placed_y) = text_box.place(art_w as usize, art_h as usize, allow_figlet && art.source != "plain");
         let art_x = placed_x.clamp(0, grid_w.saturating_sub(art_w).max(0));
         let art_y = placed_y.clamp(0, grid_h.saturating_sub(art_h).max(0));
 
@@ -1192,7 +1189,7 @@ pub fn detections_to_overlays(
             if let Some(plain) = plain_text_art(&det.text, max_w_allowed) {
                 let pw = plain.width() as i32;
                 let ph = plain.height() as i32;
-                let (px, py) = text_box.place(pw as usize, ph as usize, grid_w);
+                let (px, py) = text_box.place(pw as usize, ph as usize, false);
                 (plain, px.clamp(0, grid_w.saturating_sub(pw).max(0)), py.clamp(0, grid_h.saturating_sub(ph).max(0)), pw, ph)
             } else {
                 (art, art_x, art_y, art_w, art_h)
@@ -1225,6 +1222,80 @@ pub fn detections_to_overlays(
                 target_w,
                 target_h
             );
+        }
+        if args.ocr_debug_boxes {
+            log::info!(
+                "[OCR Box #{}] text={:?} conf={:.3} img_bounds={:?} grid_box=[left={:.2}, top={:.2}, right={:.2}, bottom={:.2}, w={:.2}, h={:.2}] placed=[x={}, y={}, w={}, h={}] font={:?}",
+                i + 1,
+                det.text,
+                det.confidence,
+                bounds,
+                text_box.left,
+                text_box.top,
+                text_box.right,
+                text_box.bottom,
+                text_box.right - text_box.left,
+                text_box.bottom - text_box.top,
+                final_x,
+                final_y,
+                final_w,
+                final_h,
+                final_art.source,
+            );
+
+            let bw = ((text_box.right - text_box.left).round() as usize).max(1);
+            let bh = ((text_box.bottom - text_box.top).round() as usize).max(1);
+            let bx = (text_box.left.round() as i32).clamp(0, grid_w.saturating_sub(1));
+            let by = (text_box.top.round() as i32).clamp(0, grid_h.saturating_sub(1));
+
+            let mut box_lines = Vec::new();
+            let tag = format!("[#{}]", i + 1);
+            if bh <= 1 {
+                let line_str = if bw > tag.len() {
+                    format!("{}{}", tag, "─".repeat(bw.saturating_sub(tag.len())))
+                } else {
+                    tag
+                };
+                box_lines.push(line_str);
+            } else {
+                let top_dashes = bw.saturating_sub(tag.len() + 2);
+                let top_line = format!("┌{}{}{}", tag, "─".repeat(top_dashes), if bw >= 2 { "┐" } else { "" });
+                box_lines.push(top_line);
+                for _ in 1..bh.saturating_sub(1) {
+                    let mid_line = if bw >= 2 {
+                        format!("│{}│", " ".repeat(bw.saturating_sub(2)))
+                    } else {
+                        "│".to_string()
+                    };
+                    box_lines.push(mid_line);
+                }
+                if bh >= 2 {
+                    let bot_line = if bw >= 2 {
+                        format!("└{}┘", "─".repeat(bw.saturating_sub(2)))
+                    } else {
+                        "└".to_string()
+                    };
+                    box_lines.push(bot_line);
+                }
+            }
+            let box_text = box_lines.join("\n");
+            overlays.push(TextOverlay {
+                text: box_text,
+                source_text: None,
+                figlet_font: None,
+                x: bx,
+                y: by,
+                w: bw as i32,
+                h: bh as i32,
+                fg: Some(ColorSpec::Rgb([255, 0, 255])),
+                bg: None,
+                wrap: false,
+                auto_grow: false,
+                transparent_spaces: true,
+                bold: true,
+                italic: false,
+                underline: false,
+            });
         }
         overlays.push(text_art_overlay(
             &det.text,
@@ -2185,24 +2256,25 @@ mod tests {
             bottom: 8.0,
         });
         // small is centered in a 20-col grid (center = 10, box center = 10)
-        assert_eq!(small.place(10, 2, 20), (5, 2));
-        // large is centered in a 40-col grid (center = 20, box center = 20)
-        assert_eq!(large.place(20, 4, 40), (10, 4));
+        assert_eq!(small.place(10, 2, false), (5, 2));
+        assert_eq!(large.place(20, 4, false), (10, 4));
     }
 
     #[test]
     fn test_alignment_snapping_and_selective_centering() {
-        // Centered box in 80-col grid (center = 40)
+        // Box spanning 30..50 (width 20)
         let centered_box = ScaledTextBox {
             left: 30.0,
             top: 5.0,
             right: 50.0,
             bottom: 9.0,
         };
-        // Box center is 40.0. Art width 10 will be centered horizontally inside box (30 + (20 - 10)/2 = 35)
-        assert_eq!(centered_box.place(10, 4, 80), (35, 5));
+        // FIGlet art with width 10 is centered horizontally inside box (30 + (20 - 10)/2 = 35)
+        assert_eq!(centered_box.place(10, 4, true), (35, 5));
+        // Plain text with width 10 remains left-aligned at box left (30)
+        assert_eq!(centered_box.place(10, 4, false), (30, 5));
 
-        // Off-center column box in 80-col grid (center = 40)
+        // Off-center column box
         let left_box_a = ScaledTextBox {
             left: 5.2,
             top: 10.0,
@@ -2215,9 +2287,9 @@ mod tests {
             right: 25.0,
             bottom: 13.0,
         };
-        // Box centers ~ 11.6 and 14.9 are far from 40, so they are left-aligned
-        assert_eq!(left_box_a.place(8, 1, 80), (5, 10));
-        assert_eq!(left_box_b.place(15, 1, 80), (5, 12));
+        // Plain text is left-aligned with the box's left coordinate
+        assert_eq!(left_box_a.place(8, 1, false), (5, 10));
+        assert_eq!(left_box_b.place(15, 1, false), (5, 12));
 
         // Snap alignments
         let mut boxes = vec![left_box_a, left_box_b];

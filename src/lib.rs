@@ -276,6 +276,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_box_threshold: args.ocr_box_threshold,
         ocr_unclip_ratio: args.ocr_unclip_ratio,
         ocr_lock: args.ocr_lock,
+        ocr_debug_boxes: args.ocr_debug_boxes,
 
         min_width: args.min_width,
         max_width: args.max_width,
