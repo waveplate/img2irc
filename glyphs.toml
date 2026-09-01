@@ -237,13 +237,10 @@ include = [
 
 [ui]
 enabled_sets = [
-    "all",
     "ascii.space",
+    "blocks.eighth",
     "blocks.full",
     "blocks.half",
-    "p",
-    "p2",
-    "smooth",
 ]
 
 [vb]

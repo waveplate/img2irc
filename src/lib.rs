@@ -8,6 +8,7 @@ pub mod contour_score;
 pub mod draw;
 pub mod effects;
 pub mod font;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod generator;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub mod ocr;
