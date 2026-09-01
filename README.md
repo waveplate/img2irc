@@ -46,6 +46,57 @@ cargo build --release --no-default-features
 To enable OCR explicitly in a feature-selected build, use
 `cargo build --release --no-default-features --features ocr`.
 
+### Static musl build with OCR
+
+The OCR engine uses ONNX Runtime. Its prebuilt downloader does not publish a
+musl archive for the pinned runtime, so a truly static build must first compile
+ONNX Runtime and its C/C++ dependencies with the musl toolchain. The repository
+script performs that source build, caches it under `target/`, and then links the
+OCR-enabled `img2irc` binary against the resulting static archives:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+./scripts/build-static-musl.sh
+```
+
+The host needs Git, Python 3, CMake, Ninja, and the
+`x86_64-unknown-linux-musl-{gcc,g++}` cross-toolchain. The first build is long;
+subsequent builds reuse `target/onnxruntime-musl`. Set `IMG2IRC_BUILD_JOBS` to
+limit parallelism, or `IMG2IRC_ORT_SOURCE_DIR` / `IMG2IRC_ORT_BUILD_DIR` to put
+the ONNX source and build trees elsewhere.
+
+### Python package
+
+The PyO3 package provides a compact `Simple` API and an `Advanced` API which
+accepts every serializable render setting used by the TUI, including ordered
+pipeline effects, overlays, smoothing, glyph selection, and OCR options. It
+also returns the styled cell grid on request and pixel-exact RGBA/PNG previews.
+
+```bash
+maturin build --release --features python
+```
+
+```python
+from img2irc import Advanced, Simple
+
+result = Simple(width=80, mode="ansi24").generate("photo.png")
+print(result.content)
+result.save_preview("preview.png")
+
+result = (
+    Advanced(width=100, render="ansi24", score_fix=True)
+    .add_effect("contrast", 18)
+    .add_effect("sharpen")
+    .add_overlay("hello", 2, 1, foreground=(255, 255, 255), bold=True)
+    .generate("photo.png")
+)
+```
+
+See [`python/README.md`](python/README.md) for supported input forms and font
+behavior. Normal package builds include OCR; use
+`maturin build --release --no-default-features --features python` for a smaller
+package without it.
+
 ## WebAssembly / JavaScript
 
 The browser build accepts image and font bytes directly, so it does not depend

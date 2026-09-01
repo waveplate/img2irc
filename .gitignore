@@ -8,6 +8,8 @@ img2irc.log
 /.img2irc-web.*
 /deploy.sh
 /node_modules
+__pycache__/
+*.py[cod]
 *.jpg
 *.png
 *.txt

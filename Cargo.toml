@@ -33,7 +33,8 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["ocr"]
-ocr = ["dep:figlet-rs", "dep:libc", "dep:ppocr-rs", "dep:ureq", "zip"]
+ocr = ["dep:figlet-rs", "dep:libc", "dep:ort-sys", "dep:ppocr-rs", "dep:ureq", "zip"]
+python = ["dep:pyo3"]
 zip = ["dep:zip"]
 web = [
     "dep:console_error_panic_hook",
@@ -68,9 +69,6 @@ educe = "0.6"
 regex = "1.11"
 zip = { version = "0.6", default-features = false, features = ["deflate"], optional = true }
 
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 ab_glyph = "0.2"
 ansi-to-tui = "8"
@@ -83,7 +81,8 @@ libc = { version = "0.2", optional = true }
 libz-sys = { version = "1", features = ["static"] }
 mlua = { version = "0.11", features = ["lua54", "vendored", "serialize", "send"] }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
-ppocr-rs = { version = "0.7.3", features = ["fetch-models", "test-binaries"], optional = true }
+ort-sys = { version = "=2.0.0-rc.9", default-features = false, features = ["copy-dylibs"], optional = true }
+pyo3 = { version = "0.29.2", optional = true }
 ratatui = { version = "0.30", features = ["all-widgets", "unstable-widget-ref"] }
 ratatui-image = { version = "10.0.7", default-features = false, features = ["crossterm"] }
 ratatui-textarea = "0.9"
@@ -102,5 +101,9 @@ js-sys = { version = "0.3.77", optional = true }
 serde-wasm-bindgen = { version = "0.6.5", optional = true }
 wasm-bindgen = { version = "=0.2.127", optional = true }
 
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_env = "musl")))'.dependencies]
+ppocr-rs = { version = "0.7.3", features = ["fetch-models", "test-binaries"], optional = true }
+
 [target.'cfg(target_env = "musl")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+ppocr-rs = { version = "0.7.3", features = ["fetch-models"], optional = true }

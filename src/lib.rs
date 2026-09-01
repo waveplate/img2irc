@@ -8,6 +8,7 @@ pub mod contour_score;
 pub mod draw;
 pub mod effects;
 pub mod font;
+pub mod generator;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub mod ocr;
 #[cfg(any(not(feature = "ocr"), target_arch = "wasm32"))]
@@ -102,6 +103,8 @@ pub mod colorpicker;
 pub mod tui;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod web;
+#[cfg(all(feature = "python", not(target_arch = "wasm32")))]
+mod python;
 
 use crate::args::{Args, Param, RenderArgs};
 use photon_rs::PhotonImage;
@@ -774,4 +777,3 @@ mod tests {
         );
     }
 }
-

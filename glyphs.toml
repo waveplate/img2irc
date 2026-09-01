@@ -93,7 +93,10 @@ ranges = [[
 ]]
 
 [hb]
-exclude = [0x258F]
+exclude = [
+    0x258A,
+    0x258F,
+]
 ranges = [[
     0x2589,
     0x258F,
@@ -234,8 +237,13 @@ include = [
 
 [ui]
 enabled_sets = [
+    "all",
     "ascii.space",
-    "default",
+    "blocks.full",
+    "blocks.half",
+    "p",
+    "p2",
+    "smooth",
 ]
 
 [vb]
