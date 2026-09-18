@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "build:web": "bash scripts/build-wasm.sh",
+    "build:wasm": "bash scripts/build-wasm.sh"
+  },
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

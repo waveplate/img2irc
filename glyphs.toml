@@ -1,0 +1,86 @@
+# default glyph catalog; custom catalogs may use the same format
+
+[default]
+include = ["space", "full", "half", "v8", "h8", "smooth"]
+
+[all]
+include = [
+    "space", "alpha", "full", "half", "quad", "eighth", "poly", "sext",
+    "legacy", "box", "braille", "geo", "geo2", "arrows",
+]
+
+[space]
+glyphs = [0x20]
+
+[alpha]
+ranges = [[0x61, 0x7A]]
+
+[full]
+glyphs = [0x2588]
+
+[half]
+glyphs = [0x2580]
+
+[quad]
+ranges = [[0x2596, 0x259F]]
+
+[eighth]
+ranges = [[0x2581, 0x2587], [0x2589, 0x258F]]
+
+[v8]
+ranges = [[0x2581, 0x2587]]
+
+[h8]
+ranges = [[0x2589, 0x258F]]
+exclude = [0x258A, 0x258F]
+
+[poly]
+ranges = [[0x1FB3C, 0x1FB6F]]
+
+[thirds]
+glyphs = [0x1FB02, 0x1FB0E, 0x1FB2D, 0x1FB39]
+
+[smooth]
+include = ["poly", "thirds"]
+
+[sext]
+ranges = [[0x1FB00, 0x1FB3B]]
+
+[oct]
+ranges = [[0x1CD20, 0x1CDE5]]
+
+[large]
+ranges = [[0x1CE1A, 0x1CE50]]
+
+[legacy]
+ranges = [[0x1CC00, 0x1CEBF]]
+
+[box]
+ranges = [[0x2500, 0x257F]]
+
+[braille]
+ranges = [[0x2800, 0x28FF]]
+
+[geo]
+ranges = [[0x25A0, 0x25FF]]
+
+[geo2]
+ranges = [[0x1F780, 0x1F7FF]]
+
+[math]
+ranges = [[0x2980, 0x29FF]]
+
+[misc]
+ranges = [[0x2600, 0x26FF]]
+
+[misc2]
+ranges = [[0x1FA00, 0x1FA6F]]
+
+[arrows]
+ranges = [[0x2190, 0x21FF]]
+
+[yijing]
+ranges = [[0x4DC0, 0x4DFF]]
+
+[ui]
+enabled_sets = ["space", "eighth", "poly", "thirds"]

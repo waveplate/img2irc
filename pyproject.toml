@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.10,<2"]
+build-backend = "maturin"
+
+[project]
+name = "img2irc"
+version = "2.0.0a0"
+description = "Python bindings for generating ANSI and IRC art with img2irc"
+readme = "python/README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-only" }
+license-files = [
+    "LICENSE",
+    "static/fonts/LICENSE-Cascadia.md",
+    "static/fonts/LICENSE-Iosevka.md",
+    "static/fonts/LICENSE-Unifont-OFL-1.1.txt",
+]
+authors = [{ name = "waveplate" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+
+[project.scripts]
+img2irc-tui = "img2irc.tui:main"
+
+[tool.maturin]
+features = ["python"]
+module-name = "img2irc._native"
+python-source = "python"

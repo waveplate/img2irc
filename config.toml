@@ -1,0 +1,4 @@
+font = "Cascadia Mono"
+blocks = [
+    "default"
+]

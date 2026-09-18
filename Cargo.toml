@@ -1,35 +1,109 @@
 [package]
 name = "img2irc-rs"
-version = "1.3.1"
+version = "2.0.0-alpha"
 authors = ["waveplate"]
-github = "https://github.com/waveplate/img2irc"
 repository = "https://github.com/waveplate/img2irc"
 description = "CLI utility to convert images to halfblock ANSI or IRC art with various optional post-processing filters"
 license = "GPL-3.0-only"
 readme = "README.md"
 edition = "2021"
+build = "build.rs"
+
+[profile.dev]
+incremental = true
 
 [profile.release]
-lto = true
-codegen-units = 1
-opt-level = "z"
+#lto = true
+#codegen-units = 1
+#opt-level = "z"
 strip = true  # Automatically strip symbols from the binary.
+#split-debuginfo = "unpacked"
+#opt-level = 3
+#incremental = true
 
-[target.x86_64-unknown-linux-musl]
-linker = "musl-gcc"
+[profile.release.package."*"]
+opt-level = 3
 
 [[bin]]
 name = "img2irc"
 path = "src/main.rs"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["ocr"]
+ocr = ["dep:figlet-rs", "dep:libc", "dep:ort-sys", "dep:ppocr-rs", "dep:ureq", "zip"]
+python = ["dep:pyo3"]
+zip = ["dep:zip"]
+web = [
+    "dep:console_error_panic_hook",
+    "dep:figlet-rs",
+    "dep:getrandom",
+    "dep:js-sys",
+    "dep:serde-wasm-bindgen",
+    "dep:wasm-bindgen",
+    "zip",
+]
+vendored-openssl = ["dep:openssl"]
+
 [dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
-reqwest = "0.11.14"
 photon-rs = "0.3.3"
+figlet-rs = { version = "1.0.0", optional = true }
 clap = { version = "4.2.0", features = ["cargo", "derive"] }
-url = "2.3.1"
-atty = "0.2.14"
 once_cell = "1.21.3"
+swash = "0.1.19"
+toml = "0.8"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+rayon = "1.11.0"
+dashmap = "6.1.0"
+image = "0.25.9"
+png = "0.18.0"
+log = "0.4.29"
+imageproc = "0.26.0"
+unicode-width = "0.2.0"
+unicode-linebreak = "0.1.5"
+educe = "0.6"
+regex = "1.11"
+zip = { version = "0.6", default-features = false, features = ["deflate"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ab_glyph = "0.2"
+ansi-to-tui = "8"
+arboard = "3.4.1"
+atty = "0.2.14"
+base64 = "0.22.1"
+crossterm = "0.29"
+fontdb = "0.16"
+libc = { version = "0.2", optional = true }
+libz-sys = { version = "1", features = ["static"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "serialize", "send"] }
+openssl = { version = "0.10", features = ["vendored"], optional = true }
+ort-sys = { version = "=2.0.0-rc.9", default-features = false, features = ["copy-dylibs"], optional = true }
+pyo3 = { version = "0.29.2", optional = true }
+ratatui = { version = "0.30", features = ["all-widgets", "unstable-widget-ref"] }
+ratatui-image = { version = "10.0.7", default-features = false, features = ["crossterm"] }
+ratatui-textarea = "0.9"
+reqwest = { version = "0.11.14", features = ["blocking"] }
+resvg = "0.41.0"
+simplelog = "0.12.2"
+tiny-skia = "0.11.0"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+ureq = { version = "2.12.1", optional = true }
+url = "2.3.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = { version = "0.1.7", optional = true }
+getrandom = { version = "0.3.3", features = ["wasm_js"], optional = true }
+js-sys = { version = "0.3.77", optional = true }
+serde-wasm-bindgen = { version = "0.6.5", optional = true }
+wasm-bindgen = { version = "=0.2.127", optional = true }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_env = "musl")))'.dependencies]
+ppocr-rs = { version = "0.7.3", features = ["fetch-models", "test-binaries"], optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+ppocr-rs = { version = "0.7.3", features = ["fetch-models"], optional = true }

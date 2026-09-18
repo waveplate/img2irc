@@ -1,0 +1,121 @@
+# img2irc TUI layout
+#
+# Search order:
+#   $IMG2IRC_CONFIG_DIR/layout.toml
+#   ./layout.toml
+#   $XDG_CONFIG_HOME/img2irc/layout.toml
+#
+# IDs in `order` are moved to the front in this order. Any omitted IDs are
+# appended in img2irc's default order, so newly-added controls still appear.
+# OCR children always stay with their parent; advanced children follow ocr-advanced.
+# Put IDs in `hidden` to remove them. Underscores may be used instead of dashes.
+
+[general]
+order = [
+    "mode",
+    "width",
+    "font-size",
+    "graphics-preview",
+    "ocr",
+    "ocr-auto-width",
+    "ocr-lock",
+    "ocr-megapixels",
+    "ocr-confidence",
+    "ocr-figlet",
+    "ocr-figlet-fill",
+    "ocr-advanced",
+    "ocr-model",
+    "ocr-threads",
+    "ocr-max-height",
+    "ocr-figlet-min-height",
+    "ocr-figlet-min-height-ratio",
+    "ocr-figlet-max-width-ratio",
+    "ocr-figlet-max-height-ratio",
+    "smooth",
+    "smooth-candidates",
+    "smooth-orders",
+    "smooth-shapes",
+    "smooth-neighbors",
+    "advanced",
+    "contour-bending-weight",
+    "contour-endpoint-weight",
+    "contour-junction-weight",
+    "contour-fragment-weight",
+    "contour-fidelity-weight",
+    "contour-boundary-weight",
+    "contour-peak-weight",
+    "font",
+    "sampling-filter",
+    "grayscale-tolerance",
+    "colorspace",
+    "encoding",
+    "auto-optimize",
+]
+hidden = [
+    "show-discontinuities",
+    "discontinuity-threshold",
+]
+
+[pipeline]
+order = [
+    "adjustments",
+    "select-color",
+    "brightness",
+    "contrast",
+    "luma-contrast",
+    "replace-colour",
+    "saturation",
+    "gamma",
+    "hue",
+    "geometry",
+    "crop-top",
+    "crop-right",
+    "crop-bottom",
+    "crop-left",
+    "flip-horizontal",
+    "flip-vertical",
+    "rotate",
+    "scale-x",
+    "scale-y",
+    "effects",
+    "gaussian-blur",
+    "median-blur",
+    "line-thickness",
+    "box-blur",
+    "pixelize",
+    "dither",
+    "stylize",
+    "invert",
+    "grayscale",
+    "halftone",
+    "sepia",
+    "solarize",
+    "normalize",
+    "noise",
+    "sharpen",
+    "edge-detection",
+    "emboss",
+    "frosted-glass",
+    "laplace",
+    "identity",
+    "filters",
+    "cali",
+    "dramatic",
+    "firenze",
+    "golden",
+    "lix",
+    "lofi",
+    "neue",
+    "obsidian",
+    "pastel-pink",
+    "ryo",
+]
+hidden = []
+
+[panes]
+general_width = 40
+pipeline_width = 60
+glyphs_width = 45
+text_width = 40
+glyph_tree_height = 10
+glyph_list_height = 30

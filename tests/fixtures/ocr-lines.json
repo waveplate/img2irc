@@ -1,0 +1,94 @@
+[
+  {
+    "name": "SIGNAL ONE small model padded overlapping boxes at 3 MP",
+    "boxes": [[1114, 2058, 1802, 2424], [126, 2050, 1209, 2430]],
+    "groups": [[1, 0]],
+    "blocks": [[[1, 0]]]
+  },
+  {
+    "name": "overlap cannot swallow a narrow word box",
+    "boxes": [[0, 0, 100, 100], [70, 0, 110, 100]],
+    "groups": [[0], [1]]
+  },
+  {
+    "name": "SIGNAL ONE poster detections",
+    "boxes": [[145, 2069, 1088, 2409], [1188, 2077, 1768, 2396]],
+    "groups": [[0, 1]]
+  },
+  {
+    "name": "three words in shuffled detector order",
+    "boxes": [[90, 11, 150, 31], [10, 10, 40, 30], [45, 12, 80, 32]],
+    "groups": [[1, 2, 0]]
+  },
+  {
+    "name": "separate text lines",
+    "boxes": [[10, 10, 40, 30], [45, 11, 75, 31], [10, 40, 40, 60], [45, 40, 75, 60]],
+    "groups": [[0, 1], [2, 3]]
+  },
+  {
+    "name": "large column gap",
+    "boxes": [[10, 10, 40, 30], [90, 10, 120, 30]],
+    "groups": [[0], [1]]
+  },
+  {
+    "name": "different font sizes",
+    "boxes": [[10, 10, 80, 50], [85, 30, 110, 50]],
+    "groups": [[0], [1]]
+  },
+  {
+    "name": "padding may slightly overlap at a word boundary",
+    "boxes": [[10, 10, 40, 30], [39, 10, 70, 30]],
+    "groups": [[0, 1]]
+  },
+  {
+    "name": "overlapping detections are not concatenated",
+    "boxes": [[10, 10, 60, 30], [30, 10, 80, 30]],
+    "groups": [[0], [1]]
+  },
+  {
+    "name": "gradual baseline drift cannot bridge lines",
+    "boxes": [[0, 0, 20, 20], [25, 4, 45, 24], [50, 8, 70, 28]],
+    "groups": [[0, 1], [2]]
+  },
+  {
+    "name": "centered multiline title",
+    "boxes": [[0, 0, 100, 20], [20, 25, 80, 45]],
+    "groups": [[0], [1]],
+    "blocks": [[[0], [1]]]
+  },
+  {
+    "name": "separate paragraphs",
+    "boxes": [[0, 0, 60, 20], [0, 28, 60, 48], [0, 80, 60, 100], [0, 108, 60, 128]],
+    "groups": [[0], [1], [2], [3]],
+    "blocks": [[[0], [1]], [[2], [3]]]
+  },
+  {
+    "name": "two columns form independent blocks",
+    "boxes": [[0, 10, 40, 30], [100, 10, 140, 30], [0, 38, 40, 58], [100, 38, 140, 58]],
+    "groups": [[0], [2], [1], [3]],
+    "blocks": [[[0], [2]], [[1], [3]]]
+  },
+  {
+    "name": "heading and smaller subtitle stay separate",
+    "boxes": [[0, 0, 100, 40], [20, 45, 80, 65]],
+    "groups": [[0], [1]],
+    "blocks": [[[0]], [[1]]]
+  },
+  {
+    "name": "left aligned poster lines tolerate normal leading and box padding",
+    "boxes": [[10, 0, 90, 34], [96, 3, 180, 37], [10, 54, 190, 91], [10, 110, 175, 145], [10, 164, 185, 200]],
+    "groups": [[0, 1], [2], [3], [4]],
+    "blocks": [[[0, 1], [2], [3], [4]]]
+  },
+  {
+    "name": "short aligned connector follows an established list across an empty line",
+    "boxes": [[10, 0, 180, 20], [10, 30, 190, 50], [10, 60, 175, 80], [10, 109, 36, 121]],
+    "groups": [[0], [1], [2], [3]],
+    "blocks": [[[0], [1], [2], [3]]]
+  },
+  {
+    "name": "empty input",
+    "boxes": [],
+    "groups": []
+  }
+]

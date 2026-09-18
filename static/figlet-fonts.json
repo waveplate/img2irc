@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "fonts": [
+    {
+      "name": "phm-minecraft",
+      "height": 2,
+      "url": "./assets/figlet/phm-minecraft.flf"
+    },
+    {
+      "name": "phm-lcdmatrix",
+      "height": 2,
+      "url": "./assets/figlet/phm-lcdmatrix.flf"
+    },
+    {
+      "name": "phm-c64",
+      "height": 2,
+      "url": "./assets/figlet/phm-c64.flf"
+    },
+    {
+      "name": "phm-cga",
+      "height": 2,
+      "url": "./assets/figlet/phm-cga.flf"
+    },
+    {
+      "name": "phm-dos-square",
+      "height": 2,
+      "url": "./assets/figlet/phm-dos-square.flf"
+    },
+    {
+      "name": "phm-vga-square",
+      "height": 2,
+      "url": "./assets/figlet/phm-vga-square.flf"
+    },
+    {
+      "name": "phm-shinonome",
+      "height": 3,
+      "url": "./assets/figlet/phm-shinonome.flf"
+    },
+    {
+      "name": "phm-largetype",
+      "height": 3,
+      "url": "./assets/figlet/phm-largetype.flf"
+    },
+    {
+      "name": "future",
+      "height": 3,
+      "url": "./assets/figlet/future.tlf"
+    },
+    {
+      "name": "phm-dos",
+      "height": 4,
+      "url": "./assets/figlet/phm-dos.flf"
+    },
+    {
+      "name": "phm-dosv",
+      "height": 4,
+      "url": "./assets/figlet/phm-dosv.flf"
+    },
+    {
+      "name": "phm-hdos",
+      "height": 4,
+      "url": "./assets/figlet/phm-hdos.flf"
+    },
+    {
+      "name": "phm-vga",
+      "height": 4,
+      "url": "./assets/figlet/phm-vga.flf"
+    },
+    {
+      "name": "smblock",
+      "height": 4,
+      "url": "./assets/figlet/smblock.tlf"
+    },
+    {
+      "name": "phm-slanted",
+      "height": 6,
+      "url": "./assets/figlet/phm-slanted.flf"
+    },
+    {
+      "name": "ansi_regular",
+      "height": 7,
+      "url": "./assets/figlet/ansi_regular.flf"
+    },
+    {
+      "name": "blocky",
+      "height": 7,
+      "url": "./assets/figlet/blocky.flf"
+    },
+    {
+      "name": "smmono9",
+      "height": 8,
+      "url": "./assets/figlet/smmono9.tlf"
+    },
+    {
+      "name": "mono9",
+      "height": 8,
+      "url": "./assets/figlet/mono9.tlf"
+    },
+    {
+      "name": "smmono12",
+      "height": 10,
+      "url": "./assets/figlet/smmono12.tlf"
+    },
+    {
+      "name": "mono12",
+      "height": 10,
+      "url": "./assets/figlet/mono12.tlf"
+    },
+    {
+      "name": "dos_rebel",
+      "height": 11,
+      "url": "./assets/figlet/dos_rebel.flf"
+    }
+  ]
+}

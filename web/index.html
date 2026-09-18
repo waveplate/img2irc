@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>img2irc</title>
+    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <form id="controls" class="editor" novalidate>
+      <header class="app-header">
+        <div class="menu-bar">
+          <div class="brand" aria-label="img2irc image-to-terminal-art editor">
+            <img src="./favicon-32x32.png" alt="" />
+            <span>img2irc</span>
+          </div>
+          <nav class="application-menu" aria-label="Application menu">
+            <details class="app-menu" data-app-menu>
+              <summary>File</summary>
+              <div class="menu-popover" role="menu">
+                <button type="button" role="menuitem" data-click-target="image">
+                  <span>Open image…</span><kbd>Ctrl+O</kbd>
+                </button>
+                <div class="menu-separator" role="separator"></div>
+                <button id="download-output" type="button" role="menuitem" disabled>
+                  <span>Download output…</span><kbd>Ctrl+S</kbd>
+                </button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Edit</summary>
+              <div class="menu-popover" role="menu">
+                <button id="copy-output" type="button" role="menuitem" data-copy-output disabled>
+                  <span>Copy encoded output</span><kbd>Ctrl+Shift+C</kbd>
+                </button>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-click-target="reset-adjustments">
+                  Reset image adjustments
+                </button>
+                <button type="button" role="menuitem" data-click-target="overlay-add">
+                  Add text overlay
+                </button>
+                <button type="button" role="menuitem" data-click-target="overlay-delete">
+                  Delete selected overlay
+                </button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>View</summary>
+              <div class="menu-popover" role="menu">
+                <label class="menu-item menu-check" role="menuitemcheckbox">
+                  <input id="view-controls" type="checkbox" checked />
+                  <span>Show controls</span>
+                </label>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-control-tab="general">General controls</button>
+                <button type="button" role="menuitem" data-control-tab="adjustments">Image adjustments</button>
+                <button type="button" role="menuitem" data-control-tab="glyphs">Glyph library</button>
+                <button type="button" role="menuitem" data-control-tab="text">Text overlays</button>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-preview-mode="text">Native text preview</button>
+                <button type="button" role="menuitem" data-preview-mode="bitmap">Bitmap preview</button>
+                <button type="button" role="menuitem" data-toggle-target="raw-output-panel">Raw output</button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Render</summary>
+              <div class="menu-popover" role="menu">
+                <button type="button" role="menuitem" data-click-target="render-button">
+                  <span>Render now</span><kbd>Ctrl+Enter</kbd>
+                </button>
+                <label class="menu-item menu-check" role="menuitemcheckbox">
+                  <input id="auto-render" type="checkbox" checked />
+                  <span>Render after changes</span>
+                </label>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Help</summary>
+              <div class="menu-popover" role="menu">
+                <a href="https://github.com/waveplate/img2irc" target="_blank" rel="noopener" role="menuitem">
+                  Project documentation
+                </a>
+                <p class="menu-note">Images and rendering stay in this browser.</p>
+              </div>
+            </details>
+          </nav>
+        </div>
+
+        <div class="app-toolbar" aria-label="Document toolbar">
+          <input id="image" class="visually-hidden" type="file" accept="image/*" />
+          <label class="file-button" for="image">Open</label>
+          <div class="document-identity">
+            <a id="source-link" target="_blank" rel="noopener" hidden></a>
+            <span id="source-placeholder">No image open</span>
+          </div>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <label class="toolbar-field">
+            <span>Output</span>
+            <select id="render">
+              <option value="irc" selected>IRC</option>
+              <option value="ansi">ANSI 256</option>
+              <option value="ansi24">ANSI 24-bit</option>
+            </select>
+          </label>
+          <button id="render-button" class="primary" type="submit">Render</button>
+          <p id="status" role="status" aria-live="polite">Loading WebAssembly…</p>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="control-dock" aria-label="Render controls">
+          <nav class="control-tabs" role="tablist" aria-label="Control groups">
+            <button type="button" role="tab" data-control-tab="general" aria-selected="true">General</button>
+            <button type="button" role="tab" data-control-tab="adjustments" aria-selected="false">Adjust</button>
+            <button type="button" role="tab" data-control-tab="glyphs" aria-selected="false">Glyphs</button>
+            <button type="button" role="tab" data-control-tab="text" aria-selected="false">Text</button>
+          </nav>
+
+          <section class="control-panel" data-control-tab-panel="general">
+            <h1 class="panel-heading">General</h1>
+            <div class="control-grid">
+              <label>
+                Width (cells)
+                <input id="width" type="number" min="0" max="300" value="80" placeholder="Auto" />
+              </label>
+              <label>
+                Height (cells)
+                <input id="height" type="number" min="1" max="300" placeholder="Auto" />
+              </label>
+              <label class="wide-control">
+                Font
+                <select id="font">
+                  <option value="local:cascadia">Cascadia Code (hosted)</option>
+                  <option value="local:iosevka-fixed">Iosevka Fixed (hosted)</option>
+                  <option value="local:iosevka-fixed-extended" selected>Iosevka Fixed Extended (hosted)</option>
+                  <option value="local:unifont">GNU Unifont 17.0.05 (hosted)</option>
+                </select>
+                <small id="font-status">Loading Google Fonts list…</small>
+              </label>
+              <label>
+                Glyph raster size
+                <input id="font-size" type="number" min="6" max="256" step="1" value="16" />
+              </label>
+              <label>
+                Sampling filter
+                <select id="filter">
+                  <option value="nearest" selected>Nearest</option>
+                  <option value="triangle">Triangle</option>
+                  <option value="catmull-rom">Catmull-Rom</option>
+                  <option value="gaussian">Gaussian</option>
+                  <option value="lanczos3">Lanczos3</option>
+                </select>
+              </label>
+              <label>
+                Grayscale tolerance
+                <input id="grayscale-tolerance" type="number" min="0" max="255" value="32" />
+              </label>
+              <label>
+                Colour space
+                <select id="colour-space">
+                  <option value="hsl">HSL</option>
+                  <option value="hsv" selected>HSV</option>
+                  <option value="hsluv">HSLuv</option>
+                  <option value="lch">LCH</option>
+                </select>
+              </label>
+            </div>
+
+            <details id="smoothing-section" class="feature-section">
+              <summary><span id="smoothing-summary">Smoothing (disabled, expand to enable)</span></summary>
+              <p class="performance-warning">Smoothing is computationally expensive and can dramatically increase render times.</p>
+              <div id="smoothing-options" class="control-grid">
+                <label>
+                  Candidates
+                  <input id="smooth-candidates" type="number" min="1" max="256" value="12" />
+                </label>
+                <label>
+                  Scan patterns
+                  <input id="smooth-orders" type="number" min="1" max="5" value="1" />
+                </label>
+                <label class="inline-control">
+                  <input id="smooth-shapes" type="checkbox" />
+                  Refine shapes
+                </label>
+                <label class="inline-control">
+                  <input id="smooth-neighbors" type="checkbox" checked />
+                  Protect neighbors
+                </label>
+              </div>
+            </details>
+
+            <details id="ocr-section" class="feature-section">
+              <summary><span id="ocr-summary">OCR (disabled, expand to enable)</span></summary>
+              <p class="feature-description">Detect image text with PP-OCRv6 and preserve it as editable terminal text.</p>
+              <div id="ocr-options" class="control-grid conditional">
+                <label class="inline-control wide-control">
+                  <input id="ocr-auto-width" type="checkbox" checked />
+                  Auto-fit render width to text
+                </label>
+                <label id="ocr-text-coverage-control">
+                  Minimum complete text coverage (%)
+                  <input id="ocr-text-coverage" type="number" min="1" max="100" step="1" value="100" />
+                </label>
+                <label class="inline-control wide-control">
+                  <input id="ocr-lock" type="checkbox" />
+                  Lock OCR (freeze untouched detections)
+                </label>
+                <label>
+                  Minimum confidence
+                  <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </label>
+                <div class="wide-control ocr-action-row">
+                  <button id="ocr-refresh" type="button">Regenerate OCR…</button>
+                  <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
+                </div>
+                <details class="advanced-section wide-control">
+                  <summary>Advanced OCR settings</summary>
+                  <div class="control-grid">
+                    <label>
+                      Printable ASCII ratio
+                      <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
+                    </label>
+                    <label>
+                      OCR width
+                      <input id="ocr-width" type="number" min="0" max="8192" step="10" value="0" />
+                    </label>
+                    <label>
+                      Maximum image side
+                      <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
+                    </label>
+                    <label>
+                      Maximum text-height ratio
+                      <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
+                    </label>
+                    <label class="inline-control">
+                      <input id="ocr-figlet" type="checkbox" checked />
+                      Use FIGlet for large text
+                    </label>
+                    <label class="inline-control">
+                      <input id="ocr-figlet-fill" type="checkbox" />
+                      Fit largest FIGlet font in available space
+                    </label>
+                    <label>
+                      FIGlet minimum rows
+                      <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
+                    </label>
+                    <label>
+                      FIGlet minimum height ratio
+                      <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
+                    </label>
+                    <label>
+                      FIGlet maximum width expansion ratio
+                      <input id="ocr-figlet-max-width-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
+                    </label>
+                    <label>
+                      FIGlet maximum height expansion ratio
+                      <input id="ocr-figlet-max-height-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
+                    </label>
+                    <label>
+                      Box score threshold
+                      <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
+                    </label>
+                    <label>
+                      Binarization threshold
+                      <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
+                    </label>
+                    <label>
+                      Box expansion
+                      <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
+                    </label>
+                  </div>
+                </details>
+              </div>
+            </details>
+          </section>
+
+          <section class="control-panel" data-control-tab-panel="adjustments" hidden>
+            <h1 class="panel-heading">Image adjustments</h1>
+            <div class="range-grid">
+              <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Contrast <input id="contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Luma contrast <input id="luma-contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Median radius <input id="median-blur" type="range" min="0" max="10" value="0" /> <output>0</output></label>
+              <label>Line thickness <input id="line-thickness" type="range" min="-10" max="10" value="0" /> <output>0</output></label>
+              <label>Gamma <input id="gamma" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Saturation <input id="saturation" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Hue <input id="hue" type="range" min="0" max="360" value="0" /> <output>0</output></label>
+              <label>Rotation <input id="rotate" type="range" min="-180" max="180" value="0" /> <output>0°</output></label>
+              <label>Horizontal scale <input id="scale-x" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
+              <label>Vertical scale <input id="scale-y" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
+              <label>Pixelize <input id="pixelize" type="range" min="0" max="64" value="0" /> <output>0</output></label>
+              <label>Gaussian blur <input id="gaussian-blur" type="range" min="0" max="20" value="0" /> <output>0</output></label>
+              <label>Dither <input id="dither" type="range" min="0" max="8" value="0" /> <output>0</output></label>
+            </div>
+            <div class="toggle-grid">
+              <label><input id="flip-horizontal" type="checkbox" /> Flip horizontally</label>
+              <label><input id="flip-vertical" type="checkbox" /> Flip vertically</label>
+              <label><input id="invert" type="checkbox" /> Invert</label>
+              <label><input id="grayscale" type="checkbox" /> Grayscale</label>
+              <label><input id="light-lines" type="checkbox" /> Light lines</label>
+              <label><input id="box-blur" type="checkbox" /> Box blur</label>
+            </div>
+            <fieldset>
+              <legend><label class="inline-control"><input id="replace-enabled" type="checkbox" /> Replace colour</label></legend>
+              <div class="toggle-grid">
+                <label>From <input id="replace-from" type="color" value="#ffffff" /></label>
+                <label>To <input id="replace-to" type="color" value="#000000" /></label>
+                <button id="replace-pick" type="button" disabled>Pick From…</button>
+                <button id="replace-pick-to" type="button" disabled>Pick To…</button>
+              </div>
+              <div class="range-grid">
+                <label>Tolerance % <input id="replace-tolerance" type="range" min="0" max="100" value="5" /> <output>5</output></label>
+              </div>
+              <small>Replaces matching colours throughout the image. Raise tolerance to include similar shades.</small>
+            </fieldset>
+            <dialog id="replace-dialog" aria-labelledby="replace-dialog-title">
+              <p id="replace-dialog-title">Click a visible colour in the image</p>
+              <canvas id="replace-canvas" aria-label="Visible output colour eyedropper"></canvas>
+              <p>The preview is quantized to the selected output mode.</p>
+              <button id="replace-cancel" type="button">Cancel</button>
+            </dialog>
+            <button id="reset-adjustments" type="button">Reset adjustments</button>
+          </section>
+
+          <section class="control-panel glyph-panel" data-control-tab-panel="glyphs" hidden>
+            <h1 class="panel-heading">Glyphs</h1>
+            <label class="inline-control">
+              <input id="braille" type="checkbox" />
+              Use Braille output instead of glyph groups
+            </label>
+            <div id="glyph-controls">
+              <div class="button-row">
+                <button id="glyph-default" type="button">Default</button>
+                <button id="glyph-smooth" type="button">Smooth</button>
+                <button id="glyph-all" type="button">All</button>
+                <button id="glyph-none" type="button">None</button>
+              </div>
+              <label>
+                Find a group
+                <input id="glyph-search" type="search" placeholder="blocks, legacy, box…" />
+              </label>
+              <div id="glyph-groups" class="glyph-groups" aria-label="Glyph groups"></div>
+              <div class="control-grid">
+                <label>
+                  Include characters
+                  <input id="include" type="text" placeholder="@#%" />
+                </label>
+                <label>
+                  Exclude characters
+                  <input id="exclude" type="text" />
+                </label>
+                <label class="wide-control">
+                  Include Unicode ranges
+                  <textarea id="include-ranges" rows="2" placeholder="2600-26FF (one per line)"></textarea>
+                </label>
+                <label class="wide-control">
+                  Exclude Unicode ranges
+                  <textarea id="exclude-ranges" rows="2" placeholder="1F600-1F64F (one per line)"></textarea>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="control-panel text-panel" data-control-tab-panel="text" hidden>
+            <h1 class="panel-heading">Text overlays</h1>
+            <div class="button-row">
+              <button id="overlay-add" type="button">Add text overlay</button>
+              <button id="overlay-delete" class="danger" type="button">Delete selected</button>
+            </div>
+            <p class="overlay-instructions">Drag across empty output cells to create a text box. Drag a box to move it, or its corner handle to resize it.</p>
+            <label>
+              Overlays
+              <select id="overlay-list" class="overlay-list" size="5"></select>
+            </label>
+            <p id="overlay-empty" class="empty-note">Add an overlay or enable OCR to populate this list.</p>
+
+            <div id="overlay-editor" hidden>
+              <label class="wide-control">
+                Text
+                <textarea id="overlay-text" rows="4"></textarea>
+              </label>
+              <div class="control-grid">
+                <label>X <input id="overlay-x" type="number" step="1" value="0" /></label>
+                <label>Y <input id="overlay-y" type="number" step="1" value="0" /></label>
+                <label>Width <input id="overlay-width" type="number" min="0" step="1" value="1" /></label>
+                <label>Height <input id="overlay-height" type="number" min="0" step="1" value="1" /></label>
+              </div>
+              <div class="toggle-grid overlay-formatting">
+                <label><input id="overlay-auto-grow" type="checkbox" /> Fit to text</label>
+                <label><input id="overlay-wrap" type="checkbox" /> Wrap</label>
+                <label><input id="overlay-figlet" type="checkbox" /> FIGlet</label>
+                <label><input id="overlay-bold" type="checkbox" /> Bold</label>
+                <label><input id="overlay-italic" type="checkbox" /> Italic</label>
+                <label><input id="overlay-underline" type="checkbox" /> Underline</label>
+              </div>
+              <label id="overlay-figlet-font-control" hidden>
+                FIGlet font
+                <select id="overlay-figlet-font"></select>
+              </label>
+              <small id="overlay-figlet-status"></small>
+              <div class="overlay-colors">
+                <label>
+                  <input id="overlay-foreground-enabled" type="checkbox" /> Foreground
+                  <input id="overlay-foreground" type="color" value="#ffffff" />
+                </label>
+                <label>
+                  <input id="overlay-background-enabled" type="checkbox" /> Background
+                  <input id="overlay-background" type="color" value="#000000" />
+                </label>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="document-area" aria-label="Output workspace">
+          <div class="document-toolbar">
+            <button id="copy-output-toolbar" class="copy-output-button" type="button" data-copy-output disabled>
+              Copy to clipboard
+            </button>
+            <div class="toolbar-spacer"></div>
+            <label class="preview-mode">
+              Display
+              <select id="preview-mode">
+                <option value="bitmap">Bitmap</option>
+                <option value="text" selected>Native</option>
+              </select>
+            </label>
+            <label class="output-font-size">
+              Output font size
+              <input id="output-font-size" type="number" min="6" max="64" step="1" value="16" />
+              <span>px</span>
+            </label>
+          </div>
+          <div class="canvas-viewport">
+            <div id="preview-stage" class="preview-stage">
+              <canvas id="output-canvas" role="img" aria-label="Rendered terminal art" hidden></canvas>
+              <div id="output-text" class="output-text" role="img" aria-label="Rendered terminal art as native browser text"></div>
+              <div id="overlay-tools" class="overlay-tools" aria-label="Text overlay editor"></div>
+            </div>
+            <p id="output-placeholder">Rendered output will appear here.</p>
+          </div>
+          <details id="raw-output-panel" class="raw-output-panel">
+            <summary>Raw IRC/ANSI data</summary>
+            <textarea id="raw-output" rows="8" readonly></textarea>
+          </details>
+          <footer id="render-stats" class="render-stats" aria-label="Render statistics" aria-live="polite">
+            Render statistics will appear here.
+          </footer>
+        </section>
+      </main>
+    </form>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
