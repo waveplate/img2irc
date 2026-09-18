@@ -51,6 +51,13 @@ export interface Img2IrcRenderOptions {
     colourSpace?: Img2IrcColourSpace;
     brightness?: number;
     contrast?: number;
+    lumaContrast?: number;
+    medianBlur?: number;
+    lineThickness?: number;
+    lightLines?: boolean;
+    replaceFrom?: [number, number, number];
+    replaceTo?: [number, number, number];
+    replaceTolerance?: number;
     gamma?: number;
     saturation?: number;
     hue?: number;
@@ -95,6 +102,9 @@ export interface Img2IrcFigletFont {
 
 export interface Img2IrcFigletRequest {
     text: string;
+    baseWidth?: number;
+    baseHeight?: number;
+    fillAvailable?: boolean;
     maxWidth: number;
     maxHeight: number;
     useFiglet?: boolean;
@@ -258,6 +268,13 @@ struct WebOptions {
     colour_space: WebColourSpace,
     brightness: f32,
     contrast: f32,
+    luma_contrast: f32,
+    median_blur: i32,
+    line_thickness: i32,
+    light_lines: bool,
+    replace_from: Option<[u8; 3]>,
+    replace_to: [u8; 3],
+    replace_tolerance: f32,
     gamma: f32,
     saturation: f32,
     hue: f32,
@@ -316,6 +333,7 @@ struct WebFigletFont {
 #[serde(default, rename_all = "camelCase")]
 struct WebFigletRequest {
     text: String,
+    fill_available: bool,
     base_width: usize,
     base_height: usize,
     max_width: usize,
@@ -328,6 +346,7 @@ impl Default for WebFigletRequest {
     fn default() -> Self {
         Self {
             text: String::new(),
+            fill_available: false,
             base_width: 0,
             base_height: 0,
             max_width: 1,
@@ -403,6 +422,13 @@ impl Default for WebOptions {
             colour_space: WebColourSpace::Hsv,
             brightness: 0.0,
             contrast: 0.0,
+            luma_contrast: 0.0,
+            median_blur: 0,
+            line_thickness: 0,
+            light_lines: false,
+            replace_from: None,
+            replace_to: [0; 3],
+            replace_tolerance: 5.0,
             gamma: 0.0,
             saturation: 0.0,
             hue: 0.0,
@@ -493,6 +519,13 @@ impl WebOptions {
         (self.colour_space as u8).hash(&mut hasher);
         self.brightness.to_bits().hash(&mut hasher);
         self.contrast.to_bits().hash(&mut hasher);
+        self.luma_contrast.to_bits().hash(&mut hasher);
+        self.median_blur.hash(&mut hasher);
+        self.line_thickness.hash(&mut hasher);
+        self.light_lines.hash(&mut hasher);
+        self.replace_from.hash(&mut hasher);
+        self.replace_to.hash(&mut hasher);
+        self.replace_tolerance.to_bits().hash(&mut hasher);
         self.gamma.to_bits().hash(&mut hasher);
         self.saturation.to_bits().hash(&mut hasher);
         self.hue.to_bits().hash(&mut hasher);
@@ -665,24 +698,22 @@ fn normalize_figlet_art(source: String, rendered: &str) -> Option<WebFigletArt> 
 
 fn plain_figlet_art(text: &str, max_width: usize, max_height: usize) -> Option<WebFigletArt> {
     let text = text.trim();
-    let width = text.chars().count();
-    if text.is_empty() || width > max_width || max_height == 0 {
+    let width = text.lines().map(|line| line.chars().count()).max().unwrap_or(0);
+    let height = text.lines().count();
+    if text.is_empty() || width > max_width || height > max_height {
         return None;
     }
     Some(WebFigletArt {
         source: "plain".to_string(),
         text: text.to_string(),
         width,
-        height: 1,
+        height,
     })
 }
 
 fn render_figlet_font(font: &WebFigletFont, text: &str) -> Option<WebFigletArt> {
-    let figure = font.font.convert(text)?;
-    if figure.characters.len() != text.chars().count() {
-        return None;
-    }
-    normalize_figlet_art(font.name.clone(), &figure.as_str())
+    let rendered = crate::figlet_text::render(&font.font, text)?;
+    normalize_figlet_art(font.name.clone(), &rendered)
 }
 
 fn decode_figlet_font(data: &[u8]) -> Result<String, String> {
@@ -730,6 +761,16 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
                 .filter(|art| {
                     art.width <= request.max_width && art.height <= request.max_height
                 })
+                .or_else(|| plain_figlet_art(text, request.max_width, request.max_height));
+        }
+
+        if request.fill_available {
+            return fonts.iter().filter_map(|font| {
+                render_figlet_font(font, text)
+                    .filter(|art| art.width <= request.max_width && art.height <= request.max_height)
+                    .map(|art| (art, font.priority))
+            }).max_by_key(|(art, priority)| (art.height, art.width, std::cmp::Reverse(*priority)))
+                .map(|(art, _)| art)
                 .or_else(|| plain_figlet_art(text, request.max_width, request.max_height));
         }
 
@@ -1060,6 +1101,19 @@ impl WebRenderer {
         cli.smooth_neighbors = options.smooth_neighbors;
 
         let mut args = args_to_render_args(&cli);
+        use crate::pipeline::ImageEffect;
+        args.pipeline = crate::effects::default_pipeline(&args);
+        if let Some(from) = options.replace_from {
+            args.pipeline.insert(0, ImageEffect::ReplaceColour {
+                from,
+                to: options.replace_to,
+                tolerance: options.replace_tolerance,
+            });
+        }
+        args.pipeline.push(ImageEffect::LumaContrast(options.luma_contrast));
+        args.pipeline.push(ImageEffect::MedianBlur(options.median_blur));
+        let thickness = options.line_thickness.clamp(-10, 10);
+        args.pipeline.push(ImageEffect::DarkLines(if options.light_lines { -thickness } else { thickness }));
         args.ocr = false;
         args.save = None;
         args.fft_debug_dir = None;

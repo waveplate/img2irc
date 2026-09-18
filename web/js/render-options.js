@@ -2,6 +2,8 @@ const value = (root, id) => root.querySelector(`#${id}`).value;
 const checked = (root, id) => root.querySelector(`#${id}`).checked;
 const number = (root, id) => Number(value(root, id));
 
+const hexRgb = (hex) => [1, 3, 5].map((start) => parseInt(hex.slice(start, start + 2), 16));
+
 function optionalPositiveInteger(root, id) {
   const input = value(root, id).trim();
   const parsed = Number(input);
@@ -51,6 +53,13 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     colourSpace: value(root, "colour-space"),
     brightness: number(root, "brightness"),
     contrast: number(root, "contrast"),
+    lumaContrast: number(root, "luma-contrast"),
+    medianBlur: number(root, "median-blur"),
+    lineThickness: number(root, "line-thickness"),
+    lightLines: checked(root, "light-lines"),
+    replaceFrom: checked(root, "replace-enabled") ? hexRgb(value(root, "replace-from")) : undefined,
+    replaceTo: hexRgb(value(root, "replace-to")),
+    replaceTolerance: number(root, "replace-tolerance"),
     gamma: number(root, "gamma"),
     saturation: number(root, "saturation"),
     hue: number(root, "hue"),
@@ -65,7 +74,9 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     smoothOrders: number(root, "smooth-orders"),
     smoothShapes: checked(root, "smooth-shapes"),
     smoothNeighbors: checked(root, "smooth-neighbors"),
-    includeCells: value(root, "preview-mode") === "text",
+    // Both previews consume styled cells. Native mode builds fixed DOM cells;
+    // bitmap mode lets the browser rasterize the same font with antialiasing.
+    includeCells: true,
     overlays,
   };
 }
@@ -76,7 +87,10 @@ export function updateRangeOutput(input) {
 }
 
 export function resetAdjustments(root) {
+  root.querySelector("#replace-from").value = "#ffffff";
+  root.querySelector("#replace-to").value = "#000000";
   const defaults = {
+    "luma-contrast": 0, "median-blur": 0, "line-thickness": 0, "replace-tolerance": 5,
     brightness: 0, contrast: 0, gamma: 0, saturation: 0, hue: 0, rotate: 0,
     "scale-x": 1, "scale-y": 1, pixelize: 0, "gaussian-blur": 0, dither: 0,
   };
@@ -85,7 +99,7 @@ export function resetAdjustments(root) {
     input.value = defaultValue;
     updateRangeOutput(input);
   }
-  for (const id of ["flip-horizontal", "flip-vertical", "invert", "grayscale", "box-blur"]) {
+  for (const id of ["flip-horizontal", "flip-vertical", "invert", "grayscale", "box-blur", "light-lines", "replace-enabled"]) {
     root.querySelector(`#${id}`).checked = false;
   }
 }

@@ -7,6 +7,7 @@
 #
 # IDs in `order` are moved to the front in this order. Any omitted IDs are
 # appended in img2irc's default order, so newly-added controls still appear.
+# OCR children always stay with their parent; advanced children follow ocr-advanced.
 # Put IDs in `hidden` to remove them. Underscores may be used instead of dashes.
 
 [general]
@@ -16,17 +17,20 @@ order = [
     "font-size",
     "graphics-preview",
     "ocr",
+    "ocr-auto-width",
+    "ocr-lock",
+    "ocr-megapixels",
+    "ocr-confidence",
     "ocr-figlet",
+    "ocr-figlet-fill",
+    "ocr-advanced",
+    "ocr-model",
+    "ocr-threads",
+    "ocr-max-height",
     "ocr-figlet-min-height",
     "ocr-figlet-min-height-ratio",
     "ocr-figlet-max-width-ratio",
     "ocr-figlet-max-height-ratio",
-    "ocr-confidence",
-    "ocr-width",
-    "ocr-model",
-    "ocr-max-side",
-    "ocr-max-height",
-    "ocr-threads",
     "smooth",
     "smooth-candidates",
     "smooth-orders",
@@ -58,6 +62,8 @@ order = [
     "select-color",
     "brightness",
     "contrast",
+    "luma-contrast",
+    "replace-colour",
     "saturation",
     "gamma",
     "hue",
@@ -73,6 +79,8 @@ order = [
     "scale-y",
     "effects",
     "gaussian-blur",
+    "median-blur",
+    "line-thickness",
     "box-blur",
     "pixelize",
     "dither",

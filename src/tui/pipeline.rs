@@ -87,8 +87,29 @@ pub(crate) fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App
 }
 
 pub(crate) fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    app.pipeline_active_area = area;
     app.ensure_pipeline_selection();
+    app.replace_colour_button_area = Rect::default();
+    let area = if app.pipeline_expanded.is_none() {
+        if let Some(crate::pipeline::ImageEffectNode {
+            effect: crate::pipeline::ImageEffect::ReplaceColour { from, to, tolerance }, ..
+        }) = app.pipeline_nodes.get(app.selected_control) {
+            let parts = Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).split(area);
+            let block = Block::default().borders(Borders::ALL).title(" Replace Colour ");
+            let inner = block.inner(parts[1]);
+            f.render_widget(block, parts[1]);
+            let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(inner);
+            f.render_widget(Paragraph::new(Line::from(vec![
+                Span::styled(format!(" #{:02x}{:02x}{:02x}", from[0], from[1], from[2]), Style::default().fg(Color::Rgb(from[0], from[1], from[2]))),
+                Span::raw(" → "),
+                Span::styled(format!("#{:02x}{:02x}{:02x}", to[0], to[1], to[2]), Style::default().fg(Color::Rgb(to[0], to[1], to[2]))),
+                Span::raw(format!("  Tolerance: {tolerance:.0}%")),
+            ])), rows[0]);
+            f.render_widget(Paragraph::new(" [ Eyedropper / Edit colours… ]  Enter / c").style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)), rows[1]);
+            app.replace_colour_button_area = rows[1];
+            parts[0]
+        } else { area }
+    } else { area };
+    app.pipeline_active_area = area;
     let is_focused = app.current_tab == 1;
     let block = Block::default()
         .borders(Borders::ALL)
@@ -143,6 +164,14 @@ pub(crate) fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App,
             }
         } else {
             (active_f32, active_range)
+        };
+
+        let label = if !is_add_node
+            && matches!(app.pipeline_nodes[i].effect, crate::pipeline::ImageEffect::ReplaceColour { .. })
+        {
+            "Replace Colour [c]"
+        } else {
+            label
         };
 
         let text_fg = if is_disabled {

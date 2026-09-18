@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 img2irc.log
 /inputs
 /web/pkg
@@ -10,6 +9,8 @@ img2irc.log
 /node_modules
 __pycache__/
 *.py[cod]
+/python/img2irc/_native*.so
+/python/img2irc/_native*.pyd
 *.jpg
 *.png
 *.txt

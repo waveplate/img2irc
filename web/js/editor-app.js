@@ -1,3 +1,4 @@
+import { ColourReplacementPicker } from "./colour-replacement.js";
 import { initializeControlHelp } from "./control-help.js";
 import { EditorState } from "./editor-state.js";
 import { FontService } from "./font-service.js";
@@ -8,7 +9,7 @@ import { RendererClient } from "./renderer-client.js";
 import { RenderStatus } from "./render-status.js";
 import { OutputPreview } from "./output-preview.js";
 import { FigletService } from "./figlet-service.js";
-import { OcrService, ocrItemsToOverlays } from "./ocr-service.js";
+import { OcrService, ocrItemsToOverlays, ocrFitWidth } from "./ocr-service.js";
 import { renderableOverlays, TextControls } from "./text-controls.js";
 import { initializeNumberScrubbers } from "./number-scrubber.js";
 
@@ -45,8 +46,14 @@ export class EditorApp {
   #textControls = new TextControls(
     this.#form,
     this.#state,
-    () => this.#markRenderDirty(),
+    () => this.#markOverlayDirty(),
     this.#preview,
+  );
+  #colourPicker = new ColourReplacementPicker(
+    this.#form,
+    () => this.#state.sourceObjectUrl,
+    () => this.#element("render").value,
+    () => this.#markRenderDirty(),
   );
   #rendererFontKey;
   #rendererSourceKey;
@@ -57,12 +64,13 @@ export class EditorApp {
   #documentRevision = 0;
   #renderInFlight = false;
   #renderQueued = false;
+  #overlayRenderQueued = false;
+  #overlayRenderOptions;
   #renderTimer;
   #ocrRefreshRevision = 0;
   #ocrOverlayKey;
   #lockedOcr;
-  #lockedRenderOptions;
-  #lockedEffectKey;
+  #lockedOcrGrid;
 
   async start() {
     initializeControlHelp(this.#form);
@@ -71,6 +79,9 @@ export class EditorApp {
     populateGlyphGroups(this.#element("glyph-groups"), glyphGroups);
     this.#textControls.start();
     this.#bindEvents();
+    this.#syncOcrAutoWidthControls();
+    this.#colourPicker.start();
+    this.#form.dataset.controlsVisible = "true";
     this.#selectControlTab("general");
     this.#preview.setMode(this.#element("preview-mode").value);
     this.#updateOutputFontSize();
@@ -141,7 +152,15 @@ export class EditorApp {
     this.#renderTimer = setTimeout(() => this.render(), 350);
   }
 
+  #syncOcrAutoWidthControls() {
+    const disabled = !this.#element("ocr-auto-width").checked;
+    this.#element("ocr-text-coverage").disabled = disabled;
+    this.#element("ocr-text-coverage-control").classList.toggle("disabled-control", disabled);
+  }
+
   #selectControlTab(tab) {
+    this.#form.dataset.controlsVisible = "true";
+    this.#element("view-controls").checked = true;
     this.#form.querySelectorAll("[data-control-tab]").forEach((button) => {
       button.setAttribute("aria-selected", String(button.dataset.controlTab === tab));
     });
@@ -168,6 +187,7 @@ export class EditorApp {
   #ocrFigletSettings() {
     return {
       enabled: this.#element("ocr-figlet").checked,
+      fillAvailable: this.#element("ocr-figlet-fill").checked,
       minHeight: Number(this.#element("ocr-figlet-min-height").value),
       minHeightRatio: Number(this.#element("ocr-figlet-min-height-ratio").value),
       maxWidthRatio: Number(this.#element("ocr-figlet-max-width-ratio")?.value || 0.5),
@@ -219,7 +239,86 @@ export class EditorApp {
 
   #markRenderDirty() {
     this.#documentRevision += 1;
+    this.#overlayRenderOptions = undefined;
     this.#scheduleRender();
+  }
+
+  #markOverlayDirty() {
+    this.#documentRevision += 1;
+    if (!this.#state.hasImage) return;
+    if (!this.#overlayRenderOptions || !this.#state.result) {
+      this.#scheduleRender();
+      return;
+    }
+    clearTimeout(this.#renderTimer);
+    this.#renderTimer = setTimeout(() => void this.#renderOverlaysOnly(), 75);
+  }
+
+  #commitRenderResult(result, renderMs, started, figletFailures = new Set()) {
+    this.#state.result = result;
+    this.#element("raw-output").value = result.content;
+    this.#form.querySelectorAll("[data-copy-output]").forEach((button) => {
+      button.disabled = false;
+    });
+    this.#element("download-output").disabled = false;
+    this.#preview.draw(result);
+    this.#textControls.setGrid(result.columns, result.rows);
+    // The canvas owns the painted pixels now; keep the document result small
+    // instead of retaining a multi-megabyte RGBA transfer until next render.
+    delete result.previewRgba;
+    result.workerRenderMs = renderMs;
+    const elapsed = performance.now() - started;
+    this.#renderStatus.update(result, elapsed);
+    const figletNote = figletFailures.size
+      ? ` · ${figletFailures.size} FIGlet files unavailable`
+      : "";
+    this.#setStatus(`${result.columns} × ${result.rows} cells · ${Math.round(elapsed)} ms${figletNote}`);
+    const status = this.#element("status");
+    status.dataset.renderMs = renderMs.toFixed(1);
+    status.dataset.totalMs = elapsed.toFixed(1);
+  }
+
+  async #renderOverlaysOnly() {
+    if (!this.#state.hasImage) return;
+    if (!this.#overlayRenderOptions || !this.#state.result) {
+      this.#scheduleRender();
+      return;
+    }
+    if (this.#renderInFlight) {
+      this.#overlayRenderQueued = true;
+      return;
+    }
+
+    const renderRevision = this.#documentRevision;
+    const options = this.#overlayRenderOptions;
+    const { columns, rows } = this.#state.result;
+    this.#renderInFlight = true;
+    this.#setStatus("Updating text overlays…", false, true);
+    const started = performance.now();
+    try {
+      const figlet = await this.#resolveFigletOverlays(columns, rows);
+      if (renderRevision !== this.#documentRevision) return;
+      const { result, renderMs } = await this.#renderer.render({
+        ...options,
+        overlays: renderableOverlays(this.#state.overlays),
+      });
+      if (renderRevision !== this.#documentRevision) return;
+      this.#commitRenderResult(result, renderMs, started, new Set(figlet?.failed ?? []));
+    } catch (error) {
+      if (renderRevision === this.#documentRevision) {
+        this.#setStatus(`Could not update text overlays: ${error}`, true);
+      }
+    } finally {
+      this.#renderInFlight = false;
+      if (this.#renderQueued) {
+        this.#renderQueued = false;
+        this.#overlayRenderQueued = false;
+        queueMicrotask(() => this.render());
+      } else if (this.#overlayRenderQueued) {
+        this.#overlayRenderQueued = false;
+        queueMicrotask(() => void this.#renderOverlaysOnly());
+      }
+    }
   }
 
   #updateOutputFontSize() {
@@ -229,6 +328,60 @@ export class EditorApp {
     this.#preview.setOutputFontSize(this.#state.outputFontSize);
   }
 
+  async #transformedImageBlob(options) {
+    const transformed = await this.#renderer.getTransformedImage(options);
+    const canvas = typeof OffscreenCanvas === "function"
+      ? new OffscreenCanvas(transformed.width, transformed.height)
+      : Object.assign(document.createElement("canvas"), {
+        width: transformed.width,
+        height: transformed.height,
+      });
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("A 2D canvas is required to prepare OCR");
+    context.putImageData(new ImageData(
+      new Uint8ClampedArray(
+        transformed.rgba.buffer,
+        transformed.rgba.byteOffset,
+        transformed.rgba.byteLength,
+      ),
+      transformed.width,
+      transformed.height,
+    ), 0, 0);
+    return typeof canvas.convertToBlob === "function"
+      ? canvas.convertToBlob({ type: "image/png" })
+      : new Promise((resolve, reject) => canvas.toBlob(
+        (blob) => blob ? resolve(blob) : reject(new Error("Could not encode the OCR image")),
+        "image/png",
+      ));
+  }
+
+  #optionsForTransformedImage(options) {
+    return {
+      ...options,
+      rotate: 0,
+      flipHorizontal: false,
+      flipVertical: false,
+      scaleX: 1,
+      scaleY: 1,
+      brightness: 0,
+      contrast: 0,
+      lumaContrast: 0,
+      medianBlur: 0,
+      lineThickness: 0,
+      replaceFrom: undefined,
+      gamma: 0,
+      saturation: 0,
+      hue: 0,
+      invert: false,
+      dither: 0,
+      grayscale: false,
+      noGrayscale: false,
+      pixelize: 0,
+      boxBlur: false,
+      gaussianBlur: 0,
+    };
+  }
+
   async #loadSourceImage(blob, label = "clipboard image") {
     if (!blob?.type?.startsWith("image/")) {
       this.#setStatus("The selected clipboard item is not an image", true);
@@ -236,6 +389,7 @@ export class EditorApp {
     }
     const sourceRevision = ++this.#sourceLoadRevision;
     this.#documentRevision += 1;
+    this.#overlayRenderOptions = undefined;
     clearTimeout(this.#renderTimer);
     this.#setStatus("Loading image…", false, true);
     try {
@@ -254,11 +408,17 @@ export class EditorApp {
       return;
     }
     this.#state.setSource(URL.createObjectURL(blob), blob);
+    this.#form.querySelectorAll("[data-copy-output]").forEach((button) => {
+      button.disabled = true;
+    });
+    this.#element("download-output").disabled = true;
+    this.#element("replace-pick").disabled = false;
+    this.#element("replace-pick-to").disabled = false;
+    this.#colourPicker.close();
     this.#rendererSourceKey = `original:${this.#state.sourceRevision}`;
     this.#ocrOverlayKey = undefined;
     this.#lockedOcr = undefined;
-    this.#lockedRenderOptions = undefined;
-    this.#lockedEffectKey = undefined;
+    this.#lockedOcrGrid = undefined;
     const ocrLock = this.#element("ocr-lock");
     if (ocrLock) ocrLock.checked = false;
     this.#textControls.clearOcrOverlays();
@@ -287,69 +447,53 @@ export class EditorApp {
     const renderRevision = this.#documentRevision;
     this.#renderInFlight = true;
     try {
-      const ocrEnabled = this.#element("ocr-enabled").checked;
-      const ocrLock = ocrEnabled && Boolean(this.#element("ocr-lock")?.checked);
+      const ocrEnabled = this.#element("ocr-section").open;
+      this.#state.setOcrOverlaysEnabled(ocrEnabled);
+      const ocrLockRequested = ocrEnabled && Boolean(this.#element("ocr-lock")?.checked);
       const options = collectRenderOptions(this.#form, this.#glyphs, []);
       if (!await this.#ensureRenderer()) return;
+      const preserveEditedOcr = Boolean(this.#state.ocrOverlaysDirty);
+      const useLockedOcr = (ocrLockRequested || preserveEditedOcr) && Boolean(this.#lockedOcr);
 
       let preparedOcr;
+      let ocrWidthNote = "";
       let effectiveRenderOptions = options;
-      let effectKey = "";
+      const preparationKey = String(renderRevision);
 
       if (ocrEnabled) {
-        if (ocrLock && this.#lockedOcr) {
-          preparedOcr = this.#lockedOcr;
-          effectiveRenderOptions = this.#lockedRenderOptions ?? options;
-          effectKey = this.#lockedEffectKey ?? "";
-          const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
-          if (preparedOcr.processedBytes) {
-            await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
+        this.#setStatus(
+          useLockedOcr ? "Applying locked OCR regions…" : "Preparing transformed image for OCR…",
+          false,
+          true,
+        );
+        await this.#ensureRendererSource(
+          this.#state.sourceBlob,
+          `original:${this.#state.sourceRevision}`,
+        );
+        if (renderRevision !== this.#documentRevision) return;
+
+        const sourceOptions = useLockedOcr
+          && this.#element("ocr-auto-width").checked
+          && this.#lockedOcrGrid
+          ? {
+            ...options,
+            width: this.#lockedOcrGrid.width,
+            height: this.#lockedOcrGrid.height,
           }
-        } else {
-          this.#setStatus("Preparing transformed image for OCR…", false, true);
+          : options;
+        const transformedBlob = await this.#transformedImageBlob(sourceOptions);
+        if (renderRevision !== this.#documentRevision) return;
+        effectiveRenderOptions = this.#optionsForTransformedImage(sourceOptions);
+
+        if (useLockedOcr) {
+          preparedOcr = this.#lockedOcr;
+          const processedBytes = await this.#ocr.reapplyBackground(transformedBlob, preparedOcr);
+          if (renderRevision !== this.#documentRevision) return;
           await this.#ensureRendererSource(
-            this.#state.sourceBlob,
-            `original:${this.#state.sourceRevision}`,
+            processedBytes ?? transformedBlob,
+            `ocr-locked:${this.#state.sourceRevision}:${preparationKey}:${preparedOcr.key}`,
           );
-          if (renderRevision !== this.#documentRevision) return;
-
-          const transformed = await this.#renderer.getTransformedImage(options);
-          if (renderRevision !== this.#documentRevision) return;
-
-          const canvas = typeof OffscreenCanvas === "function"
-            ? new OffscreenCanvas(transformed.width, transformed.height)
-            : Object.assign(document.createElement("canvas"), { width: transformed.width, height: transformed.height });
-          const ctx = canvas.getContext("2d");
-          const imgData = new ImageData(
-            new Uint8ClampedArray(transformed.rgba.buffer, transformed.rgba.byteOffset, transformed.rgba.byteLength),
-            transformed.width,
-            transformed.height,
-          );
-          ctx.putImageData(imgData, 0, 0);
-          const transformedBlob = await (typeof canvas.convertToBlob === "function"
-            ? canvas.convertToBlob({ type: "image/png" })
-            : new Promise((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error("blob failed")), "image/png")));
-
-          effectKey = JSON.stringify({
-            r: options.rotate,
-            fh: options.flipHorizontal,
-            fv: options.flipVertical,
-            sx: options.scaleX,
-            sy: options.scaleY,
-            br: options.brightness,
-            co: options.contrast,
-            ga: options.gamma,
-            sa: options.saturation,
-            hu: options.hue,
-            inv: options.invert,
-            dit: options.dither,
-            gs: options.grayscale,
-            ngs: options.noGrayscale,
-            pix: options.pixelize,
-            bb: options.boxBlur,
-            gb: options.gaussianBlur,
-          });
-
+        } else {
           this.#setStatus("Preparing OCR…", false, true);
           preparedOcr = await this.#ocr.prepare(
             transformedBlob,
@@ -361,64 +505,25 @@ export class EditorApp {
           );
           if (renderRevision !== this.#documentRevision) return;
 
-          const sourceKey = `ocr:${this.#state.sourceRevision}:${effectKey}:${preparedOcr.key}`;
           if (preparedOcr.processedBytes) {
-            await this.#ensureRendererSource(preparedOcr.processedBytes, sourceKey);
-            effectiveRenderOptions = {
-              ...options,
-              rotate: 0,
-              flipHorizontal: false,
-              flipVertical: false,
-              scaleX: 1,
-              scaleY: 1,
-              brightness: 0,
-              contrast: 0,
-              gamma: 0,
-              saturation: 0,
-              hue: 0,
-              invert: false,
-              dither: 0,
-              grayscale: false,
-              noGrayscale: false,
-              pixelize: 0,
-              boxBlur: false,
-              gaussianBlur: 0,
-            };
+            await this.#ensureRendererSource(
+              preparedOcr.processedBytes,
+              `ocr:${this.#state.sourceRevision}:${preparationKey}:${preparedOcr.key}`,
+            );
           } else {
             await this.#ensureRendererSource(
               transformedBlob,
-              `transformed:${this.#state.sourceRevision}:${effectKey}`,
+              `transformed:${this.#state.sourceRevision}:${preparationKey}`,
             );
-            effectiveRenderOptions = {
-              ...options,
-              rotate: 0,
-              flipHorizontal: false,
-              flipVertical: false,
-              scaleX: 1,
-              scaleY: 1,
-              brightness: 0,
-              contrast: 0,
-              gamma: 0,
-              saturation: 0,
-              hue: 0,
-              invert: false,
-              dither: 0,
-              grayscale: false,
-              noGrayscale: false,
-              pixelize: 0,
-              boxBlur: false,
-              gaussianBlur: 0,
-            };
           }
           this.#lockedOcr = preparedOcr;
-          this.#lockedRenderOptions = effectiveRenderOptions;
-          this.#lockedEffectKey = effectKey;
         }
       } else {
-        this.#lockedOcr = undefined;
-        this.#lockedRenderOptions = undefined;
-        this.#lockedEffectKey = undefined;
-        this.#textControls.clearOcrOverlays();
+        if (!this.#state.ocrOverlaysDirty) {
+          this.#lockedOcr = undefined;
+          this.#lockedOcrGrid = undefined;
+          this.#textControls.clearOcrOverlays();
+        }
         await this.#ensureRendererSource(
           this.#state.sourceBlob,
           `original:${this.#state.sourceRevision}`,
@@ -426,18 +531,37 @@ export class EditorApp {
       }
       if (renderRevision !== this.#documentRevision) return;
       this.#setStatus("Rendering output…", false, true);
+      if (preparedOcr && !useLockedOcr && this.#element("ocr-auto-width").checked) {
+        const fit = ocrFitWidth(
+          preparedOcr,
+          1,
+          4096,
+          Number(this.#element("ocr-text-coverage").value),
+        );
+        if (fit) {
+          effectiveRenderOptions = { ...effectiveRenderOptions, width: fit.width, height: undefined };
+          const coverage = Math.floor(fit.coverage + 1e-6);
+          ocrWidthNote = ` · auto width ${fit.width} · ${coverage}% text coverage`;
+          if (fit.coverage + 1e-6 < fit.targetCoverage) {
+            ocrWidthNote += ` (target ${fit.targetCoverage}%; all text needs ${fit.required})`;
+          }
+        }
+      }
       const started = performance.now();
       const needsOverlayPass = Boolean(preparedOcr) || this.#state.overlays.length > 0;
       const firstOptions = needsOverlayPass
         ? { ...effectiveRenderOptions, includePreview: false, includeCells: false }
         : effectiveRenderOptions;
       let { result, renderMs } = await this.#renderer.render(firstOptions);
+      if (preparedOcr && !useLockedOcr) {
+        this.#lockedOcrGrid = { width: result.columns, height: result.rows };
+      }
       let ocrFigletResult;
-      if (preparedOcr && !ocrLock) {
+      if (preparedOcr && !useLockedOcr) {
         const figletSettings = this.#ocrFigletSettings();
         const overlayKey = JSON.stringify([
           this.#state.sourceRevision,
-          effectKey,
+          preparationKey,
           preparedOcr.key,
           result.columns,
           result.rows,
@@ -473,7 +597,11 @@ export class EditorApp {
         ...(overlayFigletResult?.failed ?? []),
       ]);
       if (preparedOcr) {
-        const cacheNote = preparedOcr.cacheHit ? " · cached" : "";
+        const cacheNote = preserveEditedOcr
+          ? " · edited overlays preserved"
+          : useLockedOcr
+            ? " · locked"
+            : preparedOcr.cacheHit ? " · cached" : "";
         const figletCount = this.#state.ocrOverlays
           .filter((overlay) => overlay.figletFont && overlay.figletFont !== "plain").length;
         const figletNote = figletCount ? ` · ${figletCount} FIGlet` : "";
@@ -481,7 +609,7 @@ export class EditorApp {
           ? ` · ${figletFailures.size} FIGlet fonts unavailable`
           : "";
         this.#setOcrStatus(
-          `${this.#state.ocrOverlays.length}/${preparedOcr.result.items.length} regions rendered · ${Math.round(preparedOcr.elapsedMs)} ms${cacheNote}${figletNote}${unavailableNote}`,
+          `${this.#state.ocrOverlays.length}/${preparedOcr.result.items.length} regions rendered · ${Math.round(preparedOcr.elapsedMs)} ms${cacheNote}${figletNote}${unavailableNote}${ocrWidthNote}`,
         );
       }
       if (renderRevision !== this.#documentRevision) {
@@ -491,28 +619,11 @@ export class EditorApp {
         }
         return;
       }
-      this.#state.result = result;
-      this.#element("raw-output").value = result.content;
-      this.#element("copy-output").disabled = false;
-      this.#element("download-output").disabled = false;
-      this.#preview.draw(result);
-      this.#textControls.setGrid(result.columns, result.rows);
-      // The canvas owns the painted pixels now; keep the document result small
-      // instead of retaining a multi-megabyte RGBA transfer until next render.
-      delete result.previewRgba;
-      result.workerRenderMs = renderMs;
-      const elapsed = performance.now() - started;
-      this.#renderStatus.update(result, elapsed);
-      const figletNote = figletFailures.size
-        ? ` · ${figletFailures.size} FIGlet files unavailable`
-        : "";
-      this.#setStatus(`${result.columns} × ${result.rows} cells · ${Math.round(elapsed)} ms${figletNote}`);
-      const status = this.#element("status");
-      status.dataset.renderMs = renderMs.toFixed(1);
-      status.dataset.totalMs = elapsed.toFixed(1);
+      this.#overlayRenderOptions = { ...effectiveRenderOptions };
+      this.#commitRenderResult(result, renderMs, started, figletFailures);
     } catch (error) {
       if (renderRevision === this.#documentRevision) {
-        if (this.#element("ocr-enabled").checked) {
+        if (this.#element("ocr-section").open) {
           this.#setOcrStatus(`OCR failed: ${error}`, true);
         }
         this.#setStatus(`Render failed: ${error}`, true);
@@ -521,7 +632,11 @@ export class EditorApp {
       this.#renderInFlight = false;
       if (this.#renderQueued) {
         this.#renderQueued = false;
+        this.#overlayRenderQueued = false;
         queueMicrotask(() => this.render());
+      } else if (this.#overlayRenderQueued) {
+        this.#overlayRenderQueued = false;
+        queueMicrotask(() => void this.#renderOverlaysOnly());
       }
     }
   }
@@ -549,28 +664,18 @@ export class EditorApp {
         else clearTimeout(this.#renderTimer);
         return;
       }
-      if (event.target.id === "ocr-enabled") {
-        const enabled = event.target.checked;
-        this.#element("ocr-options").hidden = !enabled;
-        if (!enabled) {
-          this.#textControls.clearOcrOverlays();
-          this.#ocrOverlayKey = undefined;
-          this.#lockedOcr = undefined;
-          this.#lockedRenderOptions = undefined;
-          this.#lockedEffectKey = undefined;
-          const ocrLock = this.#element("ocr-lock");
-          if (ocrLock) ocrLock.checked = false;
-          this.#setOcrStatus("OCR loads only when enabled.");
-        }
+      if (event.target.id === "view-controls") {
+        this.#form.dataset.controlsVisible = String(event.target.checked);
+        return;
       }
       if (event.target.id === "ocr-lock") {
-        if (!event.target.checked) {
+        if (!event.target.checked && !this.#state.ocrOverlaysDirty) {
           this.#ocrOverlayKey = undefined;
           this.#lockedOcr = undefined;
-          this.#lockedRenderOptions = undefined;
-          this.#lockedEffectKey = undefined;
+          this.#lockedOcrGrid = undefined;
         }
       }
+      if (event.target.id === "ocr-auto-width") this.#syncOcrAutoWidthControls();
       if (["font", "image", "glyph-search"].includes(event.target.id)) return;
       this.#markRenderDirty();
     });
@@ -583,14 +688,19 @@ export class EditorApp {
     this.#form.querySelectorAll("[data-control-tab]").forEach((button) => {
       button.addEventListener("click", () => this.#selectControlTab(button.dataset.controlTab));
     });
+    this.#bindApplicationMenu();
     this.#element("ocr-refresh").addEventListener("click", () => {
+      if (this.#state.ocrOverlaysDirty
+        && !window.confirm("Regenerate OCR and discard your edited OCR overlays?")) {
+        return;
+      }
       const ocrLock = this.#element("ocr-lock");
       if (ocrLock) ocrLock.checked = false;
       this.#lockedOcr = undefined;
-      this.#lockedRenderOptions = undefined;
-      this.#lockedEffectKey = undefined;
+      this.#lockedOcrGrid = undefined;
       this.#ocrRefreshRevision += 1;
       this.#ocrOverlayKey = undefined;
+      this.#textControls.clearOcrOverlays();
       this.#figlet.reload();
       this.#markRenderDirty();
       if (!this.#element("auto-render").checked && this.#state.hasImage) void this.render();
@@ -642,6 +752,7 @@ export class EditorApp {
 
     this.#element("font").addEventListener("change", async () => {
       this.#documentRevision += 1;
+      this.#overlayRenderOptions = undefined;
       this.#rendererSourceKey = undefined;
       clearTimeout(this.#renderTimer);
       try {
@@ -664,6 +775,28 @@ export class EditorApp {
         : "Smoothing (disabled, expand to enable)";
       this.#markRenderDirty();
     });
+    this.#element("ocr-section").addEventListener("toggle", (event) => {
+      const enabled = event.currentTarget.open;
+      this.#state.setOcrOverlaysEnabled(enabled);
+      this.#element("ocr-summary").textContent = enabled
+        ? "OCR (enabled, collapse to disable)"
+        : "OCR (disabled, expand to enable)";
+      if (!enabled) {
+        if (this.#state.ocrOverlaysDirty) {
+          this.#setOcrStatus("Edited OCR overlays are hidden and preserved until OCR is enabled again.");
+        } else {
+          this.#textControls.clearOcrOverlays();
+          this.#ocrOverlayKey = undefined;
+          this.#lockedOcr = undefined;
+          this.#lockedOcrGrid = undefined;
+          this.#setOcrStatus("OCR loads only when enabled.");
+        }
+        const ocrLock = this.#element("ocr-lock");
+        if (ocrLock) ocrLock.checked = false;
+      }
+      this.#textControls.refresh();
+      this.#markRenderDirty();
+    });
     this.#element("braille").addEventListener("change", () => {
       const disabled = this.#element("braille").checked;
       this.#element("glyph-controls").querySelectorAll("input, textarea, button").forEach((element) => {
@@ -683,12 +816,79 @@ export class EditorApp {
       resetAdjustments(this.#form);
       this.#markRenderDirty();
     });
-    this.#element("copy-output").addEventListener("click", () => this.#copyOutput());
+    this.#form.querySelectorAll("[data-copy-output]").forEach((button) => {
+      button.addEventListener("click", () => this.#copyOutput());
+    });
     this.#element("download-output").addEventListener("click", () => this.#downloadOutput());
     window.addEventListener("beforeunload", () => {
       this.#renderer.terminate();
       void this.#ocr.dispose();
     }, { once: true });
+  }
+
+  #bindApplicationMenu() {
+    const menus = [...this.#form.querySelectorAll("[data-app-menu]")];
+    const closeMenus = (except) => {
+      for (const menu of menus) {
+        if (menu !== except) menu.open = false;
+      }
+    };
+
+    for (const menu of menus) {
+      menu.querySelector("summary").addEventListener("click", () => {
+        if (!menu.open) closeMenus(menu);
+      });
+      menu.addEventListener("toggle", () => {
+        if (menu.open) closeMenus(menu);
+      });
+      menu.querySelectorAll("[role='menuitem'], [role='menuitemcheckbox']").forEach((item) => {
+        item.addEventListener("click", () => queueMicrotask(() => { menu.open = false; }));
+      });
+    }
+    document.addEventListener("pointerdown", (event) => {
+      if (!event.target.closest("[data-app-menu]")) closeMenus();
+    });
+
+    this.#form.querySelectorAll("[data-click-target]").forEach((item) => {
+      item.addEventListener("click", () => this.#element(item.dataset.clickTarget)?.click());
+    });
+    this.#form.querySelectorAll("[data-preview-mode]").forEach((item) => {
+      item.addEventListener("click", () => {
+        const select = this.#element("preview-mode");
+        select.value = item.dataset.previewMode;
+        select.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    });
+    this.#form.querySelectorAll("[data-toggle-target]").forEach((item) => {
+      item.addEventListener("click", () => {
+        const target = this.#element(item.dataset.toggleTarget);
+        target.open = !target.open;
+      });
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && menus.some((menu) => menu.open)) {
+        const openMenu = menus.find((menu) => menu.open);
+        closeMenus();
+        openMenu?.querySelector("summary")?.focus();
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === "o") {
+        event.preventDefault();
+        this.#element("image").click();
+      } else if (key === "s") {
+        event.preventDefault();
+        this.#element("download-output").click();
+      } else if (key === "c" && event.shiftKey) {
+        event.preventDefault();
+        this.#element("copy-output").click();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        this.#element("render-button").click();
+      }
+    });
   }
 
   async #copyOutput() {

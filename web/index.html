@@ -12,44 +12,117 @@
   </head>
   <body>
     <form id="controls" class="editor" novalidate>
-      <header class="app-toolbar" aria-label="Application toolbar">
-        <div class="brand">img2irc</div>
-        <label class="file-button">
-          Open image
-          <input id="image" type="file" accept="image/*" />
-        </label>
-        <label class="toolbar-field">
-          <span>Output</span>
-          <select id="render">
-            <option value="irc" selected>IRC</option>
-            <option value="ansi">ANSI 256</option>
-            <option value="ansi24">ANSI 24-bit</option>
-          </select>
-        </label>
-        <label class="toolbar-toggle">
-          <input id="auto-render" type="checkbox" checked />
-          Render after changes
-        </label>
-        <button id="render-button" class="primary" type="submit">Render</button>
-        <p id="status" role="status" aria-live="polite">Loading WebAssembly…</p>
+      <header class="app-header">
+        <div class="menu-bar">
+          <div class="brand" aria-label="img2irc image-to-terminal-art editor">
+            <img src="./favicon-32x32.png" alt="" />
+            <span>img2irc</span>
+          </div>
+          <nav class="application-menu" aria-label="Application menu">
+            <details class="app-menu" data-app-menu>
+              <summary>File</summary>
+              <div class="menu-popover" role="menu">
+                <button type="button" role="menuitem" data-click-target="image">
+                  <span>Open image…</span><kbd>Ctrl+O</kbd>
+                </button>
+                <div class="menu-separator" role="separator"></div>
+                <button id="download-output" type="button" role="menuitem" disabled>
+                  <span>Download output…</span><kbd>Ctrl+S</kbd>
+                </button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Edit</summary>
+              <div class="menu-popover" role="menu">
+                <button id="copy-output" type="button" role="menuitem" data-copy-output disabled>
+                  <span>Copy encoded output</span><kbd>Ctrl+Shift+C</kbd>
+                </button>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-click-target="reset-adjustments">
+                  Reset image adjustments
+                </button>
+                <button type="button" role="menuitem" data-click-target="overlay-add">
+                  Add text overlay
+                </button>
+                <button type="button" role="menuitem" data-click-target="overlay-delete">
+                  Delete selected overlay
+                </button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>View</summary>
+              <div class="menu-popover" role="menu">
+                <label class="menu-item menu-check" role="menuitemcheckbox">
+                  <input id="view-controls" type="checkbox" checked />
+                  <span>Show controls</span>
+                </label>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-control-tab="general">General controls</button>
+                <button type="button" role="menuitem" data-control-tab="adjustments">Image adjustments</button>
+                <button type="button" role="menuitem" data-control-tab="glyphs">Glyph library</button>
+                <button type="button" role="menuitem" data-control-tab="text">Text overlays</button>
+                <div class="menu-separator" role="separator"></div>
+                <button type="button" role="menuitem" data-preview-mode="text">Native text preview</button>
+                <button type="button" role="menuitem" data-preview-mode="bitmap">Bitmap preview</button>
+                <button type="button" role="menuitem" data-toggle-target="raw-output-panel">Raw output</button>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Render</summary>
+              <div class="menu-popover" role="menu">
+                <button type="button" role="menuitem" data-click-target="render-button">
+                  <span>Render now</span><kbd>Ctrl+Enter</kbd>
+                </button>
+                <label class="menu-item menu-check" role="menuitemcheckbox">
+                  <input id="auto-render" type="checkbox" checked />
+                  <span>Render after changes</span>
+                </label>
+              </div>
+            </details>
+            <details class="app-menu" data-app-menu>
+              <summary>Help</summary>
+              <div class="menu-popover" role="menu">
+                <a href="https://github.com/waveplate/img2irc" target="_blank" rel="noopener" role="menuitem">
+                  Project documentation
+                </a>
+                <p class="menu-note">Images and rendering stay in this browser.</p>
+              </div>
+            </details>
+          </nav>
+        </div>
+
+        <div class="app-toolbar" aria-label="Document toolbar">
+          <input id="image" class="visually-hidden" type="file" accept="image/*" />
+          <label class="file-button" for="image">Open</label>
+          <div class="document-identity">
+            <a id="source-link" target="_blank" rel="noopener" hidden></a>
+            <span id="source-placeholder">No image open</span>
+          </div>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <label class="toolbar-field">
+            <span>Output</span>
+            <select id="render">
+              <option value="irc" selected>IRC</option>
+              <option value="ansi">ANSI 256</option>
+              <option value="ansi24">ANSI 24-bit</option>
+            </select>
+          </label>
+          <button id="render-button" class="primary" type="submit">Render</button>
+          <p id="status" role="status" aria-live="polite">Loading WebAssembly…</p>
+        </div>
       </header>
 
       <main class="workspace">
         <aside class="control-dock" aria-label="Render controls">
-          <section class="source-panel">
-            <a id="source-link" target="_blank" rel="noopener" hidden></a>
-            <p id="source-placeholder">Open, paste, or drop an image to begin.</p>
-          </section>
-
           <nav class="control-tabs" role="tablist" aria-label="Control groups">
             <button type="button" role="tab" data-control-tab="general" aria-selected="true">General</button>
-            <button type="button" role="tab" data-control-tab="adjustments" aria-selected="false">Adjustments</button>
+            <button type="button" role="tab" data-control-tab="adjustments" aria-selected="false">Adjust</button>
             <button type="button" role="tab" data-control-tab="glyphs" aria-selected="false">Glyphs</button>
             <button type="button" role="tab" data-control-tab="text" aria-selected="false">Text</button>
           </nav>
 
-          <details class="control-panel" data-control-tab-panel="general" open>
-            <summary>General</summary>
+          <section class="control-panel" data-control-tab-panel="general">
+            <h1 class="panel-heading">General</h1>
             <div class="control-grid">
               <label>
                 Width (cells)
@@ -98,7 +171,7 @@
               </label>
             </div>
 
-            <details id="smoothing-section" class="smoothing-section">
+            <details id="smoothing-section" class="feature-section">
               <summary><span id="smoothing-summary">Smoothing (disabled, expand to enable)</span></summary>
               <p class="performance-warning">Smoothing is computationally expensive and can dramatically increase render times.</p>
               <div id="smoothing-options" class="control-grid">
@@ -121,82 +194,99 @@
               </div>
             </details>
 
-            <fieldset class="ocr-controls">
-              <legend>OCR</legend>
-              <label class="inline-control">
-                <input id="ocr-enabled" type="checkbox" />
-                Detect and preserve text with PP-OCRv6
-              </label>
-              <div id="ocr-options" class="control-grid conditional" hidden>
+            <details id="ocr-section" class="feature-section">
+              <summary><span id="ocr-summary">OCR (disabled, expand to enable)</span></summary>
+              <p class="feature-description">Detect image text with PP-OCRv6 and preserve it as editable terminal text.</p>
+              <div id="ocr-options" class="control-grid conditional">
+                <label class="inline-control wide-control">
+                  <input id="ocr-auto-width" type="checkbox" checked />
+                  Auto-fit render width to text
+                </label>
+                <label id="ocr-text-coverage-control">
+                  Minimum complete text coverage (%)
+                  <input id="ocr-text-coverage" type="number" min="1" max="100" step="1" value="100" />
+                </label>
                 <label class="inline-control wide-control">
                   <input id="ocr-lock" type="checkbox" />
-                  Lock OCR (freeze detections & overlays)
+                  Lock OCR (freeze untouched detections)
                 </label>
                 <label>
                   Minimum confidence
                   <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
                 </label>
-                <label>
-                  Printable ASCII ratio
-                  <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
-                </label>
-                <label>
-                  OCR width
-                  <input id="ocr-width" type="number" min="0" max="8192" step="10" value="0" />
-                </label>
-                <label>
-                  Maximum image side
-                  <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
-                </label>
-                <label>
-                  Maximum text-height ratio
-                  <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
-                </label>
-                <label class="inline-control">
-                  <input id="ocr-figlet" type="checkbox" checked />
-                  Use FIGlet for large text
-                </label>
-                <label>
-                  FIGlet minimum rows
-                  <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
-                </label>
-                <label>
-                  FIGlet minimum height ratio
-                  <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
-                </label>
-                <label>
-                  FIGlet maximum width expansion ratio
-                  <input id="ocr-figlet-max-width-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
-                </label>
-                <label>
-                  FIGlet maximum height expansion ratio
-                  <input id="ocr-figlet-max-height-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
-                </label>
-                <label>
-                  Box score threshold
-                  <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
-                </label>
-                <label>
-                  Binarization threshold
-                  <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
-                </label>
-                <label>
-                  Box expansion
-                  <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
-                </label>
                 <div class="wide-control ocr-action-row">
-                  <button id="ocr-refresh" type="button">Refresh detection</button>
+                  <button id="ocr-refresh" type="button">Regenerate OCR…</button>
                   <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
                 </div>
+                <details class="advanced-section wide-control">
+                  <summary>Advanced OCR settings</summary>
+                  <div class="control-grid">
+                    <label>
+                      Printable ASCII ratio
+                      <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
+                    </label>
+                    <label>
+                      OCR width
+                      <input id="ocr-width" type="number" min="0" max="8192" step="10" value="0" />
+                    </label>
+                    <label>
+                      Maximum image side
+                      <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
+                    </label>
+                    <label>
+                      Maximum text-height ratio
+                      <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
+                    </label>
+                    <label class="inline-control">
+                      <input id="ocr-figlet" type="checkbox" checked />
+                      Use FIGlet for large text
+                    </label>
+                    <label class="inline-control">
+                      <input id="ocr-figlet-fill" type="checkbox" />
+                      Fit largest FIGlet font in available space
+                    </label>
+                    <label>
+                      FIGlet minimum rows
+                      <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
+                    </label>
+                    <label>
+                      FIGlet minimum height ratio
+                      <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
+                    </label>
+                    <label>
+                      FIGlet maximum width expansion ratio
+                      <input id="ocr-figlet-max-width-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
+                    </label>
+                    <label>
+                      FIGlet maximum height expansion ratio
+                      <input id="ocr-figlet-max-height-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
+                    </label>
+                    <label>
+                      Box score threshold
+                      <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
+                    </label>
+                    <label>
+                      Binarization threshold
+                      <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
+                    </label>
+                    <label>
+                      Box expansion
+                      <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
+                    </label>
+                  </div>
+                </details>
               </div>
-            </fieldset>
-          </details>
+            </details>
+          </section>
 
-          <details class="control-panel" data-control-tab-panel="adjustments" open hidden>
-            <summary>Image adjustments</summary>
+          <section class="control-panel" data-control-tab-panel="adjustments" hidden>
+            <h1 class="panel-heading">Image adjustments</h1>
             <div class="range-grid">
               <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
               <label>Contrast <input id="contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Luma contrast <input id="luma-contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
+              <label>Median radius <input id="median-blur" type="range" min="0" max="10" value="0" /> <output>0</output></label>
+              <label>Line thickness <input id="line-thickness" type="range" min="-10" max="10" value="0" /> <output>0</output></label>
               <label>Gamma <input id="gamma" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
               <label>Saturation <input id="saturation" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
               <label>Hue <input id="hue" type="range" min="0" max="360" value="0" /> <output>0</output></label>
@@ -212,13 +302,33 @@
               <label><input id="flip-vertical" type="checkbox" /> Flip vertically</label>
               <label><input id="invert" type="checkbox" /> Invert</label>
               <label><input id="grayscale" type="checkbox" /> Grayscale</label>
+              <label><input id="light-lines" type="checkbox" /> Light lines</label>
               <label><input id="box-blur" type="checkbox" /> Box blur</label>
             </div>
+            <fieldset>
+              <legend><label class="inline-control"><input id="replace-enabled" type="checkbox" /> Replace colour</label></legend>
+              <div class="toggle-grid">
+                <label>From <input id="replace-from" type="color" value="#ffffff" /></label>
+                <label>To <input id="replace-to" type="color" value="#000000" /></label>
+                <button id="replace-pick" type="button" disabled>Pick From…</button>
+                <button id="replace-pick-to" type="button" disabled>Pick To…</button>
+              </div>
+              <div class="range-grid">
+                <label>Tolerance % <input id="replace-tolerance" type="range" min="0" max="100" value="5" /> <output>5</output></label>
+              </div>
+              <small>Replaces matching colours throughout the image. Raise tolerance to include similar shades.</small>
+            </fieldset>
+            <dialog id="replace-dialog" aria-labelledby="replace-dialog-title">
+              <p id="replace-dialog-title">Click a visible colour in the image</p>
+              <canvas id="replace-canvas" aria-label="Visible output colour eyedropper"></canvas>
+              <p>The preview is quantized to the selected output mode.</p>
+              <button id="replace-cancel" type="button">Cancel</button>
+            </dialog>
             <button id="reset-adjustments" type="button">Reset adjustments</button>
-          </details>
+          </section>
 
-          <details class="control-panel glyph-panel" data-control-tab-panel="glyphs" open hidden>
-            <summary>Glyphs</summary>
+          <section class="control-panel glyph-panel" data-control-tab-panel="glyphs" hidden>
+            <h1 class="panel-heading">Glyphs</h1>
             <label class="inline-control">
               <input id="braille" type="checkbox" />
               Use Braille output instead of glyph groups
@@ -254,10 +364,10 @@
                 </label>
               </div>
             </div>
-          </details>
+          </section>
 
-          <details class="control-panel text-panel" data-control-tab-panel="text" open hidden>
-            <summary>Text overlays</summary>
+          <section class="control-panel text-panel" data-control-tab-panel="text" hidden>
+            <h1 class="panel-heading">Text overlays</h1>
             <div class="button-row">
               <button id="overlay-add" type="button">Add text overlay</button>
               <button id="overlay-delete" class="danger" type="button">Delete selected</button>
@@ -304,11 +414,14 @@
                 </label>
               </div>
             </div>
-          </details>
+          </section>
         </aside>
 
         <section class="document-area" aria-label="Output workspace">
           <div class="document-toolbar">
+            <button id="copy-output-toolbar" class="copy-output-button" type="button" data-copy-output disabled>
+              Copy to clipboard
+            </button>
             <div class="toolbar-spacer"></div>
             <label class="preview-mode">
               Display
@@ -322,8 +435,6 @@
               <input id="output-font-size" type="number" min="6" max="64" step="1" value="16" />
               <span>px</span>
             </label>
-            <button id="copy-output" type="button" disabled>Copy encoded output</button>
-            <button id="download-output" type="button" disabled>Download</button>
           </div>
           <div class="canvas-viewport">
             <div id="preview-stage" class="preview-stage">
@@ -333,7 +444,7 @@
             </div>
             <p id="output-placeholder">Rendered output will appear here.</p>
           </div>
-          <details class="raw-output-panel">
+          <details id="raw-output-panel" class="raw-output-panel">
             <summary>Raw IRC/ANSI data</summary>
             <textarea id="raw-output" rows="8" readonly></textarea>
           </details>

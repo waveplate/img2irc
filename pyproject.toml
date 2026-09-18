@@ -18,6 +18,9 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: Graphics Conversion",
 ]
 
+[project.scripts]
+img2irc-tui = "img2irc.tui:main"
+
 [tool.maturin]
 features = ["python"]
 module-name = "img2irc._native"

@@ -65,13 +65,17 @@ ORT_PREFER_DYNAMIC_LINK=0 \
 cargo build \
     --manifest-path "${ROOT_DIR}/Cargo.toml" \
     --release \
+    --locked \
     --target x86_64-unknown-linux-musl \
     --bin img2irc \
-    --no-default-features \
-    --features ocr
+    --all-features
 
 BINARY="${ROOT_DIR}/target/x86_64-unknown-linux-musl/release/img2irc"
 file "${BINARY}"
+if readelf -l "${BINARY}" | grep -q INTERP || readelf -d "${BINARY}" | grep -q NEEDED; then
+    echo "error: the binary is not fully static" >&2
+    exit 1
+fi
 if command -v ldd >/dev/null 2>&1; then
     ldd "${BINARY}" 2>&1 || true
 fi

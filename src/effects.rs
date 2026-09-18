@@ -73,15 +73,12 @@ pub fn calculate_dimensions(
     // their grid from the font's continuous advance and line metrics, so using
     // the bitmap ratio here makes the output alternate between aspect ratios as
     // those two dimensions cross pixel boundaries independently.
-    let cell_aspect = if float_x.is_finite()
-        && float_y.is_finite()
-        && float_x > 0.0
-        && float_y > 0.0
-    {
-        float_x / float_y
-    } else {
-        factor_x / factor_y
-    };
+    let cell_aspect =
+        if float_x.is_finite() && float_y.is_finite() && float_x > 0.0 && float_y > 0.0 {
+            float_x / float_y
+        } else {
+            factor_x / factor_y
+        };
     let image_aspect = (orig_w / orig_h).max(f32::MIN_POSITIVE);
 
     log::info!("factor_x: {}, float_x: {}", factor_x, float_x);
@@ -161,15 +158,16 @@ fn fast_crop_and_nearest_resize(
     let raw_h = img.get_height();
     let raw = img.get_raw_pixels();
 
-    let (left, top, src_w, src_h) = if let Some((crop_top, crop_right, crop_bottom, crop_left)) = crop_coords {
-        let l = crop_left.min(raw_w);
-        let t = crop_top.min(raw_h);
-        let r = crop_right.min(raw_w - l);
-        let b = crop_bottom.min(raw_h - t);
-        (l, t, raw_w - l - r, raw_h - t - b)
-    } else {
-        (0, 0, raw_w, raw_h)
-    };
+    let (left, top, src_w, src_h) =
+        if let Some((crop_top, crop_right, crop_bottom, crop_left)) = crop_coords {
+            let l = crop_left.min(raw_w);
+            let t = crop_top.min(raw_h);
+            let r = crop_right.min(raw_w - l);
+            let b = crop_bottom.min(raw_h - t);
+            (l, t, raw_w - l - r, raw_h - t - b)
+        } else {
+            (0, 0, raw_w, raw_h)
+        };
 
     let mut dest_pixels = vec![0u8; (dest_w * dest_h * 4) as usize];
 
@@ -331,24 +329,8 @@ fn resize_for_output(
     base_image.unwrap()
 }
 
-pub fn apply_effects(
-    args: &args::RenderArgs,
-    glyphs: &GlyphStore,
-    mut photon_image: PhotonImage,
-) -> PhotonImage {
-    // Pipeline nodes operate on the source image. Output sizing is deliberately
-    // deferred until every node has run so ScaleX/ScaleY alter the input
-    // geometry without multiplying the configured terminal output width.
-    type ColourFunc = fn(&mut PhotonImage, &str, f32);
-
-    let colour_func: ColourFunc = match args.colorspace {
-        args::ColourSpace::HSL => colour_spaces::hsl,
-        args::ColourSpace::HSV => colour_spaces::hsv,
-        args::ColourSpace::HSLUV => colour_spaces::hsluv,
-        args::ColourSpace::LCH => colour_spaces::lch,
-    };
-
-    let pipeline = if !args.pipeline.is_empty() {
+pub fn default_pipeline(args: &args::RenderArgs) -> Vec<crate::pipeline::ImageEffect> {
+    if !args.pipeline.is_empty() {
         args.pipeline.clone()
     } else {
         use crate::pipeline::ImageEffect;
@@ -458,11 +440,66 @@ pub fn apply_effects(
             }
         }
         p
+    }
+}
+
+pub fn apply_effects(
+    args: &args::RenderArgs,
+    glyphs: &GlyphStore,
+    photon_image: PhotonImage,
+) -> PhotonImage {
+    let pipeline = default_pipeline(args);
+    resize_for_output(args, glyphs, apply_pipeline(args, photon_image, &pipeline))
+}
+
+/// Apply exactly these nodes, without resizing the output grid or adding defaults.
+pub fn apply_pipeline(
+    args: &args::RenderArgs,
+    mut photon_image: PhotonImage,
+    pipeline: &[crate::pipeline::ImageEffect],
+) -> PhotonImage {
+    // Pipeline nodes operate on the source image. Output sizing is deliberately
+    // deferred until every node has run so ScaleX/ScaleY alter the input
+    // geometry without multiplying the configured terminal output width.
+    type ColourFunc = fn(&mut PhotonImage, &str, f32);
+
+    let colour_func: ColourFunc = match args.colorspace {
+        args::ColourSpace::HSL => colour_spaces::hsl,
+        args::ColourSpace::HSV => colour_spaces::hsv,
+        args::ColourSpace::HSLUV => colour_spaces::hsluv,
+        args::ColourSpace::LCH => colour_spaces::lch,
     };
 
-    for effect in pipeline {
+    for effect in pipeline.iter().cloned() {
         use crate::pipeline::ImageEffect::*;
         match effect {
+            ReplaceColour {
+                from,
+                to,
+                tolerance,
+            } => match args.render {
+                args::Render::Irc => crate::adjustments::replace_colour_quantized(
+                    &mut photon_image,
+                    from,
+                    to,
+                    tolerance,
+                    &crate::palette::IRC99,
+                ),
+                args::Render::Ansi => crate::adjustments::replace_colour_quantized(
+                    &mut photon_image,
+                    from,
+                    to,
+                    tolerance,
+                    &crate::palette::ANSI256,
+                ),
+                args::Render::Ansi24 => {
+                    crate::adjustments::replace_colour(&mut photon_image, from, to, tolerance)
+                }
+            },
+            LumaContrast(c) => crate::adjustments::luma_contrast(&mut photon_image, c),
+            MedianBlur(r) => crate::adjustments::median_blur(&mut photon_image, r),
+            DarkLines(r) => crate::adjustments::line_thickness(&mut photon_image, r, false),
+            LightLines(r) => crate::adjustments::line_thickness(&mut photon_image, r, true),
             Dither(d) => {
                 if d > 0 {
                     effects::dither(&mut photon_image, d);
@@ -639,7 +676,7 @@ pub fn apply_effects(
         }
     }
 
-    resize_for_output(args, glyphs, photon_image)
+    photon_image
 }
 
 pub fn apply_luma_effects(
@@ -759,8 +796,7 @@ mod tests {
     fn rotate_test_image(source: &PhotonImage, degrees: f32) -> PhotonImage {
         let width = source.get_width();
         let height = source.get_height();
-        let buffer =
-            image::ImageBuffer::from_raw(width, height, source.get_raw_pixels()).unwrap();
+        let buffer = image::ImageBuffer::from_raw(width, height, source.get_raw_pixels()).unwrap();
         let rotated = rotate_about_center(
             &buffer,
             degrees.to_radians(),
@@ -796,8 +832,7 @@ mod tests {
 
     #[test]
     fn pipeline_scale_changes_source_not_configured_output_size() {
-        let cli =
-            crate::args::Args::try_parse_from(["img2irc", "--width", "10"]).unwrap();
+        let cli = crate::args::Args::try_parse_from(["img2irc", "--width", "10"]).unwrap();
         let mut args = crate::args_to_render_args(&cli);
         let unscaled_args = args.clone();
         args.pipeline = vec![
@@ -819,9 +854,6 @@ mod tests {
 
         assert_eq!(output.get_width(), unscaled_output.get_width());
         assert_eq!(output.get_height(), unscaled_output.get_height());
-        assert_eq!(
-            (output.get_width(), output.get_height()),
-            (10, 5)
-        );
+        assert_eq!((output.get_width(), output.get_height()), (10, 5));
     }
 }

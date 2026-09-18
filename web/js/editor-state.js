@@ -9,9 +9,32 @@ export class EditorState {
 
   manualOverlays = [];
   ocrOverlays = [];
+  ocrOverlaysDirty = false;
+  ocrOverlaysEnabled = true;
 
   get overlays() {
-    return [...this.ocrOverlays, ...this.manualOverlays];
+    return [
+      ...(this.ocrOverlaysEnabled ? this.ocrOverlays : []),
+      ...this.manualOverlays,
+    ];
+  }
+
+  replaceOcrOverlays(overlays) {
+    this.ocrOverlays = overlays;
+    this.ocrOverlaysDirty = false;
+  }
+
+  markOcrOverlaysEdited() {
+    this.ocrOverlaysDirty = true;
+  }
+
+  setOcrOverlaysEnabled(enabled) {
+    this.ocrOverlaysEnabled = Boolean(enabled);
+  }
+
+  clearOcrOverlays() {
+    this.ocrOverlays = [];
+    this.ocrOverlaysDirty = false;
   }
 
   setSource(objectUrl, blob) {
@@ -21,6 +44,7 @@ export class EditorState {
     this.sourceBlob = blob;
     this.sourceRevision += 1;
     this.result = undefined;
-    this.ocrOverlays = [];
+    this.clearOcrOverlays();
+    this.ocrOverlaysEnabled = true;
   }
 }

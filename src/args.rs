@@ -69,6 +69,14 @@ fn default_contour_zero_weight() -> f32 {
     0.0
 }
 
+fn parse_ocr_megapixels(value: &str) -> Result<f32, String> {
+    let value = value.parse::<f32>().map_err(|_| "Expected megapixels from 0.1 to 16".to_string())?;
+    if !value.is_finite() || !(0.1..=16.0).contains(&value) {
+        return Err("OCR megapixels must be between 0.1 and 16".to_string());
+    }
+    Ok(value)
+}
+
 fn default_ocr_max_text_height_ratio() -> f32 {
     0.0
 }
@@ -412,6 +420,8 @@ pub struct RenderArgs {
     pub save: Option<String>,
     pub fft_debug_dir: Option<String>,
     pub ocr: bool,
+    #[serde(default = "default_true")]
+    pub ocr_auto_width: bool,
     pub ocr_min_confidence: f32,
     pub ocr_min_ascii_ratio: f32,
     pub ocr_model_tier: OcrModelTier,
@@ -432,11 +442,15 @@ pub struct RenderArgs {
     pub ocr_threads: usize,
     #[serde(default)]
     pub ocr_width: Option<u32>,
+    #[serde(default)]
+    pub ocr_megapixels: Option<f32>,
     pub ocr_max_side_len: u32,
     #[serde(default = "default_ocr_max_text_height_ratio")]
     pub ocr_max_text_height_ratio: f32,
     #[serde(default = "default_true")]
     pub ocr_figlet: bool,
+    #[serde(default)]
+    pub ocr_figlet_fill: bool,
     #[serde(default = "default_ocr_figlet_min_height")]
     pub ocr_figlet_min_height: f32,
     #[serde(default = "default_ocr_figlet_min_height_ratio")]
@@ -467,9 +481,26 @@ pub struct RenderArgs {
     pub figlet_dir: Option<std::path::PathBuf>,
 }
 
+impl RenderArgs {
+    /// Detection resolution never depends on the output grid or auto-fit toggle.
+    pub fn ocr_detection_budget(&self) -> Option<f32> {
+        self.ocr_megapixels.or_else(|| {
+            if self.ocr_width.is_some_and(|width| width > 0) || self.ocr_max_side_len != 3000 {
+                None
+            } else {
+                Some(1.5)
+            }
+        })
+    }
+}
+
 #[derive(Parser, Clone, Debug)]
 #[command(name = "img2irc", author, version = env!("IMG2IRC_VERSION"), about, long_about = None)]
 pub struct Args {
+    /// print bundled font licenses
+    #[arg(long, default_value_t = false)]
+    pub font_licenses: bool,
+
     /// print all configured glyph characters grouped by glyph set
     #[arg(long, default_value_t = false)]
     pub print_glyph_chars: bool,
@@ -558,9 +589,11 @@ pub struct Args {
     #[arg(long, default_value_t = false, conflicts_with = "blocks")]
     pub braille: bool,
 
-    /// use blocks
+    /// choose glyph sets
     #[arg(
-        long,
+        long = "glyphs",
+        alias = "blocks",
+        value_name = "GLYPHS",
         value_delimiter = ',',
         num_args = 0..,
         conflicts_with = "braille",
@@ -842,7 +875,9 @@ pub struct Args {
         long = "smooth-neighbors",
         alias = "score-fix-neighborhood-guard",
         default_value = "true",
-        action = clap::ArgAction::Set
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
     )]
     pub smooth_neighbors: bool,
 
@@ -907,6 +942,16 @@ pub struct Args {
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr: bool,
 
+    /// grow render width to fit every accepted OCR line (default: TUI on, CLI off)
+    #[arg(
+        long = "ocr-auto-width",
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_auto_width: Option<bool>,
+
     /// lock OCR detections and overlays so subsequent parameter changes do not regenerate them
     #[arg(long = "ocr-lock", default_value_t = false)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
@@ -958,7 +1003,13 @@ pub struct Args {
     pub ocr_dict: Option<String>,
 
     /// classify and correct per-line text orientation, matching PaddleOCR use_textline_orientation=True
-    #[arg(long = "ocr-textline-orientation", default_value_t = false, action = clap::ArgAction::Set)]
+    #[arg(
+        long = "ocr-textline-orientation",
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_textline_orientation: bool,
 
@@ -987,12 +1038,17 @@ pub struct Args {
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_threads: usize,
 
-    /// scale image to this width before OCR detection and text removal; 0 or omitted uses original
+    /// legacy detection-image width in pixels; independent of output width
     #[arg(long = "ocr-width", value_name = "PIXELS")]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_width: Option<u32>,
 
-    /// maximum side length for OCR detection preprocessing
+    /// detection image budget in megapixels (default 1.5); independent of auto output width
+    #[arg(long = "ocr-megapixels", value_parser = parse_ocr_megapixels)]
+    #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
+    pub ocr_megapixels: Option<f32>,
+
+    /// maximum side length for legacy OCR detection preprocessing
     #[arg(long = "ocr-max-side-len", default_value_t = 3000)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_max_side_len: u32,
@@ -1003,9 +1059,19 @@ pub struct Args {
     pub ocr_max_text_height_ratio: f32,
 
     /// allow OCR text to use configured FIGlet fonts; pass false to render plain text only
-    #[arg(long = "ocr-figlet", default_value_t = true, action = clap::ArgAction::Set)]
+    #[arg(
+        long = "ocr-figlet",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet: bool,
+
+    /// choose the largest FIGlet art that fits the allowed expanded box
+    #[arg(long = "ocr-figlet-fill", default_value_t = false)]
+    pub ocr_figlet_fill: bool,
 
     /// minimum detected text-box height in output rows before FIGlet may be used
     #[arg(long = "ocr-figlet-min-height", default_value_t = 2.0)]
@@ -1075,8 +1141,67 @@ pub struct Args {
     pub figlet_dir: Option<std::path::PathBuf>,
 }
 
+const OPTIONAL_BOOLEAN_VALUE_FLAGS: &[&str] = &[
+    "--smooth-neighbors",
+    "--score-fix-neighborhood-guard",
+    "--ocr-auto-width",
+    "--ocr-textline-orientation",
+    "--ocr-figlet",
+];
+
+/// Parse CLI arguments while keeping optional boolean values unambiguous.
+///
+/// A following `true` or `false` is treated as the option's explicit value;
+/// otherwise a bare option is rewritten to `--option=true` so it cannot consume
+/// the positional image path.
+pub fn parse_args_from<I, T>(args: I) -> Args
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString>,
+{
+    let mut args = args.into_iter().map(Into::into).peekable();
+    let mut normalized = Vec::new();
+    let mut options_ended = false;
+
+    while let Some(mut arg) = args.next() {
+        if options_ended {
+            normalized.push(arg);
+            continue;
+        }
+        if arg == "--" {
+            options_ended = true;
+            normalized.push(arg);
+            continue;
+        }
+
+        let is_optional_boolean = arg
+            .to_str()
+            .is_some_and(|value| OPTIONAL_BOOLEAN_VALUE_FLAGS.contains(&value));
+        if !is_optional_boolean {
+            normalized.push(arg);
+            continue;
+        }
+
+        let explicit_value = args
+            .peek()
+            .and_then(|value| value.to_str())
+            .filter(|value| matches!(*value, "true" | "false"))
+            .map(str::to_owned);
+        if let Some(value) = explicit_value {
+            args.next();
+            arg.push("=");
+            arg.push(value);
+        } else {
+            arg.push("=true");
+        }
+        normalized.push(arg);
+    }
+
+    Args::parse_from(normalized)
+}
+
 pub fn parse_args() -> Args {
-    let args = Args::parse();
+    let args = parse_args_from(std::env::args_os());
 
     #[cfg(not(feature = "ocr"))]
     if args.ocr {

@@ -23,6 +23,11 @@ async fn main() {
         exit(0);
     }
 
+    if args.font_licenses {
+        print!("{}", font::bundled_font_licenses());
+        exit(0);
+    }
+
     let log_config = simplelog::ConfigBuilder::new()
         .set_time_format_rfc3339()
         .build();
@@ -91,7 +96,7 @@ async fn main() {
                 }
             }
         }
-        let render_args = img2irc_rs::args_to_render_args(&args);
+        let render_args = img2irc_rs::args_to_tui_render_args(&args);
         if let Err(e) = img2irc_rs::tui::run(render_args).await {
             log::error!("Error running TUI: {}", e);
             std::process::exit(1);
@@ -167,34 +172,8 @@ async fn main() {
     {
         Ok(loaded_image) => {
             let ocr_detections = if render_args.ocr {
-                let ocr_image = match render_args.ocr_width {
-                    Some(w) if w > 0 && w != loaded_image.get_width() => {
-                        let h = ((w as f32 * loaded_image.get_height() as f32) / loaded_image.get_width() as f32).round().max(1.0) as u32;
-                        photon_rs::transform::resize(&loaded_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
-                    }
-                    _ => loaded_image.clone(),
-                };
-                let orig_w = loaded_image.get_width() as f32;
-                let orig_h = loaded_image.get_height() as f32;
-                let ocr_w = ocr_image.get_width() as f32;
-                let ocr_h = ocr_image.get_height() as f32;
-                match img2irc_rs::ocr::detect_text(&ocr_image, &render_args) {
-                    Ok(raw_detections) => {
-                        let scaled_detections: Vec<img2irc_rs::ocr::OcrDetection> = if (ocr_w - orig_w).abs() > 0.5 || (ocr_h - orig_h).abs() > 0.5 {
-                            raw_detections
-                                .into_iter()
-                                .map(|mut d| {
-                                    for pt in &mut d.polygon {
-                                        pt[0] = pt[0] * orig_w / ocr_w;
-                                        pt[1] = pt[1] * orig_h / ocr_h;
-                                    }
-                                    d
-                                })
-                                .collect()
-                        } else {
-                            raw_detections
-                        };
-                        let detections = scaled_detections;
+                match img2irc_rs::ocr::detect_text(&loaded_image, &render_args) {
+                    Ok(detections) => {
                         img2irc_rs::ocr::log_detections(&detections, &render_args);
                         if !img2irc_rs::ocr::has_renderable_detections(&detections, &render_args, loaded_image.get_width(), loaded_image.get_height()) {
                             log::info!("No renderable text detected via OCR. Falling back to standard render.");
@@ -220,6 +199,10 @@ async fn main() {
             };
 
             // 2. Resolve auto font size based on loaded image if not explicitly set (> 0)
+            if render_args.ocr && render_args.ocr_auto_width {
+                render_args.width = None;
+                render_args.height = None;
+            }
             if render_args.font_size == 0.0 {
                 img2irc_rs::resolve_auto_font_size(&mut render_args, &loaded_image, &initial_glyph_store);
             }
@@ -238,6 +221,9 @@ async fn main() {
             );
 
             if let Some(detections) = &ocr_detections {
+                img2irc_rs::ocr::choose_text_render_geometry(
+                    &mut render_args, &loaded_image, &glyph_store, detections,
+                );
                 let overlays = img2irc_rs::ocr::detections_to_overlays(
                     &loaded_image,
                     &base_image,

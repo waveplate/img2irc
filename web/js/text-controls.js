@@ -163,14 +163,14 @@ export class TextControls {
 
   setOcrOverlays(overlays) {
     const previous = this.#selected;
-    this.#state.ocrOverlays = overlays;
+    this.#state.replaceOcrOverlays(overlays);
     if (previous?.kind === "ocr") this.#selected = overlays[0];
     this.#render();
   }
 
   clearOcrOverlays() {
     if (this.#selected?.kind === "ocr") this.#selected = undefined;
-    this.#state.ocrOverlays = [];
+    this.#state.clearOcrOverlays();
     this.#render();
   }
 
@@ -184,7 +184,9 @@ export class TextControls {
 
   #entries() {
     return [
-      ...this.#state.ocrOverlays.map((overlay, index) => ({ overlay, key: `ocr:${index}` })),
+      ...(this.#state.ocrOverlaysEnabled
+        ? this.#state.ocrOverlays.map((overlay, index) => ({ overlay, key: `ocr:${index}` }))
+        : []),
       ...this.#state.manualOverlays.map((overlay, index) => ({ overlay, key: `manual:${index}` })),
     ];
   }
@@ -199,15 +201,21 @@ export class TextControls {
     return this.#entries().find((entry) => entry.overlay === overlay)?.key;
   }
 
+  #notifyOverlayChanged(overlay) {
+    if (overlay?.kind === "ocr") this.#state.markOcrOverlaysEdited();
+    this.#changed();
+  }
+
   #deleteSelected() {
     if (!this.#selected) return;
+    const deleted = this.#selected;
     for (const collection of [this.#state.ocrOverlays, this.#state.manualOverlays]) {
       const index = collection.indexOf(this.#selected);
       if (index >= 0) collection.splice(index, 1);
     }
     this.#selected = undefined;
     this.#render();
-    this.#changed();
+    this.#notifyOverlayChanged(deleted);
   }
 
   #entryLabel(overlay, index) {
@@ -335,7 +343,7 @@ export class TextControls {
     ]);
     if (previousArtKey !== nextArtKey) this.#invalidateArt(overlay);
     this.#render();
-    this.#changed();
+    this.#notifyOverlayChanged(overlay);
   }
 
   #overlayDimensions(overlay) {
@@ -346,6 +354,14 @@ export class TextControls {
     };
   }
 
+  #positionBox(box, geometry) {
+    const dimensions = this.#overlayDimensions(geometry);
+    box.style.left = `${geometry.x * 100 / this.#columns}%`;
+    box.style.top = `${geometry.y * 100 / this.#rows}%`;
+    box.style.width = `${dimensions.width * 100 / this.#columns}%`;
+    box.style.height = `${dimensions.height * 100 / this.#rows}%`;
+  }
+
   #renderLayer(draft) {
     const entries = this.#entries();
     this.#layer.hidden = !this.#interactive || this.#columns < 1 || this.#rows < 1;
@@ -354,7 +370,6 @@ export class TextControls {
       return;
     }
     const boxes = entries.map(({ overlay, key }, index) => {
-      const dimensions = this.#overlayDimensions(overlay);
       const box = document.createElement("div");
       box.className = "overlay-box";
       box.dataset.overlayKey = key;
@@ -363,10 +378,7 @@ export class TextControls {
       box.tabIndex = 0;
       box.setAttribute("aria-label", `${this.#entryLabel(overlay, index)}; drag to move`);
       box.setAttribute("aria-selected", String(overlay === this.#selected));
-      box.style.left = `${overlay.x * 100 / this.#columns}%`;
-      box.style.top = `${overlay.y * 100 / this.#rows}%`;
-      box.style.width = `${dimensions.width * 100 / this.#columns}%`;
-      box.style.height = `${dimensions.height * 100 / this.#rows}%`;
+      this.#positionBox(box, overlay);
       const handle = document.createElement("span");
       handle.className = "overlay-resize-handle";
       handle.setAttribute("aria-hidden", "true");
@@ -376,10 +388,7 @@ export class TextControls {
     if (draft) {
       const box = document.createElement("div");
       box.className = "overlay-draft";
-      box.style.left = `${draft.x * 100 / this.#columns}%`;
-      box.style.top = `${draft.y * 100 / this.#rows}%`;
-      box.style.width = `${draft.width * 100 / this.#columns}%`;
-      box.style.height = `${draft.height * 100 / this.#rows}%`;
+      this.#positionBox(box, draft);
       boxes.push(box);
     }
     this.#layer.replaceChildren(...boxes);
@@ -405,20 +414,28 @@ export class TextControls {
         pointerId: event.pointerId,
         start: cell,
         overlay,
+        element: box,
         original: { x: overlay.x, y: overlay.y, ...dimensions },
         changed: false,
       };
       this.#renderEditor();
-      this.#renderLayer();
+      this.#element("overlay-list").value = box.dataset.overlayKey;
+      this.#layer.querySelectorAll(".overlay-box").forEach((candidate) => {
+        candidate.setAttribute("aria-selected", String(candidate === box));
+      });
     } else {
+      const draft = document.createElement("div");
+      draft.className = "overlay-draft";
+      this.#positionBox(draft, { x: cell.x, y: cell.y, width: 1, height: 1 });
+      this.#layer.append(draft);
       this.#gesture = {
         mode: "create",
         pointerId: event.pointerId,
         start: cell,
         current: cell,
+        element: draft,
         changed: false,
       };
-      this.#renderLayer({ x: cell.x, y: cell.y, width: 1, height: 1 });
     }
     this.#layer.setPointerCapture(event.pointerId);
   }
@@ -438,7 +455,7 @@ export class TextControls {
       gesture.current = cell;
       const x = Math.min(gesture.start.x, cell.x);
       const y = Math.min(gesture.start.y, cell.y);
-      this.#renderLayer({
+      this.#positionBox(gesture.element, {
         x,
         y,
         width: Math.abs(cell.x - gesture.start.x) + 1,
@@ -471,8 +488,7 @@ export class TextControls {
       this.#invalidateArt(gesture.overlay);
     }
     gesture.changed = true;
-    this.#renderEditor();
-    this.#renderLayer();
+    this.#positionBox(gesture.element, gesture.overlay);
   }
 
   #finishPointerGesture(event) {
@@ -499,7 +515,7 @@ export class TextControls {
       this.#changed();
     } else {
       this.#render();
-      if (gesture.changed) this.#changed();
+      if (gesture.changed) this.#notifyOverlayChanged(gesture.overlay);
     }
   }
 
@@ -526,7 +542,7 @@ export class TextControls {
     overlay.x = Math.max(0, Math.min(this.#columns - dimensions.width, overlay.x + direction[0]));
     overlay.y = Math.max(0, Math.min(this.#rows - dimensions.height, overlay.y + direction[1]));
     this.#render();
-    this.#changed();
+    this.#notifyOverlayChanged(overlay);
   }
 
   #focusText() {

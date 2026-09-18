@@ -3,6 +3,10 @@ pub mod general;
 pub mod glyphs;
 pub mod pipeline;
 pub mod text;
+mod replace_colour;
+use replace_colour::*;
+mod figlet_picker;
+use figlet_picker::*;
 pub(crate) use general::*;
 pub(crate) use glyphs::*;
 pub(crate) use pipeline::*;
@@ -108,15 +112,17 @@ enum ControlId {
     GraphicsPreview,
     Ocr,
     OcrLock,
-    OcrWidth,
+    OcrAutoWidth,
+    OcrMegapixels,
     OcrFiglet,
     OcrFigletMinHeight,
     OcrFigletMinHeightRatio,
+    OcrFigletFill,
     OcrFigletMaxWidthRatio,
     OcrFigletMaxHeightRatio,
     OcrMinConfidence,
     OcrModelTier,
-    OcrMaxSideLen,
+    OcrAdvanced,
     OcrMaxTextHeight,
     OcrThreads,
 
@@ -198,15 +204,17 @@ impl ControlId {
             ControlId::GraphicsPreview => "graphics-preview",
             ControlId::Ocr => "ocr",
             ControlId::OcrLock => "ocr-lock",
-            ControlId::OcrWidth => "ocr-width",
+            ControlId::OcrAutoWidth => "ocr-auto-width",
+            ControlId::OcrMegapixels => "ocr-megapixels",
             ControlId::OcrFiglet => "ocr-figlet",
             ControlId::OcrFigletMinHeight => "ocr-figlet-min-height",
             ControlId::OcrFigletMinHeightRatio => "ocr-figlet-min-height-ratio",
+            ControlId::OcrFigletFill => "ocr-figlet-fill",
             ControlId::OcrFigletMaxWidthRatio => "ocr-figlet-max-width-ratio",
             ControlId::OcrFigletMaxHeightRatio => "ocr-figlet-max-height-ratio",
             ControlId::OcrMinConfidence => "ocr-confidence",
             ControlId::OcrModelTier => "ocr-model",
-            ControlId::OcrMaxSideLen => "ocr-max-side",
+            ControlId::OcrAdvanced => "ocr-advanced",
             ControlId::OcrMaxTextHeight => "ocr-max-height",
             ControlId::OcrThreads => "ocr-threads",
             ControlId::HighlightDisc => "show-discontinuities",
@@ -282,15 +290,17 @@ impl ControlId {
         matches!(
             self,
             ControlId::OcrLock
-                | ControlId::OcrWidth
+                | ControlId::OcrMegapixels
+                | ControlId::OcrAutoWidth
                 | ControlId::OcrFiglet
                 | ControlId::OcrFigletMinHeight
                 | ControlId::OcrFigletMinHeightRatio
+                | ControlId::OcrFigletFill
                 | ControlId::OcrFigletMaxWidthRatio
                 | ControlId::OcrFigletMaxHeightRatio
                 | ControlId::OcrMinConfidence
                 | ControlId::OcrModelTier
-                | ControlId::OcrMaxSideLen
+                | ControlId::OcrAdvanced
                 | ControlId::OcrMaxTextHeight
                 | ControlId::OcrThreads
         )
@@ -300,14 +310,68 @@ impl ControlId {
         cfg!(feature = "ocr") || (self != ControlId::Ocr && !self.requires_ocr())
     }
 
+    fn disabled_reason(self, ocr: bool, auto_width: bool, locked: bool) -> Option<&'static str> {
+        if !ocr {
+            return None;
+        }
+        if locked
+            && ((self.requires_ocr() && !matches!(self, Self::OcrLock | Self::OcrAdvanced))
+                || matches!(self, Self::Width | Self::AutoOptimize))
+        {
+            return Some(
+                "Unlock OCR to change this setting; detections, overlays and grid size are frozen.",
+            );
+        }
+        if auto_width {
+            match self {
+                Self::Width => return Some("Auto Output Width calculates the output width from detected text. Turn it off to set a manual width."),
+                Self::AutoOptimize => return Some("Turn off Auto OCR Width before optimizing manual render dimensions."),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn help(self) -> &'static str {
+        match self {
+            Self::Ocr => "Recognize text in the image, remove its original pixels and preserve it as editable text overlays.",
+            Self::OcrAutoWidth => "Fit the output grid to recognized text. OCR input resolution is controlled separately by OCR Megapixels and remains editable.",
+            Self::OcrLock => "Freeze current detections, text overlays and grid size while you adjust the image or edit text. Unlock to apply OCR settings again.",
+            Self::OcrMegapixels => "Recognition detail in millions of pixels. Higher values retain small text but take longer. Keeps aspect ratio; never enlarges the source.",
+            Self::OcrMinConfidence => "Keep text detections scoring at least this percentage. Raise it to reject uncertain text; lower it to recover faint or difficult text.",
+            Self::OcrFigletFill => "Choose the largest font that fits the permitted extra width and height, constrained by nearby text and the canvas. Does not increase output width.",
+            Self::OcrFiglet => "Render large detected text with decorative multi-row FIGlet fonts when they fit. Smaller text stays plain.",
+            Self::OcrAdvanced => "Show or hide model, performance, text filtering and large-text styling settings. Hiding them preserves their values.",
+            Self::OcrModelTier => "Recognition model size: Tiny is fastest; larger models use more memory and may improve difficult text recognition.",
+            Self::OcrThreads => "Number of CPU workers used for OCR inference. More workers can speed recognition but use more CPU.",
+            Self::OcrMaxTextHeight => "Ignore text taller than this percentage of the typical detected line. 0 keeps all text sizes; 200 allows lines up to twice as tall.",
+            Self::OcrFigletMinHeight => "Minimum detected height in output rows before decorative text styling is allowed.",
+            Self::OcrFigletMinHeightRatio => "Minimum text height relative to typical lines before styling. 125 means 25% taller; 0 disables this check.",
+            Self::OcrFigletMaxWidthRatio => "Extra horizontal space decorative text may use beyond its box. 50 allows 50% extra, constrained by neighboring text.",
+            Self::OcrFigletMaxHeightRatio => "Extra vertical space decorative text may use beyond its box. 50 allows 50% extra, constrained by neighboring text.",
+            Self::Width => "Output width in character columns. 0 uses automatic image sizing. Auto OCR Width manages this when OCR is enabled.",
+            Self::FontSize => "Size of the font used to match image regions to glyphs. 0 chooses a size automatically.",
+            _ => "Arrow keys or mouse wheel adjust this option. Enter toggles or edits it; numeric values can also be typed directly.",
+        }
+    }
+
     fn requires_figlet(self) -> bool {
         matches!(
             self,
             ControlId::OcrFigletMinHeight
                 | ControlId::OcrFigletMinHeightRatio
+                | ControlId::OcrFigletFill
                 | ControlId::OcrFigletMaxWidthRatio
                 | ControlId::OcrFigletMaxHeightRatio
         )
+    }
+
+    fn requires_ocr_advanced(self) -> bool {
+        self.requires_figlet()
+            || matches!(
+                self,
+                Self::OcrModelTier | Self::OcrMaxTextHeight | Self::OcrThreads
+            )
     }
 
     fn requires_advanced(self) -> bool {
@@ -335,7 +399,7 @@ impl ControlId {
     }
 
     fn conditional_depth(self) -> u16 {
-        if self.requires_figlet() || self.requires_advanced() {
+        if self.requires_ocr_advanced() || self.requires_advanced() {
             2
         } else if self.requires_ocr() || self.requires_score_fix() {
             1
@@ -409,18 +473,46 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
+        id: ControlId::OcrAutoWidth,
+        label: "Auto Output Width",
+        kind: ControlKind::Toggle { default: true },
+    },
+    ControlDef {
         id: ControlId::OcrLock,
         label: "Lock OCR",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
+        id: ControlId::OcrMegapixels,
+        label: "OCR Megapixels",
+        kind: ControlKind::Slider {
+            min: 1,
+            max: 160,
+            default: 15,
+        },
+    },
+    ControlDef {
+        id: ControlId::OcrMinConfidence,
+        label: "Min Confidence %",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: 100,
+            default: 70,
+        },
+    },
+    ControlDef {
         id: ControlId::OcrFiglet,
-        label: "OCR FIGlet",
+        label: "Style Large Text",
         kind: ControlKind::Toggle { default: true },
     },
     ControlDef {
+        id: ControlId::OcrFigletFill,
+        label: "Fill Style Space",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
         id: ControlId::OcrFigletMinHeight,
-        label: "FIG Min Rows",
+        label: "Min Style Rows",
         kind: ControlKind::Slider {
             min: 0,
             max: 12,
@@ -429,7 +521,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::OcrFigletMinHeightRatio,
-        label: "FIG Min H %",
+        label: "Min Relative Size %",
         kind: ControlKind::Slider {
             min: 0,
             max: 500,
@@ -438,7 +530,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::OcrFigletMaxWidthRatio,
-        label: "FIG Max W %",
+        label: "Extra Style Width %",
         kind: ControlKind::Slider {
             min: 0,
             max: 200,
@@ -447,7 +539,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::OcrFigletMaxHeightRatio,
-        label: "FIG Max H %",
+        label: "Extra Style Height %",
         kind: ControlKind::Slider {
             min: 0,
             max: 200,
@@ -455,43 +547,21 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::OcrMinConfidence,
-        label: "OCR Conf %",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 100,
-            default: 70,
-        },
-    },
-    ControlDef {
-        id: ControlId::OcrWidth,
-        label: "OCR Width",
-        kind: ControlKind::Slider {
-            min: 0,
-            max: 8192,
-            default: 0,
-        },
+        id: ControlId::OcrAdvanced,
+        label: "Advanced OCR",
+        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::OcrModelTier,
-        label: "OCR Model",
+        label: "Recognition Model",
         kind: ControlKind::Enum {
             options: &["Tiny", "Small", "Medium"],
             default: 0,
         },
     },
     ControlDef {
-        id: ControlId::OcrMaxSideLen,
-        label: "OCR Max Side",
-        kind: ControlKind::Slider {
-            min: 320,
-            max: 5000,
-            default: 3000,
-        },
-    },
-    ControlDef {
         id: ControlId::OcrMaxTextHeight,
-        label: "OCR Max H %",
+        label: "Max Text Size %",
         kind: ControlKind::Slider {
             min: 0,
             max: 1000,
@@ -500,7 +570,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::OcrThreads,
-        label: "OCR Threads",
+        label: "Worker Threads",
         kind: ControlKind::Slider {
             min: 1,
             max: 32,
@@ -915,6 +985,10 @@ impl CatalogItem {
             Some(ImageEffect::Eyedropper) => "select-color",
             Some(ImageEffect::Brightness(_)) => "brightness",
             Some(ImageEffect::Contrast(_)) => "contrast",
+            Some(ImageEffect::LumaContrast(_)) => "luma-contrast",
+            Some(ImageEffect::MedianBlur(_)) => "median-blur",
+            Some(ImageEffect::DarkLines(_) | ImageEffect::LightLines(_)) => "line-thickness",
+            Some(ImageEffect::ReplaceColour { .. }) => "replace-colour",
             Some(ImageEffect::Saturation(_)) => "saturation",
             Some(ImageEffect::Gamma(_)) => "gamma",
             Some(ImageEffect::Hue(_)) => "hue",
@@ -978,6 +1052,14 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
         effect: Some(crate::pipeline::ImageEffect::Contrast(0.0)),
     },
     CatalogItem {
+        label: "Replace Colour",
+        effect: Some(crate::pipeline::ImageEffect::ReplaceColour { from: [255; 3], to: [0; 3], tolerance: 5.0 }),
+    },
+    CatalogItem {
+        label: "Luma Contrast",
+        effect: Some(crate::pipeline::ImageEffect::LumaContrast(0.0)),
+    },
+    CatalogItem {
         label: "Saturation",
         effect: Some(crate::pipeline::ImageEffect::Saturation(0.0)),
     },
@@ -1032,6 +1114,14 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
     CatalogItem {
         label: "── Effects ──",
         effect: None,
+    },
+    CatalogItem {
+        label: "Median Blur",
+        effect: Some(crate::pipeline::ImageEffect::MedianBlur(1)),
+    },
+    CatalogItem {
+        label: "Line Thickness (+dark / -light)",
+        effect: Some(crate::pipeline::ImageEffect::DarkLines(1)),
     },
     CatalogItem {
         label: "Gauss Blur",
@@ -1154,6 +1244,7 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
 fn normalized_layout_id(id: &str) -> String {
     let normalized = id.trim().to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
+        "ocr-width" | "ocr-max-side" => "ocr-megapixels".to_string(),
         "score-fix" => "smooth".to_string(),
         "score-fix-candidates" => "smooth-candidates".to_string(),
         "score-fix-orderings" => "smooth-orders".to_string(),
@@ -1199,6 +1290,22 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
         }
     }
 
+    // Treat OCR as a group, including new controls absent from older layouts.
+    // Preserve the parent's position and explicit hidden entries.
+    if let Some(parent) = arranged.iter().position(|control| control.id == ControlId::Ocr) {
+        let insertion = arranged[..=parent].iter().filter(|control| !control.id.requires_ocr()).count();
+        let children = GENERAL_CONTROLS.iter().filter(|control| control.id.requires_ocr()
+            && arranged.iter().any(|existing| existing.id == control.id)).copied().collect::<Vec<_>>();
+        arranged.retain(|control| !control.id.requires_ocr());
+        let basic = children.iter().filter(|control| !control.id.requires_ocr_advanced()
+            && control.id != ControlId::OcrAdvanced).copied();
+        let advanced_toggle = children.iter().filter(|control| control.id == ControlId::OcrAdvanced).copied();
+        let advanced = children.iter().filter(|control| control.id.requires_ocr_advanced()).copied();
+        arranged.splice(insertion..insertion, basic.chain(advanced_toggle).chain(advanced));
+    } else {
+        arranged.retain(|control| !control.id.requires_ocr());
+    }
+
     // Several input handlers expect the General tab to retain a focusable
     // control. Keep Mode as a safe anchor if a layout hides every item.
     if arranged.is_empty() {
@@ -1220,6 +1327,7 @@ fn visible_general_controls(
     figlet_enabled: bool,
     score_fix_enabled: bool,
     show_advanced: bool,
+    show_ocr_advanced: bool,
 ) -> Vec<ControlDef> {
     controls
         .iter()
@@ -1230,6 +1338,7 @@ fn visible_general_controls(
         .filter(|control| figlet_enabled || !control.id.requires_figlet())
         .filter(|control| score_fix_enabled || !control.id.requires_score_fix())
         .filter(|control| show_advanced || !control.id.requires_advanced())
+        .filter(|control| show_ocr_advanced || !control.id.requires_ocr_advanced())
         .copied()
         .collect()
 }
@@ -1315,6 +1424,150 @@ mod ui_layout_tests {
     use clap::Parser;
 
     #[test]
+    fn older_layouts_keep_all_ocr_options_beside_the_parent() {
+        if !cfg!(feature = "ocr") {
+            return;
+        }
+        let layout = crate::config::ItemLayout {
+            order: vec![
+                "ocr".into(),
+                "ocr-width".into(),
+                "ocr-max-side".into(),
+                "font".into(),
+                "width".into(),
+            ],
+            hidden: vec!["ocr-threads".into()],
+        };
+        let controls = arrange_general_controls(&layout);
+        assert_eq!(controls[0].id, ControlId::Ocr);
+        let end = controls
+            .iter()
+            .skip(1)
+            .take_while(|c| c.id.requires_ocr())
+            .count()
+            + 1;
+        assert!(controls[1..end]
+            .iter()
+            .any(|c| c.id == ControlId::OcrAutoWidth));
+        assert!(controls[1..end].iter().any(|c| c.id == ControlId::OcrLock));
+        assert_eq!(
+            controls[1..end]
+                .iter()
+                .filter(|c| c.id == ControlId::OcrMegapixels)
+                .count(),
+            1
+        );
+        assert!(!controls[end..].iter().any(|c| c.id.requires_ocr()));
+        assert!(!controls.iter().any(|c| c.id == ControlId::OcrThreads));
+        let toggle = controls
+            .iter()
+            .position(|c| c.id == ControlId::OcrAdvanced)
+            .unwrap();
+        assert!(controls[1..toggle]
+            .iter()
+            .all(|c| !c.id.requires_ocr_advanced()));
+        assert!(controls[toggle + 1..end]
+            .iter()
+            .all(|c| c.id.requires_ocr_advanced()));
+    }
+
+    #[test]
+    fn ocr_advanced_is_independent_of_smoothing_advanced() {
+        if !cfg!(feature = "ocr") {
+            return;
+        }
+        let controls = arrange_general_controls(&crate::config::ItemLayout::default());
+        let collapsed = visible_general_controls(&controls, true, true, true, true, false);
+        assert!(collapsed.iter().any(|c| c.id == ControlId::OcrAdvanced));
+        assert!(!collapsed.iter().any(|c| c.id.requires_ocr_advanced()));
+        let expanded = visible_general_controls(&controls, true, true, true, false, true);
+        assert!(expanded.iter().any(|c| c.id.requires_ocr_advanced()));
+        assert!(!expanded.iter().any(|c| c.id.requires_advanced()));
+    }
+
+    #[test]
+    fn ocr_input_budget_cache_ignores_inactive_manual_settings() {
+        let parsed = crate::args::Args::parse_from(["img2irc"]);
+        let mut args = crate::args_to_tui_render_args(&parsed);
+        let automatic = OcrInferenceKey::from(&args);
+        args.ocr_megapixels = Some(8.0);
+        args.ocr_width = Some(400);
+        args.ocr_max_side_len = 500;
+        assert_eq!(OcrInferenceKey::from(&args), automatic);
+        args.ocr_auto_width = false;
+        let manual = OcrInferenceKey::from(&args);
+        assert_ne!(manual, automatic);
+        args.ocr_width = Some(800);
+        args.ocr_max_side_len = 900;
+        assert_eq!(OcrInferenceKey::from(&args), manual);
+        args.ocr_megapixels = Some(2.0);
+        assert_ne!(OcrInferenceKey::from(&args), manual);
+    }
+
+    #[test]
+    fn disabled_ocr_controls_reject_edits_and_explain_why_on_screen() {
+        if !cfg!(feature = "ocr") {
+            return;
+        }
+        let parsed = crate::args::Args::parse_from(["img2irc", "--ocr"]);
+        let args = crate::args_to_render_args(&parsed);
+        let flag = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (_result_tx, result_rx) = mpsc::channel(1);
+        let mut app = App::new(args, tx, result_rx, flag);
+        assert!(!app.show_ocr_advanced);
+        app.selected_control = app
+            .tab_controls(0)
+            .iter()
+            .position(|c| c.id == ControlId::OcrMegapixels)
+            .unwrap();
+        let original = app.get_value(ControlId::OcrMegapixels);
+        let original_width = app.width;
+        app.set_value(ControlId::Width, 999);
+        assert_eq!(app.width, original_width);
+        adjust_control(&mut app, 10);
+        reset_control(&mut app);
+        app.set_value(ControlId::OcrMegapixels, 90);
+        assert_eq!(app.get_value(ControlId::OcrMegapixels), original);
+        assert!(!app.args_dirty);
+
+        let backend = ratatui::backend::TestBackend::new(64, 30);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| general::render_controls(frame, &mut app, frame.area()))
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("OCR Megapixels"));
+        assert!(screen.contains("Disabled"));
+        assert!(screen.contains("manages detection detail"), "{screen}");
+        assert!(!screen.contains("Recognition Model"));
+        let row = app.control_areas[app.selected_control];
+        let label_row = (row.x..row.right()).map(|x| terminal.backend().buffer()[(x, row.y)].symbol()).collect::<String>();
+        assert!(label_row.contains("OCR Megapixels"));
+        for (width, height) in [(40, 24), (24, 12), (8, 3)] {
+            let mut small = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            small.draw(|frame| general::render_controls(frame, &mut app, frame.area())).unwrap();
+        }
+
+        app.set_value(ControlId::OcrAutoWidth, 0);
+        app.set_value(ControlId::OcrMegapixels, 90);
+        assert_eq!(app.get_value(ControlId::OcrMegapixels), 90);
+        app.set_value(ControlId::OcrLock, 1);
+        app.set_value(ControlId::OcrMegapixels, 40);
+        assert_eq!(app.get_value(ControlId::OcrMegapixels), 90);
+        app.set_value(ControlId::OcrAdvanced, 1);
+        assert!(app.show_ocr_advanced);
+        app.set_value(ControlId::OcrLock, 0);
+        assert!(!app.ocr_lock);
+    }
+
+    #[test]
     fn layout_changes_do_not_invalidate_ocr_inference() {
         let parsed = crate::args::Args::parse_from(["img2irc"]);
         let mut args = crate::args_to_render_args(&parsed);
@@ -1376,8 +1629,8 @@ mod ui_layout_tests {
             return;
         }
 
-        let disabled = visible_general_controls(&controls, false, true, true, true);
-        let enabled = visible_general_controls(&controls, true, true, true, true);
+        let disabled = visible_general_controls(&controls, false, true, true, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::Ocr));
         assert!(!disabled.iter().any(|control| control.id.requires_ocr()));
@@ -1395,8 +1648,8 @@ mod ui_layout_tests {
             return;
         }
 
-        let disabled = visible_general_controls(&controls, true, false, true, true);
-        let enabled = visible_general_controls(&controls, true, true, true, true);
+        let disabled = visible_general_controls(&controls, true, false, true, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::OcrFiglet));
         assert!(!disabled.iter().any(|control| control.id.requires_figlet()));
@@ -1406,8 +1659,8 @@ mod ui_layout_tests {
     #[test]
     fn hides_score_fix_children_until_score_fix_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
-        let disabled = visible_general_controls(&controls, true, true, false, true);
-        let enabled = visible_general_controls(&controls, true, true, true, true);
+        let disabled = visible_general_controls(&controls, true, true, false, true, true);
+        let enabled = visible_general_controls(&controls, true, true, true, true, true);
 
         assert!(disabled.iter().any(|control| control.id == ControlId::ScoreFix));
         assert!(!disabled.iter().any(|control| control.id.requires_score_fix()));
@@ -1432,7 +1685,7 @@ mod ui_layout_tests {
     #[test]
     fn discontinuity_debug_controls_are_not_visible() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
-        let visible = visible_general_controls(&controls, true, true, true, true);
+        let visible = visible_general_controls(&controls, true, true, true, true, true);
 
         assert!(!visible.iter().any(|control| matches!(
             control.id,
@@ -2169,9 +2422,7 @@ impl App {
                 self.reapply_overlays();
             }
             TextFieldFocus::FigletButton => toggle_text_overlay_figlet(self, selected),
-            TextFieldFocus::FigletFontButton => {
-                cycle_text_overlay_figlet_font(self, selected, 1)
-            }
+            TextFieldFocus::FigletFontButton => open_figlet_picker(self, selected),
             TextFieldFocus::BoldButton => {
                 self.render_args.overlays[selected].bold =
                     !self.render_args.overlays[selected].bold;
@@ -2545,15 +2796,17 @@ pub(crate) struct App {
     render_mode_idx: usize,
     ocr: bool,
     ocr_lock: bool,
+    ocr_auto_width: bool,
     ocr_figlet: bool,
     ocr_figlet_min_height: i32,
     ocr_figlet_min_height_ratio: i32,
+    ocr_figlet_fill: bool,
     ocr_figlet_max_width_ratio: i32,
     ocr_figlet_max_height_ratio: i32,
     ocr_min_confidence: i32,
-    ocr_width: i32,
+    ocr_megapixels: i32,
+    show_ocr_advanced: bool,
     ocr_model_tier_idx: usize,
-    ocr_max_side_len: i32,
     ocr_max_text_height_ratio: i32,
     ocr_threads: i32,
     dither: i32,
@@ -2676,6 +2929,9 @@ pub(crate) struct App {
 
     // Eyedropper state
     eyedropper_color: Option<(u8, u8, u8)>,
+    replace_colour_dialog: Option<ReplaceColourDialog>,
+    replace_colour_button_area: Rect,
+    figlet_picker: Option<FigletPicker>,
     is_optimizing: bool,
     optimization_progress: String,
     optimization_best_score: Option<f64>,
@@ -3236,22 +3492,24 @@ impl App {
             width: render_args.width.unwrap_or(0) as i32,
             ocr: render_args.ocr,
             ocr_lock: render_args.ocr_lock,
+            ocr_auto_width: render_args.ocr_auto_width,
             ocr_figlet: render_args.ocr_figlet,
             ocr_figlet_min_height: render_args.ocr_figlet_min_height.ceil() as i32,
             ocr_figlet_min_height_ratio:
                 (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32,
+            ocr_figlet_fill: render_args.ocr_figlet_fill,
             ocr_figlet_max_width_ratio:
                 (render_args.ocr_figlet_max_width_ratio * 100.0).round() as i32,
             ocr_figlet_max_height_ratio:
                 (render_args.ocr_figlet_max_height_ratio * 100.0).round() as i32,
             ocr_min_confidence: (render_args.ocr_min_confidence * 100.0).round() as i32,
-            ocr_width: render_args.ocr_width.unwrap_or(0) as i32,
+            ocr_megapixels: (render_args.ocr_megapixels.unwrap_or(1.5) * 10.0).round() as i32,
+            show_ocr_advanced: false,
             ocr_model_tier_idx: match render_args.ocr_model_tier {
                 OcrModelTier::Tiny => 0,
                 OcrModelTier::Small => 1,
                 OcrModelTier::Medium => 2,
             },
-            ocr_max_side_len: render_args.ocr_max_side_len as i32,
             ocr_max_text_height_ratio: (render_args.ocr_max_text_height_ratio * 100.0).round()
                 as i32,
             ocr_threads: render_args.ocr_threads as i32,
@@ -3401,6 +3659,9 @@ impl App {
             options_pane_area: Rect::default(),
             options_areas: Vec::new(),
             eyedropper_color: None,
+            replace_colour_dialog: None,
+            replace_colour_button_area: Rect::default(),
+            figlet_picker: None,
             is_optimizing: false,
             optimization_progress: String::new(),
             optimization_best_score: None,
@@ -3475,22 +3736,23 @@ impl App {
         self.width = render_args.width.unwrap_or(0) as i32;
         self.ocr = render_args.ocr;
         self.ocr_lock = render_args.ocr_lock;
+        self.ocr_auto_width = render_args.ocr_auto_width;
         self.ocr_figlet = render_args.ocr_figlet;
         self.ocr_figlet_min_height = render_args.ocr_figlet_min_height.ceil() as i32;
         self.ocr_figlet_min_height_ratio =
             (render_args.ocr_figlet_min_height_ratio * 100.0).round() as i32;
+        self.ocr_figlet_fill = render_args.ocr_figlet_fill;
         self.ocr_figlet_max_width_ratio =
             (render_args.ocr_figlet_max_width_ratio * 100.0).round() as i32;
         self.ocr_figlet_max_height_ratio =
             (render_args.ocr_figlet_max_height_ratio * 100.0).round() as i32;
         self.ocr_min_confidence = (render_args.ocr_min_confidence * 100.0).round() as i32;
-        self.ocr_width = render_args.ocr_width.unwrap_or(0) as i32;
+        self.ocr_megapixels = (render_args.ocr_megapixels.unwrap_or(1.5) * 10.0).round() as i32;
         self.ocr_model_tier_idx = match render_args.ocr_model_tier {
             OcrModelTier::Tiny => 0,
             OcrModelTier::Small => 1,
             OcrModelTier::Medium => 2,
         };
-        self.ocr_max_side_len = render_args.ocr_max_side_len as i32;
         self.ocr_max_text_height_ratio =
             (render_args.ocr_max_text_height_ratio * 100.0).round() as i32;
         self.ocr_threads = render_args.ocr_threads as i32;
@@ -3804,15 +4066,17 @@ impl App {
             ControlId::GraphicsPreview => self.graphics_preview as i32,
             ControlId::Ocr => self.ocr as i32,
             ControlId::OcrLock => self.ocr_lock as i32,
+            ControlId::OcrAutoWidth => self.ocr_auto_width as i32,
             ControlId::OcrFiglet => self.ocr_figlet as i32,
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height,
             ControlId::OcrFigletMinHeightRatio => self.ocr_figlet_min_height_ratio,
+            ControlId::OcrFigletFill => self.ocr_figlet_fill as i32,
             ControlId::OcrFigletMaxWidthRatio => self.ocr_figlet_max_width_ratio,
             ControlId::OcrFigletMaxHeightRatio => self.ocr_figlet_max_height_ratio,
             ControlId::OcrMinConfidence => self.ocr_min_confidence,
-            ControlId::OcrWidth => self.ocr_width,
+            ControlId::OcrMegapixels => self.ocr_megapixels,
+            ControlId::OcrAdvanced => self.show_ocr_advanced as i32,
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
-            ControlId::OcrMaxSideLen => self.ocr_max_side_len,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio,
             ControlId::OcrThreads => self.ocr_threads,
             ControlId::TrimTop => self.trim_top,
@@ -3887,6 +4151,7 @@ impl App {
     }
 
     fn set_value(&mut self, id: ControlId, val: i32) {
+        if self.control_disabled_reason(id).is_some() { return; }
         match id {
             ControlId::Width => {
                 let old_w = self.width;
@@ -3909,11 +4174,13 @@ impl App {
             }
             ControlId::Ocr => self.ocr = val != 0,
             ControlId::OcrLock => self.ocr_lock = val != 0,
+            ControlId::OcrAutoWidth => self.ocr_auto_width = val != 0,
             ControlId::OcrFiglet => self.ocr_figlet = val != 0,
             ControlId::OcrFigletMinHeight => self.ocr_figlet_min_height = val.clamp(0, 12),
             ControlId::OcrFigletMinHeightRatio => {
                 self.ocr_figlet_min_height_ratio = val.clamp(0, 500)
             }
+            ControlId::OcrFigletFill => self.ocr_figlet_fill = val != 0,
             ControlId::OcrFigletMaxWidthRatio => {
                 self.ocr_figlet_max_width_ratio = val.clamp(0, 200)
             }
@@ -3921,9 +4188,9 @@ impl App {
                 self.ocr_figlet_max_height_ratio = val.clamp(0, 200)
             }
             ControlId::OcrMinConfidence => self.ocr_min_confidence = val.clamp(0, 100),
-            ControlId::OcrWidth => self.ocr_width = val.max(0),
+            ControlId::OcrMegapixels => self.ocr_megapixels = val.clamp(1, 160),
+            ControlId::OcrAdvanced => self.show_ocr_advanced = val != 0,
             ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
-            ControlId::OcrMaxSideLen => self.ocr_max_side_len = val.max(32),
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio = val.clamp(0, 1000),
             ControlId::OcrThreads => self.ocr_threads = val.max(1),
             ControlId::TrimTop => self.trim_top = val,
@@ -4005,6 +4272,10 @@ impl App {
         }
     }
 
+    fn control_disabled_reason(&self, id: ControlId) -> Option<&'static str> {
+        id.disabled_reason(self.ocr, self.ocr_auto_width, self.ocr_lock)
+    }
+
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
         match tab {
             0 => visible_general_controls(
@@ -4013,6 +4284,7 @@ impl App {
                 self.ocr_figlet,
                 self.score_fix,
                 self.show_advanced,
+                self.show_ocr_advanced,
             ),
             1 => vec![], // Pipeline Canvas is handled totally separately
             2 => self
@@ -4536,26 +4808,23 @@ impl App {
         self.render_args.width = render_width_from_tui(self.width);
         self.render_args.ocr = self.ocr;
         self.render_args.ocr_lock = self.ocr_lock;
+        self.render_args.ocr_auto_width = self.ocr_auto_width;
         self.render_args.ocr_figlet = self.ocr_figlet;
         self.render_args.ocr_figlet_min_height = self.ocr_figlet_min_height.max(0) as f32;
         self.render_args.ocr_figlet_min_height_ratio =
             self.ocr_figlet_min_height_ratio.max(0) as f32 / 100.0;
+        self.render_args.ocr_figlet_fill = self.ocr_figlet_fill;
         self.render_args.ocr_figlet_max_width_ratio =
             self.ocr_figlet_max_width_ratio.max(0) as f32 / 100.0;
         self.render_args.ocr_figlet_max_height_ratio =
             self.ocr_figlet_max_height_ratio.max(0) as f32 / 100.0;
         self.render_args.ocr_min_confidence = self.ocr_min_confidence as f32 / 100.0;
-        self.render_args.ocr_width = if self.ocr_width > 0 {
-            Some(self.ocr_width as u32)
-        } else {
-            None
-        };
+        self.render_args.ocr_megapixels = Some(self.ocr_megapixels as f32 / 10.0);
         self.render_args.ocr_model_tier = match self.ocr_model_tier_idx {
             0 => OcrModelTier::Tiny,
             1 => OcrModelTier::Small,
             _ => OcrModelTier::Medium,
         };
-        self.render_args.ocr_max_side_len = self.ocr_max_side_len.max(32) as u32;
         self.render_args.ocr_max_text_height_ratio =
             (self.ocr_max_text_height_ratio.max(0) as f32) / 100.0;
         self.render_args.ocr_threads = self.ocr_threads.max(1) as usize;
@@ -5348,6 +5617,7 @@ fn list_system_fonts() -> Vec<String> {
                         .to_string()
                 })
                 .collect();
+            fonts.extend(crate::font::bundled_font_names().map(str::to_string));
             fonts.sort();
             fonts.dedup();
             // Move Monospace to top if exists, but we want "Default" first
@@ -5364,7 +5634,9 @@ fn list_system_fonts() -> Vec<String> {
             }
         }
     }
-    vec!["Default".to_string(), "Monospace".to_string()]
+    std::iter::once("Default".to_string())
+        .chain(crate::font::bundled_font_names().map(str::to_string))
+        .collect()
 }
 
 // ── Custom Widgets ───────────────────────────────────────────────────────────
@@ -5416,7 +5688,7 @@ fn slider_bar_layout(
     _display_value: Option<&str>,
 ) -> Option<(u16, usize)> {
     let label_text = format!("  {}", label);
-    let label_width = label_text.chars().take(14).count() as u16;
+    let label_width = label_text.chars().take(slider_label_limit(area)).count() as u16;
     let bar_cells = area
         .width
         .saturating_sub(label_width + 4)
@@ -5426,6 +5698,11 @@ fn slider_bar_layout(
     } else {
         Some((area.x + label_width + 3, bar_cells))
     }
+}
+
+fn slider_label_limit(area: Rect) -> usize {
+    // Keep room for a useful bar/value while allowing descriptive option names.
+    area.width.saturating_sub(12).min(24) as usize
 }
 
 /// A quantized slider bar using left eighth-blocks.
@@ -5459,7 +5736,7 @@ fn render_bar(
     };
     let lx = area.x + 1;
     let ly = area.y + area.height.saturating_sub(1) / 2;
-    for (i, ch) in label_text.chars().take(14).enumerate() {
+    for (i, ch) in label_text.chars().take(slider_label_limit(area)).enumerate() {
         let x = lx + i as u16;
         if x >= area.x + area.width {
             break;
@@ -5803,6 +6080,7 @@ struct OcrInferenceKey {
     doc_unwarping: bool,
     threads: usize,
     ocr_width: Option<u32>,
+    megapixels: Option<u32>,
     max_side_len: u32,
     box_score_threshold: u32,
     box_threshold: u32,
@@ -5824,8 +6102,9 @@ impl From<&RenderArgs> for OcrInferenceKey {
             doc_orientation_model: args.ocr_doc_orientation_model.clone(),
             doc_unwarping: args.ocr_doc_unwarping,
             threads: args.ocr_threads,
-            ocr_width: args.ocr_width,
-            max_side_len: args.ocr_max_side_len,
+            ocr_width: if args.ocr_detection_budget().is_some() { None } else { args.ocr_width },
+            megapixels: args.ocr_detection_budget().map(f32::to_bits),
+            max_side_len: if args.ocr_detection_budget().is_some() { 0 } else { args.ocr_max_side_len },
             box_score_threshold: args.ocr_box_score_threshold.to_bits(),
             box_threshold: args.ocr_box_threshold.to_bits(),
             unclip_ratio: args.ocr_unclip_ratio.to_bits(),
@@ -5955,6 +6234,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         let mut glyphs_loaded = initial_glyphs_loaded;
         let mut last_locked_ocr_detections: Option<Vec<crate::ocr::OcrDetection>> = None;
         let mut last_locked_base_image: Option<photon_rs::PhotonImage> = None;
+        let mut last_ocr_grid: Option<(u32, u32)> = None;
 
         loop {
             // Signal rendering start
@@ -5976,6 +6256,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     ocr_detection_cache = None;
                     last_locked_ocr_detections = None;
                     last_locked_base_image = None;
+                    last_ocr_grid = None;
                 }
                 rendering_flag2.store(false, Ordering::Relaxed);
                 if rx_args.changed().await.is_err() {
@@ -5996,6 +6277,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                             ocr_detection_cache = None;
                             last_locked_ocr_detections = None;
                             last_locked_base_image = None;
+                            last_ocr_grid = None;
                         }
                         Err(e) => {
                             log::info!("Failed to reload image: {}", e);
@@ -6023,38 +6305,10 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                         log::debug!("Reusing cached OCR detections");
                         Ok(detections)
                     } else {
-                        let ocr_image = match effective_args.ocr_width {
-                            Some(w) if w > 0 && w != raw_image.get_width() => {
-                                let h = ((w as f32 * raw_image.get_height() as f32) / raw_image.get_width() as f32).round().max(1.0) as u32;
-                                photon_rs::transform::resize(&raw_image, w, h, photon_rs::transform::SamplingFilter::Lanczos3)
-                            }
-                            _ => raw_image.clone(),
-                        };
-                        let detection_image = Arc::new(ocr_image.clone());
+                        let detection_image = Arc::new(raw_image.clone());
                         let detection_args = effective_args.clone();
-                        let orig_w = raw_image.get_width() as f32;
-                        let orig_h = raw_image.get_height() as f32;
-                        let ocr_w = ocr_image.get_width() as f32;
-                        let ocr_h = ocr_image.get_height() as f32;
                         match tokio::task::spawn_blocking(move || {
                             crate::ocr::detect_text(&detection_image, &detection_args)
-                                .map(|raw_detections| {
-                                    let scaled_detections: Vec<crate::ocr::OcrDetection> = if (ocr_w - orig_w).abs() > 0.5 || (ocr_h - orig_h).abs() > 0.5 {
-                                        raw_detections
-                                            .into_iter()
-                                            .map(|mut d| {
-                                                for pt in &mut d.polygon {
-                                                    pt[0] = pt[0] * orig_w / ocr_w;
-                                                    pt[1] = pt[1] * orig_h / ocr_h;
-                                                }
-                                                d
-                                            })
-                                            .collect()
-                                    } else {
-                                        raw_detections
-                                    };
-                                    scaled_detections
-                                })
                                 .map_err(|error| error.to_string())
                         })
                         .await
@@ -6094,6 +6348,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             } else {
                 last_locked_ocr_detections = None;
                 last_locked_base_image = None;
+                last_ocr_grid = None;
                 Vec::new()
             };
 
@@ -6111,9 +6366,14 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             } else {
                 last_locked_ocr_detections = None;
                 last_locked_base_image = None;
+                last_ocr_grid = None;
                 raw_image.clone()
             };
 
+            if effective_args.ocr && effective_args.ocr_auto_width && !ocr_detections.is_empty() {
+                effective_args.width = None;
+                effective_args.height = None;
+            }
             if effective_args.font_size == 0.0 {
                 crate::resolve_auto_font_size(&mut effective_args, &raw_image, &arc_glyphs);
             }
@@ -6158,6 +6418,21 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             }
 
             let ocr_overlays = if effective_args.ocr {
+                if let Some((width, height)) = last_ocr_grid.filter(|_| effective_args.ocr_lock) {
+                    effective_args.width = Some(width);
+                    effective_args.height = Some(height);
+                    effective_args.scale = None;
+                } else {
+                    crate::ocr::choose_text_render_geometry(
+                        &mut effective_args, &raw_image, &arc_glyphs, &ocr_detections,
+                    );
+                }
+                let (pw, ph) = crate::effects::calculate_dimensions(
+                    &effective_args, &arc_glyphs,
+                    raw_image.get_width() as f32, raw_image.get_height() as f32,
+                );
+                let (gw, gh) = if effective_args.braille { (2, 4) } else { arc_glyphs.metrics };
+                last_ocr_grid = Some((pw / gw.max(1) as u32, ph / gh.max(1) as u32));
                 crate::ocr::detections_to_overlays(
                     &raw_image,
                     &base_image,
@@ -6335,6 +6610,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
+            if app.figlet_picker.is_some() {
+                handle_figlet_picker(&mut app, event);
+                continue;
+            }
+            if app.replace_colour_dialog.is_some() {
+                handle_replace_colour(&mut app, event);
+                continue;
+            }
 
             if app.show_font_picker {
                 match &event {
@@ -6642,14 +6925,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         match key.code {
                             KeyCode::Enter => {
                                 // Confirm: parse and apply the value
-                                if let Ok(val) = app.value_edit_buffer.parse::<i32>() {
+                                if let Ok(val) = app.value_edit_buffer.parse::<f32>() {
                                     let controls = app.tab_controls(app.current_tab);
                                     if let Some(ctrl) = controls.get(app.selected_control) {
                                         if let ControlKind::Slider { min, max, .. } = &ctrl.kind {
-                                            let raw_value = if ctrl.id == ControlId::FontSize {
-                                                val.saturating_mul(10)
+                                            let raw_value = if matches!(ctrl.id, ControlId::FontSize | ControlId::OcrMegapixels) {
+                                                (val * 10.0).round() as i32
                                             } else {
-                                                val
+                                                val.round() as i32
                                             };
                                             let clamped = raw_value.clamp(*min, *max);
                                             let sc = app.selected_control;
@@ -7657,6 +7940,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
 
+                            if app.replace_colour_button_area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) {
+                                open_replace_colour(&mut app).await;
+                                continue;
+                            }
+
                             if mouse.column >= app.pipeline_active_area.x
                                 && mouse.column
                                     < app.pipeline_active_area.x + app.pipeline_active_area.width
@@ -7916,7 +8204,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.text_field_focus = TextFieldFocus::FigletFontButton;
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
-                                            cycle_text_overlay_figlet_font(&mut app, sel - 1, 1);
+                                            open_figlet_picker(&mut app, sel - 1);
                                         }
                                     }
                                 } else if app.text_btn_areas[7].contains(pos) {
@@ -8537,11 +8825,15 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 cp.editing_fg = !editing_bg;
                                 app.color_picker_state = Some(cp);
                             }
+                            KeyCode::Char('c') if app.current_tab == 1 && app.pipeline_expanded.is_none() => {
+                                open_replace_colour(&mut app).await;
+                            }
                             KeyCode::Char(c)
                                 if app.current_tab == 0 && (c.is_ascii_digit() || c == '-') =>
                             {
                                 let ctrl_id = app.get_current_control_id();
                                 let def = get_control_def(ctrl_id);
+                                if app.control_disabled_reason(ctrl_id).is_some() { continue; }
                                 if let ControlKind::Slider { .. } = def.kind {
                                     app.value_edit_buffer = c.to_string();
                                     app.input_mode = InputMode::ValueEdit;
@@ -8994,6 +9286,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.mark_args_dirty();
                                         }
                                         app.pipeline_expanded = None;
+                                        if app.pipeline_nodes.get(expanded_idx).is_some_and(|node| matches!(node.effect, crate::pipeline::ImageEffect::ReplaceColour { .. })) {
+                                            app.selected_control = expanded_idx;
+                                            app.pipeline_selected = Some(app.pipeline_nodes[expanded_idx].id);
+                                            open_replace_colour(&mut app).await;
+                                        }
+                                    } else if app.pipeline_nodes.get(app.selected_control).is_some_and(|node| matches!(node.effect, crate::pipeline::ImageEffect::ReplaceColour { .. })) {
+                                        open_replace_colour(&mut app).await;
                                     } else {
                                         app.pipeline_expanded = Some(app.selected_control);
                                     }
@@ -9001,10 +9300,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let controls = app.tab_controls(0);
                                     if let Some(ctrl) = controls.get(app.selected_control) {
                                         if let ControlKind::Slider { .. } = &ctrl.kind {
+                                            if app.control_disabled_reason(ctrl.id).is_some() { continue; }
                                             let current_val = app.get_value(ctrl.id);
                                             app.value_edit_buffer =
                                                 if ctrl.id == ControlId::FontSize {
                                                     (current_val / 10).to_string()
+                                                } else if ctrl.id == ControlId::OcrMegapixels {
+                                                    format!("{:.1}", current_val as f32 / 10.0)
                                                 } else {
                                                     current_val.to_string()
                                                 };
@@ -9049,6 +9351,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
 // ── Control Logic ────────────────────────────────────────────────────────────
 fn mark_control_changed(app: &mut App, id: ControlId) {
+    if matches!(id, ControlId::OcrAdvanced | ControlId::ShowAdvanced) {
+        return;
+    }
     if id == ControlId::GraphicsPreview {
         app.output_preview_dirty = true;
     } else {
@@ -9058,6 +9363,7 @@ fn mark_control_changed(app: &mut App, id: ControlId) {
 
 fn adjust_control(app: &mut App, delta: i32) {
     let id = app.get_current_control_id();
+    if app.control_disabled_reason(id).is_some() { return; }
     let def = get_control_def(id);
 
     match def.kind {
@@ -9106,6 +9412,7 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
         return;
     };
 
+    if app.control_disabled_reason(id).is_some() { return; }
     app.set_value(id, val);
 
     log::debug!(
@@ -9120,6 +9427,7 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
 
 fn toggle_control(app: &mut App) {
     let id = app.get_current_control_id();
+    if app.control_disabled_reason(id).is_some() { return; }
     let def = get_control_def(id);
 
     match def.kind {
@@ -9163,6 +9471,7 @@ fn toggle_control(app: &mut App) {
 
 fn reset_control(app: &mut App) {
     let id = app.get_current_control_id();
+    if app.control_disabled_reason(id).is_some() { return; }
     let def = get_control_def(id);
 
     match def.kind {
@@ -9630,6 +9939,12 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let overlay_area = layout[1];
         f.render_widget(Clear, overlay_area);
         render_metadata_prompt(f, app, overlay_area);
+    }
+    if let Some(dialog) = &mut app.replace_colour_dialog {
+        render_replace_colour(f, dialog);
+    }
+    if let Some(picker) = &mut app.figlet_picker {
+        render_figlet_picker(f, picker);
     }
 }
 

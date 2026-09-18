@@ -15,6 +15,9 @@ pub struct GeneratedOutput {
     pub result: draw::RenderResult,
     pub glyph_store: font::GlyphStore,
     pub options: RenderArgs,
+    /// OCR detections which were accepted for text replacement during this
+    /// render. Empty when OCR is disabled or found no renderable text.
+    pub ocr_detections: Vec<crate::ocr::OcrDetection>,
 }
 
 /// Return the same resolved defaults as the CLI, with its normal default glyph
@@ -275,6 +278,7 @@ pub fn generate_image(
         result,
         glyph_store,
         options,
+        ocr_detections: ocr_detections.unwrap_or_default(),
     })
 }
 

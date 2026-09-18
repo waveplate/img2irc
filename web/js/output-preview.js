@@ -1,6 +1,8 @@
 // Terminal glyph size is a display property, independent of the raster size
 // used while matching glyphs in WASM.
 const DEFAULT_DISPLAY_FONT_SIZE = 16;
+const DEFAULT_CELL_ASPECT_RATIO = 0.5;
+const DEFAULT_LINE_HEIGHT_RATIO = 1;
 
 function rgb(color, fallback = [0, 0, 0]) {
   const [red, green, blue] = color ?? fallback;
@@ -36,6 +38,7 @@ export class OutputPreview {
   #displayFontSize = DEFAULT_DISPLAY_FONT_SIZE;
   #fontFamily = "monospace";
   #bitmapMetrics;
+  #bitmapCellResult;
   #textMetrics;
   #hasText = false;
   #measurementContext = document.createElement("canvas").getContext("2d");
@@ -55,6 +58,7 @@ export class OutputPreview {
   setFontFamily(family) {
     this.#fontFamily = family || "monospace";
     this.#text.style.fontFamily = `"${this.#fontFamily.replaceAll('"', '\\"')}", monospace`;
+    if (this.#bitmapCellResult) this.#drawBrowserBitmap();
     if (this.#textMetrics) this.#applyTextDisplayMetrics(this.#textMetrics);
   }
 
@@ -62,7 +66,8 @@ export class OutputPreview {
     const next = Number(value);
     if (!Number.isFinite(next) || next <= 0) return;
     this.#displayFontSize = next;
-    if (this.#bitmapMetrics) this.#applyBitmapDisplaySize(this.#bitmapMetrics);
+    if (this.#bitmapCellResult) this.#drawBrowserBitmap();
+    else if (this.#bitmapMetrics) this.#applyBitmapDisplaySize(this.#bitmapMetrics);
     if (this.#textMetrics) this.#applyTextDisplayMetrics(this.#textMetrics);
   }
 
@@ -92,6 +97,20 @@ export class OutputPreview {
   }
 
   #drawBitmap(result) {
+    if (result.cells?.length && result.columns > 0 && result.rows > 0) {
+      this.#bitmapCellResult = {
+        cells: result.cells,
+        columns: result.columns,
+        rows: result.rows,
+        renderFontSize: result.fontSize,
+        cellAdvance: result.cellAdvance,
+        lineHeight: result.lineHeight,
+      };
+      this.#drawBrowserBitmap();
+      return;
+    }
+
+    this.#bitmapCellResult = undefined;
     if (!result.previewRgba?.length || !result.previewWidth || !result.previewHeight) {
       this.#canvas.width = 0;
       this.#canvas.height = 0;
@@ -109,6 +128,7 @@ export class OutputPreview {
 
     this.#canvas.width = result.previewWidth;
     this.#canvas.height = result.previewHeight;
+    this.#canvas.style.imageRendering = "pixelated";
     const context = this.#canvas.getContext("2d", { alpha: false });
     context.imageSmoothingEnabled = false;
     const pixels = new Uint8ClampedArray(
@@ -126,6 +146,59 @@ export class OutputPreview {
       renderFontSize: result.fontSize,
       cellAdvance: result.cellAdvance,
       lineHeight: result.lineHeight,
+    };
+    this.#applyBitmapDisplaySize(this.#bitmapMetrics);
+  }
+
+  #drawBrowserBitmap() {
+    const result = this.#bitmapCellResult;
+    if (!result) return;
+    // Match irc2html's bitmap defaults rather than stretching the renderer's
+    // integer glyph masks: 0.5-width cells and a 1.0x line height.
+    const cellAdvance = this.#displayFontSize * DEFAULT_CELL_ASPECT_RATIO;
+    const lineHeight = this.#displayFontSize * DEFAULT_LINE_HEIGHT_RATIO;
+    const width = result.columns * cellAdvance;
+    const height = result.rows * lineHeight;
+    const pixelRatio = Math.max(1, globalThis.devicePixelRatio || 1);
+
+    this.#canvas.width = Math.max(1, Math.ceil(width * pixelRatio));
+    this.#canvas.height = Math.max(1, Math.ceil(height * pixelRatio));
+    this.#canvas.style.imageRendering = "auto";
+    const context = this.#canvas.getContext("2d", { alpha: false });
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.imageSmoothingEnabled = true;
+    context.textBaseline = "top";
+    context.fontKerning = "none";
+    context.fillStyle = "rgb(0 0 0)";
+    context.fillRect(0, 0, width, height);
+
+    for (let rowIndex = 0; rowIndex < result.cells.length; rowIndex += 1) {
+      const row = result.cells[rowIndex];
+      const y = rowIndex * lineHeight;
+      for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
+        const cell = row[columnIndex];
+        const x = columnIndex * cellAdvance;
+        const style = displayStyle(cell);
+        context.fillStyle = rgb(style.background);
+        context.fillRect(x, y, cellAdvance, lineHeight);
+        if (!cell.character || cell.character === " ") continue;
+
+        context.save();
+        context.beginPath();
+        context.rect(x, y, cellAdvance, lineHeight);
+        context.clip();
+        context.fillStyle = rgb(style.foreground, [255, 255, 255]);
+        context.font = `${style.italic ? "italic " : ""}${style.bold ? "700 " : "400 "}${this.#displayFontSize}px "${this.#fontFamily.replaceAll('"', '\\"')}", monospace`;
+        context.fillText(cell.character, x, y);
+        context.restore();
+      }
+    }
+
+    this.#bitmapMetrics = {
+      ...result,
+      renderFontSize: this.#displayFontSize,
+      cellAdvance,
+      lineHeight,
     };
     this.#applyBitmapDisplaySize(this.#bitmapMetrics);
   }
@@ -150,7 +223,10 @@ export class OutputPreview {
           row.append(run);
           runStyle = style;
         }
-        run.append(document.createTextNode(cell.character));
+        const cellElement = document.createElement("span");
+        cellElement.className = "output-text-cell";
+        cellElement.append(document.createTextNode(cell.character ?? ""));
+        run.append(cellElement);
       }
       documentFragment.append(row);
     }
@@ -181,6 +257,7 @@ export class OutputPreview {
     this.#text.style.lineHeight = `${lineHeight}px`;
     this.#text.style.width = `${result.columns * cellAdvance}px`;
     this.#text.style.height = `${result.rows * lineHeight}px`;
+    this.#text.style.setProperty("--output-cell-advance", `${cellAdvance}px`);
     this.#text.style.setProperty("--output-line-height", `${lineHeight}px`);
     if (this.#mode === "text") {
       this.#setStageSize(result.columns * cellAdvance, result.rows * lineHeight);
@@ -208,6 +285,7 @@ export class OutputPreview {
 
   clear(message = "Rendered output will appear here.") {
     this.#bitmapMetrics = undefined;
+    this.#bitmapCellResult = undefined;
     this.#textMetrics = undefined;
     this.#hasText = false;
     this.#canvas.width = 0;

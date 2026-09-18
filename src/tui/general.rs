@@ -9,6 +9,11 @@ pub(crate) fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: 
 
     let id = app.get_current_control_id();
     let ctrl = get_control_def(id);
+    if app.control_disabled_reason(id).is_some() {
+        app.options_pane_area = Rect::default();
+        app.options_areas.clear();
+        return;
+    }
 
     let (options, current) = match &ctrl.kind {
         ControlKind::Enum { options, .. } => (
@@ -76,7 +81,10 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         .border_style(Style::new().fg(BORDER))
         .border_set(symbols::border::ROUNDED)
         .style(Style::new().bg(SURFACE));
-    let inner = panel.inner(area);
+    let panel_inner = panel.inner(area);
+    let help_height = if panel_inner.height >= 12 { 6 } else if panel_inner.height >= 7 { 3 } else { 0 };
+    let inner = Rect::new(panel_inner.x, panel_inner.y, panel_inner.width, panel_inner.height.saturating_sub(help_height));
+    let help_area = Rect::new(panel_inner.x, inner.bottom(), panel_inner.width, help_height);
     f.render_widget(panel, area);
 
     app.control_areas.clear();
@@ -168,6 +176,8 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 } else {
                     let dv = if ctrl.id == ControlId::Width && value == 0 {
                         Some("Auto".to_string())
+                    } else if ctrl.id == ControlId::OcrMegapixels {
+                        Some(format!("{:.1} MP", value as f32 / 10.0))
                     } else if ctrl.id == ControlId::FontSize {
                         Some((value / 10).to_string())
                     } else if matches!(
@@ -250,6 +260,9 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             }
         }
 
+        if app.control_disabled_reason(ctrl.id).is_some() {
+            buf.set_style(ctrl_area, Style::new().fg(TEXT_DIM).add_modifier(Modifier::DIM));
+        }
         control_rects.push(ctrl_area);
         y += item_height;
     }
@@ -268,12 +281,31 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             },
             total
         );
-        let ix = inner.x + inner.width - indicator.len() as u16 - 1;
-        let iy = inner.y + inner.height - 1;
-        if iy < area.y + area.height {
+        let ix = inner.right().saturating_sub(indicator.len() as u16 + 1).max(inner.x);
+        let iy = inner.bottom().saturating_sub(1);
+        if inner.height > 0 && iy < area.y + area.height {
             buf.set_string(ix, iy, &indicator, Style::new().fg(TEXT_DIM).bg(SURFACE));
         }
     }
+    if help_height > 0 {
+        if let Some(control) = controls.get(app.selected_control) {
+            let reason = app.control_disabled_reason(control.id);
+            let text = reason.unwrap_or_else(|| control.id.help());
+            let title = if reason.is_some() {
+                format!(" {} · Disabled ", control.label)
+            } else {
+                format!(" {} ", control.label)
+            };
+            f.render_widget(
+                Paragraph::new(text)
+                    .block(Block::default().borders(Borders::TOP).title(title).border_style(Style::new().fg(BORDER)))
+                    .style(Style::new().fg(if reason.is_some() { Color::Yellow } else { TEXT_DIM }))
+                    .wrap(ratatui::widgets::Wrap { trim: true }),
+                help_area,
+            );
+        }
+    }
+
 }
 
 pub(crate) fn render_auto_optimize_dialog(f: &mut ratatui::Frame, app: &mut App, area: Rect) {

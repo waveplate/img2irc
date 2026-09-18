@@ -1,13 +1,18 @@
 pub const VERSION: &str = env!("IMG2IRC_VERSION");
 pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER");
 
+pub mod adjustments;
 pub mod args;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod config;
 pub mod contour_score;
 pub mod draw;
 pub mod effects;
+#[cfg(any(feature = "ocr", feature = "web"))]
+mod figlet_text;
 pub mod font;
+#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+mod ocr_layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod generator;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
@@ -261,11 +266,14 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         ocr_doc_unwarping: args.ocr_doc_unwarping,
         ocr_threads: args.ocr_threads,
         ocr_width: args.ocr_width,
+        ocr_megapixels: args.ocr_megapixels,
+        ocr_auto_width: args.ocr_auto_width.unwrap_or(false),
         ocr_max_side_len: args.ocr_max_side_len,
         ocr_max_text_height_ratio: args.ocr_max_text_height_ratio,
         ocr_figlet: args.ocr_figlet,
         ocr_figlet_min_height: args.ocr_figlet_min_height,
         ocr_figlet_min_height_ratio: args.ocr_figlet_min_height_ratio,
+        ocr_figlet_fill: args.ocr_figlet_fill,
         ocr_figlet_max_width_ratio: args.ocr_figlet_max_width_ratio,
         ocr_figlet_max_height_ratio: args.ocr_figlet_max_height_ratio,
         ocr_figlet_fonts: if args.ocr_figlet_fonts.is_empty() {
@@ -288,6 +296,16 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         config_dir: args.config_dir.clone(),
         figlet_dir: args.figlet_dir.clone(),
     }
+}
+
+/// Build render arguments for the interactive TUI.
+///
+/// OCR auto-width is enabled when the option was not supplied, while an
+/// explicit `--ocr-auto-width false` remains authoritative.
+pub fn args_to_tui_render_args(args: &Args) -> RenderArgs {
+    let mut render_args = args_to_render_args(args);
+    render_args.ocr_auto_width = args.ocr_auto_width.unwrap_or(true);
+    render_args
 }
 
 pub fn param_base(p: &Param) -> f32 {
@@ -567,6 +585,76 @@ mod tests {
     fn zero_cli_width_means_auto() {
         let args = crate::args::Args::parse_from(["img2irc", "--width", "0"]);
         assert_eq!(crate::args_to_render_args(&args).width, None);
+    }
+
+    #[test]
+    fn cli_and_tui_use_distinct_ocr_auto_width_defaults() {
+        let unspecified = crate::args::Args::parse_from(["img2irc"]);
+        assert_eq!(unspecified.ocr_auto_width, None);
+        assert!(!crate::args_to_render_args(&unspecified).ocr_auto_width);
+        assert!(crate::args_to_tui_render_args(&unspecified).ocr_auto_width);
+
+        let enabled = crate::args::Args::parse_from(["img2irc", "--ocr-auto-width"]);
+        assert_eq!(enabled.ocr_auto_width, Some(true));
+        assert!(crate::args_to_render_args(&enabled).ocr_auto_width);
+        assert!(crate::args_to_tui_render_args(&enabled).ocr_auto_width);
+
+        let disabled =
+            crate::args::Args::parse_from(["img2irc", "--ocr-auto-width", "false"]);
+        assert_eq!(disabled.ocr_auto_width, Some(false));
+        assert!(!crate::args_to_render_args(&disabled).ocr_auto_width);
+        assert!(!crate::args_to_tui_render_args(&disabled).ocr_auto_width);
+    }
+
+    #[test]
+    fn bare_boolean_option_does_not_consume_the_image_path() {
+        let args = crate::args::parse_args_from([
+            "img2irc",
+            "--ocr-auto-width",
+            "example.png",
+        ]);
+        assert_eq!(args.ocr_auto_width, Some(true));
+        assert_eq!(args.image.as_deref(), Some("example.png"));
+
+        let args = crate::args::parse_args_from([
+            "img2irc",
+            "--ocr-auto-width",
+            "false",
+            "example.png",
+        ]);
+        assert_eq!(args.ocr_auto_width, Some(false));
+        assert_eq!(args.image.as_deref(), Some("example.png"));
+    }
+
+    #[test]
+    fn value_taking_boolean_options_accept_bare_flags() {
+        let enabled = crate::args::Args::parse_from([
+            "img2irc",
+            "--smooth-neighbors",
+            "--ocr-auto-width",
+            "--ocr-textline-orientation",
+            "--ocr-figlet",
+        ]);
+        assert!(enabled.smooth_neighbors);
+        assert_eq!(enabled.ocr_auto_width, Some(true));
+        assert!(enabled.ocr_textline_orientation);
+        assert!(enabled.ocr_figlet);
+
+        let disabled = crate::args::Args::parse_from([
+            "img2irc",
+            "--smooth-neighbors",
+            "false",
+            "--ocr-auto-width",
+            "false",
+            "--ocr-textline-orientation",
+            "false",
+            "--ocr-figlet",
+            "false",
+        ]);
+        assert!(!disabled.smooth_neighbors);
+        assert_eq!(disabled.ocr_auto_width, Some(false));
+        assert!(!disabled.ocr_textline_orientation);
+        assert!(!disabled.ocr_figlet);
     }
 
     #[test]

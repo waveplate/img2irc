@@ -73,6 +73,72 @@ impl SystemFont {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+struct BundledFont {
+    name: &'static str,
+    path: &'static str,
+    data: &'static [u8],
+    face: std::sync::OnceLock<Arc<SystemFont>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BundledFont {
+    fn face(&self) -> Arc<SystemFont> {
+        Arc::clone(self.face.get_or_init(|| {
+            Arc::new(
+                SystemFont::new(Arc::from(self.data), 0, self.path.to_string())
+                    .expect("valid bundled font"),
+            )
+        }))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+static BUNDLED_FONTS: [BundledFont; 4] = [
+    BundledFont {
+        name: "Cascadia Code",
+        path: "bundled/CascadiaCode-Regular.ttf",
+        data: include_bytes!("../static/CascadiaCode-Regular.ttf"),
+        face: std::sync::OnceLock::new(),
+    },
+    BundledFont {
+        name: "Iosevka Fixed",
+        path: "bundled/IosevkaFixed-Regular.ttf",
+        data: include_bytes!("../static/fonts/IosevkaFixed-Regular.ttf"),
+        face: std::sync::OnceLock::new(),
+    },
+    BundledFont {
+        name: "Unifont",
+        path: "bundled/unifont-17.0.05.otf",
+        data: include_bytes!("../static/fonts/unifont-17.0.05.otf"),
+        face: std::sync::OnceLock::new(),
+    },
+    BundledFont {
+        name: "Unifont Upper",
+        path: "bundled/unifont_upper-17.0.05.otf",
+        data: include_bytes!("../static/fonts/unifont_upper-17.0.05.otf"),
+        face: std::sync::OnceLock::new(),
+    },
+];
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bundled_font_names() -> impl Iterator<Item = &'static str> {
+    BUNDLED_FONTS.iter().map(|font| font.name)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bundled_font_licenses() -> &'static str {
+    concat!(
+        "Cascadia Code\n",
+        include_str!("../static/fonts/LICENSE-Cascadia.md"),
+        "\nIosevka Fixed\n",
+        include_str!("../static/fonts/LICENSE-Iosevka.md"),
+        "\nGNU Unifont and Unifont Upper\n",
+        "Copyright © 1998-2026 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Ælla Chiana Moskopp, Rebecca Bettencourt, Ho-Seok Ee, et al.\n",
+        include_str!("../static/fonts/LICENSE-Unifont-OFL-1.1.txt"),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct FontLocation {
     path: String,
@@ -101,6 +167,16 @@ impl FontContext {
         };
 
         for font_name in &fonts_to_load {
+            if let Some(font) = BUNDLED_FONTS
+                .iter()
+                .find(|font| font.name.eq_ignore_ascii_case(font_name))
+            {
+                let face = font.face();
+                let key = face.source_path.clone();
+                font_paths.push(key.clone());
+                user_faces.insert(key, face);
+                continue;
+            }
             if let Some(location) = find_font_location(font_name) {
                 if let Ok(data) = fs::read(&location.path) {
                     let bytes = Arc::<[u8]>::from(data);
@@ -127,7 +203,10 @@ impl FontContext {
         }
 
         if user_faces.is_empty() {
-            panic!("No usable fonts found. Please install Cascadia Code or specify a valid font with --font.");
+            let face = BUNDLED_FONTS[0].face();
+            let key = face.source_path.clone();
+            font_paths.push(key.clone());
+            user_faces.insert(key, face);
         }
 
         FontContext {
@@ -872,73 +951,7 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
     let toml_str = if let Some(path) = toml_path {
         fs::read_to_string(path).expect("Failed to read glyphs.toml")
     } else {
-        let default_toml = r#"[default]
-include = [
-    "polygons",
-    "eighth.v",
-    "eighth.h",
-    "space",
-    "half",
-    "full",
-]
-
-[eighth.h]
-ranges = [[
-    0x2589,
-    0x258F,
-]]
-
-[eighth.v]
-ranges = [[
-    0x2581,
-    0x2587,
-]]
-
-[quarter]
-ranges = [[
-    0x2596,
-    0x259F,
-]]
-
-[half]
-glyphs = [0x2580]
-
-[full]
-glyphs = [0x2588]
-
-[largetype]
-ranges = [[
-    0x1CE1A,
-    0x1CE50,
-]]
-
-[sextants]
-ranges = [[
-    0x1FB00,
-    0x1FB3B,
-]]
-
-[octants]
-ranges = [[
-    0x1CD20,
-    0x1CDE5,
-]]
-
-[polygons]
-exclude = [
-    0x1FB69,
-    0x1FB6B,
-    0x1FB6D,
-    0x1FB6F,
-]
-ranges = [[
-    0x1FB3C,
-    0x1FB6F,
-]]
-
-[space]
-glyphs = [32]
-"#;
+        let default_toml = include_str!("../glyphs.toml");
         // Attempt to save default toml
         let mut save_path = None;
         if let Ok(config_home) = env::var("XDG_CONFIG_HOME") {
@@ -1516,6 +1529,14 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    for bundled in &BUNDLED_FONTS {
+        let font = bundled.face();
+        if font_supports_terminal_char(&font, ch) {
+            return Some((font, bundled.name.to_string()));
+        }
+    }
+
     let paths = get_fallback_font_paths(ch);
     for path in paths {
         if !ctx.fallback_faces.contains_key(&path) {
@@ -1548,7 +1569,7 @@ fn resolve_font_for_char(ctx: &mut FontContext, ch: char) -> Option<(Arc<SystemF
 
 fn metrics_hash_context(font_paths: &[String], font_size: f32, chars: &[char]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v16".hash(&mut hasher);
+    "v17".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -1566,7 +1587,7 @@ fn block_hash_context(
     chars: &[char],
 ) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    "v16".hash(&mut hasher);
+    "v17".hash(&mut hasher);
     for p in font_paths {
         p.hash(&mut hasher);
     }
@@ -2106,6 +2127,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_fonts_supply_default_and_explicit_family_without_system_lookup() {
+        let default = FontContext::new(&[], 16.0);
+        assert_eq!(default.get_main_font().source_path, BUNDLED_FONTS[0].path);
+
+        let fixed = FontContext::new(&["iosevka fixed".to_string()], 16.0);
+        assert_eq!(fixed.get_main_font().source_path, BUNDLED_FONTS[1].path);
+        assert!(is_monospace_font(&fixed.get_main_font()));
+        assert!(font_supports_terminal_char(&fixed.get_main_font(), 'A'));
+    }
+
+    #[test]
+    fn bundled_fonts_cover_polygon_third_octant_and_large_glyphs() {
+        let mut context = FontContext::new(&[], 16.0);
+        for code in [0x1FB3C, 0x1FB02, 0x1FB0E, 0x1FB2D, 0x1FB39, 0x1CD20, 0x1CE1A] {
+            let ch = char::from_u32(code).unwrap();
+            let (font, _) = resolve_font_for_char(&mut context, ch)
+                .unwrap_or_else(|| panic!("missing bundled glyph U+{code:X}"));
+            assert!(font.source_path.starts_with("bundled/"));
+        }
+    }
+
+    #[test]
     fn nested_block_paths_can_be_created_and_removed_at_any_depth() {
         let mut root = toml::map::Map::new();
         block_table_mut(&mut root, "blocks.eighth.vertical", true)
@@ -2159,23 +2202,16 @@ mod tests {
     }
 
     #[test]
-    fn smooth_group_composes_filtered_space_polygons_sextants_and_halfblocks() {
+    fn smooth_group_composes_polygons_and_four_thirds() {
         let (groups, _) = load_blocks_config();
         let smooth = groups["smooth"].iter().copied().collect::<HashSet<_>>();
-        let expected = ["ascii.space", "p2", "sextants", "hb"]
+        let expected = ["poly", "thirds"]
             .into_iter()
             .flat_map(|name| groups[name].iter().copied())
             .collect::<HashSet<_>>();
 
         assert_eq!(smooth, expected);
-
-        let (unfiltered, _) = load_blocks_config_unfiltered();
-        for excluded in unfiltered["sextants"]
-            .iter()
-            .filter(|code| !groups["sextants"].contains(code))
-        {
-            assert!(!smooth.contains(excluded));
-        }
+        assert_eq!(groups["thirds"], [0x1FB02, 0x1FB0E, 0x1FB2D, 0x1FB39]);
     }
 
     #[test]

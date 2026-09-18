@@ -19,11 +19,41 @@ pub struct OcrDetection {
     pub polygon: Vec<[f32; 2]>,
 }
 
+fn detection_dimensions(args: &RenderArgs, width: u32, height: u32) -> (u32, u32, u32) {
+    let width = width.max(1);
+    let height = height.max(1);
+    let budget = args.ocr_detection_budget();
+    if let Some(megapixels) = budget {
+        let megapixels = if megapixels.is_finite() {
+            megapixels.clamp(0.1, 16.0)
+        } else {
+            1.5
+        };
+        let scale = ((megapixels as f64 * 1_000_000.0) / (width as f64 * height as f64))
+            .sqrt()
+            .min(1.0);
+        let w = (width as f64 * scale).floor().max(1.0) as u32;
+        let h = (height as f64 * scale).floor().max(1.0) as u32;
+        // The pixel budget replaces the second, independent longest-side cap.
+        return (w, h, w.max(h));
+    }
+    // Explicit legacy detection sizing is also independent of output sizing.
+    let w = args.ocr_width.filter(|w| *w > 0).unwrap_or(width);
+    let h = (w as f64 * height as f64 / width as f64).round().max(1.0) as u32;
+    (w, h, args.ocr_max_side_len)
+}
+
 pub fn detect_text(
     source: &PhotonImage,
     args: &RenderArgs,
 ) -> Result<Vec<OcrDetection>, Box<dyn Error>> {
-    let rgb = photon_to_rgb_image(source)?;
+    let (width, height, max_side) = detection_dimensions(args, source.get_width(), source.get_height());
+    let input = if width != source.get_width() || height != source.get_height() {
+        photon_rs::transform::resize(source, width, height, photon_rs::transform::SamplingFilter::Lanczos3)
+    } else {
+        source.clone()
+    };
+    let rgb = photon_to_rgb_image(&input)?;
     let mut engine = OcrLite::new();
     let model_paths = resolve_model_paths(args)?;
 
@@ -77,7 +107,7 @@ pub fn detect_text(
         Ok(engine.detect_with_options(
             &rgb,
             10,
-            args.ocr_max_side_len,
+            max_side,
             args.ocr_box_score_threshold,
             args.ocr_box_threshold,
             args.ocr_unclip_ratio,
@@ -103,7 +133,10 @@ pub fn detect_text(
             polygon: block
                 .box_points
                 .into_iter()
-                .map(|p| [p.x as f32, p.y as f32])
+                .map(|p| [
+                    p.x as f32 * source.get_width() as f32 / width as f32,
+                    p.y as f32 * source.get_height() as f32 / height as f32,
+                ])
                 .collect(),
         })
         .collect();
@@ -184,6 +217,60 @@ fn ocr_detection_height(det: &OcrDetection, image_w: u32, image_h: u32) -> Optio
     polygon_bounds(&det.polygon, image_w, image_h).map(|(_, y0, _, y1)| (y1 - y0).max(1) as f32)
 }
 
+/// Word boxes remain separate for background removal. Only text fitting uses
+/// their combined line box, so pixels between words are never erased by merging.
+fn grouped_detections(
+    detections: &[OcrDetection],
+    args: &RenderArgs,
+    image_w: u32,
+    image_h: u32,
+    multiline: bool,
+) -> Vec<OcrDetection> {
+    let items: Vec<_> = renderable_detections(detections, args, image_w, image_h)
+        .into_iter()
+        .filter_map(|det| polygon_bounds(&det.polygon, image_w, image_h).map(|bounds| (det, bounds)))
+        .collect();
+    let boxes: Vec<_> = items
+        .iter()
+        .map(|(_, (x0, y0, x1, y1))| [*x0 as f64, *y0 as f64, *x1 as f64, *y1 as f64])
+        .collect();
+    let groups = if multiline {
+        crate::ocr_layout::group_blocks(&boxes)
+    } else {
+        crate::ocr_layout::group_boxes(&boxes)
+            .into_iter()
+            .map(|line| vec![line])
+            .collect()
+    };
+    groups
+        .into_iter()
+        .map(|lines| {
+            let group: Vec<usize> = lines.iter().flatten().copied().collect();
+            if group.len() == 1 {
+                return items[group[0]].0.clone();
+            }
+            let x0 = group.iter().map(|&i| items[i].1.0).min().unwrap() as f32;
+            let y0 = group.iter().map(|&i| items[i].1.1).min().unwrap() as f32;
+            let x1 = group.iter().map(|&i| items[i].1.2).max().unwrap() as f32;
+            let y1 = group.iter().map(|&i| items[i].1.3).max().unwrap() as f32;
+            OcrDetection {
+                text: lines
+                    .iter()
+                    .map(|line| {
+                        line.iter()
+                            .map(|&i| items[i].0.text.trim())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                confidence: group.iter().map(|&i| items[i].0.confidence).fold(1.0, f32::min),
+                polygon: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+            }
+        })
+        .collect()
+}
+
 pub fn log_detections(detections: &[OcrDetection], args: &RenderArgs) {
     let mut kept = 0usize;
     for det in detections {
@@ -222,60 +309,49 @@ pub fn choose_text_render_geometry(
     glyphs: &GlyphStore,
     detections: &[OcrDetection],
 ) {
-    let image_w = source.get_width().max(1) as f32;
-    let image_h = source.get_height().max(1) as f32;
-    let (gw, gh) = glyphs.metrics;
-    let gw = gw.max(1) as f32;
-    let gh = gh.max(1) as f32;
-    let image_aspect = image_w / image_h;
-
-    let cell_aspect = gw / gh;
-    let rows_for_cols = |cols: u32| -> u32 {
-        ((cols as f32 * cell_aspect / image_aspect).round())
-            .max(1.0)
-            .ceil() as u32
-    };
-    let cols_for_rows = |rows: u32| -> u32 {
-        ((rows as f32 * image_aspect / cell_aspect).round())
-            .max(1.0)
-            .ceil() as u32
-    };
-
-    let min_w = args.min_width.unwrap_or(1).max(1);
-
-    let (cols, rows) = match (args.width, args.height) {
-        (Some(w), Some(h)) => (w, h),
-        (Some(w), None) => (w, rows_for_cols(w)),
-        (None, Some(h)) => (cols_for_rows(h), h),
-        (None, None) => {
-            // Start at the grid whose rendered pixel dimensions most closely
-            // match the source image. OCR may grow that grid, but must never
-            // make the entire image smaller merely because its text is large.
-            let text_boxes = collect_text_box_metrics(source, args, detections);
-            let (cols, native_cols, required_cols, max_w) = automatic_ocr_columns(
-                source.get_width(),
-                gw,
-                min_w,
-                args.max_width,
-                &text_boxes,
-            );
-            let rows = rows_for_cols(cols);
-
-            log::info!(
-                "OCR automatic grid: {cols}x{rows} cells (native={native_cols} cols, text-fit={required_cols} cols, limit={max_w})"
-            );
-            (cols, rows)
-        }
-    };
-
-    args.width = Some(cols);
-    args.height = Some(rows);
-    let output_aspect = (cols as f32 * gw) / (rows as f32 * gh);
-    log::info!(
-        "OCR-derived output size: {cols}x{rows} cells (input_aspect={:.4}, output_aspect={:.4})",
-        image_aspect,
-        output_aspect
+    if !args.ocr || !args.ocr_auto_width {
+        return;
+    }
+    let text_boxes = collect_text_box_metrics(source, args, detections);
+    if text_boxes.is_empty() {
+        return;
+    }
+    let gw = if args.braille {
+        2
+    } else {
+        glyphs.metrics.0.max(1)
+    } as u32;
+    let mut automatic_args = args.clone();
+    automatic_args.width = None;
+    automatic_args.height = None;
+    let (current_pixels, _) = crate::effects::calculate_dimensions(
+        &automatic_args,
+        glyphs,
+        source.get_width() as f32,
+        source.get_height() as f32,
     );
+    let minimum = args.min_width.unwrap_or(1).max(current_pixels / gw);
+    let (cols, _, required, limit) = automatic_ocr_columns(
+        source.get_width(),
+        gw as f32,
+        minimum,
+        args.max_width,
+        &text_boxes,
+    );
+    // Dimensions applies scale after selecting the grid. Compensate here so
+    // downscaling cannot undo the text-fit calculation.
+    let scale_x = args.scale.map_or(1.0, |(x, _)| x);
+    let scale_x = if scale_x.is_finite() && scale_x > 0.0 {
+        scale_x
+    } else {
+        1.0
+    };
+    args.width = Some((cols as f64 / scale_x as f64).ceil().max(1.0) as u32);
+    args.height = None;
+    if required > limit {
+        log::warn!("OCR needs {required} columns to fit all text, but the width limit is {limit}");
+    }
+    log::info!("OCR automatic render width: {cols} columns (text-fit={required})");
 }
 
 pub fn has_renderable_detections(
@@ -327,12 +403,12 @@ fn automatic_ocr_columns(
     max_width: Option<u32>,
     text_boxes: &[TextBoxMetric],
 ) -> (u32, u32, u32, u32) {
-    let image_wf = image_w.max(1) as f32;
-    let native_cols = (image_wf / glyph_w.max(1.0)).round().max(1.0) as u32;
+    let image_wf = image_w.max(1) as f64;
+    let native_cols = (image_wf / glyph_w.max(1.0) as f64).round().max(1.0) as u32;
     let required_cols = text_boxes
         .iter()
         .map(|text_box| {
-            ((text_box.text_cols as f32 * image_wf) / text_box.width())
+            ((text_box.text_cols as f64 * image_wf) / text_box.width() as f64)
                 .ceil()
                 .max(1.0) as u32
         })
@@ -342,9 +418,9 @@ fn automatic_ocr_columns(
 
     // A one-pixel-wide false-positive box should not request an unbounded
     // allocation. An explicit maximum takes precedence; otherwise allow up to
-    // one cell per source pixel, capped at a generous 4096 columns.
+    // a generous 4096 columns, including when small source text needs upscaling.
     let automatic_safety_max = native_cols
-        .max(image_w.min(4096))
+        .max(4096)
         .max(min_width.max(1));
     let max_width = max_width.unwrap_or(automatic_safety_max).max(1);
     (
@@ -362,11 +438,11 @@ fn collect_text_box_metrics(
 ) -> Vec<TextBoxMetric> {
     let image_w = source.get_width();
     let image_h = source.get_height();
-    renderable_detections(detections, args, image_w, image_h)
+    grouped_detections(detections, args, image_w, image_h, false)
         .into_iter()
         .filter_map(|det| {
             let (x0, _, x1, _) = polygon_bounds(&det.polygon, image_w, image_h)?;
-            let text_cols = det.text.chars().count();
+            let text_cols = det.text.lines().map(|line| line.chars().count()).max().unwrap_or(0);
             if text_cols == 0 {
                 return None;
             }
@@ -479,8 +555,39 @@ fn figlet_font_dirs() -> Vec<PathBuf> {
     unique
 }
 
+const BUNDLED_FIGLET_FONTS: &[(&str, &[u8])] = &[
+    ("abraxas", include_bytes!("../static/figlet/abraxas.flf")),
+    ("ansi_regular", include_bytes!("../static/figlet/ansi_regular.flf")),
+    ("blocky", include_bytes!("../static/figlet/blocky.flf")),
+    ("dos_rebel", include_bytes!("../static/figlet/dos_rebel.flf")),
+    ("future", include_bytes!("../static/figlet/future.tlf")),
+    ("mono12", include_bytes!("../static/figlet/mono12.tlf")),
+    ("mono9", include_bytes!("../static/figlet/mono9.tlf")),
+    ("phm-beyondneo-mono", include_bytes!("../static/figlet/phm-beyondneo-mono.flf")),
+    ("phm-c64", include_bytes!("../static/figlet/phm-c64.flf")),
+    ("phm-cga", include_bytes!("../static/figlet/phm-cga.flf")),
+    ("phm-dos-square", include_bytes!("../static/figlet/phm-dos-square.flf")),
+    ("phm-dos", include_bytes!("../static/figlet/phm-dos.flf")),
+    ("phm-dosv", include_bytes!("../static/figlet/phm-dosv.flf")),
+    ("phm-hdos", include_bytes!("../static/figlet/phm-hdos.flf")),
+    ("phm-largetype", include_bytes!("../static/figlet/phm-largetype.flf")),
+    ("phm-lcdmatrix", include_bytes!("../static/figlet/phm-lcdmatrix.flf")),
+    ("phm-minecraft", include_bytes!("../static/figlet/phm-minecraft.flf")),
+    ("phm-shinonome", include_bytes!("../static/figlet/phm-shinonome.flf")),
+    ("phm-slanted", include_bytes!("../static/figlet/phm-slanted.flf")),
+    ("phm-vga-square", include_bytes!("../static/figlet/phm-vga-square.flf")),
+    ("phm-vga", include_bytes!("../static/figlet/phm-vga.flf")),
+    ("smblock", include_bytes!("../static/figlet/smblock.tlf")),
+    ("smmono12", include_bytes!("../static/figlet/smmono12.tlf")),
+    ("smmono9", include_bytes!("../static/figlet/smmono9.tlf")),
+];
+
 fn load_figlet_from_path(path: &Path) -> Result<FIGlet, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    load_figlet_from_bytes(&bytes)
+}
+
+fn load_figlet_from_bytes(bytes: &[u8]) -> Result<FIGlet, String> {
     if bytes.starts_with(b"PK\x03\x04") {
         #[cfg(feature = "zip")]
         {
@@ -500,7 +607,7 @@ fn load_figlet_from_path(path: &Path) -> Result<FIGlet, String> {
             Err("ZIP-compressed FIGlet fonts require zip feature".to_string())
         }
     } else {
-        let contents = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+        let contents = String::from_utf8(bytes.to_vec()).map_err(|e| e.to_string())?;
         FIGlet::from_content(&contents).map_err(|e| e.to_string())
     }
 }
@@ -524,7 +631,7 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
                 name.replace('-', " "),
                 name.replace('-', "_"),
             ];
-            let Some(path) = dirs
+            let path = dirs
                 .iter()
                 .flat_map(|dir| {
                     name_variants.iter().flat_map(move |variant| {
@@ -533,8 +640,15 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
                             .map(move |extension| dir.join(format!("{variant}.{extension}")))
                     })
                 })
-                .find(|path| path.is_file())
-            else {
+                .find(|path| path.is_file());
+            let bundled = BUNDLED_FIGLET_FONTS.iter().find(|(font, _)| {
+                name_variants.iter().any(|variant| font.eq_ignore_ascii_case(variant))
+            });
+            let result = if let Some(path) = &path {
+                load_figlet_from_path(path)
+            } else if let Some((_, data)) = bundled {
+                load_figlet_from_bytes(data)
+            } else {
                 log::debug!(
                     "OCR FIGlet/Toilet font {name:?} was not found for {} lines",
                     list.height
@@ -542,7 +656,7 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
                 continue;
             };
 
-            match load_figlet_from_path(&path) {
+            match result {
                 Ok(font) => {
                     let actual_height = font.header_line.height as u32;
                     fonts.push(OcrFigletFont {
@@ -555,7 +669,7 @@ fn load_ocr_figlet_fonts(font_lists: &[OcrFigletFontList]) -> Vec<OcrFigletFont>
                 Err(error) => log::debug!(
                     "Ignoring OCR FIGfont {} at {}: {}",
                     name,
-                    path.display(),
+                    path.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "bundled".to_string()),
                     error
                 ),
             }
@@ -736,15 +850,12 @@ fn normalize_text_art_with_metadata(
 }
 
 fn render_figlet_text(font: &OcrFigletFont, text: &str) -> Option<TextArt> {
-    let figure = font.font.convert(text)?;
-    if figure.characters.len() != text.chars().count() {
-        return None;
-    }
+    let rendered = crate::figlet_text::render(&font.font, text)?;
     normalize_text_art_with_metadata(
         font.name.clone(),
         font.configured_height,
         font.priority,
-        figure.as_str().lines().map(str::to_string).collect(),
+        rendered.lines().map(str::to_string).collect(),
     )
 }
 
@@ -795,6 +906,20 @@ fn choose_text_art(text: &str, base_width: usize, base_height: usize) -> Option<
     )
 }
 
+fn choose_largest_text_art(
+    text: &str,
+    max_width: usize,
+    max_height: usize,
+    fonts: &[OcrFigletFont],
+) -> Option<TextArt> {
+    fonts
+        .iter()
+        .filter_map(|font| render_figlet_text(font, text))
+        .filter(|art| art.width() <= max_width && art.height() <= max_height)
+        .max_by_key(|art| (art.height(), art.width(), std::cmp::Reverse(art.priority)))
+        .or_else(|| plain_text_art(text, max_width).filter(|art| art.height() <= max_height))
+}
+
 fn choose_text_art_from_fonts(
     text: &str,
     base_width: usize,
@@ -829,12 +954,8 @@ fn choose_text_art_from_fonts(
                 l.height == 1 && l.fonts.iter().any(|n| n.eq_ignore_ascii_case("plain"))
             })
         {
-            if text.chars().count() <= base_width {
-                if let Some(plain) =
-                    normalize_text_art_with_metadata("plain", 1, 0, vec![text.to_string()])
-                {
-                    return Some(plain);
-                }
+            if let Some(plain) = plain_text_art(text, base_width).filter(|art| art.height() <= base_height) {
+                return Some(plain);
             }
         }
 
@@ -901,19 +1022,15 @@ fn choose_text_art_from_fonts(
     // Step 3 (Fallback):
     // Fall back to plain single-line text within max_w_allowed.
     // ─────────────────────────────────────────────────────────────────────────
-    if text.chars().count() <= max_w_allowed {
-        plain_text_art(text, max_w_allowed)
-    } else {
-        None
-    }
+    plain_text_art(text, max_w_allowed).filter(|art| art.height() <= max_h_allowed)
 }
 
 fn plain_text_art(text: &str, max_width: usize) -> Option<TextArt> {
     let text = text.trim();
-    if text.is_empty() || text.chars().count() > max_width {
+    if text.is_empty() || text.lines().any(|line| line.chars().count() > max_width) {
         return None;
     }
-    normalize_text_art_with_metadata("plain", 1, 0, vec![text.to_string()])
+    normalize_text_art_with_metadata("plain", 1, 0, text.lines().map(str::to_string).collect())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1043,8 +1160,7 @@ pub fn detections_to_overlays(
     };
     let grid_w = (dim_w / gw.max(1) as u32).max(1) as i32;
     let grid_h = (dim_h / gh.max(1) as u32).max(1) as i32;
-    let rgb = photon_rgb(source);
-    let global_bg = rgb.first().copied().unwrap_or([0, 0, 0]);
+    let raw = source.get_raw_pixels();
     let figlet_fonts = if args.ocr_figlet {
         load_ocr_figlet_fonts(&args.ocr_figlet_fonts)
     } else {
@@ -1052,11 +1168,12 @@ pub fn detections_to_overlays(
     };
 
     let mut overlays = Vec::new();
-    let mut renderable = renderable_detections(
+    let mut renderable = grouped_detections(
         detections,
         args,
         source.get_width(),
         source.get_height(),
+        true,
     )
     .into_iter()
     .filter_map(|det| {
@@ -1143,7 +1260,9 @@ pub fn detections_to_overlays(
             median_detection_height,
         ) && target_h >= args.ocr_figlet_min_height as usize;
 
-        let art = if allow_figlet {
+        let art = if allow_figlet && args.ocr_figlet_fill {
+            choose_largest_text_art(&det.text, max_w_allowed, max_h_allowed, &figlet_fonts)
+        } else if allow_figlet {
             choose_text_art_from_fonts(
                 &det.text,
                 target_w,
@@ -1156,7 +1275,7 @@ pub fn detections_to_overlays(
         } else {
             plain_text_art(&det.text, max_w_allowed)
         };
-        let Some(art) = art else {
+        let Some(art) = art.filter(|art| art.height() <= max_h_allowed) else {
             log::debug!(
                 "No complete OCR text rendering fits {:?} in {}x{} cells",
                 det.text,
@@ -1205,11 +1324,10 @@ pub fn detections_to_overlays(
         }
 
         let fg = estimate_text_color(
-            &rgb,
+            &raw,
             source.get_width(),
             source.get_height(),
             *bounds,
-            global_bg,
         );
         if final_art.source != "plain" {
             log::debug!(
@@ -1322,13 +1440,14 @@ pub fn remove_detected_text(
         return source.clone();
     }
 
-    let mut raw = source.get_raw_pixels();
+    let original = source.get_raw_pixels();
+    let mut raw = original.clone();
     let mut removed = 0usize;
     for det in renderable_detections(detections, args, width, height) {
         let Some(bounds) = polygon_bounds(&det.polygon, width, height) else {
             continue;
         };
-        if fill_text_region_from_background_mask(&mut raw, width, height, bounds) {
+        if fill_text_region_from_background_mask(&original, &mut raw, width, height, bounds) {
             removed += 1;
         }
     }
@@ -1518,38 +1637,31 @@ fn photon_to_rgb_image(image: &PhotonImage) -> Result<RgbImage, Box<dyn Error>> 
     RgbImage::from_raw(width, height, rgb).ok_or_else(|| "failed to build RGB OCR image".into())
 }
 
-fn photon_rgb(image: &PhotonImage) -> Vec<[u8; 3]> {
-    image
-        .get_raw_pixels()
-        .chunks_exact(4)
-        .map(|px| [px[0], px[1], px[2]])
-        .collect()
-}
-
 fn fill_text_region_from_background_mask(
+    original: &[u8],
     raw: &mut [u8],
     image_w: u32,
     image_h: u32,
     bounds: (u32, u32, u32, u32),
 ) -> bool {
-    let (x0, y0, x1, y1) = expand_text_bounds(bounds, image_w, image_h);
+    let (x0, y0, x1, y1) = bounds;
     if x1 <= x0 || y1 <= y0 {
         return false;
     }
 
     let Some(background) =
-        dominant_background_color(raw, image_w, image_h, bounds, (x0, y0, x1, y1))
+        dominant_background_color(original, image_w, image_h, bounds)
     else {
         return false;
     };
-    let threshold = foreground_threshold(raw, image_w, image_h, background, bounds);
+    let threshold = foreground_threshold(original, image_w, image_h, background, bounds);
     let bw = (x1 - x0) as usize;
     let bh = (y1 - y0) as usize;
     let mut mask = vec![false; bw * bh];
 
     for y in y0..y1 {
         for x in x0..x1 {
-            let Some(px) = rgba_at(raw, image_w, x, y) else {
+            let Some(px) = rgba_at(original, image_w, x, y) else {
                 continue;
             };
             if color_distance_sq(px, background) >= threshold {
@@ -1574,65 +1686,93 @@ fn fill_text_region_from_background_mask(
     changed
 }
 
-fn expand_text_bounds(
-    bounds: (u32, u32, u32, u32),
-    image_w: u32,
-    image_h: u32,
-) -> (u32, u32, u32, u32) {
-    let (x0, y0, x1, y1) = bounds;
-    let box_h = y1.saturating_sub(y0);
-    let pad = ((box_h as f32 * 0.08).ceil() as u32).clamp(1, 3);
-    (
-        x0.saturating_sub(pad),
-        y0.saturating_sub(pad),
-        x1.saturating_add(pad).min(image_w),
-        y1.saturating_add(pad).min(image_h),
-    )
-}
-
+// Score colour families using separate interior, inner-edge, and exterior
+// distributions. Nearby scenery must not outvote the actual text surface.
 fn dominant_background_color(
     raw: &[u8],
     image_w: u32,
     image_h: u32,
-    _bounds: (u32, u32, u32, u32),
-    erase_bounds: (u32, u32, u32, u32),
+    bounds: (u32, u32, u32, u32),
 ) -> Option<[u8; 4]> {
-    let (ex0, ey0, ex1, ey1) = erase_bounds;
-    let ring = (erase_bounds.3.saturating_sub(erase_bounds.1) / 3).clamp(3, 16);
-    let sx0 = ex0.saturating_sub(ring);
-    let sy0 = ey0.saturating_sub(ring);
-    let sx1 = ex1.saturating_add(ring).min(image_w);
-    let sy1 = ey1.saturating_add(ring).min(image_h);
-
-    let mut bins = std::collections::HashMap::<u16, (u32, [u64; 4])>::new();
-    for y in sy0..sy1 {
-        for x in sx0..sx1 {
-            if x >= ex0 && x < ex1 && y >= ey0 && y < ey1 {
-                continue;
-            }
+    let (x0, y0, x1, y1) = bounds;
+    let ring = (y1.saturating_sub(y0) / 4).clamp(1, 4);
+    let mut bins = std::collections::BTreeMap::<u16, ([f64; 3], [f64; 4], f64)>::new();
+    let mut totals = [0.0; 3];
+    for y in y0.saturating_sub(ring)..y1.saturating_add(ring).min(image_h) {
+        for x in x0.saturating_sub(ring)..x1.saturating_add(ring).min(image_w) {
             let Some(px) = rgba_at(raw, image_w, x, y) else {
                 continue;
             };
-            let key = quantized_rgb_key(px);
-            let entry = bins.entry(key).or_insert((0, [0; 4]));
-            entry.0 += 1;
-            entry.1[0] += px[0] as u64;
-            entry.1[1] += px[1] as u64;
-            entry.1[2] += px[2] as u64;
-            entry.1[3] += px[3] as u64;
+            if px[3] == 0 {
+                continue;
+            }
+            let inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+            let edge = inside && (x == x0 || x + 1 == x1 || y == y0 || y + 1 == y1);
+            let weights = [
+                inside as u8 as f64,
+                edge as u8 as f64,
+                (!inside) as u8 as f64,
+            ];
+            let bin = bins
+                .entry(quantized_rgb_key(px))
+                .or_insert(([0.0; 3], [0.0; 4], 0.0));
+            for i in 0..3 {
+                bin.0[i] += weights[i];
+                totals[i] += weights[i];
+            }
+            // Keep the representative colour anchored to the interior.
+            if inside {
+                for i in 0..4 {
+                    bin.1[i] += px[i] as f64;
+                }
+                bin.2 += 1.0;
+            }
         }
     }
-
-    if let Some((_, (count, sum))) = bins.into_iter().max_by_key(|(_, (count, _))| *count) {
-        Some([
-            (sum[0] / count as u64) as u8,
-            (sum[1] / count as u64) as u8,
-            (sum[2] / count as u64) as u8,
-            (sum[3] / count as u64) as u8,
-        ])
-    } else {
-        rgba_at(raw, image_w, 0, 0).or(Some([0, 0, 0, 255]))
+    let score = |counts: [f64; 3]| -> f64 {
+        counts[0] / totals[0].max(1.0) * 0.45
+            + counts[1] / totals[1].max(1.0) * 0.45
+            + counts[2] / totals[2].max(1.0) * 0.10
+    };
+    let mut candidates = bins
+        .values()
+        .filter(|bin| bin.2 > 0.0)
+        .map(|bin| {
+            (
+                bin.1.map(|sum| (sum / bin.2).round() as u8),
+                bin.0,
+                bin.1,
+                bin.2,
+            )
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|a, b| score(b.1).total_cmp(&score(a.1)));
+    let mut best = None;
+    let mut best_score = -1.0;
+    // Merge neighbouring colour buckets so gradients/JPEG noise do not lose
+    // to a small but perfectly uniform black cluster.
+    for candidate in candidates.iter().take(32) {
+        let mut counts = [0.0; 3];
+        let mut sums = [0.0; 4];
+        let mut count = 0.0;
+        for other in &candidates {
+            if color_distance_sq(candidate.0, other.0) <= 48 * 48 {
+                for i in 0..3 {
+                    counts[i] += other.1[i];
+                }
+                for i in 0..4 {
+                    sums[i] += other.2[i];
+                }
+                count += other.3;
+            }
+        }
+        let value = score(counts);
+        if value > best_score {
+            best_score = value;
+            best = Some(sums.map(|sum| (sum / count).round() as u8));
+        }
     }
+    best
 }
 
 fn foreground_threshold(
@@ -1775,80 +1915,29 @@ fn polygon_bounds(
 }
 
 fn estimate_text_color(
-    rgb: &[[u8; 3]],
+    raw: &[u8],
     image_w: u32,
     image_h: u32,
     bounds: (u32, u32, u32, u32),
-    global_bg: [u8; 3],
 ) -> [u8; 3] {
     let (x0, y0, x1, y1) = bounds;
     if x1 <= x0 || y1 <= y0 || image_w == 0 || image_h == 0 {
         return [255, 255, 255];
     }
-    let pad = ((((y1 - y0) as f32) * 0.08).ceil() as u32).clamp(1, 3);
-    let erase_x0 = x0.saturating_sub(pad);
-    let erase_y0 = y0.saturating_sub(pad);
-    let erase_x1 = (x1 + pad).min(image_w);
-    let erase_y1 = (y1 + pad).min(image_h);
-    let ring = (((y1 - y0) / 4) as u32).clamp(3, 8);
-    let sample_x0 = erase_x0.saturating_sub(ring);
-    let sample_y0 = erase_y0.saturating_sub(ring);
-    let sample_x1 = (erase_x1 + ring).min(image_w);
-    let sample_y1 = (erase_y1 + ring).min(image_h);
-
-    let mut bg_pixels = Vec::new();
-    for y in sample_y0..sample_y1 {
-        for x in sample_x0..sample_x1 {
-            let inside = x >= erase_x0 && x < erase_x1 && y >= erase_y0 && y < erase_y1;
-            if !inside {
-                let idx = (y as usize) * (image_w as usize) + (x as usize);
-                if let Some(px) = rgb.get(idx) {
-                    bg_pixels.push(*px);
-                }
-            }
-        }
-    }
-    let bg = if !bg_pixels.is_empty() {
-        dominant_rgb(&bg_pixels)
-    } else {
-        global_bg
-    };
+    let bg = dominant_background_color(raw, image_w, image_h, bounds)
+        .map(|px| [px[0], px[1], px[2]])
+        .unwrap_or([0, 0, 0]);
 
     let mut bbox_pixels = Vec::with_capacity(((x1 - x0) * (y1 - y0)) as usize);
     for y in y0..y1 {
         for x in x0..x1 {
-            let idx = (y as usize) * (image_w as usize) + (x as usize);
-            if let Some(px) = rgb.get(idx).copied() {
-                bbox_pixels.push(px);
+            if let Some(px) = rgba_at(raw, image_w, x, y) {
+                bbox_pixels.push([px[0], px[1], px[2]]);
             }
         }
     }
 
     best_contrast_foreground_color(&bbox_pixels, bg)
-}
-
-fn dominant_rgb(pixels: &[[u8; 3]]) -> [u8; 3] {
-    if pixels.is_empty() {
-        return [0, 0, 0];
-    }
-    let mut bins: std::collections::HashMap<(u8, u8, u8), (usize, [u64; 3])> =
-        std::collections::HashMap::new();
-    for px in pixels {
-        let key = (px[0] >> 4, px[1] >> 4, px[2] >> 4);
-        let entry = bins.entry(key).or_insert((0, [0, 0, 0]));
-        entry.0 += 1;
-        entry.1[0] += px[0] as u64;
-        entry.1[1] += px[1] as u64;
-        entry.1[2] += px[2] as u64;
-    }
-    bins.into_values()
-        .max_by_key(|(count, _)| *count)
-        .map(|(count, sums)| [
-            (sums[0] / count as u64) as u8,
-            (sums[1] / count as u64) as u8,
-            (sums[2] / count as u64) as u8,
-        ])
-        .unwrap_or(pixels[0])
 }
 
 #[inline]
@@ -2149,6 +2238,244 @@ mod tests {
     }
 
     #[test]
+    fn detection_megapixels_preserve_aspect_and_replace_legacy_resizing() {
+        let mut args = default_render_args();
+        args.ocr_auto_width = false;
+        args.ocr_megapixels = Some(2.0);
+        args.ocr_width = Some(123);
+        args.ocr_max_side_len = 320;
+        let (w, h, side) = detection_dimensions(&args, 4000, 2000);
+        assert_eq!((w, h, side), (2000, 1000, 2000));
+        assert_eq!(detection_dimensions(&args, 2000, 4000), (1000, 2000, 2000));
+        assert_eq!(detection_dimensions(&args, 640, 480), (640, 480, 640));
+        args.ocr_auto_width = true;
+        let automatic = detection_dimensions(&args, 4000, 2000);
+        args.ocr_megapixels = Some(16.0);
+        assert_eq!(detection_dimensions(&args, 4000, 2000), automatic);
+        assert!(automatic.0 as u64 * automatic.1 as u64 <= 3_000_000);
+        args.ocr_auto_width = false;
+        args.ocr_megapixels = None;
+        assert_eq!(detection_dimensions(&args, 4000, 2000), (123, 62, 320));
+    }
+
+    #[test]
+    fn megapixel_argument_validates_finite_positive_budgets() {
+        for invalid in ["NaN", "inf", "0", "-1", "17"] {
+            assert!(
+                crate::args::Args::try_parse_from(["img2irc", "--ocr-megapixels", invalid]).is_err()
+            );
+        }
+        let args = crate::args::Args::parse_from(["img2irc", "--ocr-megapixels", "2.5"]);
+        assert_eq!(args.ocr_megapixels, Some(2.5));
+    }
+
+    fn detection(text: &str, bounds: (u32, u32, u32, u32)) -> OcrDetection {
+        let (x0, y0, x1, y1) = bounds;
+        OcrDetection {
+            text: text.to_string(),
+            confidence: 1.0,
+            polygon: vec![
+                [x0 as f32, y0 as f32],
+                [x1 as f32, y0 as f32],
+                [x1 as f32, y1 as f32],
+                [x0 as f32, y1 as f32],
+            ],
+        }
+    }
+
+    fn test_glyphs() -> GlyphStore {
+        GlyphStore {
+            glyphs: Vec::new(),
+            groups: Default::default(),
+            selected: Default::default(),
+            metrics: (10, 20),
+            float_metrics: (9.5, 19.0),
+        }
+    }
+
+    #[test]
+    fn auto_width_grows_manual_dimensions_and_keeps_complete_overlays() {
+        let mut args = default_render_args();
+        assert!(args.ocr_auto_width);
+        args.ocr = true;
+        args.ocr_figlet = false;
+        args.width = Some(40);
+        args.height = Some(10);
+        let image = PhotonImage::new(vec![255; 1000 * 300 * 4], 1000, 300);
+        let detections = vec![
+            detection("Twenty characters!!!", (100, 20, 200, 40)),
+            detection("Short", (600, 100, 800, 120)),
+        ];
+        choose_text_render_geometry(&mut args, &image, &test_glyphs(), &detections);
+        assert_eq!(args.width, Some(200));
+        assert_eq!(args.height, None);
+        let overlays = detections_to_overlays(&image, &image, &args, &test_glyphs(), &detections);
+        assert_eq!(overlays.len(), 2);
+        assert_eq!(overlays[0].text, detections[0].text);
+        assert_eq!(overlays[0].w, 20);
+        args.width = Some(999);
+        choose_text_render_geometry(&mut args, &image, &test_glyphs(), &detections);
+        assert_eq!(args.width, Some(200), "Inactive manual width must not affect automatic fitting");
+    }
+
+    #[test]
+    fn auto_width_honors_opt_out_empty_detections_and_confidence_filter() {
+        let mut args = default_render_args();
+        args.ocr = true;
+        args.width = Some(12);
+        args.height = Some(5);
+        let image = PhotonImage::new(vec![255; 100 * 40 * 4], 100, 40);
+        let detections = vec![detection("A long line", (0, 0, 5, 10))];
+        args.ocr_auto_width = false;
+        choose_text_render_geometry(&mut args, &image, &test_glyphs(), &detections);
+        assert_eq!((args.width, args.height), (Some(12), Some(5)));
+        args.ocr_auto_width = true;
+        choose_text_render_geometry(&mut args, &image, &test_glyphs(), &[]);
+        assert_eq!((args.width, args.height), (Some(12), Some(5)));
+        args.ocr_min_confidence = 1.1;
+        choose_text_render_geometry(&mut args, &image, &test_glyphs(), &detections);
+        assert_eq!((args.width, args.height), (Some(12), Some(5)));
+    }
+
+    #[test]
+    fn adjacent_word_detections_form_one_overlay_with_spaces() {
+        let words = vec![
+            detection("THREE", (42, 5, 67, 15)),
+            detection("ONE", (10, 5, 25, 15)),
+            detection("TWO", (26, 5, 41, 15)),
+        ];
+        let mut args = default_render_args();
+        args.ocr_figlet = false;
+        args.width = Some(100);
+        args.height = Some(30);
+        let source = PhotonImage::new(vec![255; 100 * 30 * 4], 100, 30);
+        let metrics = collect_text_box_metrics(&source, &args, &words);
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].text_cols, 13);
+        let overlays = detections_to_overlays(&source, &source, &args, &test_glyphs(), &words);
+        assert_eq!(overlays.len(), 1);
+        assert_eq!(overlays[0].text, "ONE TWO THREE");
+    }
+
+    #[test]
+    fn adjacent_lines_form_one_multiline_overlay_but_width_fits_each_line() {
+        let words = vec![detection("FIRST LINE", (10, 10, 80, 30)), detection("SECOND LINE", (10, 35, 80, 55))];
+        let mut args = default_render_args();
+        args.ocr_figlet = false;
+        args.width = Some(100);
+        args.height = Some(100);
+        let source = PhotonImage::new(vec![255; 100 * 100 * 4], 100, 100);
+        let metrics = collect_text_box_metrics(&source, &args, &words);
+        assert_eq!(metrics.len(), 2);
+        let overlays = detections_to_overlays(&source, &source, &args, &test_glyphs(), &words);
+        assert_eq!(overlays.len(), 1);
+        assert_eq!(
+            overlays[0].text.lines().map(str::trim_end).collect::<Vec<_>>(),
+            ["FIRST LINE", "SECOND LINE"]
+        );
+        assert_eq!(overlays[0].h, 2);
+    }
+
+    #[test]
+    fn grouped_words_leave_the_gap_in_the_source_untouched() {
+        let words = vec![detection("ONE", (10, 5, 38, 15)), detection("TWO", (43, 5, 70, 15))];
+        let mut raw = vec![255; 100 * 20 * 4];
+        set_rgba(&mut raw, 100, 40, 10, [200, 0, 0, 255]);
+        let source = PhotonImage::new(raw, 100, 20);
+        let args = default_render_args();
+        assert_eq!(grouped_detections(&words, &args, 100, 20, true).len(), 1);
+        let cleaned = remove_detected_text(&source, &args, &words).get_raw_pixels();
+        assert_eq!(&cleaned[(10 * 100 + 40) * 4..][..4], &[200, 0, 0, 255]);
+    }
+
+    #[test]
+    fn auto_width_accounts_for_downscaling_and_braille_cells() {
+        let image = PhotonImage::new(vec![255; 100 * 40 * 4], 100, 40);
+        for braille in [false, true] {
+            let mut args = default_render_args();
+            args.ocr = true;
+            args.braille = braille;
+            args.width = Some(10);
+            args.scale = Some((0.5, 0.5));
+            let detections = vec![detection("0123456789", (10, 10, 20, 20))];
+            choose_text_render_geometry(&mut args, &image, &test_glyphs(), &detections);
+            let (pw, _) = crate::effects::calculate_dimensions(&args, &test_glyphs(), 100.0, 40.0);
+            let cols = pw / if braille { 2 } else { 10 };
+            assert!(cols >= 100);
+        }
+    }
+
+    #[test]
+    fn background_uses_inner_surface_even_with_dense_text_and_black_surroundings() {
+        let bounds = (10, 5, 50, 15);
+        for (surface, ink) in [
+            ([245, 240, 230, 255], [0, 0, 0, 255]),
+            ([15, 20, 25, 255], [255, 255, 255, 255]),
+        ] {
+            let mut raw = [0, 0, 0, 255].repeat(60 * 20);
+            for y in 5..15 {
+                for x in 10..50 {
+                    let pixel = if y > 5 && y < 14 && x > 10 && x < 49 {
+                        ink
+                    } else {
+                        surface
+                    };
+                    set_rgba(&mut raw, 60, x, y, pixel);
+                }
+            }
+            assert_eq!(
+                dominant_background_color(&raw, 60, 20, bounds),
+                Some(surface)
+            );
+            let source = PhotonImage::new(raw.clone(), 60, 20);
+            let cleaned = remove_detected_text(
+                &source,
+                &default_render_args(),
+                &[detection("TEXT", bounds)],
+            );
+            let result = cleaned.get_raw_pixels();
+            assert_eq!(rgba_at(&result, 60, 30, 10), Some(surface));
+            assert_eq!(rgba_at(&result, 60, 9, 10), rgba_at(&raw, 60, 9, 10));
+            assert_eq!(
+                estimate_text_color(&raw, 60, 20, bounds),
+                [ink[0], ink[1], ink[2]]
+            );
+        }
+    }
+
+    #[test]
+    fn background_at_image_edges_does_not_fall_back_to_the_first_pixel() {
+        let surface = [240, 230, 210, 255];
+        let mut raw = surface.repeat(20 * 10);
+        set_rgba(&mut raw, 20, 0, 0, [0, 0, 0, 255]);
+        assert_eq!(
+            dominant_background_color(&raw, 20, 10, (0, 0, 20, 10)),
+            Some(surface)
+        );
+        assert_eq!(
+            dominant_background_color(&vec![0; 20 * 10 * 4], 20, 10, (0, 0, 20, 10)),
+            None
+        );
+    }
+
+    #[test]
+    fn background_merges_nearby_shades_instead_of_choosing_uniform_black_text() {
+        let mut raw = Vec::new();
+        for y in 0..20 {
+            for x in 0..60 {
+                let gray = if y > 5 && y < 15 && x % 3 == 0 {
+                    0
+                } else {
+                    190 + (x % 40) as u8
+                };
+                raw.extend_from_slice(&[gray, gray, gray, 255]);
+            }
+        }
+        let bg = dominant_background_color(&raw, 60, 20, (0, 0, 60, 20)).unwrap();
+        assert!(bg[0] >= 190 && bg[0] <= 229, "{bg:?}");
+    }
+
+    #[test]
     fn text_art_normalization_crops_blank_outer_rows_and_columns() {
         let normalized = art("compact", &["      ", "  AB  ", "  CD  ", "      "]);
 
@@ -2236,6 +2563,9 @@ mod tests {
 
         let capped = automatic_ocr_columns(200, 10.0, 1, Some(30), &boxes);
         assert_eq!(capped.0, 30);
+
+        let tiny_box = [TextBoxMetric { x0: 0.0, x1: 2.0, text_cols: 20 }];
+        assert_eq!(automatic_ocr_columns(200, 10.0, 1, None, &tiny_box).0, 2000);
     }
 
     #[test]
@@ -2296,6 +2626,25 @@ mod tests {
         snap_box_alignments(&mut boxes, 1.5);
         assert_eq!(boxes[0].left, 5.2); // Median left of cluster
         assert_eq!(boxes[1].left, 5.2);
+    }
+
+    #[test]
+    fn fill_figlet_uses_expansion_even_when_a_smaller_font_already_fits() {
+        let fonts = vec![
+            OcrFigletFont { name: "small".into(), configured_height: 5, priority: 0, font: FIGlet::small().unwrap() },
+            OcrFigletFont { name: "standard".into(), configured_height: 6, priority: 1, font: FIGlet::standard().unwrap() },
+        ];
+        let small = render_figlet_text(&fonts[0], "HELLO").unwrap();
+        let large = render_figlet_text(&fonts[1], "HELLO").unwrap();
+        assert!(large.height() > small.height());
+        let width = small.width().max(large.width());
+        let original = choose_text_art_from_fonts("HELLO", width, 5, width, 6, &[], &fonts).unwrap();
+        assert_eq!(original.source, "small");
+        let filled = choose_largest_text_art("HELLO", width, 6, &fonts).unwrap();
+        assert_eq!(filled.source, "standard");
+        assert_eq!(choose_largest_text_art("HELLO", width, small.height(), &fonts).unwrap().source, "small");
+        assert_eq!(choose_largest_text_art("HELLO", 5, 1, &fonts).unwrap().source, "plain");
+        assert!(choose_largest_text_art("HELLO", 4, 1, &fonts).is_none());
     }
 
     #[test]
