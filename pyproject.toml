@@ -9,6 +9,12 @@ description = "Python bindings for generating ANSI and IRC art with img2irc"
 readme = "python/README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-only" }
+license-files = [
+    "LICENSE",
+    "static/fonts/LICENSE-Cascadia.md",
+    "static/fonts/LICENSE-Iosevka.md",
+    "static/fonts/LICENSE-Unifont-OFL-1.1.txt",
+]
 authors = [{ name = "waveplate" }]
 classifiers = [
     "Development Status :: 3 - Alpha",

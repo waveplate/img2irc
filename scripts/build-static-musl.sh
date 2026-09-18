@@ -62,6 +62,7 @@ fi
 ORT_LIB_LOCATION="${ORT_LIB_DIR}" \
 ORT_CXX_STDLIB=stdc++ \
 ORT_PREFER_DYNAMIC_LINK=0 \
+PYO3_BUILD_EXTENSION_MODULE=1 \
 cargo build \
     --manifest-path "${ROOT_DIR}/Cargo.toml" \
     --release \
