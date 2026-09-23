@@ -70,6 +70,8 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     boxBlur: checked(root, "box-blur"),
     gaussianBlur: number(root, "gaussian-blur"),
     smooth: root.querySelector("#smoothing-section").open,
+    smoothFeatures: checked(root, "smooth-features"),
+    perceptualScore: checked(root, "perceptual-score"),
     smoothCandidates: number(root, "smooth-candidates"),
     smoothOrders: number(root, "smooth-orders"),
     smoothShapes: checked(root, "smooth-shapes"),

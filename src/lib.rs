@@ -101,6 +101,7 @@ pub mod ocr {
     }
 }
 pub mod palette;
+pub mod perceptual_score;
 pub mod pipeline;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -231,6 +232,8 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         show_discontinuities: args.show_discontinuities,
         discontinuity_threshold: args.discontinuity_threshold,
         score_fix: args.smooth,
+        score_fix_features: args.smooth_features,
+        perceptual_score: args.perceptual_score,
         score_fix_candidates: args.smooth_candidates,
         score_fix_orderings: args.smooth_orders,
         score_fix_geometry_first: args.smooth_shapes,
@@ -717,6 +720,7 @@ mod tests {
         let args = crate::args::Args::parse_from([
             "img2irc",
             "--smooth",
+            "--smooth-features",
             "--smooth-candidates",
             "24",
             "--smooth-orders",
@@ -727,10 +731,29 @@ mod tests {
         ]);
 
         assert!(args.smooth);
+        assert!(args.smooth_features);
+        assert!(crate::args_to_render_args(&args).score_fix_features);
+        assert!(!crate::generator::default_options().score_fix_features);
         assert_eq!(args.smooth_candidates, 24);
         assert_eq!(args.smooth_orders, 3);
         assert!(args.smooth_shapes);
         assert!(!args.smooth_neighbors);
+    }
+
+    #[test]
+    fn perceptual_score_is_opt_in_and_survives_settings_round_trip() {
+        let args = crate::args::Args::parse_from(["img2irc", "--perceptual-score"]);
+        let render = crate::args_to_render_args(&args);
+        assert!(render.perceptual_score);
+        assert!(!render.score_fix);
+        let mut saved = serde_json::to_value(&render).unwrap();
+        assert!(serde_json::from_value::<crate::args::RenderArgs>(saved.clone())
+            .unwrap()
+            .perceptual_score);
+        saved.as_object_mut().unwrap().remove("perceptual_score");
+        assert!(!serde_json::from_value::<crate::args::RenderArgs>(saved)
+            .unwrap()
+            .perceptual_score);
     }
 
     #[tokio::test]

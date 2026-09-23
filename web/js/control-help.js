@@ -9,6 +9,8 @@ const HELP = Object.freeze({
   "grayscale-tolerance": "Controls when near-neutral colours are treated as grayscale during palette selection. Higher values classify more colours as gray.",
   "colour-space": "Colour model used when comparing and adjusting colours. Different models weight hue and brightness differences differently.",
   smooth: "Runs the more expensive continuity pass to reduce rough transitions between neighboring glyph cells.",
+  "perceptual-score": "Experimental quality score combining contour regularity, missing or invented edges, and coarse colour agreement. Allows small edge movements. Lower is better; values use a different scale from Contour. Changes scoring, not the rendered image.",
+  "smooth-features": "Experimental fast smoothing using features extracted from the actual glyph bitmaps. Limits added source error, but may soften fine details. Turn off to compare with contour smoothing. Refine shapes still adds the slower refinement pass.",
   "smooth-candidates": "Number of alternate glyph matches retained per cell for smoothing. More candidates can improve results and increase render time.",
   "smooth-orders": "Number of traversal patterns tried by smoothing. Additional patterns reduce directional bias but add work.",
   "smooth-shapes": "Allows smoothing to refine glyph shapes as well as neighbouring colour transitions.",

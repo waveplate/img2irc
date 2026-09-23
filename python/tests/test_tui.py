@@ -218,6 +218,7 @@ class TuiTests(unittest.TestCase):
             keys,
             {
                 "score_fix",
+                "score_fix_features",
                 "score_fix_candidates",
                 "score_fix_orderings",
                 "score_fix_geometry_first",

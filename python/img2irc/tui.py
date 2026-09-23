@@ -54,6 +54,7 @@ CONTROLS = (
     Control("width", "Width", "int", 4, 0, 4096),
     Control("render", "Mode", "choice", choices=("Ansi24", "Ansi", "Irc")),
     Control("braille", "Braille"),
+    Control("perceptual_score", "Perceptual score (experimental)"),
     Control("font_size", "Font size (0=auto)", "int", 1, 0, 256),
     Control(
         "filter",
@@ -74,6 +75,12 @@ CONTROLS = (
     Control("show_discontinuities", "Show discontinuities"),
     Control("discontinuity_threshold", "Discontinuity threshold", "float", 1, 0, 1000),
     Control("score_fix", "Smoothing", section="Smoothing"),
+    Control(
+        "score_fix_features",
+        "Fast features (experimental)",
+        section="Smoothing",
+        depends_on="score_fix",
+    ),
     Control(
         "score_fix_candidates",
         "Candidates",

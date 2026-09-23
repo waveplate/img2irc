@@ -11,6 +11,8 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod smooth_features;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type RenderInstant = std::time::Instant;
 
@@ -1332,6 +1334,7 @@ pub struct RenderResult {
     pub dynamic_scaling_count: u64,
     pub grid: Vec<Vec<RenderedCell>>,
     pub score: f64,
+    pub perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
     pub longest_line_bytes: usize,
     pub initial_time: std::time::Duration,
     pub profile: RenderProfile,
@@ -1347,6 +1350,7 @@ impl From<&str> for RenderResult {
             dynamic_scaling_count: 0,
             grid: Vec::new(),
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 0,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
@@ -1572,6 +1576,7 @@ pub fn apply_overlays_to_result(
         total_pixels: base.total_pixels,
         dynamic_scaling_count: base.dynamic_scaling_count,
         score: base.score,
+        perceptual_score: base.perceptual_score,
         longest_line_bytes,
         initial_time: base.initial_time,
         profile: base.profile.clone(),
@@ -4798,6 +4803,7 @@ fn run_score_fix_prefix_search(
     let mut candidate_lists = vec![Vec::new(); grid_w * grid_h];
     let mut candidate_trials = 0usize;
     let mut duplicate_candidates_skipped = 0usize;
+    let candidate_catalog = geometry_rendered_state_catalog(glyphs);
 
     // Freeze the target set and complete candidate rankings before changing
     // the raster. Candidate k must mean the same thing in an N=k and N>k run;
@@ -4816,11 +4822,16 @@ fn run_score_fix_prefix_search(
             };
             let candidates_with_duplicates = best_candidate_pool_pre(costs, costs.len());
             let original_count = candidates_with_duplicates.len();
-            let mut candidates = deduplicate_rendered_candidates(
-                candidates_with_duplicates,
-                glyphs,
-                current_choice,
-            );
+            // Classify exact native bitmaps once per glyph set. Comparing
+            // every candidate bitmap with every earlier candidate was
+            // quadratic in the glyph count for EACH target cell.
+            let mut seen = vec![false; glyphs.len() * 2];
+            seen[candidate_catalog.class_ids[current_choice.0 * 2 + current_choice.1 as usize]] = true;
+            let mut candidates = candidates_with_duplicates;
+            candidates.retain(|&(g, inverted, _)| {
+                let class = candidate_catalog.class_ids[g * 2 + inverted as usize];
+                !std::mem::replace(&mut seen[class], true)
+            });
             let skipped = original_count.saturating_sub(candidates.len());
             candidates.truncate(candidate_count.min(candidates.len()));
             (curr_idx, candidates, skipped)
@@ -6143,7 +6154,41 @@ pub fn render_blocks_smooth(
     let mut smoothing_search_time = std::time::Duration::ZERO;
     let mut shape_refine_time = std::time::Duration::ZERO;
 
-    if args.score_fix {
+    if args.score_fix && args.score_fix_features {
+        let started = RenderInstant::now();
+        let target_scores = score_fix_initial_disc_scores
+            .take()
+            .expect("smoothing targets should be prepared");
+        if smooth_features::run(
+            args,
+            &mut grid_state,
+            &grid_data,
+            glyphs,
+            &block_glyph_costs,
+            &target_scores,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            abort_flag.as_deref(),
+        )
+        .is_err()
+        {
+            return "Cancelled".into();
+        }
+        rendered_raster = Some(build_rendered_raster(
+            &grid_data,
+            &grid_state,
+            glyphs,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        ));
+        smoothing_search_time = started.elapsed();
+    }
+
+    if args.score_fix && !args.score_fix_features {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
@@ -6227,7 +6272,7 @@ pub fn render_blocks_smooth(
         );
     }
 
-    // Start from normal Score Fix, then exhaustively search every distinct
+    // Start from the selected smoothing mode, then search every distinct
     // rendered glyph state using the overlapping local geometry energy.
     if args.score_fix && args.score_fix_geometry_first {
         let raster = rendered_raster
@@ -6615,15 +6660,21 @@ pub fn render_blocks_smooth(
 
     let disc_threshold = args.discontinuity_threshold.max(0.0);
     let t_disc_score = RenderInstant::now();
-    let cell_disc_scores = all_cell_discontinuity_scores(
-        rendered_raster
-            .as_ref()
-            .expect("rendered raster should exist when scoring discontinuities"),
-        grid_w,
-        grid_h,
-        gw,
-        gh,
-    );
+    // These expensive diagnostics are only consumed by the highlight overlay.
+    // Computing them on every render used to dominate the final-score stage.
+    let cell_disc_scores = if args.show_discontinuities {
+        all_cell_discontinuity_scores(
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring discontinuities"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        )
+    } else {
+        Vec::new()
+    };
     let relative_disc_score = if cell_disc_scores.is_empty() {
         0.0
     } else {
@@ -6634,32 +6685,59 @@ pub fn render_blocks_smooth(
             .sum::<f32>() as f64
             / cell_disc_scores.len() as f64
     };
-    let contour_score = preview_contour_score(
-        &source_raster,
-        rendered_raster
-            .as_ref()
-            .expect("rendered raster should exist when scoring contours"),
-        grid_w,
-        grid_h,
-        gw,
-        gh,
-        &contour_weights,
-    );
+    let final_raster = rendered_raster
+        .as_ref()
+        .expect("rendered raster should exist when scoring");
+    let perceptual_score = args.perceptual_score.then(|| {
+        let (source, width, height) =
+            crate::contour_score::normalize_preview_raster(&source_raster, grid_w, grid_h, gw, gh);
+        let (output, _, _) =
+            crate::contour_score::normalize_preview_raster(final_raster, grid_w, grid_h, gw, gh);
+        crate::perceptual_score::score(
+            &source,
+            &output,
+            width,
+            height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+        )
+    });
+    let contour_score = if perceptual_score.is_none() {
+        preview_contour_score(
+            &source_raster,
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring contours"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            &contour_weights,
+        )
+    } else {
+        crate::contour_score::ReferenceContourScore::default()
+    };
     let disc_score_time = t_disc_score.elapsed();
-    log::info!(
-        "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
-        contour_score.total,
-        contour_score.contour.bending,
-        contour_score.contour.endpoints,
-        contour_score.contour.junctions,
-        contour_score.contour.fragments,
-        contour_score.contour.boundary_length,
-    );
-    log::info!(
-        "Contour Reference: fidelity={:.4}, boundary_balance={:.4}",
-        contour_score.fidelity,
-        contour_score.boundary_balance,
-    );
+    if let Some(score) = perceptual_score {
+        log::info!(
+            "Perceptual Score: total={:.4}, roughness={:.4}, texture={:.4}, missing={:.4}, extra={:.4}, colour={:.4}",
+            score.total, score.roughness, score.texture, score.missing, score.extra, score.colour,
+        );
+    } else {
+        log::info!(
+            "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
+            contour_score.total,
+            contour_score.contour.bending,
+            contour_score.contour.endpoints,
+            contour_score.contour.junctions,
+            contour_score.contour.fragments,
+            contour_score.contour.boundary_length,
+        );
+        log::info!(
+            "Contour Reference: fidelity={:.4}, boundary_balance={:.4}",
+            contour_score.fidelity,
+            contour_score.boundary_balance,
+        );
+    }
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
         if let Err(err) = dump_fft_stage_inputs(root, "final", raster, grid_w, grid_h, gw, gh) {
@@ -6692,11 +6770,13 @@ pub fn render_blocks_smooth(
     };
 
     log::info!(
-        "Discontinuity scoring completed in {:?} (threshold {:.2})",
+        "Final quality scoring completed in {:?} (discontinuity threshold {:.2})",
         disc_score_time,
         disc_threshold
     );
-    log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
+    if args.show_discontinuities {
+        log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
+    }
 
     let encode_started = RenderInstant::now();
 
@@ -7131,7 +7211,8 @@ pub fn render_blocks_smooth(
         total_pixels: (bp * grid_h * grid_w) as u64,
         dynamic_scaling_count: 0,
         grid: grid_out,
-        score: contour_score.total,
+        score: perceptual_score.map_or(contour_score.total, |score| score.total),
+        perceptual_score,
         longest_line_bytes,
         initial_time,
         profile: RenderProfile {
@@ -7404,6 +7485,7 @@ pub fn render_braille(
         dynamic_scaling_count: 0,
         grid: grid_out,
         score: 0.0,
+        perceptual_score: None,
         longest_line_bytes,
         initial_time: std::time::Duration::ZERO,
         profile: RenderProfile::default(),
@@ -7748,6 +7830,7 @@ mod tests {
             dynamic_scaling_count: 0,
             grid: vec![vec![base_cell]],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 1,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
@@ -7802,6 +7885,7 @@ mod tests {
             dynamic_scaling_count: 0,
             grid: vec![cells],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 3,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
@@ -7867,6 +7951,7 @@ mod tests {
                 underline: false,
             }]],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 1,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
@@ -7918,6 +8003,56 @@ mod tests {
         assert_eq!(result.grid.len(), 1);
         assert_eq!(result.grid[0].len(), 1);
         assert!((0x2800..=0x28ff).contains(&(result.grid[0][0].char as u32)));
+    }
+
+    #[test]
+    fn feature_smoothing_keeps_fit_budget_and_cancels_without_committing() {
+        let (gw, gh) = (8, 16);
+        let mut bitmap = vec![0; gw * gh];
+        bitmap[8 * gw + 4] = 1;
+        let glyphs = vec![
+            make_test_glyph('n', &bitmap, gw, gh),
+            make_test_glyph(' ', &vec![0; gw * gh], gw, gh),
+        ];
+        let data = vec![BlockData {
+            fg: [255; 3],
+            bg: [0; 3],
+            fg_col: None,
+            bg_col: None,
+            alt_fg_col: None,
+            alt_bg_col: None,
+        }];
+        let args = crate::generator::default_options();
+        let mut state = vec![(0, false)];
+        let contrast = 3 * 255 * 255;
+        let costs = vec![vec![0, u64::MAX, contrast, u64::MAX]];
+        smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, None,
+        )
+        .unwrap();
+        assert_eq!(
+            state, vec![(1, false)],
+            "a supported improvement should be made"
+        );
+
+        // The blank would reduce regularity, but its source error exceeds the
+        // original-fit budget. Several sweeps must not relax that budget.
+        let costs = vec![vec![
+            0, u64::MAX, contrast * (gw * gh / 16 + 1) as u64, u64::MAX,
+        ]];
+        state[0] = (0, false);
+        smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, None,
+        )
+        .unwrap();
+        assert_eq!(state, vec![(0, false)]);
+
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        assert!(smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, Some(&cancelled),
+        )
+        .is_err());
+        assert_eq!(state, vec![(0, false)]);
     }
 
     fn make_test_glyph(ch: char, bitmap: &[u8], gw: usize, gh: usize) -> FastGlyph {

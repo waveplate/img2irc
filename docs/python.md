@@ -8,6 +8,8 @@ output.write("art.ans")
 output.save_preview("preview.png")
 ```
 
+Add `smooth_features=True` alongside `smooth=True` to try experimental Fast features smoothing. `Advanced` exposes the same switch as `score_fix_features=True`.
+
 inputs can be paths, HTTP(S) URLs, bytes, or binary file objects. Cascadia Code is embedded; `font=` accepts another font file or bytes.
 
 `Advanced` exposes all native render settings, an ordered pipeline, and overlays:

@@ -124,6 +124,10 @@
           <section class="control-panel" data-control-tab-panel="general">
             <h1 class="panel-heading">General</h1>
             <div class="control-grid">
+              <label class="inline-control wide-control">
+                <input id="perceptual-score" type="checkbox" />
+                Perceptual score (experimental)
+              </label>
               <label>
                 Width (cells)
                 <input id="width" type="number" min="0" max="300" value="80" placeholder="Auto" />
@@ -173,8 +177,12 @@
 
             <details id="smoothing-section" class="feature-section">
               <summary><span id="smoothing-summary">Smoothing (disabled, expand to enable)</span></summary>
-              <p class="performance-warning">Smoothing is computationally expensive and can dramatically increase render times.</p>
+              <p class="performance-warning">Contour smoothing can be expensive. Fast features is an experimental alternative; compare its results on your image.</p>
               <div id="smoothing-options" class="control-grid">
+                <label class="inline-control wide-control">
+                  <input id="smooth-features" type="checkbox" />
+                  Fast features (experimental)
+                </label>
                 <label>
                   Candidates
                   <input id="smooth-candidates" type="number" min="1" max="256" value="12" />

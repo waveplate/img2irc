@@ -389,6 +389,10 @@ pub struct RenderArgs {
     #[serde(default = "default_discontinuity_threshold")]
     pub discontinuity_threshold: f32,
     pub score_fix: bool,
+    #[serde(default)]
+    pub score_fix_features: bool,
+    #[serde(default)]
+    pub perceptual_score: bool,
     pub score_fix_candidates: u32,
     #[serde(default = "default_score_fix_orderings")]
     pub score_fix_orderings: u32,
@@ -844,6 +848,14 @@ pub struct Args {
     /// smooth rough glyph transitions using the preview contour score
     #[arg(long = "smooth", alias = "score-fix", default_value_t = false)]
     pub smooth: bool,
+
+    /// use experimental fast glyph-feature smoothing (with --smooth)
+    #[arg(long = "smooth-features", default_value_t = false)]
+    pub smooth_features: bool,
+
+    /// use experimental perceptual quality scoring for status and auto-optimization
+    #[arg(long = "perceptual-score", default_value_t = false)]
+    pub perceptual_score: bool,
 
     /// number of source-matching glyph states tried during smoothing
     #[arg(

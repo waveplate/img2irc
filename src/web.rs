@@ -69,6 +69,8 @@ export interface Img2IrcRenderOptions {
     boxBlur?: boolean;
     gaussianBlur?: number;
     smooth?: boolean;
+    smoothFeatures?: boolean;
+    perceptualScore?: boolean;
     smoothCandidates?: number;
     smoothOrders?: number;
     smoothShapes?: boolean;
@@ -136,6 +138,7 @@ export interface Img2IrcRenderResult {
     errorCount: number;
     totalPixels: number;
     score: number;
+    perceptualScore?: { total: number; roughness: number; texture: number; missing: number; extra: number; colour: number };
     previewWidth: number;
     previewHeight: number;
     fontSize: number;
@@ -286,6 +289,8 @@ struct WebOptions {
     box_blur: bool,
     gaussian_blur: i32,
     smooth: bool,
+    smooth_features: bool,
+    perceptual_score: bool,
     smooth_candidates: u32,
     smooth_orders: u32,
     smooth_shapes: bool,
@@ -440,6 +445,8 @@ impl Default for WebOptions {
             box_blur: false,
             gaussian_blur: 0,
             smooth: false,
+            smooth_features: false,
+            perceptual_score: false,
             smooth_candidates: 12,
             smooth_orders: 1,
             smooth_shapes: false,
@@ -544,6 +551,8 @@ impl WebOptions {
         self.canvas_cache_key().hash(&mut hasher);
         (self.render as u8).hash(&mut hasher);
         self.smooth.hash(&mut hasher);
+        self.smooth_features.hash(&mut hasher);
+        self.perceptual_score.hash(&mut hasher);
         self.smooth_candidates.hash(&mut hasher);
         self.smooth_orders.hash(&mut hasher);
         self.smooth_shapes.hash(&mut hasher);
@@ -589,6 +598,8 @@ struct WebRenderResult {
     error_count: u64,
     total_pixels: u64,
     score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
     preview_width: u32,
     preview_height: u32,
     font_size: f32,
@@ -1095,6 +1106,8 @@ impl WebRenderer {
         cli.box_blur = options.box_blur;
         cli.gaussian_blur = Param::Fixed(options.gaussian_blur as f32);
         cli.smooth = options.smooth;
+        cli.smooth_features = options.smooth_features;
+        cli.perceptual_score = options.perceptual_score;
         cli.smooth_candidates = options.smooth_candidates.max(1);
         cli.smooth_orders = options.smooth_orders.clamp(1, 5);
         cli.smooth_shapes = options.smooth_shapes;
@@ -1281,6 +1294,7 @@ impl WebRenderer {
             error_count: result.error_count,
             total_pixels: result.total_pixels,
             score: result.score,
+            perceptual_score: result.perceptual_score,
             preview_width,
             preview_height,
             font_size: options.font_size,

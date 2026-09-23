@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "img2irc"
-version = "2.0.0a0"
+version = "2.0.1a0"
 description = "Python bindings for generating ANSI and IRC art with img2irc"
 readme = "python/README.md"
 requires-python = ">=3.10"

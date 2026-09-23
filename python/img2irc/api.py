@@ -750,6 +750,7 @@ class Simple:
         blocks: list[str] | tuple[str, ...] | None = None,
         characters: str | None = None,
         smooth: bool = False,
+        smooth_features: bool = False,
         ocr: bool = False,
         font: FontSource | None = None,
     ) -> None:
@@ -760,6 +761,7 @@ class Simple:
             "font_size": font_size,
             "braille": braille,
             "score_fix": smooth,
+            "score_fix_features": smooth_features,
             "ocr": ocr,
         }
         if blocks is not None:

@@ -129,6 +129,8 @@ enum ControlId {
     HighlightDisc,
     DiscThreshold,
     ScoreFix,
+    ScoreFixFeatures,
+    PerceptualScore,
     ScoreFixCandidates,
     ScoreFixOrderings,
     ScoreFixGeometryFirst,
@@ -220,6 +222,8 @@ impl ControlId {
             ControlId::HighlightDisc => "show-discontinuities",
             ControlId::DiscThreshold => "discontinuity-threshold",
             ControlId::ScoreFix => "smooth",
+            ControlId::ScoreFixFeatures => "smooth-features",
+            ControlId::PerceptualScore => "perceptual-score",
             ControlId::ScoreFixCandidates => "smooth-candidates",
             ControlId::ScoreFixOrderings => "smooth-orders",
             ControlId::ScoreFixGeometryFirst => "smooth-shapes",
@@ -391,6 +395,7 @@ impl ControlId {
         matches!(
             self,
             ControlId::ScoreFixCandidates
+                | ControlId::ScoreFixFeatures
                 | ControlId::ScoreFixOrderings
                 | ControlId::ScoreFixGeometryFirst
                 | ControlId::ScoreFixNeighborhoodGuard
@@ -592,6 +597,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
+        id: ControlId::PerceptualScore,
+        label: "Perceptual Score (exp)",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
         id: ControlId::ScoreFix,
         label: "Smoothing",
         kind: ControlKind::Toggle { default: false },
@@ -604,6 +614,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 256,
             default: 12,
         },
+    },
+    ControlDef {
+        id: ControlId::ScoreFixFeatures,
+        label: "Fast Features (exp)",
+        kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
         id: ControlId::ScoreFixOrderings,
@@ -1486,22 +1501,23 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn ocr_input_budget_cache_ignores_inactive_manual_settings() {
+    fn explicit_ocr_budget_ignores_size_settings_and_auto_width() {
         let parsed = crate::args::Args::parse_from(["img2irc"]);
         let mut args = crate::args_to_tui_render_args(&parsed);
         let automatic = OcrInferenceKey::from(&args);
-        args.ocr_megapixels = Some(8.0);
         args.ocr_width = Some(400);
         args.ocr_max_side_len = 500;
-        assert_eq!(OcrInferenceKey::from(&args), automatic);
+        assert_ne!(OcrInferenceKey::from(&args), automatic);
+        args.ocr_megapixels = Some(8.0);
+        let megapixel_budget = OcrInferenceKey::from(&args);
+        assert_ne!(megapixel_budget, automatic);
         args.ocr_auto_width = false;
-        let manual = OcrInferenceKey::from(&args);
-        assert_ne!(manual, automatic);
+        assert_eq!(OcrInferenceKey::from(&args), megapixel_budget);
         args.ocr_width = Some(800);
         args.ocr_max_side_len = 900;
-        assert_eq!(OcrInferenceKey::from(&args), manual);
+        assert_eq!(OcrInferenceKey::from(&args), megapixel_budget);
         args.ocr_megapixels = Some(2.0);
-        assert_ne!(OcrInferenceKey::from(&args), manual);
+        assert_ne!(OcrInferenceKey::from(&args), megapixel_budget);
     }
 
     #[test]
@@ -2815,6 +2831,8 @@ pub(crate) struct App {
     graphics_preview: bool,
     show_advanced: bool,
     score_fix: bool,
+    score_fix_features: bool,
+    perceptual_score: bool,
     score_fix_candidates: i32,
     score_fix_orderings: i32,
     score_fix_geometry_first: bool,
@@ -3519,6 +3537,8 @@ impl App {
             graphics_preview: false,
             show_advanced: false,
             score_fix: render_args.score_fix,
+            score_fix_features: render_args.score_fix_features,
+            perceptual_score: render_args.perceptual_score,
             score_fix_candidates: render_args.score_fix_candidates as i32,
             score_fix_orderings: render_args.score_fix_orderings as i32,
             score_fix_geometry_first: render_args.score_fix_geometry_first,
@@ -3765,6 +3785,8 @@ impl App {
         self.show_discontinuities = render_args.show_discontinuities;
         self.discontinuity_threshold = (render_args.discontinuity_threshold * 10.0).round() as i32;
         self.score_fix = render_args.score_fix;
+        self.score_fix_features = render_args.score_fix_features;
+        self.perceptual_score = render_args.perceptual_score;
         self.score_fix_candidates = render_args.score_fix_candidates as i32;
         self.score_fix_orderings = render_args.score_fix_orderings as i32;
         self.score_fix_geometry_first = render_args.score_fix_geometry_first;
@@ -4104,6 +4126,8 @@ impl App {
             ControlId::HighlightDisc => self.show_discontinuities as i32,
             ControlId::DiscThreshold => self.discontinuity_threshold,
             ControlId::ScoreFix => self.score_fix as i32,
+            ControlId::ScoreFixFeatures => self.score_fix_features as i32,
+            ControlId::PerceptualScore => self.perceptual_score as i32,
             ControlId::ScoreFixCandidates => self.score_fix_candidates,
             ControlId::ScoreFixOrderings => self.score_fix_orderings,
             ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first as i32,
@@ -4221,6 +4245,8 @@ impl App {
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
             ControlId::DiscThreshold => self.discontinuity_threshold = val.max(0),
             ControlId::ScoreFix => self.score_fix = val != 0,
+            ControlId::ScoreFixFeatures => self.score_fix_features = val != 0,
+            ControlId::PerceptualScore => self.perceptual_score = val != 0,
             ControlId::ScoreFixCandidates => self.score_fix_candidates = val.max(1),
             ControlId::ScoreFixOrderings => self.score_fix_orderings = val.clamp(1, 5),
             ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first = val != 0,
@@ -4590,7 +4616,9 @@ impl App {
                 move || {
                     let fg = crate::draw::prepare_glyphs(&gs, &a);
                     let result = crate::render_output(a, &gs, img, &fg, None);
-                    if optimize_shortest_longest_line {
+                    if result.grid.is_empty() {
+                        f64::INFINITY
+                    } else if optimize_shortest_longest_line {
                         result.longest_line_bytes as f64
                     } else {
                         result.score
@@ -4726,7 +4754,9 @@ impl App {
                     tokio::task::spawn_blocking(move || {
                         let result =
                             crate::render_output(a.clone(), &gs, img, &fg, Some(cancel_inner));
-                        if result.content != "Cancelled" {
+                        // Error/cancelled renders carry a default zero score;
+                        // they must never beat an actual image.
+                        if !result.grid.is_empty() {
                             let score = if optimize_shortest_longest_line {
                                 result.longest_line_bytes as f64
                             } else {
@@ -4834,6 +4864,8 @@ impl App {
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.discontinuity_threshold = self.discontinuity_threshold as f32 / 10.0;
         self.render_args.score_fix = self.score_fix;
+        self.render_args.score_fix_features = self.score_fix_features;
+        self.render_args.perceptual_score = self.perceptual_score;
         self.render_args.score_fix_candidates = self.score_fix_candidates.max(1) as u32;
         self.render_args.score_fix_orderings = self.score_fix_orderings.clamp(1, 5) as u32;
         self.render_args.score_fix_geometry_first = self.score_fix_geometry_first;
@@ -10118,10 +10150,19 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
         let w_px = width_chars * cw;
         let h_px = height_chars * ch;
         let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
+        let score_label = if app
+            .cached_result
+            .as_ref()
+            .is_some_and(|r| r.perceptual_score.is_some())
+        {
+            "Perceptual"
+        } else {
+            "Contour"
+        };
 
         let mut title_right = format!(
-            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Advance: {:.1}px | Line height: {:.1}px | Line {} ({} bytes) | Contour: {:.3} ",
-            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, p_score
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Advance: {:.1}px | Line height: {:.1}px | Line {} ({} bytes) | {}: {:.3} ",
+            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, score_label, p_score
         );
         if app.graphics_preview {
             title_right.push_str(&format!(
@@ -10575,7 +10616,11 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             res.score
         };
         full_spans.push(Span::styled(
-            format!(" Contour {:.3} ", display_score),
+            format!(
+                " {} {:.3} ",
+                if res.perceptual_score.is_some() { "Perceptual" } else { "Contour" },
+                display_score,
+            ),
             Style::new()
                 .fg(Color::White)
                 .bg(ACCENT_DIM)
