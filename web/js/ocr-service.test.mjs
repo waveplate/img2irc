@@ -215,7 +215,7 @@ test("multiline overlays preserve missing source rows as blank text rows", async
     items: [
       { text: "ALPHA", bounds: bounds(10, 5, 60, 15) },
       { text: "BETA", bounds: bounds(10, 25, 55, 35) },
-      { text: "and", bounds: bounds(10, 50, 28, 60) },
+      { text: "and", bounds: bounds(10, 45, 28, 55) },
     ],
   };
   const mapped = await ocrItemsToOverlays(
@@ -225,19 +225,43 @@ test("multiline overlays preserve missing source rows as blank text rows", async
     { enabled: false, minHeight: 1 },
     async (requests) => {
       assert.equal(requests.length, 1);
-      assert.equal(requests[0].text, "ALPHA\n\nBETA\n\n\nand");
-      assert.equal(requests[0].baseHeight, 6);
+      assert.equal(requests[0].text, "ALPHA\n\nBETA\n\nand");
+      assert.equal(requests[0].baseHeight, 5);
+      assert.deepEqual(requests[0].lineBounds, [[0.5, 1.5], [2.5, 3.5], [4.5, 5.5]]);
       return {
         arts: [{
           source: "plain",
           text: requests[0].text,
           width: 5,
-          height: 6,
+          height: 5,
         }],
       };
     },
   );
   assert.equal(mapped.overlays.length, 1);
-  assert.equal(mapped.overlays[0].text, "ALPHA\n\nBETA\n\n\nand");
+  assert.equal(mapped.overlays[0].text, "ALPHA\n\nBETA\n\nand");
+  assert.equal(mapped.overlays[0].height, 5);
+});
+
+test("plain merged text spans the source ink height even when each source line is tall", async () => {
+  const prepared = { result: { image: { width: 200, height: 200 } }, items: [
+    { text: "FIRST", bounds: bounds(10, 20, 100, 60) },
+    { text: "LAST", bounds: bounds(10, 90, 100, 130) },
+  ] };
+  const mapped = await ocrItemsToOverlays(prepared, 20, 10, { enabled: false }, async (requests) => ({
+    arts: requests.map((request) => ({ text: request.text, width: 5, height: request.text.split("\n").length, source: "plain" })),
+  }));
+  assert.equal(mapped.overlays.length, 1);
   assert.equal(mapped.overlays[0].height, 6);
+  assert.equal(mapped.overlays[0].renderedText, "FIRST\n\n\n\n\nLAST");
+  assert.equal(mapped.overlays[0].y, 1);
+});
+
+test("small evenly sized body lines do not become FIGlet headings merely by grouping", async () => {
+  const prepared = { result: { image: { width: 100, height: 100 } }, items: [0, 15, 30].map((y) => ({ text: "BODY", bounds: bounds(0, y, 50, y + 10) })) };
+  await ocrItemsToOverlays(prepared, 40, 20, { enabled: true, minHeight: 2, minHeightRatio: 1.25 }, async (requests) => {
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].useFiglet, false);
+    return { arts: [] };
+  });
 });

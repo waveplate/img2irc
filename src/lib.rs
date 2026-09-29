@@ -11,7 +11,7 @@ pub mod effects;
 #[cfg(any(feature = "ocr", feature = "web"))]
 mod figlet_text;
 pub mod font;
-#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+#[cfg(any(feature = "ocr", feature = "web"))]
 mod ocr_layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod generator;

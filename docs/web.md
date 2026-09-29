@@ -40,3 +40,10 @@ reuse the instance to retain decoded images and render caches. `setFont()` chang
 `editor-app.js` coordinates controls and render scheduling; `editor-state.js` owns document/overlay state; `render-options.js` maps controls into API options. `renderer-client.js` talks to `render-worker.js`, which owns WASM and caches. `output-preview.js`, `text-controls.js`, and `ocr-service.js` handle display, overlays, and recognition. stale renders are discarded and changes coalesced.
 
 geometry regressions can be checked with `node --test web/js/ocr-service.test.mjs`.
+
+OCR megapixels defaults to 1.5, like the native editor. It controls detection
+resolution independently of output width and never enlarges the source.
+Set it to zero to use the legacy width/maximum-side controls in Advanced.
+Advanced also retains ASCII and detector thresholds, box expansion and detailed
+FIGlet fitting controls. The browser uses its bundled Tiny model and one worker;
+native-only model and worker options are not presented as browser controls.

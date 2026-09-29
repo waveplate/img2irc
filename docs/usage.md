@@ -99,6 +99,17 @@ img2irc poster.png --ocr --ocr-auto-width --max-width 200
 
 OCR removes source lettering and overlays recognized text. nearby words and aligned lines are grouped for editing; original word boxes control removal. native PP-OCRv6 models download on first use and are cached. select `tiny`, `small`, or `medium` with `--ocr-model-tier`; `--ocr-model-cache` sets the cache. the browser uses a separate PaddleOCR.js worker with hosted tiny models.
 
+Multiline groups require nearby lines with consistent spacing. Paragraph breaks
+and widely separated labels stay separate. Merged plain text includes blank
+rows; merged FIGlet text uses one font and places each rendered line using its
+source bounds. The first through last visible rows approximate the source
+height to the nearest output row, excluding blank outer font margins.
+
+The native and Python editors expose ASCII filtering, box confidence,
+binarization and box expansion under **Advanced OCR**, alongside their model,
+performance and FIGlet options. The browser keeps the same detector and styling
+controls under **Advanced OCR settings**; its model and worker count are fixed.
+
 `--ocr-megapixels` controls detection resolution (native default 1.5 MP, range 0.1–16), independently of output width. automatic output width is on in the editors and off in the CLI. `--ocr-auto-width false` disables it. native auto width grows from the source-size grid; the browser fits its text coverage target. use `--max-width` to bound native output.
 
 lock OCR to preserve detections, edits, and fitted grid while adjusting the image. browser overlay edits also preserve the detected set; regenerate OCR discards those edits and detects again.

@@ -125,6 +125,11 @@ enum ControlId {
     OcrAdvanced,
     OcrMaxTextHeight,
     OcrThreads,
+    OcrAsciiRatio,
+    OcrBoxScore,
+    OcrBoxThreshold,
+    OcrUnclip,
+    OcrOrientation,
 
     HighlightDisc,
     DiscThreshold,
@@ -219,6 +224,11 @@ impl ControlId {
             ControlId::OcrAdvanced => "ocr-advanced",
             ControlId::OcrMaxTextHeight => "ocr-max-height",
             ControlId::OcrThreads => "ocr-threads",
+            ControlId::OcrAsciiRatio => "ocr-ascii-ratio",
+            ControlId::OcrBoxScore => "ocr-box-score",
+            ControlId::OcrBoxThreshold => "ocr-box-threshold",
+            ControlId::OcrUnclip => "ocr-unclip-ratio",
+            ControlId::OcrOrientation => "ocr-orientation",
             ControlId::HighlightDisc => "show-discontinuities",
             ControlId::DiscThreshold => "discontinuity-threshold",
             ControlId::ScoreFix => "smooth",
@@ -307,6 +317,11 @@ impl ControlId {
                 | ControlId::OcrAdvanced
                 | ControlId::OcrMaxTextHeight
                 | ControlId::OcrThreads
+                | ControlId::OcrAsciiRatio
+                | ControlId::OcrBoxScore
+                | ControlId::OcrBoxThreshold
+                | ControlId::OcrUnclip
+                | ControlId::OcrOrientation
         )
     }
 
@@ -348,6 +363,11 @@ impl ControlId {
             Self::OcrAdvanced => "Show or hide model, performance, text filtering and large-text styling settings. Hiding them preserves their values.",
             Self::OcrModelTier => "Recognition model size: Tiny is fastest; larger models use more memory and may improve difficult text recognition.",
             Self::OcrThreads => "Number of CPU workers used for OCR inference. More workers can speed recognition but use more CPU.",
+            Self::OcrAsciiRatio => "Minimum percentage of printable ASCII characters in accepted text. Lower this for non-Latin text.",
+            Self::OcrBoxScore => "Minimum detector confidence for a text region before recognition.",
+            Self::OcrBoxThreshold => "Binarization threshold for the detector's text probability map.",
+            Self::OcrUnclip => "Expansion of detected boxes, as a percentage. 160 means 1.6 times the detected region.",
+            Self::OcrOrientation => "Use the text-line orientation classifier before recognition.",
             Self::OcrMaxTextHeight => "Ignore text taller than this percentage of the typical detected line. 0 keeps all text sizes; 200 allows lines up to twice as tall.",
             Self::OcrFigletMinHeight => "Minimum detected height in output rows before decorative text styling is allowed.",
             Self::OcrFigletMinHeightRatio => "Minimum text height relative to typical lines before styling. 125 means 25% taller; 0 disables this check.",
@@ -375,6 +395,7 @@ impl ControlId {
             || matches!(
                 self,
                 Self::OcrModelTier | Self::OcrMaxTextHeight | Self::OcrThreads
+                | Self::OcrAsciiRatio | Self::OcrBoxScore | Self::OcrBoxThreshold | Self::OcrUnclip | Self::OcrOrientation
             )
     }
 
@@ -556,6 +577,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Advanced OCR",
         kind: ControlKind::Toggle { default: false },
     },
+    ControlDef { id: ControlId::OcrAsciiRatio, label: "Min ASCII %", kind: ControlKind::Slider { min: 0, max: 100, default: 70 } },
+    ControlDef { id: ControlId::OcrBoxScore, label: "Box Confidence %", kind: ControlKind::Slider { min: 0, max: 100, default: 60 } },
+    ControlDef { id: ControlId::OcrBoxThreshold, label: "Binarization %", kind: ControlKind::Slider { min: 0, max: 100, default: 20 } },
+    ControlDef { id: ControlId::OcrUnclip, label: "Box Expansion %", kind: ControlKind::Slider { min: 100, max: 400, default: 160 } },
+    ControlDef { id: ControlId::OcrOrientation, label: "Line Orientation", kind: ControlKind::Toggle { default: false } },
     ControlDef {
         id: ControlId::OcrModelTier,
         label: "Recognition Model",
@@ -1525,7 +1551,7 @@ mod ui_layout_tests {
         if !cfg!(feature = "ocr") {
             return;
         }
-        let parsed = crate::args::Args::parse_from(["img2irc", "--ocr"]);
+        let parsed = crate::args::Args::parse_from(["img2irc", "--ocr", "--ocr-auto-width", "true"]);
         let args = crate::args_to_render_args(&parsed);
         let flag = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
@@ -1541,6 +1567,10 @@ mod ui_layout_tests {
         let original_width = app.width;
         app.set_value(ControlId::Width, 999);
         assert_eq!(app.width, original_width);
+        // Detection detail remains independent of auto output width, but OCR
+        // lock must reject edits through every input path.
+        app.set_value(ControlId::OcrLock, 1);
+        app.args_dirty = false;
         adjust_control(&mut app, 10);
         reset_control(&mut app);
         app.set_value(ControlId::OcrMegapixels, 90);
@@ -1561,7 +1591,7 @@ mod ui_layout_tests {
             .collect::<String>();
         assert!(screen.contains("OCR Megapixels"));
         assert!(screen.contains("Disabled"));
-        assert!(screen.contains("manages detection detail"), "{screen}");
+        assert!(screen.contains("Unlock OCR"), "{screen}");
         assert!(!screen.contains("Recognition Model"));
         let row = app.control_areas[app.selected_control];
         let label_row = (row.x..row.right()).map(|x| terminal.backend().buffer()[(x, row.y)].symbol()).collect::<String>();
@@ -1571,7 +1601,7 @@ mod ui_layout_tests {
             small.draw(|frame| general::render_controls(frame, &mut app, frame.area())).unwrap();
         }
 
-        app.set_value(ControlId::OcrAutoWidth, 0);
+        app.set_value(ControlId::OcrLock, 0);
         app.set_value(ControlId::OcrMegapixels, 90);
         assert_eq!(app.get_value(ControlId::OcrMegapixels), 90);
         app.set_value(ControlId::OcrLock, 1);
@@ -4101,6 +4131,11 @@ impl App {
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio,
             ControlId::OcrThreads => self.ocr_threads,
+            ControlId::OcrAsciiRatio => (self.render_args.ocr_min_ascii_ratio * 100.0).round() as i32,
+            ControlId::OcrBoxScore => (self.render_args.ocr_box_score_threshold * 100.0).round() as i32,
+            ControlId::OcrBoxThreshold => (self.render_args.ocr_box_threshold * 100.0).round() as i32,
+            ControlId::OcrUnclip => (self.render_args.ocr_unclip_ratio * 100.0).round() as i32,
+            ControlId::OcrOrientation => self.render_args.ocr_textline_orientation as i32,
             ControlId::TrimTop => self.trim_top,
             ControlId::TrimRight => self.trim_right,
             ControlId::TrimBottom => self.trim_bottom,
@@ -4217,6 +4252,11 @@ impl App {
             ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio = val.clamp(0, 1000),
             ControlId::OcrThreads => self.ocr_threads = val.max(1),
+            ControlId::OcrAsciiRatio => self.render_args.ocr_min_ascii_ratio = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrBoxScore => self.render_args.ocr_box_score_threshold = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrBoxThreshold => self.render_args.ocr_box_threshold = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrUnclip => self.render_args.ocr_unclip_ratio = val.clamp(100, 400) as f32 / 100.0,
+            ControlId::OcrOrientation => self.render_args.ocr_textline_orientation = val != 0,
             ControlId::TrimTop => self.trim_top = val,
             ControlId::TrimRight => self.trim_right = val,
             ControlId::TrimBottom => self.trim_bottom = val,

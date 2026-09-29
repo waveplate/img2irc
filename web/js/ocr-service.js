@@ -160,8 +160,11 @@ export function groupOcrBlocks(items) {
       const gap = b.y0 - previous.bounds.y1;
       const h = median(block.map((member) => member.layoutHeight ?? member.bounds.height));
       const normalizedGap = Math.max(0, gap) / h;
+      const center = (item) => (item.bounds.y0 + item.bounds.y1) * 0.5;
+      const evenSpacing = block.length < 2
+        || Math.abs(center(line) - center(previous) - (center(block[1]) - center(block[0]))) <= 0.3 * h;
       if (aligned(previous, line) && aligned(block[0], line)
-        && gap >= -0.2 * h && gap <= 1.5 * h && normalizedGap < bestGap) {
+        && gap >= -0.2 * h && gap <= h && evenSpacing && normalizedGap < bestGap) {
         best = block;
         bestGap = normalizedGap;
       }
@@ -178,16 +181,17 @@ function preserveOcrBlockSpacing(item, imageHeight, rows) {
   const lines = item.layoutLines;
   if (!Array.isArray(lines) || lines.length < 2) return item;
   const rowScale = rows / Math.max(1, imageHeight);
+  const span = Math.max(lines.length, Math.round(item.bounds.height * rowScale));
   let text = lines[0].text.trim();
+  let previousRow = 0;
   for (let index = 1; index < lines.length; index += 1) {
-    const previous = lines[index - 1].bounds;
     const current = lines[index].bounds;
-    const centerAdvance = ((current.y0 + current.y1) - (previous.y0 + previous.y1))
-      * 0.5 * rowScale;
-    // One newline advances one output row. Additional newlines act like the
-    // empty OCR boxes that would occupy the visual gap between detections.
-    text += "\n".repeat(Math.max(1, Math.round(centerAdvance)));
+    const desired = index === lines.length - 1 ? span - 1
+      : Math.round(((current.y0 + current.y1) * 0.5 - item.bounds.y0) * rowScale - 0.5);
+    const row = Math.max(previousRow + 1, Math.min(span - (lines.length - index), desired));
+    text += "\n".repeat(row - previousRow);
     text += lines[index].text.trim();
+    previousRow = row;
   }
   return { ...item, text };
 }
@@ -536,6 +540,8 @@ export async function ocrItemsToOverlays(
   const imageWidth = Math.max(1, result.image.width);
   const imageHeight = Math.max(1, result.image.height);
   const scaled = groupOcrBlocks(items)
+    .flatMap((item) => item.layoutLines && Math.round(item.bounds.height * rows / imageHeight) < item.layoutLines.length
+      ? item.layoutLines : [item])
     .map((item) => preserveOcrBlockSpacing(item, imageHeight, rows))
     .map((item) => ({
     ...item,
@@ -549,6 +555,8 @@ export async function ocrItemsToOverlays(
 
   const maxWRatio = figletSettings.maxWidthRatio ?? 0.5;
   const maxHRatio = figletSettings.maxHeightRatio ?? 0.5;
+  const lineHeights = ordered.flatMap((item) => (item.layoutLines ?? [item]).map((line) => line.layoutHeight ?? line.bounds.height));
+  const medianHeight = lineHeights.length >= 3 ? median(lineHeights) : 0;
 
   const requests = ordered.map((item, i) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
@@ -586,15 +594,18 @@ export async function ocrItemsToOverlays(
       }
     }
 
-    const meetsAbsoluteHeight = ownHeight >= figletSettings.minHeight;
+    const lineHeight = Math.min(...(item.layoutLines ?? [item]).map((line) => line.layoutHeight ?? line.bounds.height));
+    const meetsAbsoluteHeight = lineHeight * rows / imageHeight >= (figletSettings.minHeight ?? 2);
+    const meetsRelativeHeight = medianHeight === 0 || lineHeight >= medianHeight * (figletSettings.minHeightRatio ?? 1.25);
     return {
       text: item.text,
+      lineBounds: item.layoutLines?.map((line) => [line.bounds.y0 * rows / imageHeight, line.bounds.y1 * rows / imageHeight]),
       fillAvailable: Boolean(figletSettings.fillAvailable),
       baseWidth: ownWidth,
       baseHeight: ownHeight,
       maxWidth: maxAllowedW,
       maxHeight: maxAllowedH,
-      useFiglet: figletSettings.enabled && meetsAbsoluteHeight,
+      useFiglet: figletSettings.enabled && meetsAbsoluteHeight && meetsRelativeHeight,
     };
   });
   const figlet = await renderFiglet(requests);
@@ -708,12 +719,17 @@ export class OcrService {
 
   async #prepare(blob, settings, status) {
     let ocrBlob = blob;
-    if (settings.ocrWidth > 0) {
+    let maxSide = settings.maxSideLength;
+    if (settings.megapixels > 0 || settings.ocrWidth > 0) {
       status("Rescaling image for OCR…");
       const bitmap = await createImageBitmap(blob);
       try {
-        const targetW = Math.max(32, settings.ocrWidth);
-        const targetH = Math.max(32, Math.round(targetW * bitmap.height / bitmap.width));
+        const scale = settings.megapixels > 0
+          ? Math.min(1, Math.sqrt(Math.min(16, Math.max(0.1, settings.megapixels)) * 1e6 / (bitmap.width * bitmap.height)))
+          : Math.max(32, settings.ocrWidth) / bitmap.width;
+        const targetW = Math.max(1, Math.floor(bitmap.width * scale));
+        const targetH = Math.max(1, Math.floor(bitmap.height * scale));
+        if (settings.megapixels > 0) maxSide = Math.max(targetW, targetH);
         const canvas = typeof OffscreenCanvas === "function"
           ? new OffscreenCanvas(targetW, targetH)
           : Object.assign(document.createElement("canvas"), { width: targetW, height: targetH });
@@ -729,9 +745,9 @@ export class OcrService {
     status("Detecting text…");
     const started = performance.now();
     const [rawResult] = await ocr.predict(ocrBlob, {
-      textDetLimitSideLen: settings.maxSideLength,
+      textDetLimitSideLen: maxSide,
       textDetLimitType: "max",
-      textDetMaxSideLimit: settings.maxSideLength,
+      textDetMaxSideLimit: maxSide,
       textDetThresh: settings.boxThreshold,
       textDetBoxThresh: settings.boxScoreThreshold,
       textDetUnclipRatio: settings.unclipRatio,

@@ -36,6 +36,19 @@ class TuiTests(unittest.TestCase):
         self.assertTrue(app.change_selected(1))
         self.assertTrue(app.options["invert"])
 
+    def test_ocr_advanced_collapses_without_resetting_values(self):
+        app = PythonTui("picture.png", ocr=True)
+        app.section_index = SECTIONS.index("OCR")
+        self.assertNotIn("ocr_box_threshold", {c.key for c in app.controls})
+        app.options["ocr_box_threshold"] = 0.45
+        self.select(app, "show_ocr_advanced")
+        app.change_selected(1)
+        self.assertIn("ocr_box_threshold", {c.key for c in app.controls})
+        self.select(app, "show_ocr_advanced")
+        app.change_selected(1)
+        self.assertNotIn("ocr_box_threshold", {c.key for c in app.controls})
+        self.assertEqual(app.options["ocr_box_threshold"], 0.45)
+
     def test_output_names(self):
         self.assertEqual(
             _default_output_path("picture.jpg", "Ansi24"), Path("picture.img2irc.ans")
@@ -260,9 +273,9 @@ class TuiTests(unittest.TestCase):
         app = PythonTui("picture.png")
         app._glyph_catalog = {"default": " ▀", "blocks.full": "█"}
         app.set_glyph_groups(["blocks.full"])
-        self.assertEqual(app.options["blocks"], ["blocks.full"])
+        self.assertEqual(app.options["glyphs"], ["blocks.full"])
         app.set_characters(" ▀█")
-        self.assertEqual(app.options["blocks"], [])
+        self.assertEqual(app.options["glyphs"], [])
         self.assertEqual(app.options["include"], " ▀█")
         app.set_selected_characters(" ▀█", {" ", "█"})
         self.assertEqual(app.options["exclude"], ["▀"])
@@ -290,6 +303,8 @@ class TuiTests(unittest.TestCase):
 
         app = PythonTui("picture.png")
         for control in CONTROLS:
+            if control.key == "show_ocr_advanced":
+                continue  # View state is deliberately excluded from render options.
             with self.subTest(control=control.key):
                 self.assertIn(control.key, app.options)
                 values = (

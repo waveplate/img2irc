@@ -18,14 +18,30 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(renderer.options["pipeline"], [{"Contrast": 10}, "Sharpen"])
 
     def test_native_glyph_catalog(self):
-        catalog = img2irc.glyph_groups()
+        catalog = img2irc.glyph_sets()
         self.assertIn("default", catalog)
+        self.assertIn("smooth", catalog)
+        self.assertTrue(catalog["smooth"])
         self.assertTrue(all(
             isinstance(name, str) and isinstance(chars, str)
             for name, chars in catalog.items()
         ))
         catalog.clear()
         self.assertIn("default", img2irc.glyph_groups())
+
+    def test_glyph_names_and_deprecated_alias_accept_a_single_string(self):
+        for key in ("glyphs", "blocks"):
+            for value in ("smooth", ["smooth"], ("smooth",)):
+                with self.subTest(key=key, value=value):
+                    renderer = img2irc.Simple(width=2, **{key: value}).advanced
+                    self.assertEqual(renderer.resolved_options["glyphs"], ["smooth"])
+                    self.assertTrue(renderer.font_info().selected_count)
+                    self.assertTrue(renderer.generate(self.PNG).content)
+            renderer = img2irc.Advanced(**{key: "smooth"})
+            self.assertEqual(renderer.resolved_options["glyphs"], ["smooth"])
+            self.assertEqual(renderer.generate(self.PNG, width=2, **{key: "default"}).options["glyphs"], ["default"])
+        self.assertIn("glyphs", img2irc.available_options())
+        self.assertIn("blocks", img2irc.available_options())
 
     def test_current_pipeline_effect_builders(self):
         renderer = img2irc.Advanced()

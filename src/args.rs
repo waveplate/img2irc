@@ -331,6 +331,7 @@ pub struct RenderArgs {
     pub flipv: bool,
     pub render: Render,
     pub braille: bool,
+    #[serde(rename = "glyphs", alias = "blocks")]
     pub blocks: Vec<String>,
     pub include_range: Vec<String>,
     pub include: Option<String>,

@@ -175,6 +175,7 @@ export class EditorApp {
       minConfidence: Number(this.#element("ocr-confidence").value),
       minAsciiRatio: Number(this.#element("ocr-ascii-ratio").value),
       ocrWidth: Number(this.#element("ocr-width")?.value || 0),
+      megapixels: Number(this.#element("ocr-megapixels")?.value ?? 1.5),
       maxSideLength: Number(this.#element("ocr-max-side").value),
       maxTextHeightRatio: Number(this.#element("ocr-max-height-ratio").value),
       boxScoreThreshold: Number(this.#element("ocr-box-score").value),

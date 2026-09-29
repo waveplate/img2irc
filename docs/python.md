@@ -12,6 +12,24 @@ Add `smooth_features=True` alongside `smooth=True` to try experimental Fast feat
 
 inputs can be paths, HTTP(S) URLs, bytes, or binary file objects. Cascadia Code is embedded; `font=` accepts another font file or bytes.
 
+Glyph sets are embedded in the wheel. Use `glyphs="smooth"` for one set or
+`glyphs=["smooth", "ascii"]` for several; `blocks` remains a deprecated alias.
+Both `Simple` and `Advanced` accept these forms, as do generation overrides.
+
+```python
+import img2irc
+
+sets = img2irc.glyph_sets()  # name -> complete character string
+print(sorted(sets))
+output = img2irc.Simple(width=80, glyphs="smooth").generate("photo.png")
+```
+
+`glyph_groups()` is also supported. Catalog membership is independent of font
+coverage; `font_info(glyphs="smooth")` reports the characters supported by the
+selected font. Local `glyphs.toml` definitions override bundled sets with the
+same name; sets missing from an older local catalog remain available from the
+wheel. Serialized render options now use `glyphs`; older `blocks` JSON is accepted.
+
 `Advanced` exposes all native render settings, an ordered pipeline, and overlays:
 
 ```python
@@ -39,3 +57,5 @@ python3.12 -m pip install dist/<generated-wheel>.whl
 the script requires Docker and x86_64 Linux, and produces a manylinux 2.28 wheel. OCR, ONNX Runtime, and OpenSSL are included; the first build compiles native dependencies and later builds reuse caches under `target/`. `--no-ocr` omits OCR, `--out DIR` changes the wheel directory, and `IMG2IRC_BUILD_JOBS` limits parallelism. install with the Python version selected for the build. Python 3.10 or later is required.
 
 a small testing front end is also available as `img2irc-tui photo.png`.
+Its OCR tab keeps detector thresholds, model/performance options and detailed
+FIGlet controls under **Advanced OCR**. Collapsing it preserves their values.

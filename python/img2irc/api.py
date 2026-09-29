@@ -375,6 +375,8 @@ def _normalise_option(name: str, value: Any) -> Any:
         return None
     if name == "exclude" and isinstance(value, str):
         return list(value)
+    if name == "glyphs" and isinstance(value, str):
+        return [value]
     if name in {"config_dir", "figlet_dir", "ocr_model_cache"} and isinstance(
         value, os.PathLike
     ):
@@ -509,7 +511,7 @@ class Advanced:
 
     @staticmethod
     def available_options() -> tuple[str, ...]:
-        return tuple(_default_options())
+        return (*_default_options(), "blocks")
 
     @property
     def options(self) -> dict[str, Any]:
@@ -540,6 +542,8 @@ class Advanced:
         )
 
     def set(self, name: str, value: Any) -> Advanced:
+        if name == "blocks":
+            name = "glyphs"
         if name == "mode":
             name = "render"
         if name not in _default_options():
@@ -712,6 +716,8 @@ class Advanced:
     def _options_with_overrides(self, overrides: Mapping[str, Any]) -> dict[str, Any]:
         options = self.options
         for name, value in overrides.items():
+            if name == "blocks":
+                name = "glyphs"
             if name == "mode":
                 name = "render"
             if name not in _default_options():
@@ -747,7 +753,8 @@ class Simple:
         mode: str = "ansi24",
         font_size: float = 0,
         braille: bool = False,
-        blocks: list[str] | tuple[str, ...] | None = None,
+        glyphs: str | list[str] | tuple[str, ...] | None = None,
+        blocks: str | list[str] | tuple[str, ...] | None = None,
         characters: str | None = None,
         smooth: bool = False,
         smooth_features: bool = False,
@@ -764,10 +771,12 @@ class Simple:
             "score_fix_features": smooth_features,
             "ocr": ocr,
         }
-        if blocks is not None:
-            options["blocks"] = list(blocks)
+        if glyphs is not None and blocks is not None:
+            raise ValueError("specify glyphs or its deprecated blocks alias, not both")
+        if glyphs is not None or blocks is not None:
+            options["glyphs"] = glyphs if glyphs is not None else blocks
         if characters is not None:
-            options["blocks"] = []
+            options["glyphs"] = []
             options["include"] = characters
         self._advanced = Advanced(options, font=font)
 
@@ -791,14 +800,19 @@ def available_options() -> tuple[str, ...]:
     return Advanced.available_options()
 
 
-def glyph_groups() -> dict[str, str]:
+def glyph_sets() -> dict[str, str]:
     """Return named glyph sets from the native glyph catalog.
 
     The strings include all configured members, before per-glyph exclusions.
-    Pass set names through ``blocks=`` or characters through ``include=``.
+    Pass set names through ``glyphs=`` or characters through ``include=``.
     Font coverage is reported separately by :func:`font_info`.
     """
     return json.loads(_native.glyph_groups_json())
+
+
+def glyph_groups() -> dict[str, str]:
+    """Compatibility alias for :func:`glyph_sets`."""
+    return glyph_sets()
 
 
 def generate(image: ImageSource, **options: Any) -> Output:

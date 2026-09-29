@@ -115,8 +115,17 @@ pub fn group_blocks(boxes: &[[f64; 4]]) -> Vec<Vec<Vec<usize>>> {
                 (aligned(a, ah, b, bh)
                     && aligned(bounds(first, boxes), line_height(first, boxes), b, bh)
                     && gap >= -0.2 * h
-                    && gap <= 1.5 * h)
-                    .then_some((index, gap.max(0.0) / h.max(f64::EPSILON)))
+                    && gap <= h
+                    // Compare every pitch to the first. Pairwise comparison
+                    // alone allows a paragraph break to grow gradually.
+                    && (block.len() < 2 || {
+                        let first_box = bounds(first, boxes);
+                        let second = bounds(&block[1], boxes);
+                        let pitch = (second[1] + second[3] - first_box[1] - first_box[3]) * 0.5;
+                        let next = (b[1] + b[3] - a[1] - a[3]) * 0.5;
+                        (next - pitch).abs() <= h * 0.3
+                    }))
+                .then_some((index, gap.max(0.0) / h.max(f64::EPSILON)))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((index, _)) = candidate {
@@ -128,9 +137,65 @@ pub fn group_blocks(boxes: &[[f64; 4]]) -> Vec<Vec<Vec<usize>>> {
     blocks
 }
 
+/// Place already trimmed line art in output rows. The first and last ink rows
+/// span the source union; blank font margins do not count toward that height.
+/// Absolute positions avoid accumulating rounding error over many lines.
+pub fn space_line_art<T: Clone>(lines: &[Vec<Vec<T>>], bounds: &[[f64; 2]]) -> Option<Vec<Vec<T>>> {
+    if lines.len() < 2
+        || lines.len() != bounds.len()
+        || lines.iter().any(Vec::is_empty)
+        || bounds.iter().flatten().any(|v| !v.is_finite())
+    {
+        return None;
+    }
+    let origin = bounds[0][0];
+    let span = (bounds.last()?[1] - origin).round().max(1.0) as usize;
+    let required: usize = lines.iter().map(Vec::len).sum();
+    if required > span || span > 65536 {
+        return None;
+    }
+    let mut rows = Vec::with_capacity(span);
+    let mut remaining = required;
+    for (index, line) in lines.iter().enumerate() {
+        let desired = if index == 0 {
+            0
+        } else if index + 1 == lines.len() {
+            span - line.len()
+        } else {
+            ((bounds[index][0] + bounds[index][1]) * 0.5 - origin - line.len() as f64 * 0.5)
+                .round()
+                .max(0.0) as usize
+        };
+        let start = desired.clamp(rows.len(), span - remaining);
+        if start.abs_diff(desired) > 1 {
+            return None;
+        }
+        rows.resize_with(start, Vec::new);
+        rows.extend_from_slice(line);
+        remaining -= line.len();
+    }
+    Some(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_rows_span_source_bounds_without_cumulative_rounding() {
+        let bounds = [[0.0, 2.0], [3.6, 5.6], [7.2, 9.2]];
+        for line in [vec![vec!['X']], vec![vec!['X'], vec!['X']]] {
+            let rows = space_line_art(&vec![line.clone(); 3], &bounds).unwrap();
+            assert_eq!(rows.len(), 9);
+            assert!(!rows[0].is_empty());
+            assert!(!rows[8].is_empty());
+            assert_eq!(
+                rows.iter().filter(|row| !row.is_empty()).count(),
+                line.len() * 3
+            );
+        }
+        assert!(space_line_art(&vec![vec![vec!['X']; 4]; 3], &bounds).is_none());
+    }
 
     #[test]
     fn shared_ocr_line_cases() {

@@ -49,6 +49,7 @@ class Control:
 
 
 SECTIONS = ("General", "Smoothing", "OCR", "Effects")
+OCR_BASIC = {"ocr", "ocr_auto_width", "ocr_megapixels", "ocr_min_confidence", "ocr_figlet", "show_ocr_advanced"}
 
 CONTROLS = (
     Control("width", "Width", "int", 4, 0, 4096),
@@ -184,6 +185,11 @@ CONTROLS = (
         depends_on="score_fix",
     ),
     Control("ocr", "OCR", section="OCR"),
+    Control("show_ocr_advanced", "Advanced OCR", section="OCR"),
+    Control("ocr_min_ascii_ratio", "Minimum ASCII ratio", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_box_score_threshold", "Box confidence", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_box_threshold", "Binarization threshold", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_unclip_ratio", "Box expansion", "float", 0.1, 1, 4, section="OCR", depends_on="ocr"),
     Control("ocr_auto_width", "Auto width", section="OCR", depends_on="ocr"),
     Control(
         "ocr_megapixels",
@@ -334,7 +340,7 @@ class PythonTui:
             }
         )
         if blocks is not None:
-            self.options["blocks"] = list(blocks)
+            self.options["glyphs"] = list(blocks)
         if characters is not None:
             self.set_characters(characters)
         self._output_explicit = output is not None
@@ -348,6 +354,7 @@ class PythonTui:
             self._protect_source(font, is_image=False)
         self.section_index = 0
         self.selected = 0
+        self.show_ocr_advanced = False
         self.result: Output | None = None
         self.status = "Ready"
         self.render_seconds = 0.0
@@ -361,6 +368,7 @@ class PythonTui:
             control
             for control in CONTROLS
             if control.section == SECTIONS[self.section_index]
+            and (control.section != "OCR" or self.show_ocr_advanced or control.key in OCR_BASIC)
         )
 
     def next_section(self, direction: int = 1) -> None:
@@ -387,6 +395,9 @@ class PythonTui:
 
     def change_selected(self, direction: int) -> bool:
         control = self.controls[self.selected]
+        if control.key == "show_ocr_advanced":
+            self.show_ocr_advanced = not self.show_ocr_advanced
+            return False  # UI only; preserve the rendered result.
         reason = self.disabled_reason(control)
         if reason:
             self.status = reason
@@ -442,13 +453,13 @@ class PythonTui:
         unknown = set(groups) - self.glyph_catalog().keys()
         if unknown:
             raise ValueError(f"Unknown glyph sets: {', '.join(sorted(unknown))}")
-        self.options.update(blocks=list(groups), include=None)
+        self.options.update(glyphs=list(groups), include=None)
         self.result = None
 
     def set_characters(self, characters: str) -> None:
         if not characters:
             raise ValueError("Select at least one character")
-        self.options.update(blocks=[], include=characters, exclude=[])
+        self.options.update(glyphs=[], include=characters, exclude=[])
         self.result = None
 
     def glyph_characters(self) -> tuple[str, set[str]]:
@@ -634,7 +645,7 @@ def _draw(screen: curses.window, app: PythonTui, colour: bool) -> None:
         range(scroll, min(len(controls), scroll + available_rows)), 2
     ):
         control = controls[index]
-        value = control.display(app.options[control.key])
+        value = control.display(app.show_ocr_advanced if control.key == "show_ocr_advanced" else app.options[control.key])
         marker = ">" if index == app.selected else " "
         label = f"{marker} {control.label[:panel_width - 11]:<{panel_width - 11}} {value:>7}"
         attribute = curses.A_REVERSE if index == app.selected else curses.A_NORMAL
@@ -785,7 +796,7 @@ def _edit_glyphs(screen: curses.window, app: PythonTui, *, individual: bool) -> 
             for name in catalog
             if any(
                 name == block or name.startswith(block + ".")
-                for block in app.options["blocks"]
+                for block in app.options["glyphs"]
             )
         }
         changed = _checklist(screen, "Glyph sets", items, selected)

@@ -222,32 +222,37 @@
                   Minimum confidence
                   <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
                 </label>
+                <label>
+                  OCR megapixels
+                  <input id="ocr-megapixels" type="number" min="0" max="16" step="0.1" value="1.5" />
+                </label>
+                <label class="inline-control">
+                  <input id="ocr-figlet" type="checkbox" checked />
+                  Style large text (FIGlet)
+                </label>
                 <div class="wide-control ocr-action-row">
                   <button id="ocr-refresh" type="button">Regenerate OCR…</button>
                   <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
                 </div>
                 <details class="advanced-section wide-control">
                   <summary>Advanced OCR settings</summary>
+                  <p class="feature-description">Browser recognition uses the bundled Tiny model with one worker. Detection and text styling controls below remain active when collapsed.</p>
                   <div class="control-grid">
                     <label>
                       Printable ASCII ratio
                       <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
                     </label>
                     <label>
-                      OCR width
+                      Legacy OCR width (megapixels = 0)
                       <input id="ocr-width" type="number" min="0" max="8192" step="10" value="0" />
                     </label>
                     <label>
-                      Maximum image side
+                      Legacy maximum side (megapixels = 0)
                       <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
                     </label>
                     <label>
                       Maximum text-height ratio
                       <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
-                    </label>
-                    <label class="inline-control">
-                      <input id="ocr-figlet" type="checkbox" checked />
-                      Use FIGlet for large text
                     </label>
                     <label class="inline-control">
                       <input id="ocr-figlet-fill" type="checkbox" />

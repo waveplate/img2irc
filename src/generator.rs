@@ -34,11 +34,22 @@ pub fn default_options() -> RenderArgs {
 pub fn options_from_json(options_json: &str) -> Result<RenderArgs, String> {
     let mut defaults =
         serde_json::to_value(default_options()).map_err(|error| error.to_string())?;
-    let patch: serde_json::Value = serde_json::from_str(options_json)
+    let mut patch: serde_json::Value = serde_json::from_str(options_json)
         .map_err(|error| format!("invalid options JSON: {error}"))?;
     let patch_object = patch
-        .as_object()
+        .as_object_mut()
         .ok_or_else(|| "generation options must be a JSON object".to_string())?;
+    if let Some(blocks) = patch_object.remove("blocks") {
+        if patch_object.contains_key("glyphs") {
+            return Err("specify glyphs or its deprecated blocks alias, not both".into());
+        }
+        patch_object.insert("glyphs".into(), blocks);
+    }
+    if let Some(value) = patch_object.get_mut("glyphs") {
+        if let Some(name) = value.as_str() {
+            *value = serde_json::json!([name]);
+        }
+    }
     let known = defaults
         .as_object()
         .expect("serialized RenderArgs is an object");
@@ -313,5 +324,18 @@ mod tests {
         assert!(options_from_json(r#"{"widht":42}"#)
             .unwrap_err()
             .contains("unknown generation option"));
+    }
+
+    #[test]
+    fn glyphs_and_legacy_blocks_accept_strings_or_lists() {
+        for json in [r#"{"glyphs":"smooth"}"#, r#"{"glyphs":["smooth"]}"#,
+            r#"{"blocks":"smooth"}"#, r#"{"blocks":["smooth"]}"#] {
+            let options = options_from_json(json).unwrap();
+            assert_eq!(options.blocks, ["smooth"]);
+            let encoded = serde_json::to_value(options).unwrap();
+            assert_eq!(encoded["glyphs"], serde_json::json!(["smooth"]));
+            assert!(encoded.get("blocks").is_none());
+        }
+        assert!(options_from_json(r#"{"glyphs":"smooth","blocks":"default"}"#).is_err());
     }
 }

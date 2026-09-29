@@ -104,6 +104,7 @@ export interface Img2IrcFigletFont {
 
 export interface Img2IrcFigletRequest {
     text: string;
+    lineBounds?: [number, number][];
     baseWidth?: number;
     baseHeight?: number;
     fillAvailable?: boolean;
@@ -338,6 +339,7 @@ struct WebFigletFont {
 #[serde(default, rename_all = "camelCase")]
 struct WebFigletRequest {
     text: String,
+    line_bounds: Vec<[f64; 2]>,
     fill_available: bool,
     base_width: usize,
     base_height: usize,
@@ -351,6 +353,7 @@ impl Default for WebFigletRequest {
     fn default() -> Self {
         Self {
             text: String::new(),
+            line_bounds: Vec::new(),
             fill_available: false,
             base_width: 0,
             base_height: 0,
@@ -756,6 +759,28 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
     let text = request.text.trim();
     if text.is_empty() || request.max_width == 0 || request.max_height == 0 {
         return None;
+    }
+    if request.line_bounds.len() > 1 {
+        let compose = |font: Option<&WebFigletFont>| -> Option<WebFigletArt> {
+            let parts = text.lines().filter(|line| !line.trim().is_empty()).map(|line| match font {
+                Some(font) => render_figlet_font(font, line),
+                None => plain_figlet_art(line, request.max_width, request.max_height),
+            }).collect::<Option<Vec<_>>>()?;
+            let source = parts.first()?.source.clone();
+            let rows = parts.iter().map(|part| part.text.lines().map(|line| line.chars().collect::<Vec<_>>()).collect::<Vec<_>>()).collect::<Vec<_>>();
+            let rows = crate::ocr_layout::space_line_art(&rows, &request.line_bounds)?;
+            let art = normalize_figlet_art(source, &rows.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>().join("\n"))?;
+            (art.width <= request.max_width && art.height <= request.max_height).then_some(art)
+        };
+        let mut candidates = if request.use_figlet {
+            fonts.iter().filter(|font| request.font_name.as_ref().is_none_or(|name| name.eq_ignore_ascii_case(&font.name)))
+                .filter_map(|font| compose(Some(font)).map(|art| (art, font))).collect::<Vec<_>>()
+        } else { Vec::new() };
+        candidates.sort_by_key(|(art, font)| (
+            if request.fill_available { 0 } else { art.width.saturating_sub(request.base_width) },
+            std::cmp::Reverse(font.height), font.priority,
+        ));
+        return candidates.into_iter().next().map(|(art, _)| art).or_else(|| compose(None));
     }
     let base_w = if request.base_width > 0 { request.base_width } else { request.max_width };
     let base_h = if request.base_height > 0 { request.base_height } else { request.max_height };

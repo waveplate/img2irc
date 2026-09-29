@@ -226,6 +226,14 @@ fn grouped_detections(
     image_h: u32,
     multiline: bool,
 ) -> Vec<OcrDetection> {
+    grouped_detection_layouts(detections, args, image_w, image_h, multiline, None)
+        .into_iter().map(|(det, _)| det).collect()
+}
+
+fn grouped_detection_layouts(
+    detections: &[OcrDetection], args: &RenderArgs, image_w: u32, image_h: u32,
+    multiline: bool, row_scale: Option<f64>,
+) -> Vec<(OcrDetection, Vec<[f64; 2]>)> {
     let items: Vec<_> = renderable_detections(detections, args, image_w, image_h)
         .into_iter()
         .filter_map(|det| polygon_bounds(&det.polygon, image_w, image_h).map(|bounds| (det, bounds)))
@@ -244,16 +252,27 @@ fn grouped_detections(
     };
     groups
         .into_iter()
+        .flat_map(|lines| {
+            let top = lines.iter().flatten().map(|&i| boxes[i][1]).fold(f64::INFINITY, f64::min);
+            let bottom = lines.iter().flatten().map(|&i| boxes[i][3]).fold(f64::NEG_INFINITY, f64::max);
+            if row_scale.is_some_and(|scale| ((bottom - top) * scale).round() < lines.len() as f64) {
+                lines.into_iter().map(|line| vec![line]).collect::<Vec<_>>()
+            } else { vec![lines] }
+        })
         .map(|lines| {
             let group: Vec<usize> = lines.iter().flatten().copied().collect();
+            let line_bounds = lines.iter().map(|line| [
+                line.iter().map(|&i| boxes[i][1]).fold(f64::INFINITY, f64::min),
+                line.iter().map(|&i| boxes[i][3]).fold(f64::NEG_INFINITY, f64::max),
+            ]).collect();
             if group.len() == 1 {
-                return items[group[0]].0.clone();
+                return (items[group[0]].0.clone(), line_bounds);
             }
             let x0 = group.iter().map(|&i| items[i].1.0).min().unwrap() as f32;
             let y0 = group.iter().map(|&i| items[i].1.1).min().unwrap() as f32;
             let x1 = group.iter().map(|&i| items[i].1.2).max().unwrap() as f32;
             let y1 = group.iter().map(|&i| items[i].1.3).max().unwrap() as f32;
-            OcrDetection {
+            (OcrDetection {
                 text: lines
                     .iter()
                     .map(|line| {
@@ -266,7 +285,7 @@ fn grouped_detections(
                     .join("\n"),
                 confidence: group.iter().map(|&i| items[i].0.confidence).fold(1.0, f32::min),
                 polygon: vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
-            }
+            }, line_bounds)
         })
         .collect()
 }
@@ -1033,6 +1052,54 @@ fn plain_text_art(text: &str, max_width: usize) -> Option<TextArt> {
     normalize_text_art_with_metadata("plain", 1, 0, text.lines().map(str::to_string).collect())
 }
 
+fn spaced_block_art(
+    text: &str,
+    bounds: &[[f64; 2]],
+    font: Option<&OcrFigletFont>,
+    max_width: usize,
+) -> Option<TextArt> {
+    let parts = text
+        .lines()
+        .map(|line| match font {
+            Some(font) => render_figlet_text(font, line),
+            None => plain_text_art(line, max_width),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut art = parts.first()?.clone();
+    art.lines = crate::ocr_layout::space_line_art(
+        &parts.into_iter().map(|part| part.lines).collect::<Vec<_>>(),
+        bounds,
+    )?;
+    (art.width() <= max_width).then_some(art)
+}
+
+fn choose_block_art(
+    text: &str,
+    bounds: &[[f64; 2]],
+    base_width: usize,
+    max_width: usize,
+    max_height: usize,
+    fonts: &[OcrFigletFont],
+    fill: bool,
+) -> Option<TextArt> {
+    let mut candidates = fonts
+        .iter()
+        .filter_map(|font| spaced_block_art(text, bounds, Some(font), max_width))
+        .filter(|art| art.height() <= max_height)
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|art| {
+        (
+            if fill { 0 } else { art.width().saturating_sub(base_width) },
+            std::cmp::Reverse(art.configured_height),
+            art.priority,
+        )
+    });
+    candidates.into_iter().next().or_else(|| {
+        spaced_block_art(text, bounds, None, max_width)
+            .filter(|art| art.height() <= max_height)
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ScaledTextBox {
     left: f64,
@@ -1168,15 +1235,16 @@ pub fn detections_to_overlays(
     };
 
     let mut overlays = Vec::new();
-    let mut renderable = grouped_detections(
+    let mut renderable = grouped_detection_layouts(
         detections,
         args,
         source.get_width(),
         source.get_height(),
         true,
+        Some(grid_h as f64 / source.get_height() as f64),
     )
     .into_iter()
-    .filter_map(|det| {
+    .filter_map(|(det, line_bounds)| {
         let bounds = polygon_bounds(&det.polygon, source.get_width(), source.get_height())?;
         let text_box = scale_image_box_to_grid(
             bounds,
@@ -1185,22 +1253,26 @@ pub fn detections_to_overlays(
             grid_w,
             grid_h,
         );
-        Some((det, bounds, text_box))
+        let line_bounds = line_bounds.into_iter().map(|[top, bottom]| [
+            top * grid_h as f64 / source.get_height() as f64,
+            bottom * grid_h as f64 / source.get_height() as f64,
+        ]).collect::<Vec<_>>();
+        Some((det, bounds, text_box, line_bounds))
     })
     .collect::<Vec<_>>();
     renderable.sort_by(|a, b| {
         a.2.top.total_cmp(&b.2.top).then_with(|| a.2.left.total_cmp(&b.2.left))
     });
 
-    let mut text_boxes: Vec<ScaledTextBox> = renderable.iter().map(|(_, _, b)| *b).collect();
+    let mut text_boxes: Vec<ScaledTextBox> = renderable.iter().map(|(_, _, b, _)| *b).collect();
     snap_box_alignments(&mut text_boxes, 1.5);
-    for (i, (_, _, b)) in renderable.iter_mut().enumerate() {
+    for (i, (_, _, b, _)) in renderable.iter_mut().enumerate() {
         *b = text_boxes[i];
     }
 
     let mut detection_heights = renderable
         .iter()
-        .map(|(_, bounds, _)| bounds.3.saturating_sub(bounds.1) as f32)
+        .flat_map(|(_, _, _, lines)| lines.iter().map(|b| ((b[1] - b[0]) * source.get_height() as f64 / grid_h as f64) as f32))
         .filter(|height| *height > 0.0)
         .collect::<Vec<_>>();
     let median_detection_height = if detection_heights.len() >= 3 {
@@ -1212,9 +1284,11 @@ pub fn detections_to_overlays(
     let mut occupied = vec![vec![false; grid_w as usize]; grid_h as usize];
 
     for i in 0..renderable.len() {
-        let (det, bounds, text_box) = &renderable[i];
+        let (det, bounds, text_box, line_bounds) = &renderable[i];
         let target_w = text_box.available_width();
-        let target_h = text_box.available_height();
+        let target_h = if line_bounds.len() > 1 {
+            text_box.height().round().max(line_bounds.len() as f64) as usize
+        } else { text_box.available_height() };
         let left_i = (text_box.left.round() as usize).min(grid_w as usize);
         let top_i = (text_box.top.round() as usize).min(grid_h as usize);
         let right_i = (text_box.right.round() as usize).min(grid_w as usize);
@@ -1231,7 +1305,7 @@ pub fn detections_to_overlays(
             if i == j {
                 continue;
             }
-            let (_, _, other_box) = &renderable[j];
+            let (_, _, other_box, _) = &renderable[j];
             let left_j = (other_box.left.round() as usize).min(grid_w as usize);
             let top_j = (other_box.top.round() as usize).min(grid_h as usize);
             let right_j = (other_box.right.round() as usize).min(grid_w as usize);
@@ -1252,15 +1326,23 @@ pub fn detections_to_overlays(
         max_w_allowed = max_w_allowed.max(1);
         max_h_allowed = max_h_allowed.max(1);
 
-        let detection_height = bounds.3.saturating_sub(bounds.1) as f32;
+        let line_height = line_bounds.iter().map(|b| b[1] - b[0]).fold(f64::INFINITY, f64::min);
+        let detection_height = (line_height * source.get_height() as f64 / grid_h as f64) as f32;
+        let line_box = ScaledTextBox { bottom: text_box.top + line_height, ..*text_box };
         let allow_figlet = figlet_allowed(
             args,
-            *text_box,
+            line_box,
             detection_height,
             median_detection_height,
-        ) && target_h >= args.ocr_figlet_min_height as usize;
+        ) && line_height >= args.ocr_figlet_min_height as f64;
 
-        let art = if allow_figlet && args.ocr_figlet_fill {
+        let plain = || if line_bounds.len() > 1 {
+            spaced_block_art(&det.text, line_bounds, None, max_w_allowed)
+        } else { plain_text_art(&det.text, max_w_allowed) };
+        let art = if line_bounds.len() > 1 {
+            choose_block_art(&det.text, line_bounds, target_w, max_w_allowed, max_h_allowed,
+                if allow_figlet { &figlet_fonts } else { &[] }, args.ocr_figlet_fill)
+        } else if allow_figlet && args.ocr_figlet_fill {
             choose_largest_text_art(&det.text, max_w_allowed, max_h_allowed, &figlet_fonts)
         } else if allow_figlet {
             choose_text_art_from_fonts(
@@ -1273,7 +1355,7 @@ pub fn detections_to_overlays(
                 &figlet_fonts,
             )
         } else {
-            plain_text_art(&det.text, max_w_allowed)
+            plain()
         };
         let Some(art) = art.filter(|art| art.height() <= max_h_allowed) else {
             log::debug!(
@@ -1305,7 +1387,7 @@ pub fn detections_to_overlays(
         }
 
         let (final_art, final_x, final_y, final_w, final_h) = if has_overlap && art.source != "plain" {
-            if let Some(plain) = plain_text_art(&det.text, max_w_allowed) {
+            if let Some(plain) = plain() {
                 let pw = plain.width() as i32;
                 let ph = plain.height() as i32;
                 let (px, py) = text_box.place(pw as usize, ph as usize, false);
@@ -2250,9 +2332,9 @@ mod tests {
         assert_eq!(detection_dimensions(&args, 640, 480), (640, 480, 640));
         args.ocr_auto_width = true;
         let automatic = detection_dimensions(&args, 4000, 2000);
+        assert_eq!(automatic, (2000, 1000, 2000));
         args.ocr_megapixels = Some(16.0);
-        assert_eq!(detection_dimensions(&args, 4000, 2000), automatic);
-        assert!(automatic.0 as u64 * automatic.1 as u64 <= 3_000_000);
+        assert_eq!(detection_dimensions(&args, 4000, 2000), (4000, 2000, 4000));
         args.ocr_auto_width = false;
         args.ocr_megapixels = None;
         assert_eq!(detection_dimensions(&args, 4000, 2000), (123, 62, 320));
@@ -2294,9 +2376,29 @@ mod tests {
     }
 
     #[test]
+    fn merged_plain_ocr_preserves_first_to_last_ink_height() {
+        let mut args = default_render_args();
+        args.ocr_figlet = false;
+        args.ocr_auto_width = false;
+        args.ocr_figlet_max_height_ratio = 0.0;
+        args.width = Some(20);
+        args.height = Some(10);
+        let image = PhotonImage::new(vec![255; 200 * 200 * 4], 200, 200);
+        let detections = vec![detection("FIRST", (10, 20, 100, 60)), detection("LAST", (10, 90, 100, 130))];
+        let overlays = detections_to_overlays(&image, &image, &args, &test_glyphs(), &detections);
+        assert_eq!(overlays.len(), 1);
+        let overlay = &overlays[0];
+        assert_eq!(overlay.text.lines().filter(|s| !s.trim().is_empty()).count(), 2);
+        assert!(overlay.text.contains("\n\n"));
+        assert_eq!(overlay.text.lines().count() as i32, overlay.h);
+        assert!((overlay.h as f64 - 5.5).abs() <= 0.5);
+        assert_eq!(overlay.y, 1);
+    }
+
+    #[test]
     fn auto_width_grows_manual_dimensions_and_keeps_complete_overlays() {
         let mut args = default_render_args();
-        assert!(args.ocr_auto_width);
+        args.ocr_auto_width = true;
         args.ocr = true;
         args.ocr_figlet = false;
         args.width = Some(40);
@@ -2370,10 +2472,10 @@ mod tests {
         let overlays = detections_to_overlays(&source, &source, &args, &test_glyphs(), &words);
         assert_eq!(overlays.len(), 1);
         assert_eq!(
-            overlays[0].text.lines().map(str::trim_end).collect::<Vec<_>>(),
+            overlays[0].text.lines().map(str::trim_end).filter(|line| !line.is_empty()).collect::<Vec<_>>(),
             ["FIRST LINE", "SECOND LINE"]
         );
-        assert_eq!(overlays[0].h, 2);
+        assert_eq!(overlays[0].h, 45);
     }
 
     #[test]
@@ -2394,6 +2496,7 @@ mod tests {
         for braille in [false, true] {
             let mut args = default_render_args();
             args.ocr = true;
+            args.ocr_auto_width = true;
             args.braille = braille;
             args.width = Some(10);
             args.scale = Some((0.5, 0.5));
