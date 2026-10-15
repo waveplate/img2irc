@@ -980,7 +980,12 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
         default_toml.to_string()
     };
 
-    let raw_config: BTreeMap<String, Value> = toml::from_str(&toml_str).expect("Invalid TOML");
+    resolve_glyph_catalog(&toml_str, apply_exclusions)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_glyph_catalog(toml_str: &str, apply_exclusions: bool) -> (HashMap<String, Vec<u32>>, HashSet<char>) {
+    let raw_config: BTreeMap<String, Value> = toml::from_str(toml_str).expect("Invalid TOML");
 
     let mut blocks: HashMap<String, BlockEntry> = HashMap::new();
 
@@ -1009,7 +1014,11 @@ fn load_blocks_config_impl(apply_exclusions: bool) -> (HashMap<String, Vec<u32>>
         }
     }
 
-    for (k, v) in raw_config {
+    // A saved catalog from an older installation must not hide newly bundled
+    // sets. Local definitions still replace the corresponding built-in set.
+    let bundled: BTreeMap<String, Value> = toml::from_str(include_str!("../glyphs.toml"))
+        .expect("Invalid bundled glyph catalog");
+    for (k, v) in bundled.into_iter().chain(raw_config) {
         flatten_toml(&k, &v, &mut blocks);
     }
 
@@ -2125,6 +2134,14 @@ pub fn print_glyph_bitmaps(store: &GlyphStore) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_glyph_catalog_retains_bundled_sets_and_local_overrides() {
+        let (groups, _) = resolve_glyph_catalog("[default]\nglyphs = [0x58]\n[custom]\ninclude = ['smooth']\n", true);
+        assert_eq!(groups["default"], vec![0x58]);
+        assert!(!groups["smooth"].is_empty());
+        assert_eq!(groups["custom"], groups["smooth"]);
+    }
 
     #[test]
     fn bundled_fonts_supply_default_and_explicit_family_without_system_lookup() {

@@ -3,10 +3,13 @@ pub mod general;
 pub mod glyphs;
 pub mod pipeline;
 pub mod text;
-mod replace_colour;
-use replace_colour::*;
+mod effect_controls;
+use effect_controls::*;
 mod figlet_picker;
 use figlet_picker::*;
+mod optimization;
+mod render_cache;
+use optimization::{load_glyphs, optimization_score, OptimizationLog};
 pub(crate) use general::*;
 pub(crate) use glyphs::*;
 pub(crate) use pipeline::*;
@@ -46,7 +49,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Terminal,
 };
 use ratatui_image::{
@@ -88,6 +91,7 @@ const EIGHTH_BLOCKS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", 
 enum OptimizationUpdate {
     Progress(String),
     BestResult(RenderArgs, f64),
+    FontScanFinished(Result<crate::font_scan::FontScanResult, String>),
     Finished,
 }
 
@@ -125,14 +129,28 @@ enum ControlId {
     OcrAdvanced,
     OcrMaxTextHeight,
     OcrThreads,
+    OcrAsciiRatio,
+    OcrBoxScore,
+    OcrBoxThreshold,
+    OcrUnclip,
+    OcrOrientation,
 
     HighlightDisc,
     DiscThreshold,
-    ScoreFix,
-    ScoreFixCandidates,
-    ScoreFixOrderings,
-    ScoreFixGeometryFirst,
-    ScoreFixNeighborhoodGuard,
+    Smooth,
+    PerceptualScore,
+    RegionGuidance,
+    GlyphSearch,
+    ShowGlyphDefects,
+    GlyphSearchThreshold,
+    GlyphSearchCandidates,
+    GlyphSearchPasses,
+    GlyphSearchFinalists,
+    SmoothCandidates,
+    SmoothOrders,
+    SuperpixelWarp,
+    SmoothShapes,
+    SmoothNeighbors,
     ContourBendingWeight,
     ContourEndpointWeight,
     ContourJunctionWeight,
@@ -217,13 +235,27 @@ impl ControlId {
             ControlId::OcrAdvanced => "ocr-advanced",
             ControlId::OcrMaxTextHeight => "ocr-max-height",
             ControlId::OcrThreads => "ocr-threads",
+            ControlId::OcrAsciiRatio => "ocr-ascii-ratio",
+            ControlId::OcrBoxScore => "ocr-box-score",
+            ControlId::OcrBoxThreshold => "ocr-box-threshold",
+            ControlId::OcrUnclip => "ocr-unclip-ratio",
+            ControlId::OcrOrientation => "ocr-orientation",
             ControlId::HighlightDisc => "show-discontinuities",
             ControlId::DiscThreshold => "discontinuity-threshold",
-            ControlId::ScoreFix => "smooth",
-            ControlId::ScoreFixCandidates => "smooth-candidates",
-            ControlId::ScoreFixOrderings => "smooth-orders",
-            ControlId::ScoreFixGeometryFirst => "smooth-shapes",
-            ControlId::ScoreFixNeighborhoodGuard => "smooth-neighbors",
+            ControlId::Smooth => "smooth",
+            ControlId::PerceptualScore => "perceptual-score",
+            ControlId::RegionGuidance => "region-guidance",
+            ControlId::GlyphSearch => "glyph-search",
+            ControlId::ShowGlyphDefects => "show-glyph-defects",
+            ControlId::GlyphSearchThreshold => "glyph-search-threshold",
+            ControlId::GlyphSearchCandidates => "glyph-search-candidates",
+            ControlId::GlyphSearchPasses => "glyph-search-passes",
+            ControlId::GlyphSearchFinalists => "glyph-search-finalists",
+            ControlId::SmoothCandidates => "smooth-candidates",
+            ControlId::SmoothOrders => "smooth-orders",
+            ControlId::SuperpixelWarp => "superpixel-warp",
+            ControlId::SmoothShapes => "smooth-shapes",
+            ControlId::SmoothNeighbors => "smooth-neighbors",
             ControlId::ContourBendingWeight => "contour-bending-weight",
             ControlId::ContourEndpointWeight => "contour-endpoint-weight",
             ControlId::ContourJunctionWeight => "contour-junction-weight",
@@ -303,6 +335,11 @@ impl ControlId {
                 | ControlId::OcrAdvanced
                 | ControlId::OcrMaxTextHeight
                 | ControlId::OcrThreads
+                | ControlId::OcrAsciiRatio
+                | ControlId::OcrBoxScore
+                | ControlId::OcrBoxThreshold
+                | ControlId::OcrUnclip
+                | ControlId::OcrOrientation
         )
     }
 
@@ -344,13 +381,25 @@ impl ControlId {
             Self::OcrAdvanced => "Show or hide model, performance, text filtering and large-text styling settings. Hiding them preserves their values.",
             Self::OcrModelTier => "Recognition model size: Tiny is fastest; larger models use more memory and may improve difficult text recognition.",
             Self::OcrThreads => "Number of CPU workers used for OCR inference. More workers can speed recognition but use more CPU.",
+            Self::OcrAsciiRatio => "Minimum percentage of printable ASCII characters in accepted text. Lower this for non-Latin text.",
+            Self::OcrBoxScore => "Minimum detector confidence for a text region before recognition.",
+            Self::OcrBoxThreshold => "Binarization threshold for the detector's text probability map.",
+            Self::OcrUnclip => "Expansion of detected boxes, as a percentage. 160 means 1.6 times the detected region.",
+            Self::OcrOrientation => "Use the text-line orientation classifier before recognition.",
             Self::OcrMaxTextHeight => "Ignore text taller than this percentage of the typical detected line. 0 keeps all text sizes; 200 allows lines up to twice as tall.",
             Self::OcrFigletMinHeight => "Minimum detected height in output rows before decorative text styling is allowed.",
             Self::OcrFigletMinHeightRatio => "Minimum text height relative to typical lines before styling. 125 means 25% taller; 0 disables this check.",
             Self::OcrFigletMaxWidthRatio => "Extra horizontal space decorative text may use beyond its box. 50 allows 50% extra, constrained by neighboring text.",
             Self::OcrFigletMaxHeightRatio => "Extra vertical space decorative text may use beyond its box. 50 allows 50% extra, constrained by neighboring text.",
             Self::Width => "Output width in character columns. 0 uses automatic image sizing. Auto OCR Width manages this when OCR is enabled.",
-            Self::FontSize => "Size of the font used to match image regions to glyphs. 0 chooses a size automatically.",
+            Self::FontSize => "Size of the font used to match image regions to glyphs. Click Auto or press A to scan sizes 9–30 for the lowest Perceptual score, skipping refinements. 0 chooses a size automatically.",
+            Self::RegionGuidance => "Fit glyph shapes and observed region colours together, without blending colours across borders. Experimental; preserves confident boundaries and limits added pixel error. Works independently of Smoothing and Align Sextant Features.",
+            Self::GlyphSearch => "Find suspect gaps, tips and edges, then search neighbouring glyph pairs, including diagonals. Keeps only lower full-image Perceptual scores. Works independently of Smoothing.",
+            Self::ShowGlyphDefects => "Preview the actual search plan: red cells are defect targets; amber cells are their neighbours. Works with search off. During search, shows each pass before repairs. Copy/save keeps the normal output.",
+            Self::GlyphSearchThreshold => "Minimum defect strength to search, sharing --disc-threshold. Lower includes more cells; 0 searches every non-flat cell and disables skipping unchanged contexts. Default 0.5.",
+            Self::GlyphSearchCandidates => "Alternatives per cell, split between source fit and agreement with neighbouring boundaries, plus its current glyph. Pair combinations grow roughly with the square of this count.",
+            Self::GlyphSearchPasses => "Maximum sweeps over adjacent pairs. Stops when a complete pass finds no improvement. Later passes can combine earlier changes.",
+            Self::GlyphSearchFinalists => "Best local combinations checked against the full-image score per pair. 0 checks every shortlisted combination globally and is much slower.",
             _ => "Arrow keys or mouse wheel adjust this option. Enter toggles or edits it; numeric values can also be typed directly.",
         }
     }
@@ -371,6 +420,7 @@ impl ControlId {
             || matches!(
                 self,
                 Self::OcrModelTier | Self::OcrMaxTextHeight | Self::OcrThreads
+                | Self::OcrAsciiRatio | Self::OcrBoxScore | Self::OcrBoxThreshold | Self::OcrUnclip | Self::OcrOrientation
             )
     }
 
@@ -387,21 +437,23 @@ impl ControlId {
         )
     }
 
-    fn requires_score_fix(self) -> bool {
+    fn requires_smooth(self) -> bool {
         matches!(
             self,
-            ControlId::ScoreFixCandidates
-                | ControlId::ScoreFixOrderings
-                | ControlId::ScoreFixGeometryFirst
-                | ControlId::ScoreFixNeighborhoodGuard
+            ControlId::SmoothCandidates
+                | ControlId::SmoothOrders
+                | ControlId::SmoothShapes
+                | ControlId::SmoothNeighbors
                 | ControlId::ShowAdvanced
         ) || self.requires_advanced()
     }
 
     fn conditional_depth(self) -> u16 {
-        if self.requires_ocr_advanced() || self.requires_advanced() {
+        if matches!(self, Self::GlyphSearchThreshold | Self::GlyphSearchCandidates | Self::GlyphSearchPasses | Self::GlyphSearchFinalists) {
+            1
+        } else if self.requires_ocr_advanced() || self.requires_advanced() {
             2
-        } else if self.requires_ocr() || self.requires_score_fix() {
+        } else if self.requires_ocr() || self.requires_smooth() {
             1
         } else {
             0
@@ -551,6 +603,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         label: "Advanced OCR",
         kind: ControlKind::Toggle { default: false },
     },
+    ControlDef { id: ControlId::OcrAsciiRatio, label: "Min ASCII %", kind: ControlKind::Slider { min: 0, max: 100, default: 70 } },
+    ControlDef { id: ControlId::OcrBoxScore, label: "Box Confidence %", kind: ControlKind::Slider { min: 0, max: 100, default: 60 } },
+    ControlDef { id: ControlId::OcrBoxThreshold, label: "Binarization %", kind: ControlKind::Slider { min: 0, max: 100, default: 20 } },
+    ControlDef { id: ControlId::OcrUnclip, label: "Box Expansion %", kind: ControlKind::Slider { min: 100, max: 400, default: 160 } },
+    ControlDef { id: ControlId::OcrOrientation, label: "Line Orientation", kind: ControlKind::Toggle { default: false } },
     ControlDef {
         id: ControlId::OcrModelTier,
         label: "Recognition Model",
@@ -592,35 +649,84 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
-        id: ControlId::ScoreFix,
+        id: ControlId::PerceptualScore,
+        label: "Perceptual Score (exp)",
+        kind: ControlKind::Toggle { default: true },
+    },
+    ControlDef {
+        id: ControlId::Smooth,
         label: "Smoothing",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
-        id: ControlId::ScoreFixCandidates,
+        id: ControlId::RegionGuidance,
+        label: "Region Guidance (exp)",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::GlyphSearch,
+        label: "Repair Edges",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::ShowGlyphDefects,
+        label: "Show Search Defects",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
+        id: ControlId::GlyphSearchThreshold,
+        label: "Defect Thresh (0=all)",
+        kind: ControlKind::Slider { min: 0, max: 1000, default: 5 },
+    },
+    ControlDef {
+        id: ControlId::GlyphSearchCandidates,
+        label: "Search Alternatives",
+        kind: ControlKind::Slider { min: 1, max: 64, default: 6 },
+    },
+    ControlDef {
+        id: ControlId::GlyphSearchPasses,
+        label: "Search Passes",
+        kind: ControlKind::Slider { min: 1, max: 20, default: 2 },
+    },
+    ControlDef {
+        id: ControlId::GlyphSearchFinalists,
+        label: "Full Checks (0=all)",
+        kind: ControlKind::Slider { min: 0, max: 4096, default: 3 },
+    },
+    ControlDef {
+        id: ControlId::SuperpixelWarp,
+        label: "Align Sextant Features",
+        kind: ControlKind::Slider {
+            min: 0,
+            max: crate::superpixels::MAX_STRENGTH as i32,
+            default: 0,
+        },
+    },
+    ControlDef {
+        id: ControlId::SmoothCandidates,
         label: "Candidates",
         kind: ControlKind::Slider {
             min: 1,
             max: 256,
-            default: 12,
+            default: 5,
         },
     },
     ControlDef {
-        id: ControlId::ScoreFixOrderings,
+        id: ControlId::SmoothOrders,
         label: "Scan Patterns",
         kind: ControlKind::Slider {
             min: 1,
             max: 5,
-            default: 1,
+            default: 5,
         },
     },
     ControlDef {
-        id: ControlId::ScoreFixGeometryFirst,
+        id: ControlId::SmoothShapes,
         label: "Refine Shapes",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
-        id: ControlId::ScoreFixNeighborhoodGuard,
+        id: ControlId::SmoothNeighbors,
         label: "Protect Neighbors",
         kind: ControlKind::Toggle { default: true },
     },
@@ -989,10 +1095,12 @@ impl CatalogItem {
             Some(ImageEffect::MedianBlur(_)) => "median-blur",
             Some(ImageEffect::DarkLines(_) | ImageEffect::LightLines(_)) => "line-thickness",
             Some(ImageEffect::ReplaceColour { .. }) => "replace-colour",
+            Some(ImageEffect::QuantizeColours(_) | ImageEffect::QuantizePalette { .. }) => "quantize-colours",
             Some(ImageEffect::Saturation(_)) => "saturation",
             Some(ImageEffect::Gamma(_)) => "gamma",
             Some(ImageEffect::Hue(_)) => "hue",
             Some(ImageEffect::CropTop(_)) => "crop-top",
+            Some(ImageEffect::Crop { .. }) => "crop",
             Some(ImageEffect::CropBottom(_)) => "crop-bottom",
             Some(ImageEffect::CropLeft(_)) => "crop-left",
             Some(ImageEffect::CropRight(_)) => "crop-right",
@@ -1056,6 +1164,10 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
         effect: Some(crate::pipeline::ImageEffect::ReplaceColour { from: [255; 3], to: [0; 3], tolerance: 5.0 }),
     },
     CatalogItem {
+        label: "Quantize Colours",
+        effect: Some(crate::pipeline::ImageEffect::QuantizePalette { colours: 16, threshold: 3.0, palette: vec![], source: true }),
+    },
+    CatalogItem {
         label: "Luma Contrast",
         effect: Some(crate::pipeline::ImageEffect::LumaContrast(0.0)),
     },
@@ -1076,20 +1188,8 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
         effect: None,
     },
     CatalogItem {
-        label: "Crop Top",
-        effect: Some(crate::pipeline::ImageEffect::CropTop(0)),
-    },
-    CatalogItem {
-        label: "Crop Right",
-        effect: Some(crate::pipeline::ImageEffect::CropRight(0)),
-    },
-    CatalogItem {
-        label: "Crop Bottom",
-        effect: Some(crate::pipeline::ImageEffect::CropBottom(0)),
-    },
-    CatalogItem {
-        label: "Crop Left",
-        effect: Some(crate::pipeline::ImageEffect::CropLeft(0)),
+        label: "Crop",
+        effect: Some(crate::pipeline::ImageEffect::Crop { top: 0, right: 0, bottom: 0, left: 0 }),
     },
     CatalogItem {
         label: "Flip Horizontal",
@@ -1121,7 +1221,7 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
     },
     CatalogItem {
         label: "Line Thickness (+dark / -light)",
-        effect: Some(crate::pipeline::ImageEffect::DarkLines(1)),
+        effect: Some(crate::pipeline::ImageEffect::DarkLines(0.1)),
     },
     CatalogItem {
         label: "Gauss Blur",
@@ -1245,11 +1345,6 @@ fn normalized_layout_id(id: &str) -> String {
     let normalized = id.trim().to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
         "ocr-width" | "ocr-max-side" => "ocr-megapixels".to_string(),
-        "score-fix" => "smooth".to_string(),
-        "score-fix-candidates" => "smooth-candidates".to_string(),
-        "score-fix-orderings" => "smooth-orders".to_string(),
-        "score-fix-geometry" => "smooth-shapes".to_string(),
-        "score-fix-overlap" => "smooth-neighbors".to_string(),
         _ => normalized,
     }
 }
@@ -1325,18 +1420,18 @@ fn visible_general_controls(
     controls: &[ControlDef],
     ocr_enabled: bool,
     figlet_enabled: bool,
-    score_fix_enabled: bool,
+    smooth_enabled: bool,
     show_advanced: bool,
     show_ocr_advanced: bool,
 ) -> Vec<ControlDef> {
     controls
         .iter()
         .filter(|control| {
-            !matches!(control.id, ControlId::HighlightDisc | ControlId::DiscThreshold)
+            !matches!(control.id, ControlId::HighlightDisc | ControlId::DiscThreshold | ControlId::RegionGuidance | ControlId::SuperpixelWarp)
         })
         .filter(|control| ocr_enabled || !control.id.requires_ocr())
         .filter(|control| figlet_enabled || !control.id.requires_figlet())
-        .filter(|control| score_fix_enabled || !control.id.requires_score_fix())
+        .filter(|control| smooth_enabled || !control.id.requires_smooth())
         .filter(|control| show_advanced || !control.id.requires_advanced())
         .filter(|control| show_ocr_advanced || !control.id.requires_ocr_advanced())
         .copied()
@@ -1486,22 +1581,23 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn ocr_input_budget_cache_ignores_inactive_manual_settings() {
+    fn explicit_ocr_budget_ignores_size_settings_and_auto_width() {
         let parsed = crate::args::Args::parse_from(["img2irc"]);
         let mut args = crate::args_to_tui_render_args(&parsed);
         let automatic = OcrInferenceKey::from(&args);
-        args.ocr_megapixels = Some(8.0);
         args.ocr_width = Some(400);
         args.ocr_max_side_len = 500;
-        assert_eq!(OcrInferenceKey::from(&args), automatic);
+        assert_ne!(OcrInferenceKey::from(&args), automatic);
+        args.ocr_megapixels = Some(8.0);
+        let megapixel_budget = OcrInferenceKey::from(&args);
+        assert_ne!(megapixel_budget, automatic);
         args.ocr_auto_width = false;
-        let manual = OcrInferenceKey::from(&args);
-        assert_ne!(manual, automatic);
+        assert_eq!(OcrInferenceKey::from(&args), megapixel_budget);
         args.ocr_width = Some(800);
         args.ocr_max_side_len = 900;
-        assert_eq!(OcrInferenceKey::from(&args), manual);
+        assert_eq!(OcrInferenceKey::from(&args), megapixel_budget);
         args.ocr_megapixels = Some(2.0);
-        assert_ne!(OcrInferenceKey::from(&args), manual);
+        assert_ne!(OcrInferenceKey::from(&args), megapixel_budget);
     }
 
     #[test]
@@ -1509,7 +1605,7 @@ mod ui_layout_tests {
         if !cfg!(feature = "ocr") {
             return;
         }
-        let parsed = crate::args::Args::parse_from(["img2irc", "--ocr"]);
+        let parsed = crate::args::Args::parse_from(["img2irc", "--ocr", "--ocr-auto-width", "true"]);
         let args = crate::args_to_render_args(&parsed);
         let flag = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
@@ -1525,6 +1621,10 @@ mod ui_layout_tests {
         let original_width = app.width;
         app.set_value(ControlId::Width, 999);
         assert_eq!(app.width, original_width);
+        // Detection detail remains independent of auto output width, but OCR
+        // lock must reject edits through every input path.
+        app.set_value(ControlId::OcrLock, 1);
+        app.args_dirty = false;
         adjust_control(&mut app, 10);
         reset_control(&mut app);
         app.set_value(ControlId::OcrMegapixels, 90);
@@ -1545,7 +1645,7 @@ mod ui_layout_tests {
             .collect::<String>();
         assert!(screen.contains("OCR Megapixels"));
         assert!(screen.contains("Disabled"));
-        assert!(screen.contains("manages detection detail"), "{screen}");
+        assert!(screen.contains("Unlock OCR"), "{screen}");
         assert!(!screen.contains("Recognition Model"));
         let row = app.control_areas[app.selected_control];
         let label_row = (row.x..row.right()).map(|x| terminal.backend().buffer()[(x, row.y)].symbol()).collect::<String>();
@@ -1555,7 +1655,7 @@ mod ui_layout_tests {
             small.draw(|frame| general::render_controls(frame, &mut app, frame.area())).unwrap();
         }
 
-        app.set_value(ControlId::OcrAutoWidth, 0);
+        app.set_value(ControlId::OcrLock, 0);
         app.set_value(ControlId::OcrMegapixels, 90);
         assert_eq!(app.get_value(ControlId::OcrMegapixels), 90);
         app.set_value(ControlId::OcrLock, 1);
@@ -1598,15 +1698,32 @@ mod ui_layout_tests {
     }
 
     #[test]
+    fn space_restores_slider_value_after_toggling_or_manual_zero() {
+        let parsed = crate::args::Args::parse_from(["img2irc", "--width=75"]);
+        let args = crate::args_to_render_args(&parsed);
+        let flag = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (_result_tx, result_rx) = mpsc::channel(1);
+        let mut app = App::new(args, tx, result_rx, flag);
+        app.selected_control = app.tab_controls(0).iter()
+            .position(|c| c.id == ControlId::Width).unwrap();
+        toggle_control(&mut app);
+        assert_eq!(app.width, 0);
+        toggle_control(&mut app);
+        assert_eq!(app.width, 75);
+        app.set_value(ControlId::Width, 65);
+        app.set_value(ControlId::Width, 0);
+        toggle_control(&mut app);
+        assert_eq!(app.width, 65);
+    }
+
+    #[test]
     fn geometry_is_only_in_the_pipeline_library() {
         let general = arrange_general_controls(&crate::config::ItemLayout::default());
         let pipeline = arrange_pipeline_catalog(&crate::config::ItemLayout::default());
 
         for id in [
-            "crop-top",
-            "crop-right",
-            "crop-bottom",
-            "crop-left",
+            "crop",
             "flip-horizontal",
             "flip-vertical",
             "rotate",
@@ -1657,14 +1774,14 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn hides_score_fix_children_until_score_fix_is_enabled() {
+    fn hides_smooth_children_until_smooth_is_enabled() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
         let disabled = visible_general_controls(&controls, true, true, false, true, true);
         let enabled = visible_general_controls(&controls, true, true, true, true, true);
 
-        assert!(disabled.iter().any(|control| control.id == ControlId::ScoreFix));
-        assert!(!disabled.iter().any(|control| control.id.requires_score_fix()));
-        assert!(enabled.iter().any(|control| control.id.requires_score_fix()));
+        assert!(disabled.iter().any(|control| control.id == ControlId::Smooth));
+        assert!(!disabled.iter().any(|control| control.id.requires_smooth()));
+        assert!(enabled.iter().any(|control| control.id.requires_smooth()));
     }
 
     #[test]
@@ -1697,7 +1814,7 @@ mod ui_layout_tests {
     fn conditional_controls_have_nested_hierarchy_depths() {
         assert_eq!(ControlId::OcrFiglet.conditional_depth(), 1);
         assert_eq!(ControlId::OcrFigletMinHeight.conditional_depth(), 2);
-        assert_eq!(ControlId::ScoreFixCandidates.conditional_depth(), 1);
+        assert_eq!(ControlId::SmoothCandidates.conditional_depth(), 1);
         assert_eq!(ControlId::ContourBendingWeight.conditional_depth(), 2);
         assert_ne!(SURFACE, CONDITIONAL_BG);
         assert_ne!(CONDITIONAL_BG, NESTED_CONDITIONAL_BG);
@@ -2716,6 +2833,10 @@ impl App {
     }
 }
 
+type SearchProgressUpdate = (
+    Arc<AtomicBool>, Arc<font::GlyphStore>, draw::search_status::GlyphSearchProgress,
+);
+
 pub(crate) struct App {
     render_args: RenderArgs,
     input_mode: InputMode,
@@ -2746,6 +2867,11 @@ pub(crate) struct App {
     base_render_result: Option<draw::RenderResult>,
     last_render_latency: Option<Duration>,
     is_rendering: Arc<AtomicBool>,
+    rx_search_progress: Option<watch::Receiver<Option<SearchProgressUpdate>>>,
+    search_progress: Option<draw::search_status::GlyphSearchProgress>,
+    search_preview: Option<Arc<draw::search_status::GlyphSearchPreview>>,
+    search_preview_glyphs: Option<Arc<font::GlyphStore>>,
+    defect_preview_result: Option<draw::RenderResult>,
     render_tick: usize,
     dragged_control: Option<usize>,
     value_edit_buffer: String,
@@ -2814,11 +2940,18 @@ pub(crate) struct App {
     discontinuity_threshold: i32,
     graphics_preview: bool,
     show_advanced: bool,
-    score_fix: bool,
-    score_fix_candidates: i32,
-    score_fix_orderings: i32,
-    score_fix_geometry_first: bool,
-    score_fix_neighborhood_guard: bool,
+    smooth: bool,
+    perceptual_score: bool,
+    region_guidance: bool,
+    glyph_search: bool,
+    glyph_search_candidates: i32,
+    glyph_search_passes: i32,
+    glyph_search_finalists: i32,
+    superpixel_warp: i32,
+    smooth_candidates: i32,
+    smooth_orders: i32,
+    smooth_shapes: bool,
+    smooth_neighbors: bool,
     contour_bending_weight: i32,
     contour_endpoint_weight: i32,
     contour_junction_weight: i32,
@@ -2858,10 +2991,15 @@ pub(crate) struct App {
     colorspace_idx: usize,
     encoding_idx: usize,
     rx_optimization: Option<mpsc::Receiver<OptimizationUpdate>>,
+    font_scan_running: bool,
+    font_scan_area: Rect,
+    smooth_hint_shown: bool,
+    smooth_hint_until: Option<Instant>,
 
     // Slider state
     slider_last_press: Option<std::time::Instant>,
     slider_repeat_count: u32,
+    slider_previous: std::collections::HashMap<ControlId, i32>,
 
     // Effects
     pixelize: i32,
@@ -2915,6 +3053,8 @@ pub(crate) struct App {
     glyph_add_area: Rect,
     glyph_delete_area: Rect,
     explorer_area: Rect,
+    last_text_save: Option<std::path::PathBuf>,
+    last_png_save: Option<std::path::PathBuf>,
     preview_area: Rect,
     output_area: Rect,
     options_pane_area: Rect,
@@ -2922,6 +3062,7 @@ pub(crate) struct App {
 
     // Image preview for xplr
     image_preview_protocol: Option<StatefulProtocol>,
+    source_preview: Arc<std::sync::Mutex<Option<(String, Arc<PhotonImage>)>>>,
     output_preview_protocol: Option<StatefulProtocol>,
     output_preview_dirty: bool,
     preview_picker: Picker,
@@ -2929,8 +3070,7 @@ pub(crate) struct App {
 
     // Eyedropper state
     eyedropper_color: Option<(u8, u8, u8)>,
-    replace_colour_dialog: Option<ReplaceColourDialog>,
-    replace_colour_button_area: Rect,
+    effect_controls: EffectControls,
     figlet_picker: Option<FigletPicker>,
     is_optimizing: bool,
     optimization_progress: String,
@@ -3448,12 +3588,18 @@ impl App {
             base_render_result: None,
             last_render_latency: None,
             is_rendering: Arc::new(AtomicBool::new(true)),
+            rx_search_progress: None,
+            search_progress: None,
+            search_preview: None,
+            search_preview_glyphs: None,
+            defect_preview_result: None,
             render_tick: 0,
             dragged_control: None,
             value_edit_buffer: String::new(),
             arc_glyphs: None,
 
             image_preview_protocol: None,
+            source_preview: Arc::new(std::sync::Mutex::new(None)),
             output_preview_protocol: None,
             output_preview_dirty: true,
             preview_picker: Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
@@ -3518,11 +3664,18 @@ impl App {
             discontinuity_threshold: (render_args.discontinuity_threshold * 10.0).round() as i32,
             graphics_preview: false,
             show_advanced: false,
-            score_fix: render_args.score_fix,
-            score_fix_candidates: render_args.score_fix_candidates as i32,
-            score_fix_orderings: render_args.score_fix_orderings as i32,
-            score_fix_geometry_first: render_args.score_fix_geometry_first,
-            score_fix_neighborhood_guard: render_args.score_fix_neighborhood_guard,
+            smooth: render_args.smooth,
+            perceptual_score: render_args.perceptual_score,
+            region_guidance: render_args.region_guidance,
+            glyph_search: render_args.glyph_search,
+            glyph_search_candidates: render_args.glyph_search_candidates.clamp(1, 64) as i32,
+            glyph_search_passes: render_args.glyph_search_passes.clamp(1, 20) as i32,
+            glyph_search_finalists: render_args.glyph_search_finalists.min(4096) as i32,
+            superpixel_warp: render_args.superpixel_warp.min(crate::superpixels::MAX_STRENGTH) as i32,
+            smooth_candidates: render_args.smooth_candidates as i32,
+            smooth_orders: render_args.smooth_orders as i32,
+            smooth_shapes: render_args.smooth_shapes,
+            smooth_neighbors: render_args.smooth_neighbors,
             contour_bending_weight: (render_args.contour_bending_weight * 10.0).round() as i32,
             contour_endpoint_weight: (render_args.contour_endpoint_weight * 10.0).round() as i32,
             contour_junction_weight: (render_args.contour_junction_weight * 10.0).round() as i32,
@@ -3547,6 +3700,7 @@ impl App {
 
             slider_last_press: None,
             slider_repeat_count: 0,
+            slider_previous: std::collections::HashMap::new(),
 
             trim_top: render_args.trim.map(|t| t.0 as i32).unwrap_or(0),
             trim_right: render_args.trim.map(|t| t.1 as i32).unwrap_or(0),
@@ -3627,10 +3781,12 @@ impl App {
             solarize: render_args.solarize,
             edge_detection: render_args.edge_detection,
 
-            pipeline_nodes: Vec::new(),
+            pipeline_nodes: render_args.pipeline.iter().cloned().enumerate().map(|(index, effect)| {
+                crate::pipeline::ImageEffectNode { id: index + 1, effect, disabled: false }
+            }).collect(),
             pipeline_catalog,
             pipeline_list_state: ratatui::widgets::ListState::default(),
-            pipeline_next_id: 1,
+            pipeline_next_id: render_args.pipeline.len() + 1,
             pipeline_dragging: None,
             pipeline_scroll: 0,
             pipeline_selected: None,
@@ -3654,18 +3810,23 @@ impl App {
             glyph_add_area: Rect::default(),
             glyph_delete_area: Rect::default(),
             explorer_area: Rect::default(),
+            last_text_save: None,
+            last_png_save: None,
             preview_area: Rect::default(),
             output_area: Rect::default(),
             options_pane_area: Rect::default(),
             options_areas: Vec::new(),
             eyedropper_color: None,
-            replace_colour_dialog: None,
-            replace_colour_button_area: Rect::default(),
+            effect_controls: EffectControls::default(),
             figlet_picker: None,
             is_optimizing: false,
             optimization_progress: String::new(),
             optimization_best_score: None,
             rx_optimization: None,
+            font_scan_running: false,
+            font_scan_area: Rect::default(),
+            smooth_hint_shown: false,
+            smooth_hint_until: None,
             auto_optimize_state: None,
             saved_auto_optimize_inputs: Vec::new(),
             saved_auto_optimize_enabled_rows: [true; 8],
@@ -3764,11 +3925,18 @@ impl App {
         self.dither = render_args.dither as i32;
         self.show_discontinuities = render_args.show_discontinuities;
         self.discontinuity_threshold = (render_args.discontinuity_threshold * 10.0).round() as i32;
-        self.score_fix = render_args.score_fix;
-        self.score_fix_candidates = render_args.score_fix_candidates as i32;
-        self.score_fix_orderings = render_args.score_fix_orderings as i32;
-        self.score_fix_geometry_first = render_args.score_fix_geometry_first;
-        self.score_fix_neighborhood_guard = render_args.score_fix_neighborhood_guard;
+        self.smooth = render_args.smooth;
+        self.perceptual_score = render_args.perceptual_score;
+        self.region_guidance = render_args.region_guidance;
+        self.glyph_search = render_args.glyph_search;
+        self.glyph_search_candidates = render_args.glyph_search_candidates.clamp(1, 64) as i32;
+        self.glyph_search_passes = render_args.glyph_search_passes.clamp(1, 20) as i32;
+        self.glyph_search_finalists = render_args.glyph_search_finalists.min(4096) as i32;
+        self.superpixel_warp = render_args.superpixel_warp.min(crate::superpixels::MAX_STRENGTH) as i32;
+        self.smooth_candidates = render_args.smooth_candidates as i32;
+        self.smooth_orders = render_args.smooth_orders as i32;
+        self.smooth_shapes = render_args.smooth_shapes;
+        self.smooth_neighbors = render_args.smooth_neighbors;
         self.contour_bending_weight = (render_args.contour_bending_weight * 10.0).round() as i32;
         self.contour_endpoint_weight =
             (render_args.contour_endpoint_weight * 10.0).round() as i32;
@@ -4079,6 +4247,11 @@ impl App {
             ControlId::OcrModelTier => self.ocr_model_tier_idx as i32,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio,
             ControlId::OcrThreads => self.ocr_threads,
+            ControlId::OcrAsciiRatio => (self.render_args.ocr_min_ascii_ratio * 100.0).round() as i32,
+            ControlId::OcrBoxScore => (self.render_args.ocr_box_score_threshold * 100.0).round() as i32,
+            ControlId::OcrBoxThreshold => (self.render_args.ocr_box_threshold * 100.0).round() as i32,
+            ControlId::OcrUnclip => (self.render_args.ocr_unclip_ratio * 100.0).round() as i32,
+            ControlId::OcrOrientation => self.render_args.ocr_textline_orientation as i32,
             ControlId::TrimTop => self.trim_top,
             ControlId::TrimRight => self.trim_right,
             ControlId::TrimBottom => self.trim_bottom,
@@ -4102,12 +4275,20 @@ impl App {
 
             ControlId::Dither => self.dither,
             ControlId::HighlightDisc => self.show_discontinuities as i32,
-            ControlId::DiscThreshold => self.discontinuity_threshold,
-            ControlId::ScoreFix => self.score_fix as i32,
-            ControlId::ScoreFixCandidates => self.score_fix_candidates,
-            ControlId::ScoreFixOrderings => self.score_fix_orderings,
-            ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first as i32,
-            ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard as i32,
+            ControlId::DiscThreshold | ControlId::GlyphSearchThreshold => self.discontinuity_threshold,
+            ControlId::Smooth => self.smooth as i32,
+            ControlId::PerceptualScore => self.perceptual_score as i32,
+            ControlId::RegionGuidance => self.region_guidance as i32,
+            ControlId::GlyphSearch => self.glyph_search as i32,
+            ControlId::ShowGlyphDefects => self.render_args.show_glyph_defects as i32,
+            ControlId::GlyphSearchCandidates => self.glyph_search_candidates,
+            ControlId::GlyphSearchPasses => self.glyph_search_passes,
+            ControlId::GlyphSearchFinalists => self.glyph_search_finalists,
+            ControlId::SuperpixelWarp => self.superpixel_warp,
+            ControlId::SmoothCandidates => self.smooth_candidates,
+            ControlId::SmoothOrders => self.smooth_orders,
+            ControlId::SmoothShapes => self.smooth_shapes as i32,
+            ControlId::SmoothNeighbors => self.smooth_neighbors as i32,
             ControlId::ContourBendingWeight => self.contour_bending_weight,
             ControlId::ContourEndpointWeight => self.contour_endpoint_weight,
             ControlId::ContourJunctionWeight => self.contour_junction_weight,
@@ -4152,6 +4333,12 @@ impl App {
 
     fn set_value(&mut self, id: ControlId, val: i32) {
         if self.control_disabled_reason(id).is_some() { return; }
+        if let ControlKind::Slider { min, max, .. } = get_control_def(id).kind {
+            let old = self.get_value(id);
+            if old != slider_off_value(id, min, max) && old != val {
+                self.slider_previous.insert(id, old);
+            }
+        }
         match id {
             ControlId::Width => {
                 let old_w = self.width;
@@ -4193,6 +4380,11 @@ impl App {
             ControlId::OcrModelTier => self.ocr_model_tier_idx = val.clamp(0, 2) as usize,
             ControlId::OcrMaxTextHeight => self.ocr_max_text_height_ratio = val.clamp(0, 1000),
             ControlId::OcrThreads => self.ocr_threads = val.max(1),
+            ControlId::OcrAsciiRatio => self.render_args.ocr_min_ascii_ratio = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrBoxScore => self.render_args.ocr_box_score_threshold = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrBoxThreshold => self.render_args.ocr_box_threshold = val.clamp(0, 100) as f32 / 100.0,
+            ControlId::OcrUnclip => self.render_args.ocr_unclip_ratio = val.clamp(100, 400) as f32 / 100.0,
+            ControlId::OcrOrientation => self.render_args.ocr_textline_orientation = val != 0,
             ControlId::TrimTop => self.trim_top = val,
             ControlId::TrimRight => self.trim_right = val,
             ControlId::TrimBottom => self.trim_bottom = val,
@@ -4219,12 +4411,20 @@ impl App {
 
             ControlId::Dither => self.dither = val,
             ControlId::HighlightDisc => self.show_discontinuities = val != 0,
-            ControlId::DiscThreshold => self.discontinuity_threshold = val.max(0),
-            ControlId::ScoreFix => self.score_fix = val != 0,
-            ControlId::ScoreFixCandidates => self.score_fix_candidates = val.max(1),
-            ControlId::ScoreFixOrderings => self.score_fix_orderings = val.clamp(1, 5),
-            ControlId::ScoreFixGeometryFirst => self.score_fix_geometry_first = val != 0,
-            ControlId::ScoreFixNeighborhoodGuard => self.score_fix_neighborhood_guard = val != 0,
+            ControlId::DiscThreshold | ControlId::GlyphSearchThreshold => self.discontinuity_threshold = val.max(0),
+            ControlId::Smooth => self.smooth = val != 0,
+            ControlId::PerceptualScore => self.perceptual_score = val != 0,
+            ControlId::RegionGuidance => self.region_guidance = val != 0,
+            ControlId::GlyphSearch => self.glyph_search = val != 0,
+            ControlId::ShowGlyphDefects => self.render_args.show_glyph_defects = val != 0,
+            ControlId::GlyphSearchCandidates => self.glyph_search_candidates = val.clamp(1, 64),
+            ControlId::GlyphSearchPasses => self.glyph_search_passes = val.clamp(1, 20),
+            ControlId::GlyphSearchFinalists => self.glyph_search_finalists = val.clamp(0, 4096),
+            ControlId::SuperpixelWarp => self.superpixel_warp = val.clamp(0, crate::superpixels::MAX_STRENGTH as i32),
+            ControlId::SmoothCandidates => self.smooth_candidates = val.max(1),
+            ControlId::SmoothOrders => self.smooth_orders = val.clamp(1, 5),
+            ControlId::SmoothShapes => self.smooth_shapes = val != 0,
+            ControlId::SmoothNeighbors => self.smooth_neighbors = val != 0,
             ControlId::ContourBendingWeight => self.contour_bending_weight = val.max(0),
             ControlId::ContourEndpointWeight => self.contour_endpoint_weight = val.max(0),
             ControlId::ContourJunctionWeight => self.contour_junction_weight = val.max(0),
@@ -4270,6 +4470,13 @@ impl App {
             ControlId::EdgeDetection => self.edge_detection = val != 0,
             ControlId::Eyedropper | ControlId::AutoOptimize => {}
         }
+        if matches!(id, ControlId::Smooth | ControlId::GlyphSearch)
+            && val != 0 && !self.smooth_hint_shown
+            && self.render_args.blocks != ["smooth"]
+        {
+            self.smooth_hint_shown = true;
+            self.smooth_hint_until = Some(Instant::now() + Duration::from_secs(20));
+        }
     }
 
     fn control_disabled_reason(&self, id: ControlId) -> Option<&'static str> {
@@ -4282,10 +4489,14 @@ impl App {
                 &self.general_controls,
                 self.ocr,
                 self.ocr_figlet,
-                self.score_fix,
+                self.smooth,
                 self.show_advanced,
                 self.show_ocr_advanced,
-            ),
+            ).into_iter().filter(|control| match control.id {
+                ControlId::GlyphSearchThreshold => self.glyph_search || self.render_args.show_glyph_defects,
+                ControlId::GlyphSearchCandidates | ControlId::GlyphSearchPasses | ControlId::GlyphSearchFinalists => self.glyph_search,
+                _ => true,
+            }).collect(),
             1 => vec![], // Pipeline Canvas is handled totally separately
             2 => self
                 .available_blocks
@@ -4328,8 +4539,110 @@ impl App {
     }
 
     fn mark_args_dirty(&mut self) {
+        if self.font_scan_running {
+            if let Some(flag) = &self.auto_optimize_cancel {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
         self.args_dirty = true;
         self.last_args_change = Some(Instant::now());
+        // Stop obsolete search work immediately while coalescing slider edits.
+        if self.glyph_search {
+            self.current_cancel_flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn refresh_defect_preview(&mut self) {
+        self.defect_preview_result = if let Some(preview) = self.search_preview.as_ref()
+            .filter(|_| self.is_rendering.load(Ordering::Relaxed)
+                && !self.current_cancel_flag.load(Ordering::Relaxed))
+        {
+            // Show the new source adjustments as soon as the pre-search art is
+            // ready, while the unchanged full search continues in the background.
+            let render = match self.render_mode_idx {
+                0 => Render::Irc,
+                1 => Render::Ansi,
+                _ => Render::Ansi24,
+            };
+            let result = draw::encode_output_colours(
+                &preview.result, render, true, self.grayscale_tolerance as u8,
+            );
+            let result = draw::apply_overlays_to_result(
+                &result, &self.render_args.overlays, render,
+                true, self.grayscale_tolerance as u8,
+            );
+            let result = if let Some(glyphs) = self.search_preview_glyphs.as_deref()
+                .or(self.arc_glyphs.as_deref())
+            {
+                crate::output_colours::apply(&result, glyphs, &self.render_args.pipeline,
+                    render, true, self.grayscale_tolerance as u8)
+            } else { result };
+            Some(if self.render_args.show_glyph_defects {
+                draw::search_status::highlight_glyph_defects(&result, &preview.defects)
+            } else { result })
+        } else if !self.render_args.show_glyph_defects {
+            None
+        } else {
+            self.cached_result.as_ref().and_then(|result| result.glyph_defects.as_ref().map(|map| {
+                draw::search_status::highlight_glyph_defects(result, map)
+            }))
+        };
+        self.output_preview_dirty = true;
+    }
+
+    fn display_result(&self) -> Option<&draw::RenderResult> {
+        self.defect_preview_result.as_ref().or(self.cached_result.as_ref())
+    }
+
+    fn display_glyphs(&self) -> Option<&font::GlyphStore> {
+        if self.defect_preview_result.is_some() && self.search_preview.is_some()
+            && self.is_rendering.load(Ordering::Relaxed)
+        {
+            self.search_preview_glyphs.as_deref().or(self.arc_glyphs.as_deref())
+        } else {
+            self.arc_glyphs.as_deref()
+        }
+    }
+
+    fn display_content(&self) -> &str {
+        self.defect_preview_result.as_ref().map_or(&self.cached_render, |result| &result.content)
+    }
+
+    fn poll_search_progress(&mut self) {
+        // A cancelled/finished worker can change the rendering flag before its
+        // next channel update. Drop its live frame too, keeping the displayed
+        // glyphs paired with the font that actually produced them.
+        if self.search_preview.is_some()
+            && (!self.is_rendering.load(Ordering::Relaxed)
+                || self.current_cancel_flag.load(Ordering::Relaxed))
+        {
+            self.search_preview = None;
+            self.search_preview_glyphs = None;
+            self.refresh_defect_preview();
+        }
+        let update = self.rx_search_progress.as_mut().and_then(|rx| {
+            rx.has_changed().ok().filter(|&changed| changed)
+                .map(|_| rx.borrow_and_update().clone())
+        });
+        if let Some(update) = update {
+            if let Some((cancel, glyphs, progress)) = update {
+                if cancel.load(Ordering::Relaxed) { return; }
+                let changed = match (&self.search_preview, &progress.preview) {
+                    (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
+                    (None, None) => false,
+                    _ => true,
+                };
+                if progress.preview.is_some() { self.search_preview_glyphs = Some(glyphs); }
+                self.search_preview = progress.preview.clone();
+                self.search_progress = Some(progress);
+                if changed { self.refresh_defect_preview(); }
+            } else {
+                self.search_progress = None;
+                self.search_preview = None;
+                self.search_preview_glyphs = None;
+                self.refresh_defect_preview();
+            }
+        }
     }
 
     fn matching_font_indices(&self) -> Vec<usize> {
@@ -4426,9 +4739,18 @@ impl App {
                 true,
                 self.grayscale_tolerance as u8,
             );
+            let overlayed = if let Some(glyphs) = &self.arc_glyphs {
+                crate::output_colours::apply(
+                    &overlayed, glyphs, &self.render_args.pipeline,
+                    render, true, self.grayscale_tolerance as u8,
+                )
+            } else {
+                overlayed
+            };
             self.cached_render = overlayed.content.clone();
             self.cached_result = Some(overlayed);
             self.output_preview_dirty = true;
+            self.refresh_defect_preview();
         }
     }
 
@@ -4570,39 +4892,91 @@ impl App {
         let original_score = args.score;
         args.score = true;
 
-        let glyph_store = self.arc_glyphs.clone().unwrap();
         let image_path = self.image_path.clone();
 
         tokio::spawn(async move {
+            let mut optimization_log = OptimizationLog::new(&args, optimize_shortest_longest_line);
+            optimization_log.record("start", serde_json::json!({
+                "objective": if optimize_shortest_longest_line {
+                    "longest_line_bytes"
+                } else if args.uses_perceptual_score() { "perceptual" } else { "contour" },
+                "total_trials": total_perms,
+                "randomize": randomize,
+                "settings": args,
+                "ranges": {
+                    "width": ws, "trim_top": ct, "trim_right": cr,
+                    "trim_bottom": cb, "trim_left": cl, "font_size": fs,
+                    "scale_x_percent": sx, "scale_y_percent": sy,
+                },
+            }));
+
+            // The live preview may still be rendering older settings. Build
+            // fresh glyphs for the baseline before considering any candidates.
+            let glyph_store = tokio::task::spawn_blocking({
+                let a = args.clone();
+                let cancel = cancel_flag.clone();
+                move || load_glyphs(&a, if a.font_size == 0.0 { 24.0 } else { a.font_size }, cancel)
+            }).await.unwrap();
             let image = if image_path.is_empty() {
                 PhotonImage::new(vec![0; 4], 1, 1)
             } else {
-                match crate::load_image_from_url_or_path(&image_path, &args, &glyph_store).await {
+                match crate::load_image_from_url_or_path(&image_path, &args, &glyph_store)
+                    .await.map_err(|error| error.to_string()) {
                     Ok(img) => img,
-                    Err(_) => PhotonImage::new(vec![0; 4], 1, 1),
+                    Err(error) => {
+                        log::error!("Cannot load optimization image: {error}");
+                        optimization_log.record("error", serde_json::json!({"message": error.to_string()}));
+                        let _ = tx.send(OptimizationUpdate::Finished).await;
+                        return;
+                    }
                 }
             };
 
-            let true_initial_score = tokio::task::spawn_blocking({
+            let initial_font_size = args.font_size;
+            crate::resolve_auto_font_size(&mut args, &image, &glyph_store);
+            let image = if args.ocr {
+                tokio::task::spawn_blocking({
+                    let a = args.clone();
+                    move || match crate::ocr::detect_text(&image, &a) {
+                        Ok(detections) if crate::ocr::has_renderable_detections(
+                            &detections, &a, image.get_width(), image.get_height(),
+                        ) => crate::ocr::remove_detected_text(&image, &a, &detections),
+                        Ok(_) => image,
+                        Err(error) => {
+                            log::error!("Optimization OCR detection failed: {error}");
+                            image
+                        }
+                    }
+                }).await.unwrap()
+            } else { image };
+            let glyph_store = if args.font_size != initial_font_size {
+                tokio::task::spawn_blocking({
+                    let a = args.clone();
+                    let cancel = cancel_flag.clone();
+                    move || load_glyphs(&a, a.font_size, cancel)
+                }).await.unwrap()
+            } else { glyph_store };
+            let baseline_start = Instant::now();
+            let baseline = tokio::task::spawn_blocking({
                 let img = image.clone();
                 let gs = glyph_store.clone();
                 let a = args.clone();
+                let cancel = cancel_flag.clone();
                 move || {
                     let fg = crate::draw::prepare_glyphs(&gs, &a);
-                    let result = crate::render_output(a, &gs, img, &fg, None);
-                    if optimize_shortest_longest_line {
-                        result.longest_line_bytes as f64
-                    } else {
-                        result.score
-                    }
+                    crate::render_output(a, &gs, img, &fg, Some(cancel))
                 }
             })
             .await
-            .unwrap_or(f64::MAX);
+            .unwrap_or_else(|error| draw::RenderResult::from(format!("Baseline worker failed: {error}").as_str()));
 
-            let mut best_score = true_initial_score;
+            let mut best_score = optimization_score(&baseline, optimize_shortest_longest_line)
+                .unwrap_or(f64::INFINITY);
+            optimization_log.result("baseline", 0, 0, &args, &baseline,
+                baseline_start.elapsed().as_secs_f64(), best_score, false);
             let mut best_args = args.clone();
             let mut curr = 0;
+            let mut valid = 0;
 
             let concurrency = std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -4630,18 +5004,7 @@ impl App {
                     let gs = if (f - args.font_size).abs() < std::f32::EPSILON {
                         gs_clone.clone()
                     } else {
-                        let new_store = crate::font::glyph_store(
-                            &args.blocks,
-                            &args.exclude_range,
-                            &args.exclude,
-                            &args.include_range,
-                            args.include.as_ref(),
-                            &args.font,
-                            f,
-                            false,
-                            Some(cancel_clone.clone()),
-                        );
-                        std::sync::Arc::new(new_store)
+                        load_glyphs(&args, f, cancel_clone.clone())
                     };
                     let fg = crate::draw::prepare_glyphs(&gs, &args);
                     fg_map.insert(f.to_bits(), (gs, std::sync::Arc::new(fg)));
@@ -4652,6 +5015,7 @@ impl App {
                 }
 
                 struct Perm {
+                    trial: usize,
                     w: i32,
                     t: i32,
                     r: i32,
@@ -4672,6 +5036,7 @@ impl App {
                                         for &x in &sx {
                                             for &y in &sy {
                                                 perms.push(Perm {
+                                                    trial: perms.len() + 1,
                                                     w,
                                                     t,
                                                     r,
@@ -4713,8 +5078,9 @@ impl App {
                         break;
                     }
                     let mut a = args.clone();
-                    a.width = Some(p.w as u32);
-                    a.trim = Some((p.t as u32, p.r as u32, p.b as u32, p.l as u32));
+                    a.width = render_width_from_tui(p.w);
+                    a.trim = (p.t > 0 || p.r > 0 || p.b > 0 || p.l > 0)
+                        .then_some((p.t as u32, p.r as u32, p.b as u32, p.l as u32));
                     a.font_size = p.f;
                     a.scale = Some((p.x as f32 / 100.0, p.y as f32 / 100.0));
 
@@ -4724,16 +5090,10 @@ impl App {
                     let rtx = res_tx.clone();
                     let cancel_inner = cancel_clone.clone();
                     tokio::task::spawn_blocking(move || {
+                        let render_start = Instant::now();
                         let result =
                             crate::render_output(a.clone(), &gs, img, &fg, Some(cancel_inner));
-                        if result.content != "Cancelled" {
-                            let score = if optimize_shortest_longest_line {
-                                result.longest_line_bytes as f64
-                            } else {
-                                result.score
-                            };
-                            let _ = rtx.blocking_send((a, score));
-                        }
+                        let _ = rtx.blocking_send((p.trial, a, result, render_start.elapsed().as_secs_f64()));
                         drop(permit);
                     });
                 }
@@ -4741,11 +5101,16 @@ impl App {
 
             let optimize_start_time = std::time::Instant::now();
 
-            while let Some((a, score)) = res_rx.recv().await {
+            while let Some((trial, a, result, render_seconds)) = res_rx.recv().await {
                 curr += 1;
-                if score < best_score {
+                // Error/cancelled renders carry a default zero score and
+                // must never beat an actual image. Nonfinite scores also fail.
+                let score = optimization_score(&result, optimize_shortest_longest_line);
+                valid += usize::from(score.is_some());
+                let new_best = score.is_some_and(|score| score < best_score);
+                if let Some(score) = score.filter(|_| new_best) {
                     best_score = score;
-                    best_args = a;
+                    best_args = a.clone();
                     let _ = tx
                         .send(OptimizationUpdate::BestResult(
                             best_args.clone(),
@@ -4753,6 +5118,8 @@ impl App {
                         ))
                         .await;
                 }
+                optimization_log.result("trial", trial, curr, &a, &result,
+                    render_seconds, best_score, new_best);
 
                 if curr % batch_size as usize == 0 || curr == args_len {
                     let elapsed = optimize_start_time.elapsed().as_secs_f64();
@@ -4772,6 +5139,8 @@ impl App {
             }
 
             best_args.score = original_score;
+            optimization_log.finish(&best_args, best_score, curr, valid,
+                cancel_flag.load(Ordering::Relaxed));
             let _ = tx
                 .send(OptimizationUpdate::BestResult(best_args, best_score))
                 .await;
@@ -4782,9 +5151,14 @@ impl App {
     fn cancel_render(&mut self) {
         self.current_cancel_flag.store(true, Ordering::Relaxed);
         self.is_rendering.store(false, Ordering::Relaxed);
+        self.refresh_defect_preview();
     }
 
     fn flush_render_args(&mut self) {
+        self.synchronize_render_args(true);
+    }
+
+    fn synchronize_render_args(&mut self, dispatch_render: bool) {
         if !self.args_dirty {
             return;
         }
@@ -4833,11 +5207,18 @@ impl App {
         self.render_args.grayscale = self.grayscale;
         self.render_args.show_discontinuities = self.show_discontinuities;
         self.render_args.discontinuity_threshold = self.discontinuity_threshold as f32 / 10.0;
-        self.render_args.score_fix = self.score_fix;
-        self.render_args.score_fix_candidates = self.score_fix_candidates.max(1) as u32;
-        self.render_args.score_fix_orderings = self.score_fix_orderings.clamp(1, 5) as u32;
-        self.render_args.score_fix_geometry_first = self.score_fix_geometry_first;
-        self.render_args.score_fix_neighborhood_guard = self.score_fix_neighborhood_guard;
+        self.render_args.smooth = self.smooth;
+        self.render_args.perceptual_score = self.perceptual_score;
+        self.render_args.region_guidance = self.region_guidance;
+        self.render_args.glyph_search = self.glyph_search;
+        self.render_args.glyph_search_candidates = self.glyph_search_candidates.clamp(1, 64) as u32;
+        self.render_args.glyph_search_passes = self.glyph_search_passes.clamp(1, 20) as u32;
+        self.render_args.glyph_search_finalists = self.glyph_search_finalists.clamp(0, 4096) as u32;
+        self.render_args.superpixel_warp = self.superpixel_warp.clamp(0, crate::superpixels::MAX_STRENGTH as i32) as u32;
+        self.render_args.smooth_candidates = self.smooth_candidates.max(1) as u32;
+        self.render_args.smooth_orders = self.smooth_orders.clamp(1, 5) as u32;
+        self.render_args.smooth_shapes = self.smooth_shapes;
+        self.render_args.smooth_neighbors = self.smooth_neighbors;
         self.render_args.contour_bending_weight = self.contour_bending_weight as f32 / 10.0;
         self.render_args.contour_endpoint_weight = self.contour_endpoint_weight as f32 / 10.0;
         self.render_args.contour_junction_weight = self.contour_junction_weight as f32 / 10.0;
@@ -4953,6 +5334,12 @@ impl App {
 
         self.render_args.pipeline = pipeline;
 
+        if !dispatch_render {
+            self.args_dirty = false;
+            self.last_args_change = None;
+            return;
+        }
+
         // Cancel previous render
         self.current_cancel_flag.store(true, Ordering::Relaxed);
         // Create new flag
@@ -4991,7 +5378,7 @@ impl App {
                         .to_lowercase();
                     matches!(
                         ext.as_str(),
-                        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff"
+                        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "svg"
                     )
                 });
                 explorer = explorer.with_filter(filter).unwrap();
@@ -5007,11 +5394,22 @@ impl App {
 
             // If we have a current image path, maybe suggest a default name for saving
             if !matches!(mode, ExplorerMode::Open) {
-                let default_name = Path::new(&self.image_path)
+                let previous = match mode {
+                    ExplorerMode::SaveText => self.last_text_save.as_ref(),
+                    ExplorerMode::SavePng => self.last_png_save.as_ref(),
+                    _ => None,
+                };
+                if let Some(parent) = previous.and_then(|path| path.parent()) {
+                    let _ = explorer.set_cwd(parent);
+                }
+                let stem = Path::new(&self.image_path)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("output")
                     .to_string();
+                let extension = if matches!(mode, ExplorerMode::SavePng) { "png" } else { "txt" };
+                let default_name = previous.and_then(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("{stem}.{extension}"));
                 name_input.insert_str(default_name);
             }
 
@@ -5042,6 +5440,8 @@ impl App {
                     .unwrap_or(&self.cached_render);
                 if let Err(e) = std::fs::write(&path, save_data) {
                     log::info!("Failed to save text: {}", e);
+                } else {
+                    self.last_text_save = Some(std::path::PathBuf::from(path));
                 }
             }
             ExplorerMode::SavePng => {
@@ -5055,6 +5455,8 @@ impl App {
                     let metadata = serde_json::to_string(&self.render_args).unwrap_or_default();
                     if let Err(e) = draw::save_as_png(result, glyphs, &png_path, &metadata) {
                         log::info!("Failed to save PNG: {}", e);
+                    } else {
+                        self.last_png_save = Some(std::path::PathBuf::from(png_path));
                     }
                 }
             }
@@ -6196,6 +6598,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     };
 
     let arc_image = Arc::new(image);
+    let source_preview = Arc::new(std::sync::Mutex::new(render_args.image.clone().map(|path| (path, arc_image.clone()))));
+    let source_preview_worker = source_preview.clone();
     let arc_glyphs = Arc::new(glyph_store);
 
     let initial_flag = Arc::new(AtomicBool::new(false));
@@ -6205,6 +6609,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         Instant::now(),
     ));
     let (tx_result, rx_result) = mpsc::channel(1);
+    let (tx_search_progress, rx_search_progress) = watch::channel(None::<SearchProgressUpdate>);
     let rendering_flag = Arc::new(AtomicBool::new(true));
     let rendering_flag2 = rendering_flag.clone();
     let arc_glyphs_shared = arc_glyphs.clone();
@@ -6213,6 +6618,8 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     let thread_render_args = render_args.clone();
     tokio::spawn(async move {
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
+        let mut completed_renders = render_cache::CompletedRenderCache::default();
+        let mut glyph_signature = 0;
         let mut arc_image = arc_image;
         let mut current_image_path = initial_image_path;
         let mut image_revision = 0u64;
@@ -6239,6 +6646,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
         loop {
             // Signal rendering start
             rendering_flag2.store(true, Ordering::Relaxed);
+            tx_search_progress.send_replace(None);
 
             let (current_args, cancel_flag, render_requested_at) = {
                 rx_args.borrow_and_update().clone()
@@ -6272,6 +6680,9 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                     {
                         Ok(img) => {
                             arc_image = Arc::new(img);
+                            if let Ok(mut preview) = source_preview_worker.lock() {
+                                *preview = Some((path.clone(), arc_image.clone()));
+                            }
                             current_image_path = Some(path.clone());
                             image_revision = image_revision.wrapping_add(1);
                             ocr_detection_cache = None;
@@ -6415,6 +6826,9 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
             if fast_glyphs_store.is_none() {
                 fast_glyphs_store = Some(draw::prepare_glyphs(&arc_glyphs, &effective_args));
+                glyph_signature = draw::glyph_set_cache_hash(
+                    fast_glyphs_store.as_ref().unwrap(), arc_glyphs.metrics.0, arc_glyphs.metrics.1,
+                );
             }
 
             let ocr_overlays = if effective_args.ocr {
@@ -6444,38 +6858,36 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 Vec::new()
             };
 
-            let render_image = crate::effects::apply_effects(&effective_args, &arc_glyphs, base_image);
-
             // Render!
             let glyphs = fast_glyphs_store.as_ref().unwrap();
             log::info!("Starting render optimization... ({} glyphs)", glyphs.len());
             let start = Instant::now();
-            let mut output_args = effective_args.clone();
-            output_args.pipeline.clear();
-            output_args.rotate = 0.0;
-            output_args.fliph = false;
-            output_args.flipv = false;
-            output_args.scale = None;
-            output_args.brightness = 0.0;
-            output_args.contrast = 0.0;
-            output_args.gamma = 0.0;
-            output_args.saturation = 0.0;
-            output_args.hue = 0.0;
-            output_args.invert = false;
-            output_args.dither = 0;
-            output_args.grayscale = false;
-            output_args.nograyscale = false;
-            output_args.pixelize = 0;
-            output_args.box_blur = false;
-            output_args.gaussian_blur = 0;
-
-            let result = crate::render_output(
-                output_args,
-                &arc_glyphs,
-                render_image,
-                glyphs,
-                Some(cancel_flag.clone()),
-            );
+            let progress_tx = tx_search_progress.clone();
+            let progress_cancel = cancel_flag.clone();
+            let progress_glyphs = arc_glyphs.clone();
+            // Output overlays are applied by the display layer, including on
+            // cache hits. Never retain user text in the cached base grid.
+            effective_args.overlays.clear();
+            let cache_key = render_cache::CompletedRenderCache::key(&effective_args, &base_image, glyph_signature);
+            let cached = cache_key.as_ref().and_then(|key| completed_renders.get(key, effective_args.show_glyph_defects));
+            let result = if let Some(result) = cached {
+                log::info!("Reusing completed render from session cache; smoothing and glyph search skipped");
+                result
+            } else { draw::search_status::observe_glyph_search(
+                move |progress| {
+                    if !progress_cancel.load(Ordering::Relaxed) {
+                        progress_tx.send_replace(Some((
+                            progress_cancel.clone(), progress_glyphs.clone(), progress.clone(),
+                        )));
+                    }
+                },
+                || crate::render_base_output(
+                    effective_args, &arc_glyphs, base_image, glyphs, Some(cancel_flag.clone()),
+                ),
+            ) };
+            if !cancel_flag.load(Ordering::Relaxed) {
+                if let Some(key) = cache_key { completed_renders.insert(key, &result); }
+            }
             log::info!("Render finished in {:?}", start.elapsed());
 
             rendering_flag2.store(false, Ordering::Relaxed);
@@ -6502,7 +6914,9 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     });
 
     let mut app = App::new(render_args, tx_args, rx_result, initial_flag);
+    app.source_preview = source_preview;
     app.is_rendering = rendering_flag;
+    app.rx_search_progress = Some(rx_search_progress);
     app.arc_glyphs = Some(arc_glyphs_shared);
     // Don't trigger update immediately here, we have initial args
     // However, we want to ensure any logic in update_render_args runs, so lets run flush
@@ -6536,6 +6950,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
     loop {
         app.render_tick = app.render_tick.wrapping_add(1);
         app.poll_clipboard_paste();
+        app.poll_search_progress();
 
         if let Some(mut rx) = app.rx_optimization.take() {
             while let Ok(update) = rx.try_recv() {
@@ -6547,6 +6962,27 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         // Don't mark_args_dirty here — avoid triggering
                         // stale re-renders that overwrite the score display.
                         // A single final render is triggered on Finished.
+                    }
+                    OptimizationUpdate::FontScanFinished(result) => {
+                        let cancelled = app.auto_optimize_cancel.as_ref()
+                            .is_some_and(|flag| flag.load(Ordering::Relaxed));
+                        app.font_scan_running = false;
+                        app.is_optimizing = false;
+                        app.auto_optimize_cancel = None;
+                        app.optimization_progress = if cancelled {
+                            "Font scan cancelled".to_string()
+                        } else {
+                            match result {
+                                Ok(best) => {
+                                    app.font_size = best.font_size;
+                                    app.render_args.font_size = best.font_size;
+                                    app.optimization_best_score = Some(best.score);
+                                    format!("Size {} · Perceptual {:.3}", best.font_size, best.score)
+                                }
+                                Err(error) => format!("Font scan: {error}"),
+                            }
+                        };
+                        app.mark_args_dirty();
                     }
                     OptimizationUpdate::Finished => {
                         app.is_optimizing = false;
@@ -6593,14 +7029,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 true, // as_preview
                 app.grayscale_tolerance as u8,
             );
+            let overlayed = crate::output_colours::apply(
+                &overlayed, &glyphs, &app.render_args.pipeline,
+                render, true, app.grayscale_tolerance as u8,
+            );
             app.cached_render = overlayed.content.clone();
             app.cached_result = Some(overlayed);
             app.base_render_result = Some(result);
             app.arc_glyphs = Some(glyphs);
             app.output_preview_dirty = true;
+            app.refresh_defect_preview();
             // The next terminal draw immediately below presents this cached
-            // output. Include debounce/queueing, font reload, effects, Score
-            // Fix, geometry refinement, channel wait, and overlay application.
+            // output. Include debounce/queueing, font reload, effects, smoothing,
+            // geometry refinement, channel wait, and overlay application.
             app.last_render_latency = Some(render_requested_at.elapsed());
         }
 
@@ -6610,12 +7051,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
+            if handle_effect_controls(&mut app, &event) { continue; }
             if app.figlet_picker.is_some() {
                 handle_figlet_picker(&mut app, event);
-                continue;
-            }
-            if app.replace_colour_dialog.is_some() {
-                handle_replace_colour(&mut app, event);
                 continue;
             }
 
@@ -6801,7 +7239,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         } else {
                             // Focus on Explorer
-                            if (key.code == KeyCode::Enter || key.code == KeyCode::Char('l'))
+                            if key.code == KeyCode::Enter
                                 && dialog.explorer.current().is_file()
                             {
                                 if matches!(dialog.mode, ExplorerMode::Open) {
@@ -6830,7 +7268,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     dialog.focus_on_input = true;
                                     app.explorer_dialog = Some(dialog);
                                 }
-                            } else if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+                            } else if key.code == KeyCode::Esc {
                                 app.input_mode = InputMode::Normal;
                                 app.explorer_dialog = None;
                             } else {
@@ -6929,7 +7367,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     let controls = app.tab_controls(app.current_tab);
                                     if let Some(ctrl) = controls.get(app.selected_control) {
                                         if let ControlKind::Slider { min, max, .. } = &ctrl.kind {
-                                            let raw_value = if matches!(ctrl.id, ControlId::FontSize | ControlId::OcrMegapixels) {
+                                            let raw_value = if matches!(ctrl.id, ControlId::FontSize | ControlId::OcrMegapixels | ControlId::GlyphSearchThreshold) {
                                                 (val * 10.0).round() as i32
                                             } else {
                                                 val.round() as i32
@@ -7940,11 +8378,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 }
                             }
 
-                            if app.replace_colour_button_area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) {
-                                open_replace_colour(&mut app).await;
-                                continue;
-                            }
-
                             if mouse.column >= app.pipeline_active_area.x
                                 && mouse.column
                                     < app.pipeline_active_area.x + app.pipeline_active_area.width
@@ -7960,6 +8393,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let total_nodes = app.pipeline_nodes.len();
                                 match app.get_pipeline_clicked_layer(inner_y) {
                                     (Some(i), None) => {
+                                        let inner_x = mouse.column.saturating_sub(app.pipeline_active_area.x);
                                         if i < total_nodes {
                                             app.pipeline_selected = Some(app.pipeline_nodes[i].id);
                                         } else {
@@ -7967,6 +8401,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         }
                                         if app.selected_control == i
                                             && app.pipeline_expanded.is_none()
+                                            && !(22..=54).contains(&inner_x)
                                         {
                                             app.pipeline_expanded = Some(i);
                                         } else if app.selected_control != i {
@@ -7974,8 +8409,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.pipeline_expanded = None;
                                         }
 
-                                        let inner_x =
-                                            mouse.column.saturating_sub(app.pipeline_active_area.x);
                                         if inner_x >= 22 && inner_x <= 54 {
                                             let is_expanded = app.pipeline_expanded == Some(i);
                                             let mut used_range: Option<(f32, f32)> = None;
@@ -8036,6 +8469,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
+                            if app.font_scan_area.contains((mouse.column, mouse.row).into()) {
+                                app.perform_font_size_scan();
+                                continue;
+                            }
+
                             // Check general control clicks
                             for i in 0..app.control_areas.len() {
                                 let area = app.control_areas[i];
@@ -8063,6 +8501,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                         } else if matches!(
                                                             ctrl.id,
                                                             ControlId::DiscThreshold
+                                                                | ControlId::GlyphSearchThreshold
                                                                 | ControlId::ContourBendingWeight
                                                                 | ControlId::ContourEndpointWeight
                                                                 | ControlId::ContourJunctionWeight
@@ -8554,6 +8993,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                     } else if matches!(
                                                         ctrl.id,
                                                         ControlId::DiscThreshold
+                                                            | ControlId::GlyphSearchThreshold
                                                             | ControlId::ContourBendingWeight
                                                             | ControlId::ContourEndpointWeight
                                                             | ControlId::ContourJunctionWeight
@@ -8752,6 +9192,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         match key.code {
+                            KeyCode::Char('a' | 'A') if app.current_tab == 0
+                                && app.get_current_control_id() == ControlId::FontSize =>
+                            {
+                                app.perform_font_size_scan();
+                            }
                             KeyCode::Tab => {
                                 if app.current_tab == 3 {
                                     app.cycle_text_field_focus(1);
@@ -8824,9 +9269,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
                                 cp.editing_fg = !editing_bg;
                                 app.color_picker_state = Some(cp);
-                            }
-                            KeyCode::Char('c') if app.current_tab == 1 && app.pipeline_expanded.is_none() => {
-                                open_replace_colour(&mut app).await;
                             }
                             KeyCode::Char(c)
                                 if app.current_tab == 0 && (c.is_ascii_digit() || c == '-') =>
@@ -9289,10 +9731,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         if app.pipeline_nodes.get(expanded_idx).is_some_and(|node| matches!(node.effect, crate::pipeline::ImageEffect::ReplaceColour { .. })) {
                                             app.selected_control = expanded_idx;
                                             app.pipeline_selected = Some(app.pipeline_nodes[expanded_idx].id);
-                                            open_replace_colour(&mut app).await;
                                         }
-                                    } else if app.pipeline_nodes.get(app.selected_control).is_some_and(|node| matches!(node.effect, crate::pipeline::ImageEffect::ReplaceColour { .. })) {
-                                        open_replace_colour(&mut app).await;
                                     } else {
                                         app.pipeline_expanded = Some(app.selected_control);
                                     }
@@ -9305,7 +9744,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.value_edit_buffer =
                                                 if ctrl.id == ControlId::FontSize {
                                                     (current_val / 10).to_string()
-                                                } else if ctrl.id == ControlId::OcrMegapixels {
+                                                } else if matches!(ctrl.id, ControlId::OcrMegapixels | ControlId::GlyphSearchThreshold) {
                                                     format!("{:.1}", current_val as f32 / 10.0)
                                                 } else {
                                                     current_val.to_string()
@@ -9337,11 +9776,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             }
         }
 
-        // Slider pending logic removed — changes apply immediately now
-
         if app.args_dirty {
             if let Some(last) = app.last_args_change {
-                if last.elapsed() >= std::time::Duration::from_millis(50) {
+                let delay = if app.glyph_search { 200 } else { 50 };
+                if last.elapsed() >= std::time::Duration::from_millis(delay) {
                     app.flush_render_args();
                 }
             }
@@ -9353,6 +9791,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 fn mark_control_changed(app: &mut App, id: ControlId) {
     if matches!(id, ControlId::OcrAdvanced | ControlId::ShowAdvanced) {
         return;
+    }
+    if id == ControlId::ShowGlyphDefects {
+        app.refresh_defect_preview();
+        let has_map = app.search_preview.is_some()
+            || app.cached_result.as_ref().is_some_and(|result| result.glyph_defects.is_some());
+        if !app.render_args.show_glyph_defects || has_map || app.is_rendering.load(Ordering::Relaxed) && app.glyph_search {
+            return;
+        }
     }
     if id == ControlId::GraphicsPreview {
         app.output_preview_dirty = true;
@@ -9425,12 +9871,36 @@ fn set_control_value(app: &mut App, visual_idx: usize, val: i32) {
     mark_control_changed(app, id);
 }
 
+fn slider_off_value(id: ControlId, min: i32, max: i32) -> i32 {
+    // A scale of 100% is neutral. Counts that cannot be zero use their minimum.
+    match id {
+        ControlId::ScaleX | ControlId::ScaleY => 100,
+        _ => 0_i32.clamp(min, max),
+    }
+}
+
 fn toggle_control(app: &mut App) {
     let id = app.get_current_control_id();
     if app.control_disabled_reason(id).is_some() { return; }
     let def = get_control_def(id);
 
     match def.kind {
+        ControlKind::Slider { min, max, default } => {
+            let off = slider_off_value(id, min, max);
+            let current = app.get_value(id);
+            let fallback = match id {
+                ControlId::SuperpixelWarp => 100,
+                ControlId::FontSize => 160,
+                _ if default != off => default,
+                _ => (off + 1).clamp(min, max),
+            };
+            let value = if current != off {
+                off
+            } else {
+                app.slider_previous.get(&id).copied().unwrap_or(fallback).clamp(min, max)
+            };
+            app.set_value(id, value);
+        }
         ControlKind::Toggle { .. } => {
             let val = app.get_value(id);
             app.set_value(id, if val == 0 { 1 } else { 0 });
@@ -9507,6 +9977,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     render_title_bar(f, app, root[0]);
 
     app.control_areas.clear();
+    app.font_scan_area = Rect::default();
     app.general_area = Rect::default();
     app.pipeline_column_area = Rect::default();
     app.pipeline_active_area = Rect::default();
@@ -9578,6 +10049,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     }
 
     render_output(f, app, panes[2]);
+    render_source_picker(f, app, panes[2]);
 
     // ── Status bar ──
     render_status_bar(f, app, root[2]);
@@ -9869,7 +10341,13 @@ fn render_title_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     if is_rendering {
         let spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let spinner_ch = spinners[(app.render_tick / 3) % spinners.len()];
-        right_text.push_str(&format!(" {} Rendering ", spinner_ch));
+        if let Some(progress) = &app.search_progress {
+            right_text.push_str(&format!(" {} Search {}/{} {:.0}% {:.1}s ",
+                spinner_ch, progress.pass, progress.passes, progress.fraction() * 100.0,
+                progress.elapsed_ms / 1000.0));
+        } else {
+            right_text.push_str(&format!(" {} Rendering ", spinner_ch));
+        }
     }
 
     let right_text_len = right_text.chars().count() as u16; // use chars().count() instead of len() for unicode
@@ -9940,9 +10418,6 @@ fn render_output(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         f.render_widget(Clear, overlay_area);
         render_metadata_prompt(f, app, overlay_area);
     }
-    if let Some(dialog) = &mut app.replace_colour_dialog {
-        render_replace_colour(f, dialog);
-    }
     if let Some(picker) = &mut app.figlet_picker {
         render_figlet_picker(f, picker);
     }
@@ -9971,7 +10446,7 @@ fn render_explorer_dialog(
     let mut explorer_block = Block::default()
         .borders(Borders::ALL)
         .border_set(symbols::border::ROUNDED)
-        .title(" Explorer ");
+        .title(" Explorer · type a letter to jump ");
 
     if !dialog.focus_on_input {
         explorer_block = explorer_block.border_style(Style::default().fg(ACCENT));
@@ -9988,16 +10463,16 @@ fn render_explorer_dialog(
         || path.to_string_lossy().to_lowercase().ends_with(".jpeg")
         || path.to_string_lossy().to_lowercase().ends_with(".gif")
         || path.to_string_lossy().to_lowercase().ends_with(".bmp")
-        || path.to_string_lossy().to_lowercase().ends_with(".webp");
+        || path.to_string_lossy().to_lowercase().ends_with(".webp")
+        || path.to_string_lossy().to_lowercase().ends_with(".tiff")
+        || path.to_string_lossy().to_lowercase().ends_with(".svg");
 
     if is_image {
         let path_str = path.to_string_lossy().into_owned();
         if app.last_preview_path.as_ref() != Some(&path_str) {
-            if let Ok(img) = image::open(&path_str) {
-                let protocol = app.preview_picker.new_resize_protocol(img);
-                app.image_preview_protocol = Some(protocol);
-                app.last_preview_path = Some(path_str);
-            }
+            app.image_preview_protocol = explorer::preview_image(path).ok()
+                .map(|img| app.preview_picker.new_resize_protocol(img));
+            app.last_preview_path = Some(path_str);
         }
 
         if let Some(protocol) = &mut app.image_preview_protocol {
@@ -10078,14 +10553,22 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             Style::new().fg(TEXT).add_modifier(Modifier::BOLD),
         ));
 
-    if app.cached_render.is_empty() && is_rendering {
+    if app.display_content().is_empty() && is_rendering {
         // Only show full-panel spinner if no content yet
+        let loading_area = block.inner(area);
         let loading_text = "\n\n\n      Rendering...".to_string();
         let p = Paragraph::new(loading_text)
             .block(block)
             .alignment(Alignment::Center)
             .style(Style::new().fg(ACCENT));
         f.render_widget(p, area);
+        if let Some(progress) = &app.search_progress {
+            if loading_area.height > 1 {
+                f.render_widget(Gauge::default().ratio(progress.fraction()).label(progress.message.clone())
+                    .gauge_style(Style::new().fg(ACCENT).bg(SURFACE)),
+                    Rect::new(loading_area.x, loading_area.y, loading_area.width, 1));
+            }
+        }
     } else {
         // Use save_content (IRC) stats when available, otherwise cached_render (ANSI)
         let stats_content = app
@@ -10104,24 +10587,32 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             .unwrap_or((0, 0));
 
         let width_chars = app
-            .cached_result
-            .as_ref()
+            .display_result()
             .and_then(|r| r.grid.first())
             .map_or(0, |row| row.len());
-        let height_chars = app.cached_result.as_ref().map_or(0, |r| r.grid.len());
+        let height_chars = app.display_result().map_or(0, |r| r.grid.len());
 
-        let (cw, ch) = app.arc_glyphs.as_ref().map_or((0, 0), |g| g.metrics);
+        let (cw, ch) = app.display_glyphs().map_or((0, 0), |g| g.metrics);
         let (fw, fh) = app
-            .arc_glyphs
-            .as_ref()
+            .display_glyphs()
             .map_or((0.0, 0.0), |g| g.float_metrics);
         let w_px = width_chars * cw;
         let h_px = height_chars * ch;
-        let p_score = app.cached_result.as_ref().map_or(0.0, |r| r.score);
+        let live_score = app.search_progress.as_ref().filter(|_| is_rendering).map(|progress| progress.score);
+        let p_score = live_score.unwrap_or_else(|| app.cached_result.as_ref().map_or(0.0, |r| r.score));
+        let score_label = if live_score.is_some() || app
+            .cached_result
+            .as_ref()
+            .is_some_and(|r| r.perceptual_score.is_some())
+        {
+            "Perceptual"
+        } else {
+            "Contour"
+        };
 
         let mut title_right = format!(
-            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Advance: {:.1}px | Line height: {:.1}px | Line {} ({} bytes) | Contour: {:.3} ",
-            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, p_score
+            " Output: {}x{} chars ({}x{} px) | Cell: {}x{} px | Advance: {:.1}px | Line height: {:.1}px | Line {} ({} bytes) | {}: {:.3} ",
+            width_chars, height_chars, w_px, h_px, cw, ch, fw, fh, longest_line_idx, max_bytes, score_label, p_score
         );
         if app.graphics_preview {
             title_right.push_str(&format!(
@@ -10147,15 +10638,35 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             )))
             .style(Style::new().bg(BG));
 
-        let inner = block_with_bottom_title.inner(area);
+        let mut inner = block_with_bottom_title.inner(area);
         f.render_widget(block_with_bottom_title, area);
+
+        if app.render_args.show_glyph_defects && inner.height > 1 {
+            let map = app.display_result().and_then(|result| result.glyph_defects.as_ref());
+            let legend = map.map_or_else(|| "Defect map: waiting for glyph matching".to_string(), |map| {
+                format!("Red: {} targets | Amber: {} neighbours | threshold {:.1} | map before repairs",
+                    map.target_count(), map.neighbor_count(), map.threshold)
+            });
+            f.render_widget(Paragraph::new(legend).style(Style::new().fg(Color::Yellow)),
+                Rect::new(inner.x, inner.y, inner.width, 1));
+            inner.y += 1;
+            inner.height -= 1;
+        }
+        if is_rendering && inner.height > 1 {
+            if let Some(progress) = &app.search_progress {
+                f.render_widget(Gauge::default().ratio(progress.fraction()).label(progress.message.clone())
+                    .gauge_style(Style::new().fg(ACCENT).bg(SURFACE)),
+                    Rect::new(inner.x, inner.y, inner.width, 1));
+                inner.y += 1;
+                inner.height -= 1;
+            }
+        }
 
         if app.graphics_preview {
             if app.output_preview_dirty {
                 let image = app
-                    .cached_result
-                    .as_ref()
-                    .zip(app.arc_glyphs.as_deref())
+                    .display_result()
+                    .zip(app.display_glyphs())
                     .and_then(|(result, glyphs)| draw::render_result_image(result, glyphs));
                 app.output_preview_protocol =
                     image.map(|image| app.preview_picker.new_resize_protocol(image));
@@ -10177,13 +10688,13 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
             }
         } else {
             let text = app
-                .cached_render
+                .display_content()
                 .as_bytes()
                 .into_text()
-                .unwrap_or_else(|_| ratatui::text::Text::from(app.cached_render.clone()));
+                .unwrap_or_else(|_| ratatui::text::Text::from(app.display_content().to_string()));
 
             // Vertical center calculation
-            let line_count = app.cached_render.lines().count() as u16;
+            let line_count = app.display_content().lines().count() as u16;
             app.scroll = clamp_output_scroll(app.scroll, line_count, inner.height);
             let pad_y = if line_count < inner.height {
                 inner.height.saturating_sub(line_count).saturating_div(2)
@@ -10575,7 +11086,11 @@ fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             res.score
         };
         full_spans.push(Span::styled(
-            format!(" Contour {:.3} ", display_score),
+            format!(
+                " {} {:.3} ",
+                if res.perceptual_score.is_some() { "Perceptual" } else { "Contour" },
+                display_score,
+            ),
             Style::new()
                 .fg(Color::White)
                 .bg(ACCENT_DIM)

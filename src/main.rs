@@ -3,6 +3,7 @@ use clap::CommandFactory;
 use simplelog::{LevelFilter, WriteLogger};
 use std::fs::File;
 use std::process::exit;
+use std::io::{IsTerminal, Write};
 
 fn glyph_bitmap_font_size(requested: f32) -> f32 {
     if requested > 0.0 {
@@ -249,7 +250,7 @@ async fn main() {
             log::info!("Prepared {} optimized glyphs", glyphs.len());
 
             let mut output_args = render_args.clone();
-            output_args.pipeline.clear();
+            output_args.pipeline.retain(img2irc_rs::pipeline::ImageEffect::is_output_colour);
             output_args.rotate = 0.0;
             output_args.fliph = false;
             output_args.flipv = false;
@@ -266,20 +267,35 @@ async fn main() {
             output_args.pixelize = 0;
             output_args.box_blur = false;
             output_args.gaussian_blur = 0;
+            output_args.median_blur = 0;
 
-            let result = img2irc_rs::render_output(
-                output_args,
-                &glyph_store,
-                render_image,
-                &glyphs,
-                None,
-            );
+            let show_progress = output_args.glyph_search && std::io::stderr().is_terminal();
+            let render = || img2irc_rs::render_output(output_args, &glyph_store, render_image, &glyphs, None);
+            let result = if show_progress {
+                draw::search_status::observe_glyph_search(
+                    move |progress| {
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = write!(stderr, "\r\x1b[2K{}", progress.message);
+                        let _ = stderr.flush();
+                    }, render,
+                )
+            } else { render() };
+            if show_progress { eprintln!(); }
 
             if args.profile {
                 eprintln!("img2irc profile: {}", result.profile.summary());
             }
 
-            img2irc_rs::write_encoded_output(&result.content, &args.encoding);
+            let diagnostic;
+            let content = if args.show_glyph_defects {
+                diagnostic = result.glyph_defects.as_ref().map(|map| {
+                    draw::search_status::highlight_glyph_defects(&result, map)
+                });
+                diagnostic.as_ref().map_or(&result.content, |preview| &preview.content)
+            } else {
+                &result.content
+            };
+            img2irc_rs::write_encoded_output(content, &args.encoding);
             if let Some(path) = &args.save {
                 let metadata = format!("{:?}", args);
                 if let Err(e) = draw::save_as_png(&result, &glyph_store, path, &metadata) {

@@ -88,6 +88,8 @@ _ENUM_VALUES = {
 _EFFECT_NAMES = {
     "replace_colour": "ReplaceColour",
     "replace_color": "ReplaceColour",
+    "quantize_colours": "QuantizeColours",
+    "quantize_colors": "QuantizeColours",
     "brightness": "Brightness",
     "contrast": "Contrast",
     "luma_contrast": "LumaContrast",
@@ -229,6 +231,7 @@ class Timings(_RecordMapping):
     encode_ms: float
     contour_cache_hits: int
     contour_cache_misses: int
+    glyph_search_ms: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -375,13 +378,56 @@ def _normalise_option(name: str, value: Any) -> Any:
         return None
     if name == "exclude" and isinstance(value, str):
         return list(value)
-    if name in {"config_dir", "figlet_dir", "ocr_model_cache"} and isinstance(
+    if name in {"glyphs", "font", "include_range", "exclude_range"} and isinstance(value, str):
+        return [value]
+    if name in {
+        "config_dir", "figlet_dir", "ocr_model_cache", "ocr_det_model",
+        "ocr_cls_model", "ocr_rec_model", "ocr_dict", "ocr_doc_orientation_model",
+    } and isinstance(
         value, os.PathLike
     ):
         return os.fspath(value)
+    if name == "ocr_figlet_fonts":
+        return _normalise_figlet_fonts(value)
     if name in {"scale", "crop", "trim"} and isinstance(value, tuple):
         return list(value)
     return value
+
+
+def _normalise_figlet_fonts(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, Mapping):
+        if "height" in value:
+            entries = [value]
+        else:
+            entries = [
+                {"height": int(height) if isinstance(height, str) else height, "fonts": fonts}
+                for height, fonts in value.items()
+            ]
+    elif isinstance(value, str):
+        entries = [value]
+    else:
+        entries = value
+    lists = []
+    for entry in entries:
+        if isinstance(entry, str):
+            try:
+                height, fonts = entry.split("=", 1)
+                entry = {"height": int(height.strip()), "fonts": fonts}
+            except ValueError as error:
+                raise ValueError("ocr_figlet_fonts entries must use LINES=FONT1,FONT2") from error
+        if not isinstance(entry, Mapping) or set(entry) != {"height", "fonts"}:
+            raise ValueError("ocr_figlet_fonts entries require height and fonts")
+        height, fonts = entry["height"], entry["fonts"]
+        if isinstance(fonts, str):
+            fonts = [name.strip() for name in fonts.split(",") if name.strip()]
+        else:
+            fonts = list(fonts)
+        if isinstance(height, bool) or not isinstance(height, int) or height <= 0:
+            raise ValueError("ocr_figlet_fonts heights must be positive integers")
+        if not fonts or any(not isinstance(font, str) or not font.strip() for font in fonts):
+            raise ValueError("ocr_figlet_fonts requires non-empty font names")
+        lists.append({"height": height, "fonts": fonts})
+    return lists
 
 
 def _rgb(value: tuple[int, int, int] | list[int]) -> list[int]:
@@ -409,6 +455,31 @@ def _colour(value: int | tuple[int, int, int] | list[int] | None) -> Any:
 @lru_cache(maxsize=1)
 def _default_options() -> dict[str, Any]:
     return json.loads(_native.default_options_json())
+
+
+@lru_cache(maxsize=1)
+def _option_aliases() -> dict[str, str]:
+    return {**json.loads(_native.option_aliases_json()), "mode": "render"}
+
+
+def _set_option(options: dict[str, Any], name: str, value: Any) -> None:
+    name = name.removeprefix("--").replace("-", "_")
+    name = _option_aliases().get(name, name)
+    components = {
+        "scalex": ("scale", 0), "scaley": ("scale", 1),
+        "crop_x1": ("crop", 0), "crop_y1": ("crop", 1),
+        "crop_x2": ("crop", 2), "crop_y2": ("crop", 3),
+    }
+    if name in components:
+        target, index = components[name]
+        fallback = [1.0, 1.0] if target == "scale" else [0, 0, 0, 0]
+        values = list(options.get(target) or fallback)
+        values[index] = value
+        options[target] = values
+        return
+    if name not in _default_options():
+        raise KeyError(f"unknown img2irc option {name!r}")
+    options[name] = _normalise_option(name, value)
 
 
 def _resolve_options(options: Mapping[str, Any]) -> dict[str, Any]:
@@ -466,11 +537,11 @@ def _output_from_native(
 
 
 class Advanced:
-    """Full-fidelity generator exposing every serializable TUI render option.
+    """Generator exposing CLI render settings and ordered effects/overlays.
 
-    Keyword names match ``RenderArgs`` in the default-options dictionary. Use
-    :meth:`add_effect` for ordered pipeline operations and :meth:`add_overlay`
-    for editable terminal text layers.
+    CLI long-option names use underscores, e.g. ``ocr_min_confidence`` and
+    ``smooth_orders``. Use :meth:`add_effect` for ordered pipeline operations
+    and :meth:`add_overlay` for editable terminal text layers.
     """
 
     def __init__(
@@ -509,7 +580,7 @@ class Advanced:
 
     @staticmethod
     def available_options() -> tuple[str, ...]:
-        return tuple(_default_options())
+        return tuple(dict.fromkeys((*_default_options(), *_option_aliases())))
 
     @property
     def options(self) -> dict[str, Any]:
@@ -540,11 +611,7 @@ class Advanced:
         )
 
     def set(self, name: str, value: Any) -> Advanced:
-        if name == "mode":
-            name = "render"
-        if name not in _default_options():
-            raise KeyError(f"unknown img2irc option {name!r}")
-        self._options[name] = _normalise_option(name, value)
+        _set_option(self._options, name, value)
         return self
 
     def update(self, options: Mapping[str, Any] | None = None, **values: Any) -> Advanced:
@@ -577,6 +644,11 @@ class Advanced:
         if rust_name not in known_effects:
             choices = ", ".join(EFFECTS)
             raise ValueError(f"unknown effect {name!r}; choose one of: {choices}")
+        if rust_name == "QuantizeColours":
+            if isinstance(value, Mapping):
+                return self.add_quantize_colours(**value)
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 256:
+                raise ValueError("quantize_colours requires an integer colour count between 1 and 256")
         if rust_name in _UNIT_EFFECTS:
             if value is not None:
                 raise ValueError(f"effect {name!r} does not take a value")
@@ -608,7 +680,7 @@ class Advanced:
         *,
         tolerance: float = 5.0,
     ) -> Advanced:
-        """Replace pixels near one RGB colour with another colour."""
+        """Replace finished-art colours (source pixels when using process())."""
         if isinstance(tolerance, bool) or not isinstance(tolerance, (int, float)):
             raise TypeError("colour replacement tolerance must be a number")
         tolerance = float(tolerance)
@@ -625,6 +697,39 @@ class Advanced:
         return self
 
     add_replace_color = add_replace_colour
+
+    def add_quantize_colours(
+        self,
+        colours: int = 16,
+        *,
+        threshold: float = 3.0,
+        palette: list[tuple[int, int, int] | list[int]] | None = None,
+        source: bool = False,
+    ) -> Advanced:
+        """Merge similar shades, then limit colours, or map to an explicit palette.
+
+        A count of zero only merges shades. Set source=True to clean pixels
+        before glyph matching; otherwise edit the finished art. process()
+        always applies effects to pixels. A palette overrides count/threshold.
+        """
+        if isinstance(colours, bool) or not isinstance(colours, int) or not 0 <= colours <= 256:
+            raise ValueError("colours must be an integer between 0 and 256")
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+            raise TypeError("threshold must be a number")
+        threshold = float(threshold)
+        if not math.isfinite(threshold) or not 0 <= threshold <= 100:
+            raise ValueError("threshold must be between 0 and 100")
+        if not isinstance(source, bool):
+            raise TypeError("source must be a boolean")
+        chosen = [_rgb(rgb) for rgb in (palette or [])]
+        if len(chosen) > 256:
+            raise ValueError("palette must contain at most 256 colours")
+        self._options.setdefault("pipeline", []).append({"QuantizePalette": {
+            "colours": colours, "threshold": threshold, "palette": chosen, "source": source,
+        }})
+        return self
+
+    add_quantize_colors = add_quantize_colours
 
     def add_overlay(
         self,
@@ -712,11 +817,7 @@ class Advanced:
     def _options_with_overrides(self, overrides: Mapping[str, Any]) -> dict[str, Any]:
         options = self.options
         for name, value in overrides.items():
-            if name == "mode":
-                name = "render"
-            if name not in _default_options():
-                raise KeyError(f"unknown img2irc option {name!r}")
-            options[name] = _normalise_option(name, value)
+            _set_option(options, name, value)
         return options
 
     def generate(self, image: ImageSource, **overrides: Any) -> Output:
@@ -737,7 +838,10 @@ class Advanced:
 
 
 class Simple:
-    """Convenient generator for the options most applications commonly need."""
+    """Convenient defaults with the same render settings as :class:`Advanced`.
+
+    Extra keywords, including all ``ocr_*`` controls, are forwarded to Advanced.
+    """
 
     def __init__(
         self,
@@ -747,11 +851,16 @@ class Simple:
         mode: str = "ansi24",
         font_size: float = 0,
         braille: bool = False,
-        blocks: list[str] | tuple[str, ...] | None = None,
+        glyphs: str | list[str] | tuple[str, ...] | None = None,
+        blocks: str | list[str] | tuple[str, ...] | None = None,
         characters: str | None = None,
         smooth: bool = False,
+        region_guidance: bool = False,
+        glyph_search: bool = False,
+        superpixel_warp: int = 0,
         ocr: bool = False,
         font: FontSource | None = None,
+        **overrides: Any,
     ) -> None:
         options: dict[str, Any] = {
             "width": width,
@@ -759,15 +868,20 @@ class Simple:
             "render": mode,
             "font_size": font_size,
             "braille": braille,
-            "score_fix": smooth,
+            "smooth": smooth,
+            "region_guidance": region_guidance,
+            "glyph_search": glyph_search,
+            "superpixel_warp": superpixel_warp,
             "ocr": ocr,
         }
-        if blocks is not None:
-            options["blocks"] = list(blocks)
+        if glyphs is not None and blocks is not None:
+            raise ValueError("specify glyphs or its deprecated blocks alias, not both")
+        if glyphs is not None or blocks is not None:
+            options["glyphs"] = glyphs if glyphs is not None else blocks
         if characters is not None:
-            options["blocks"] = []
+            options["glyphs"] = []
             options["include"] = characters
-        self._advanced = Advanced(options, font=font)
+        self._advanced = Advanced(options, font=font, **overrides)
 
     @property
     def advanced(self) -> Advanced:
@@ -789,14 +903,19 @@ def available_options() -> tuple[str, ...]:
     return Advanced.available_options()
 
 
-def glyph_groups() -> dict[str, str]:
+def glyph_sets() -> dict[str, str]:
     """Return named glyph sets from the native glyph catalog.
 
     The strings include all configured members, before per-glyph exclusions.
-    Pass set names through ``blocks=`` or characters through ``include=``.
+    Pass set names through ``glyphs=`` or characters through ``include=``.
     Font coverage is reported separately by :func:`font_info`.
     """
     return json.loads(_native.glyph_groups_json())
+
+
+def glyph_groups() -> dict[str, str]:
+    """Compatibility alias for :func:`glyph_sets`."""
+    return glyph_sets()
 
 
 def generate(image: ImageSource, **options: Any) -> Output:

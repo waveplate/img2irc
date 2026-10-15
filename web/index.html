@@ -1,460 +1,1098 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>img2irc</title>
-    <link rel="icon" type="image/x-icon" href="./favicon.ico" />
-    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <form id="controls" class="editor" novalidate>
-      <header class="app-header">
-        <div class="menu-bar">
-          <div class="brand" aria-label="img2irc image-to-terminal-art editor">
-            <img src="./favicon-32x32.png" alt="" />
-            <span>img2irc</span>
-          </div>
-          <nav class="application-menu" aria-label="Application menu">
-            <details class="app-menu" data-app-menu>
-              <summary>File</summary>
-              <div class="menu-popover" role="menu">
-                <button type="button" role="menuitem" data-click-target="image">
-                  <span>Open image…</span><kbd>Ctrl+O</kbd>
-                </button>
-                <div class="menu-separator" role="separator"></div>
-                <button id="download-output" type="button" role="menuitem" disabled>
-                  <span>Download output…</span><kbd>Ctrl+S</kbd>
-                </button>
-              </div>
-            </details>
-            <details class="app-menu" data-app-menu>
-              <summary>Edit</summary>
-              <div class="menu-popover" role="menu">
-                <button id="copy-output" type="button" role="menuitem" data-copy-output disabled>
-                  <span>Copy encoded output</span><kbd>Ctrl+Shift+C</kbd>
-                </button>
-                <div class="menu-separator" role="separator"></div>
-                <button type="button" role="menuitem" data-click-target="reset-adjustments">
-                  Reset image adjustments
-                </button>
-                <button type="button" role="menuitem" data-click-target="overlay-add">
-                  Add text overlay
-                </button>
-                <button type="button" role="menuitem" data-click-target="overlay-delete">
-                  Delete selected overlay
-                </button>
-              </div>
-            </details>
-            <details class="app-menu" data-app-menu>
-              <summary>View</summary>
-              <div class="menu-popover" role="menu">
-                <label class="menu-item menu-check" role="menuitemcheckbox">
-                  <input id="view-controls" type="checkbox" checked />
-                  <span>Show controls</span>
-                </label>
-                <div class="menu-separator" role="separator"></div>
-                <button type="button" role="menuitem" data-control-tab="general">General controls</button>
-                <button type="button" role="menuitem" data-control-tab="adjustments">Image adjustments</button>
-                <button type="button" role="menuitem" data-control-tab="glyphs">Glyph library</button>
-                <button type="button" role="menuitem" data-control-tab="text">Text overlays</button>
-                <div class="menu-separator" role="separator"></div>
-                <button type="button" role="menuitem" data-preview-mode="text">Native text preview</button>
-                <button type="button" role="menuitem" data-preview-mode="bitmap">Bitmap preview</button>
-                <button type="button" role="menuitem" data-toggle-target="raw-output-panel">Raw output</button>
-              </div>
-            </details>
-            <details class="app-menu" data-app-menu>
-              <summary>Render</summary>
-              <div class="menu-popover" role="menu">
-                <button type="button" role="menuitem" data-click-target="render-button">
-                  <span>Render now</span><kbd>Ctrl+Enter</kbd>
-                </button>
-                <label class="menu-item menu-check" role="menuitemcheckbox">
-                  <input id="auto-render" type="checkbox" checked />
-                  <span>Render after changes</span>
-                </label>
-              </div>
-            </details>
-            <details class="app-menu" data-app-menu>
-              <summary>Help</summary>
-              <div class="menu-popover" role="menu">
-                <a href="https://github.com/waveplate/img2irc" target="_blank" rel="noopener" role="menuitem">
-                  Project documentation
-                </a>
-                <p class="menu-note">Images and rendering stay in this browser.</p>
-              </div>
-            </details>
-          </nav>
+ <head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1" name="viewport"/>
+  <title>
+   img2irc
+  </title>
+  <link href="./favicon.ico" rel="icon" type="image/x-icon"/>
+  <link href="./favicon-32x32.png" rel="icon" sizes="32x32" type="image/png"/>
+  <link href="./favicon-16x16.png" rel="icon" sizes="16x16" type="image/png"/>
+  <link href="./apple-touch-icon.png" rel="apple-touch-icon" sizes="180x180"/>
+  <link href="./styles.css" rel="stylesheet"/>
+ </head>
+ <body>
+  <form class="editor" data-active-tab="general" data-controls-visible="true" id="controls" novalidate="">
+   <header class="app-header">
+    <div class="title-bar">
+     <div class="brand">
+      <span>
+       img2irc
+      </span>
+     </div>
+     <nav aria-label="Control groups" class="control-tabs" role="tablist">
+      <button aria-controls="panel-general" aria-selected="true" data-control-tab="general" id="tab-general" role="tab" tabindex="0" type="button">
+       General
+      </button>
+      <button aria-controls="panel-pipeline" aria-selected="false" data-control-tab="pipeline" id="tab-pipeline" role="tab" tabindex="-1" type="button">
+       Pipeline
+      </button>
+      <button aria-controls="panel-glyphs" aria-selected="false" data-control-tab="glyphs" id="tab-glyphs" role="tab" tabindex="-1" type="button">
+       Glyphs
+      </button>
+      <button aria-controls="panel-text" aria-selected="false" data-control-tab="text" id="tab-text" role="tab" tabindex="-1" type="button">
+       Text
+      </button>
+     </nav>
+     <div class="document-identity">
+      <a hidden="" id="source-link" rel="noopener" target="_blank">
+      </a>
+      <span id="source-placeholder">
+       No image open
+      </span>
+     </div>
+     <nav aria-label="Application menu" class="application-menu">
+      <details class="app-menu" data-app-menu="">
+       <summary>
+        File
+       </summary>
+       <div class="menu-popover" role="menu">
+        <button data-click-target="image" role="menuitem" type="button">
+         <span>
+          Open image…
+         </span>
+         <kbd>
+          Ctrl+O
+         </kbd>
+        </button>
+        <div class="menu-separator" role="separator">
         </div>
-
-        <div class="app-toolbar" aria-label="Document toolbar">
-          <input id="image" class="visually-hidden" type="file" accept="image/*" />
-          <label class="file-button" for="image">Open</label>
-          <div class="document-identity">
-            <a id="source-link" target="_blank" rel="noopener" hidden></a>
-            <span id="source-placeholder">No image open</span>
-          </div>
-          <span class="toolbar-divider" aria-hidden="true"></span>
-          <label class="toolbar-field">
-            <span>Output</span>
-            <select id="render">
-              <option value="irc" selected>IRC</option>
-              <option value="ansi">ANSI 256</option>
-              <option value="ansi24">ANSI 24-bit</option>
-            </select>
+        <button disabled="" id="download-output" role="menuitem" type="button">
+         <span>
+          Save text…
+         </span>
+         <kbd>
+          Ctrl+S
+         </kbd>
+        </button>
+        <button disabled="" id="download-png" role="menuitem" type="button">Save PNG…</button>
+       </div>
+      </details>
+      <details class="app-menu" data-app-menu="">
+       <summary>
+        Edit
+       </summary>
+       <div class="menu-popover" role="menu">
+        <button data-copy-output="" disabled="" id="copy-output" role="menuitem" type="button">
+         <span>
+          Copy encoded output
+         </span>
+         <kbd>
+          Ctrl+Shift+C
+         </kbd>
+        </button>
+        <div class="menu-separator" role="separator">
+        </div>
+        <button data-click-target="reset-adjustments" role="menuitem" type="button">
+         Reset image adjustments
+        </button>
+        <button data-click-target="overlay-add" role="menuitem" type="button">
+         Add text overlay
+        </button>
+        <button data-click-target="overlay-delete" role="menuitem" type="button">
+         Delete selected overlay
+        </button>
+       </div>
+      </details>
+      <details class="app-menu" data-app-menu="">
+       <summary>
+        View
+       </summary>
+       <div class="menu-popover" role="menu">
+        <label class="menu-item menu-check" role="menuitemcheckbox">
+         <input checked="" id="view-controls" type="checkbox"/>
+         <span>
+          Show controls
+         </span>
+        </label>
+        <div class="menu-separator" role="separator">
+        </div>
+        <button data-control-tab="general" role="menuitem" type="button">
+         General controls
+        </button>
+        <button data-control-tab="pipeline" role="menuitem" type="button">
+         Pipeline
+        </button>
+        <button data-control-tab="glyphs" role="menuitem" type="button">
+         Glyph library
+        </button>
+        <button data-control-tab="text" role="menuitem" type="button">
+         Text overlays
+        </button>
+        <div class="menu-separator" role="separator">
+        </div>
+        <button data-preview-mode="text" role="menuitem" type="button">
+         Native text preview
+        </button>
+        <button data-preview-mode="bitmap" role="menuitem" type="button">
+         Bitmap preview
+        </button>
+        <button data-toggle-target="raw-output-panel" role="menuitem" type="button">
+         Raw output
+        </button>
+       </div>
+      </details>
+      <details class="app-menu" data-app-menu="">
+       <summary>
+        Render
+       </summary>
+       <div class="menu-popover" role="menu">
+        <button data-click-target="render-button" role="menuitem" type="button">
+         <span>
+          Render now
+         </span>
+         <kbd>
+          Ctrl+Enter
+         </kbd>
+        </button>
+        <label class="menu-item menu-check" role="menuitemcheckbox">
+         <input checked="" id="auto-render" type="checkbox"/>
+         <span>
+          Render after changes
+         </span>
+        </label>
+       </div>
+      </details>
+      <details class="app-menu" data-app-menu="">
+       <summary>
+        Help
+       </summary>
+       <div class="menu-popover" role="menu">
+        <a href="https://github.com/waveplate/img2irc" rel="noopener" role="menuitem" target="_blank">
+         Project documentation
+        </a>
+        <p class="menu-note">
+         Images and rendering stay in this browser.
+        </p>
+       </div>
+      </details>
+     </nav>
+    </div>
+   </header>
+   <main class="workspace">
+    <aside aria-label="Render controls" class="control-dock">
+     <section aria-labelledby="tab-general" class="control-panel" data-control-tab-panel="general" id="panel-general" role="tabpanel">
+      <h1 class="panel-heading">
+       General
+      </h1>
+      <div class="control-grid">
+       <label class="control-row">
+        <span>
+         Output
+        </span>
+        <select id="render">
+         <option selected="" value="irc">
+          IRC
+         </option>
+         <option value="ansi">
+          ANSI 256
+         </option>
+         <option value="ansi24">
+          ANSI 24-bit
+         </option>
+        </select>
+       </label>
+       <label>
+        Width
+        <input id="width" max="300" min="0" placeholder="Auto" type="number" value="80"/>
+       </label>
+       <label>
+        Font Size
+        <span class="font-size-controls">
+         <input id="font-size" max="256" min="6" step="1" type="number" value="16"/>
+         <button id="optimize-font-size" title="Scan sizes 9–30 using Perceptual scoring, without refinements" type="button">Auto</button>
+        </span>
+       </label>
+       <label class="control-row">
+        Graphics preview
+        <select id="preview-mode">
+         <option value="bitmap">
+          Bitmap
+         </option>
+         <option selected="" value="text">
+          Native
+         </option>
+        </select>
+       </label>
+       <label class="control-row">
+        Preview font size
+        <input id="output-font-size" max="64" min="6" step="1" type="number" value="16"/>
+        <span>
+         px
+        </span>
+       </label>
+      </div>
+      <div class="glyph-hint" hidden="" id="smooth-glyph-hint" role="status">
+       Try the Smooth glyph set for cleaner edges.
+       <button id="hint-use-smooth" type="button">Use Smooth</button>
+       <button aria-label="Dismiss glyph hint" id="hint-dismiss" type="button">×</button>
+      </div>
+      <div class="feature-group">
+      <label class="feature-enable">
+       <input aria-label="Enable OCR" id="ocr-enabled" type="checkbox"/>
+      </label>
+      <details class="feature-section" id="ocr-section">
+       <summary>
+        <span id="ocr-summary">
+         OCR
+        </span>
+       </summary>
+       <div class="control-grid conditional" id="ocr-options">
+        <label class="inline-control wide-control">
+         <input checked="" id="ocr-auto-width" type="checkbox"/>
+         Auto-fit render width to text
+        </label>
+        <label id="ocr-text-coverage-control">
+         Minimum complete text coverage (%)
+         <input id="ocr-text-coverage" max="100" min="1" step="1" type="number" value="100"/>
+        </label>
+        <label class="inline-control wide-control">
+         <input id="ocr-lock" type="checkbox"/>
+         Lock OCR (freeze untouched detections)
+        </label>
+        <label>
+         Minimum confidence
+         <input id="ocr-confidence" max="1" min="0" step="0.05" type="number" value="0.7"/>
+        </label>
+        <label>
+         OCR megapixels
+         <input id="ocr-megapixels" max="16" min="0" step="0.1" type="number" value="1.5"/>
+        </label>
+        <label>
+         OCR model
+         <select id="ocr-model-tier">
+          <option selected="" value="tiny">
+           Tiny
+          </option>
+          <option value="small">
+           Small
+          </option>
+          <option value="medium">
+           Medium
+          </option>
+         </select>
+        </label>
+        <label class="inline-control">
+         <input checked="" id="ocr-figlet" type="checkbox"/>
+         Style large text (FIGlet)
+        </label>
+        <div class="wide-control ocr-action-row">
+         <button id="ocr-refresh" type="button">
+          Regenerate OCR…
+         </button>
+         <small aria-live="polite" id="ocr-status" role="status">
+          OCR loads only when enabled.
+         </small>
+        </div>
+        <details class="advanced-section wide-control">
+         <summary>
+          Advanced OCR settings
+         </summary>
+         <div class="control-grid">
+          <label>
+           Printable ASCII ratio
+           <input id="ocr-ascii-ratio" max="1" min="0" step="0.05" type="number" value="0.7"/>
           </label>
-          <button id="render-button" class="primary" type="submit">Render</button>
-          <p id="status" role="status" aria-live="polite">Loading WebAssembly…</p>
+          <label>
+           Legacy OCR width (megapixels = 0)
+           <input id="ocr-width" max="8192" min="0" step="10" type="number" value="0"/>
+          </label>
+          <label>
+           Legacy maximum side (megapixels = 0)
+           <input id="ocr-max-side" max="5000" min="320" step="10" type="number" value="3000"/>
+          </label>
+          <label>
+           Maximum text-height ratio
+           <input id="ocr-max-height-ratio" max="10" min="0" step="0.25" type="number" value="0"/>
+          </label>
+          <label class="inline-control">
+           <input id="ocr-figlet-fill" type="checkbox"/>
+           Fit largest FIGlet font in available space
+          </label>
+          <label>
+           FIGlet minimum rows
+           <input id="ocr-figlet-min-height" max="12" min="1" step="1" type="number" value="2"/>
+          </label>
+          <label>
+           FIGlet minimum height ratio
+           <input id="ocr-figlet-min-height-ratio" max="5" min="0" step="0.05" type="number" value="1.25"/>
+          </label>
+          <label>
+           FIGlet maximum width expansion ratio
+           <input id="ocr-figlet-max-width-ratio" max="2" min="0" step="0.05" type="number" value="0.5"/>
+          </label>
+          <label>
+           FIGlet maximum height expansion ratio
+           <input id="ocr-figlet-max-height-ratio" max="2" min="0" step="0.05" type="number" value="0.5"/>
+          </label>
+          <label>
+           Box score threshold
+           <input id="ocr-box-score" max="1" min="0" step="0.05" type="number" value="0.6"/>
+          </label>
+          <label>
+           Binarization threshold
+           <input id="ocr-box-threshold" max="1" min="0" step="0.05" type="number" value="0.2"/>
+          </label>
+          <label>
+           Box expansion
+           <input id="ocr-unclip-ratio" max="4" min="1" step="0.1" type="number" value="1.6"/>
+          </label>
+         </div>
+        </details>
+       </div>
+      </details>
+      </div>
+      <div class="feature-group">
+      <label class="feature-enable">
+       <input aria-label="Enable Smoothing" id="smooth" type="checkbox"/>
+      </label>
+      <details class="feature-section" id="smoothing-section">
+       <summary>
+        <span id="smoothing-summary">
+         Smoothing
+        </span>
+       </summary>
+       <div class="control-grid" id="smoothing-options">
+        <label>
+         Candidates
+         <input id="smooth-candidates" max="256" min="1" type="number" value="5"/>
+        </label>
+        <label>
+         Scan patterns
+         <input id="smooth-orders" max="5" min="1" type="number" value="5"/>
+        </label>
+        <label class="inline-control">
+         <input id="smooth-shapes" type="checkbox"/>
+         Refine shapes
+        </label>
+        <label class="inline-control">
+         <input checked="" id="smooth-neighbors" type="checkbox"/>
+         Protect neighbors
+        </label>
+       </div>
+      </details>
+      </div>
+      <div class="feature-group">
+      <label class="feature-enable">
+       <input aria-label="Enable Repair Edges" id="glyph-pair-search" type="checkbox"/>
+      </label>
+      <details class="feature-section" id="glyph-search-section">
+       <summary>
+        Repair Edges
+       </summary>
+      <div class="control-grid" id="glyph-search-options">
+       <label>
+        Defect threshold
+        <input id="discontinuity-threshold" max="100" min="0" step="0.1" type="number" value="0.5"/>
+       </label>
+       <label>
+        Search candidates
+        <input id="glyph-search-candidates" max="64" min="1" type="number" value="6"/>
+       </label>
+       <label>
+        Search passes
+        <input id="glyph-search-passes" max="20" min="1" type="number" value="2"/>
+       </label>
+       <label class="wide-control">
+        Full-score finalists
+        <input id="glyph-search-finalists" max="4096" min="0" type="number" value="3"/>
+       </label>
+      </div>
+      </details>
+      </div>
+      <details class="advanced-section">
+       <summary>
+        Advanced
+       </summary>
+       <div class="control-grid">
+        <label class="wide-control">
+         Font
+         <select id="font">
+          <option value="local:cascadia">
+           Cascadia Code (hosted)
+          </option>
+          <option value="local:iosevka-fixed">
+           Iosevka Fixed (hosted)
+          </option>
+          <option selected="" value="local:iosevka-fixed-extended">
+           Iosevka Fixed Extended (hosted)
+          </option>
+          <option value="local:unifont">
+           GNU Unifont 17.0.05 (hosted)
+          </option>
+         </select>
+         <small id="font-status">
+          Loading Google Fonts list…
+         </small>
+        </label>
+        <label>
+         Sampling filter
+         <select id="filter">
+          <option selected="" value="nearest">
+           Nearest
+          </option>
+          <option value="triangle">
+           Triangle
+          </option>
+          <option value="catmull-rom">
+           Catmull-Rom
+          </option>
+          <option value="gaussian">
+           Gaussian
+          </option>
+          <option value="lanczos3">
+           Lanczos3
+          </option>
+         </select>
+        </label>
+        <label>
+         Grayscale tolerance
+         <input id="grayscale-tolerance" max="255" min="0" type="number" value="32"/>
+        </label>
+        <label>
+         Colour space
+         <select id="colour-space">
+          <option value="hsl">
+           HSL
+          </option>
+          <option selected="" value="hsv">
+           HSV
+          </option>
+          <option value="hsluv">
+           HSLuv
+          </option>
+          <option value="lch">
+           LCH
+          </option>
+         </select>
+        </label>
+        <label>
+         Height (optional)
+         <input data-off-value="" id="height" max="300" min="1" placeholder="Auto" type="number"/>
+        </label>
+        <label class="inline-control wide-control">
+         <input checked="" id="perceptual-score" type="checkbox"/>
+         Perceptual Score
+        </label>
+       </div>
+      </details>
+     </section>
+     <section aria-labelledby="tab-pipeline" class="control-panel pipeline-panel" data-control-tab-panel="pipeline" hidden="" id="panel-pipeline" role="tabpanel">
+      <h1 class="panel-heading">
+       Active Pipeline
+       <span class="panel-count" id="pipeline-count">
+        0 effects
+       </span>
+      </h1>
+      <p class="empty-note" id="pipeline-empty">
+       No effects added. Choose Add Effect below.
+      </p>
+      <div id="pipeline-effects">
+       <div class="pipeline-effect" data-pipeline-effect="brightness" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Brightness
+          <input id="brightness" max="255" min="-255" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
         </div>
-      </header>
-
-      <main class="workspace">
-        <aside class="control-dock" aria-label="Render controls">
-          <nav class="control-tabs" role="tablist" aria-label="Control groups">
-            <button type="button" role="tab" data-control-tab="general" aria-selected="true">General</button>
-            <button type="button" role="tab" data-control-tab="adjustments" aria-selected="false">Adjust</button>
-            <button type="button" role="tab" data-control-tab="glyphs" aria-selected="false">Glyphs</button>
-            <button type="button" role="tab" data-control-tab="text" aria-selected="false">Text</button>
-          </nav>
-
-          <section class="control-panel" data-control-tab-panel="general">
-            <h1 class="panel-heading">General</h1>
-            <div class="control-grid">
-              <label>
-                Width (cells)
-                <input id="width" type="number" min="0" max="300" value="80" placeholder="Auto" />
-              </label>
-              <label>
-                Height (cells)
-                <input id="height" type="number" min="1" max="300" placeholder="Auto" />
-              </label>
-              <label class="wide-control">
-                Font
-                <select id="font">
-                  <option value="local:cascadia">Cascadia Code (hosted)</option>
-                  <option value="local:iosevka-fixed">Iosevka Fixed (hosted)</option>
-                  <option value="local:iosevka-fixed-extended" selected>Iosevka Fixed Extended (hosted)</option>
-                  <option value="local:unifont">GNU Unifont 17.0.05 (hosted)</option>
-                </select>
-                <small id="font-status">Loading Google Fonts list…</small>
-              </label>
-              <label>
-                Glyph raster size
-                <input id="font-size" type="number" min="6" max="256" step="1" value="16" />
-              </label>
-              <label>
-                Sampling filter
-                <select id="filter">
-                  <option value="nearest" selected>Nearest</option>
-                  <option value="triangle">Triangle</option>
-                  <option value="catmull-rom">Catmull-Rom</option>
-                  <option value="gaussian">Gaussian</option>
-                  <option value="lanczos3">Lanczos3</option>
-                </select>
-              </label>
-              <label>
-                Grayscale tolerance
-                <input id="grayscale-tolerance" type="number" min="0" max="255" value="32" />
-              </label>
-              <label>
-                Colour space
-                <select id="colour-space">
-                  <option value="hsl">HSL</option>
-                  <option value="hsv" selected>HSV</option>
-                  <option value="hsluv">HSLuv</option>
-                  <option value="lch">LCH</option>
-                </select>
-              </label>
-            </div>
-
-            <details id="smoothing-section" class="feature-section">
-              <summary><span id="smoothing-summary">Smoothing (disabled, expand to enable)</span></summary>
-              <p class="performance-warning">Smoothing is computationally expensive and can dramatically increase render times.</p>
-              <div id="smoothing-options" class="control-grid">
-                <label>
-                  Candidates
-                  <input id="smooth-candidates" type="number" min="1" max="256" value="12" />
-                </label>
-                <label>
-                  Scan patterns
-                  <input id="smooth-orders" type="number" min="1" max="5" value="1" />
-                </label>
-                <label class="inline-control">
-                  <input id="smooth-shapes" type="checkbox" />
-                  Refine shapes
-                </label>
-                <label class="inline-control">
-                  <input id="smooth-neighbors" type="checkbox" checked />
-                  Protect neighbors
-                </label>
-              </div>
-            </details>
-
-            <details id="ocr-section" class="feature-section">
-              <summary><span id="ocr-summary">OCR (disabled, expand to enable)</span></summary>
-              <p class="feature-description">Detect image text with PP-OCRv6 and preserve it as editable terminal text.</p>
-              <div id="ocr-options" class="control-grid conditional">
-                <label class="inline-control wide-control">
-                  <input id="ocr-auto-width" type="checkbox" checked />
-                  Auto-fit render width to text
-                </label>
-                <label id="ocr-text-coverage-control">
-                  Minimum complete text coverage (%)
-                  <input id="ocr-text-coverage" type="number" min="1" max="100" step="1" value="100" />
-                </label>
-                <label class="inline-control wide-control">
-                  <input id="ocr-lock" type="checkbox" />
-                  Lock OCR (freeze untouched detections)
-                </label>
-                <label>
-                  Minimum confidence
-                  <input id="ocr-confidence" type="number" min="0" max="1" step="0.05" value="0.7" />
-                </label>
-                <div class="wide-control ocr-action-row">
-                  <button id="ocr-refresh" type="button">Regenerate OCR…</button>
-                  <small id="ocr-status" role="status" aria-live="polite">OCR loads only when enabled.</small>
-                </div>
-                <details class="advanced-section wide-control">
-                  <summary>Advanced OCR settings</summary>
-                  <div class="control-grid">
-                    <label>
-                      Printable ASCII ratio
-                      <input id="ocr-ascii-ratio" type="number" min="0" max="1" step="0.05" value="0.7" />
-                    </label>
-                    <label>
-                      OCR width
-                      <input id="ocr-width" type="number" min="0" max="8192" step="10" value="0" />
-                    </label>
-                    <label>
-                      Maximum image side
-                      <input id="ocr-max-side" type="number" min="320" max="5000" step="10" value="3000" />
-                    </label>
-                    <label>
-                      Maximum text-height ratio
-                      <input id="ocr-max-height-ratio" type="number" min="0" max="10" step="0.25" value="0" />
-                    </label>
-                    <label class="inline-control">
-                      <input id="ocr-figlet" type="checkbox" checked />
-                      Use FIGlet for large text
-                    </label>
-                    <label class="inline-control">
-                      <input id="ocr-figlet-fill" type="checkbox" />
-                      Fit largest FIGlet font in available space
-                    </label>
-                    <label>
-                      FIGlet minimum rows
-                      <input id="ocr-figlet-min-height" type="number" min="1" max="12" step="1" value="2" />
-                    </label>
-                    <label>
-                      FIGlet minimum height ratio
-                      <input id="ocr-figlet-min-height-ratio" type="number" min="0" max="5" step="0.05" value="1.25" />
-                    </label>
-                    <label>
-                      FIGlet maximum width expansion ratio
-                      <input id="ocr-figlet-max-width-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
-                    </label>
-                    <label>
-                      FIGlet maximum height expansion ratio
-                      <input id="ocr-figlet-max-height-ratio" type="number" min="0" max="2" step="0.05" value="0.5" />
-                    </label>
-                    <label>
-                      Box score threshold
-                      <input id="ocr-box-score" type="number" min="0" max="1" step="0.05" value="0.6" />
-                    </label>
-                    <label>
-                      Binarization threshold
-                      <input id="ocr-box-threshold" type="number" min="0" max="1" step="0.05" value="0.2" />
-                    </label>
-                    <label>
-                      Box expansion
-                      <input id="ocr-unclip-ratio" type="number" min="1" max="4" step="0.1" value="1.6" />
-                    </label>
-                  </div>
-                </details>
-              </div>
-            </details>
-          </section>
-
-          <section class="control-panel" data-control-tab-panel="adjustments" hidden>
-            <h1 class="panel-heading">Image adjustments</h1>
-            <div class="range-grid">
-              <label>Brightness <input id="brightness" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
-              <label>Contrast <input id="contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
-              <label>Luma contrast <input id="luma-contrast" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
-              <label>Median radius <input id="median-blur" type="range" min="0" max="10" value="0" /> <output>0</output></label>
-              <label>Line thickness <input id="line-thickness" type="range" min="-10" max="10" value="0" /> <output>0</output></label>
-              <label>Gamma <input id="gamma" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
-              <label>Saturation <input id="saturation" type="range" min="-255" max="255" value="0" /> <output>0</output></label>
-              <label>Hue <input id="hue" type="range" min="0" max="360" value="0" /> <output>0</output></label>
-              <label>Rotation <input id="rotate" type="range" min="-180" max="180" value="0" /> <output>0°</output></label>
-              <label>Horizontal scale <input id="scale-x" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
-              <label>Vertical scale <input id="scale-y" type="range" min="0.5" max="2" step="0.05" value="1" /> <output>1</output></label>
-              <label>Pixelize <input id="pixelize" type="range" min="0" max="64" value="0" /> <output>0</output></label>
-              <label>Gaussian blur <input id="gaussian-blur" type="range" min="0" max="20" value="0" /> <output>0</output></label>
-              <label>Dither <input id="dither" type="range" min="0" max="8" value="0" /> <output>0</output></label>
-            </div>
-            <div class="toggle-grid">
-              <label><input id="flip-horizontal" type="checkbox" /> Flip horizontally</label>
-              <label><input id="flip-vertical" type="checkbox" /> Flip vertically</label>
-              <label><input id="invert" type="checkbox" /> Invert</label>
-              <label><input id="grayscale" type="checkbox" /> Grayscale</label>
-              <label><input id="light-lines" type="checkbox" /> Light lines</label>
-              <label><input id="box-blur" type="checkbox" /> Box blur</label>
-            </div>
-            <fieldset>
-              <legend><label class="inline-control"><input id="replace-enabled" type="checkbox" /> Replace colour</label></legend>
-              <div class="toggle-grid">
-                <label>From <input id="replace-from" type="color" value="#ffffff" /></label>
-                <label>To <input id="replace-to" type="color" value="#000000" /></label>
-                <button id="replace-pick" type="button" disabled>Pick From…</button>
-                <button id="replace-pick-to" type="button" disabled>Pick To…</button>
-              </div>
-              <div class="range-grid">
-                <label>Tolerance % <input id="replace-tolerance" type="range" min="0" max="100" value="5" /> <output>5</output></label>
-              </div>
-              <small>Replaces matching colours throughout the image. Raise tolerance to include similar shades.</small>
-            </fieldset>
-            <dialog id="replace-dialog" aria-labelledby="replace-dialog-title">
-              <p id="replace-dialog-title">Click a visible colour in the image</p>
-              <canvas id="replace-canvas" aria-label="Visible output colour eyedropper"></canvas>
-              <p>The preview is quantized to the selected output mode.</p>
-              <button id="replace-cancel" type="button">Cancel</button>
-            </dialog>
-            <button id="reset-adjustments" type="button">Reset adjustments</button>
-          </section>
-
-          <section class="control-panel glyph-panel" data-control-tab-panel="glyphs" hidden>
-            <h1 class="panel-heading">Glyphs</h1>
-            <label class="inline-control">
-              <input id="braille" type="checkbox" />
-              Use Braille output instead of glyph groups
-            </label>
-            <div id="glyph-controls">
-              <div class="button-row">
-                <button id="glyph-default" type="button">Default</button>
-                <button id="glyph-smooth" type="button">Smooth</button>
-                <button id="glyph-all" type="button">All</button>
-                <button id="glyph-none" type="button">None</button>
-              </div>
-              <label>
-                Find a group
-                <input id="glyph-search" type="search" placeholder="blocks, legacy, box…" />
-              </label>
-              <div id="glyph-groups" class="glyph-groups" aria-label="Glyph groups"></div>
-              <div class="control-grid">
-                <label>
-                  Include characters
-                  <input id="include" type="text" placeholder="@#%" />
-                </label>
-                <label>
-                  Exclude characters
-                  <input id="exclude" type="text" />
-                </label>
-                <label class="wide-control">
-                  Include Unicode ranges
-                  <textarea id="include-ranges" rows="2" placeholder="2600-26FF (one per line)"></textarea>
-                </label>
-                <label class="wide-control">
-                  Exclude Unicode ranges
-                  <textarea id="exclude-ranges" rows="2" placeholder="1F600-1F64F (one per line)"></textarea>
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <section class="control-panel text-panel" data-control-tab-panel="text" hidden>
-            <h1 class="panel-heading">Text overlays</h1>
-            <div class="button-row">
-              <button id="overlay-add" type="button">Add text overlay</button>
-              <button id="overlay-delete" class="danger" type="button">Delete selected</button>
-            </div>
-            <p class="overlay-instructions">Drag across empty output cells to create a text box. Drag a box to move it, or its corner handle to resize it.</p>
-            <label>
-              Overlays
-              <select id="overlay-list" class="overlay-list" size="5"></select>
-            </label>
-            <p id="overlay-empty" class="empty-note">Add an overlay or enable OCR to populate this list.</p>
-
-            <div id="overlay-editor" hidden>
-              <label class="wide-control">
-                Text
-                <textarea id="overlay-text" rows="4"></textarea>
-              </label>
-              <div class="control-grid">
-                <label>X <input id="overlay-x" type="number" step="1" value="0" /></label>
-                <label>Y <input id="overlay-y" type="number" step="1" value="0" /></label>
-                <label>Width <input id="overlay-width" type="number" min="0" step="1" value="1" /></label>
-                <label>Height <input id="overlay-height" type="number" min="0" step="1" value="1" /></label>
-              </div>
-              <div class="toggle-grid overlay-formatting">
-                <label><input id="overlay-auto-grow" type="checkbox" /> Fit to text</label>
-                <label><input id="overlay-wrap" type="checkbox" /> Wrap</label>
-                <label><input id="overlay-figlet" type="checkbox" /> FIGlet</label>
-                <label><input id="overlay-bold" type="checkbox" /> Bold</label>
-                <label><input id="overlay-italic" type="checkbox" /> Italic</label>
-                <label><input id="overlay-underline" type="checkbox" /> Underline</label>
-              </div>
-              <label id="overlay-figlet-font-control" hidden>
-                FIGlet font
-                <select id="overlay-figlet-font"></select>
-              </label>
-              <small id="overlay-figlet-status"></small>
-              <div class="overlay-colors">
-                <label>
-                  <input id="overlay-foreground-enabled" type="checkbox" /> Foreground
-                  <input id="overlay-foreground" type="color" value="#ffffff" />
-                </label>
-                <label>
-                  <input id="overlay-background-enabled" type="checkbox" /> Background
-                  <input id="overlay-background" type="color" value="#000000" />
-                </label>
-              </div>
-            </div>
-          </section>
-        </aside>
-
-        <section class="document-area" aria-label="Output workspace">
-          <div class="document-toolbar">
-            <button id="copy-output-toolbar" class="copy-output-button" type="button" data-copy-output disabled>
-              Copy to clipboard
-            </button>
-            <div class="toolbar-spacer"></div>
-            <label class="preview-mode">
-              Display
-              <select id="preview-mode">
-                <option value="bitmap">Bitmap</option>
-                <option value="text" selected>Native</option>
-              </select>
-            </label>
-            <label class="output-font-size">
-              Output font size
-              <input id="output-font-size" type="number" min="6" max="64" step="1" value="16" />
-              <span>px</span>
-            </label>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="contrast" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Contrast
+          <input id="contrast" max="255" min="-255" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="luma-contrast" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Luma contrast
+          <input id="luma-contrast" max="255" min="-255" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="saturation" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Saturation
+          <input id="saturation" max="255" min="-255" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="gamma" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Gamma
+          <input id="gamma" max="255" min="-255" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="hue" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Hue
+          <input id="hue" max="360" min="0" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="rotate" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Rotation
+          <input id="rotate" max="180" min="-180" type="range" value="0"/>
+          <output>
+           0°
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="scale" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Horizontal scale
+          <input id="scale-x" max="2" min="0.5" step="0.05" type="range" value="1"/>
+          <output>
+           1
+          </output>
+         </label>
+         <label>
+          Vertical scale
+          <input id="scale-y" max="2" min="0.5" step="0.05" type="range" value="1"/>
+          <output>
+           1
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="flip-horizontal" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          <input id="flip-horizontal" type="checkbox"/>
+          Flip horizontally
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="flip-vertical" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          <input id="flip-vertical" type="checkbox"/>
+          Flip vertically
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="gaussian-blur" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Gaussian blur
+          <input id="gaussian-blur" max="20" min="0" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="median-blur" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Median Blur
+          <input id="median-blur" max="10" min="0" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="line-thickness" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Line thickness
+          <input id="line-thickness" max="10" min="-10" step="0.1" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+         <label>
+          <input id="light-lines" type="checkbox"/>
+          Light lines
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="box-blur" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          <input id="box-blur" type="checkbox"/>
+          Box blur
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="pixelize" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Pixelize
+          <input id="pixelize" max="64" min="0" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="crop" hidden="">
+        <div class="effect-parameters range-grid">
+         <div class="crop-margins">
+          <label>Top (px)<input id="crop-top" min="0" max="100000" step="1" type="number" value="0"/></label>
+          <label>Right (px)<input id="crop-right" min="0" max="100000" step="1" type="number" value="0"/></label>
+          <label>Bottom (px)<input id="crop-bottom" min="0" max="100000" step="1" type="number" value="0"/></label>
+          <label>Left (px)<input id="crop-left" min="0" max="100000" step="1" type="number" value="0"/></label>
+         </div>
+         <div class="button-row">
+          <button id="crop-select" type="button">Select area…</button>
+          <button id="crop-reset" type="button">Reset crop</button>
+         </div>
+         <small>Keep the selected rectangle. Cropping runs at this position in the pipeline.</small>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="dither" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          Dither
+          <input id="dither" max="8" min="0" type="range" value="0"/>
+          <output>
+           0
+          </output>
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="invert" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          <input id="invert" type="checkbox"/>
+          Invert
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="grayscale" hidden="">
+        <div class="effect-parameters range-grid">
+         <label>
+          <input id="grayscale" type="checkbox"/>
+          Grayscale
+         </label>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="replace" hidden="">
+        <div class="effect-parameters range-grid">
+         <fieldset>
+          <legend>
+           <label class="inline-control">
+            <input id="replace-enabled" type="checkbox"/>
+            Replace colour
+           </label>
+          </legend>
+          <div class="toggle-grid">
+           <label>
+            From
+            <input aria-label="From colour in hexadecimal" id="replace-from" pattern="#[0-9a-fA-F]{6}" type="text" value="#ffffff"/>
+           </label>
+           <label>
+            To
+            <input aria-label="To colour in hexadecimal" id="replace-to" pattern="#[0-9a-fA-F]{6}" type="text" value="#000000"/>
+           </label>
+           <button disabled="" id="replace-pick" type="button">
+            Pick From
+           </button>
+           <button disabled="" id="replace-pick-to" type="button">
+            Pick To
+           </button>
           </div>
-          <div class="canvas-viewport">
-            <div id="preview-stage" class="preview-stage">
-              <canvas id="output-canvas" role="img" aria-label="Rendered terminal art" hidden></canvas>
-              <div id="output-text" class="output-text" role="img" aria-label="Rendered terminal art as native browser text"></div>
-              <div id="overlay-tools" class="overlay-tools" aria-label="Text overlay editor"></div>
-            </div>
-            <p id="output-placeholder">Rendered output will appear here.</p>
+          <div class="range-grid">
+           <label>
+            Tolerance %
+            <input id="replace-tolerance" max="100" min="0" type="range" value="5"/>
+            <output>
+             5
+            </output>
+           </label>
           </div>
-          <details id="raw-output-panel" class="raw-output-panel">
-            <summary>Raw IRC/ANSI data</summary>
-            <textarea id="raw-output" rows="8" readonly></textarea>
-          </details>
-          <footer id="render-stats" class="render-stats" aria-label="Render statistics" aria-live="polite">
-            Render statistics will appear here.
-          </footer>
-        </section>
-      </main>
-    </form>
-
-    <script type="module" src="./main.js"></script>
+          <small>
+           Replaces matching colours in the finished art, including text overlays. Raise tolerance to include similar shades.
+          </small>
+          <div hidden="" id="replace-picker">
+           <p id="replace-picker-title">
+            Click a colour in the rendered art
+           </p>
+           <canvas aria-label="Visible output colour eyedropper" id="replace-canvas">
+           </canvas>
+           <button id="replace-cancel" type="button">
+            Cancel picking
+           </button>
+          </div>
+         </fieldset>
+        </div>
+       </div>
+       <div class="pipeline-effect" data-pipeline-effect="quantize" hidden="">
+        <div class="effect-parameters range-grid">
+         <fieldset>
+          <legend>
+           <label class="inline-control">
+            <input id="quantize-enabled" type="checkbox"/>
+            Quantize colours
+           </label>
+          </legend>
+          <div class="range-grid">
+           <label>
+            Maximum colours
+            <input id="quantize-colours" max="256" min="0" type="range" value="16"/>
+            <output>
+             16
+            </output>
+           </label>
+           <label>
+            Merge threshold %
+            <input id="quantize-threshold" max="100" min="0" step="0.5" type="range" value="3"/>
+            <output>
+             3
+            </output>
+           </label>
+          </div>
+          <label>
+           <input checked="" id="quantize-source" type="checkbox"/>
+           Clean source image before matching glyphs
+          </label>
+          <label>
+           Explicit palette (optional)
+           <textarea aria-describedby="quantize-help" id="quantize-palette" placeholder="#ffffff #000000 #ff8800" rows="2"></textarea>
+          </label>
+          <div aria-label="Chosen palette" class="button-row" id="quantize-swatches">
+          </div>
+          <div class="button-row">
+           <button id="quantize-current" type="button">
+            Use current art palette
+           </button>
+           <button id="quantize-auto" type="button">
+            Automatic palette
+           </button>
+          </div>
+          <small id="quantize-help">
+           Merge nearby shades first, then keep the most-used merged colours. Zero colours only merges shades. An explicit palette overrides both sliders. Uncheck source cleanup to edit only the finished art.
+          </small>
+         </fieldset>
+        </div>
+       </div>
+      </div>
+      <details class="effect-catalog" id="pipeline-add" open="">
+       <summary>
+        ＋ Add Effect…
+       </summary>
+       <label class="catalog-search">
+        Find effect
+        <input autocomplete="off" id="pipeline-filter" placeholder="brightness, blur, colour…" type="search"/>
+       </label>
+       <div id="pipeline-catalog">
+       </div>
+      </details>
+      <button id="reset-adjustments" type="button">
+       Reset adjustments
+      </button>
+     </section>
+     <section aria-labelledby="tab-glyphs" class="control-panel glyph-panel" data-control-tab-panel="glyphs" hidden="" id="panel-glyphs" role="tabpanel">
+      <h1 class="panel-heading">
+       Glyphs
+      </h1>
+      <label class="inline-control">
+       <input id="braille" type="checkbox"/>
+       Use Braille output instead of glyph groups
+      </label>
+      <div id="glyph-controls">
+       <div class="button-row">
+        <button id="glyph-default" type="button">
+         Default
+        </button>
+        <button id="glyph-smooth" type="button">
+         Smooth
+        </button>
+        <button id="glyph-all" type="button">
+         All
+        </button>
+        <button id="glyph-none" type="button">
+         None
+        </button>
+       </div>
+       <label>
+        Find a set
+        <input id="glyph-search" placeholder="blocks, legacy, box…" type="search"/>
+       </label>
+       <div aria-label="Glyph sets" class="glyph-groups" id="glyph-groups">
+       </div>
+       <section class="glyph-preview">
+        <h2 class="group-heading" id="glyph-preview-label">
+         Glyphs
+        </h2>
+        <div class="glyph-preview-grid" id="glyph-preview-grid">
+        </div>
+        <small id="glyph-preview-count">
+        </small>
+       </section>
+       <div class="control-grid">
+        <label>
+         Include characters
+         <input id="include" placeholder="@#%" type="text"/>
+        </label>
+        <label>
+         Exclude characters
+         <input id="exclude" type="text"/>
+        </label>
+        <label class="wide-control">
+         Include Unicode ranges
+         <textarea id="include-ranges" placeholder="2600-26FF (one per line)" rows="2"></textarea>
+        </label>
+        <label class="wide-control">
+         Exclude Unicode ranges
+         <textarea id="exclude-ranges" placeholder="1F600-1F64F (one per line)" rows="2"></textarea>
+        </label>
+       </div>
+      </div>
+     </section>
+     <section aria-labelledby="tab-text" class="control-panel text-panel" data-control-tab-panel="text" hidden="" id="panel-text" role="tabpanel">
+      <h1 class="panel-heading">
+       Text Settings
+      </h1>
+      <div class="button-row">
+       <button id="overlay-add" type="button">
+        Add text overlay
+       </button>
+       <button class="danger" id="overlay-delete" type="button">
+        Delete selected
+       </button>
+      </div>
+      <p class="overlay-instructions">
+       Drag across empty output cells to create a text box. Drag a box to move it, or its corner handle to resize it.
+      </p>
+      <label>
+       Overlays
+       <select class="overlay-list" id="overlay-list" size="5">
+       </select>
+      </label>
+      <p class="empty-note" id="overlay-empty">
+       Add an overlay or enable OCR to populate this list.
+      </p>
+      <div hidden="" id="overlay-editor">
+       <div class="overlay-colors">
+        <label>
+         <input id="overlay-foreground-enabled" type="checkbox"/>
+         Foreground
+         <input id="overlay-foreground" type="color" value="#ffffff"/>
+        </label>
+        <label>
+         <input id="overlay-background-enabled" type="checkbox"/>
+         Background
+         <input id="overlay-background" type="color" value="#000000"/>
+        </label>
+       </div>
+       <label class="wide-control">
+        Text
+        <textarea id="overlay-text" rows="4"></textarea>
+       </label>
+       <div class="control-grid">
+        <label>
+         X
+         <input id="overlay-x" step="1" type="number" value="0"/>
+        </label>
+        <label>
+         Y
+         <input id="overlay-y" step="1" type="number" value="0"/>
+        </label>
+        <label>
+         Width
+         <input id="overlay-width" min="0" step="1" type="number" value="1"/>
+        </label>
+        <label>
+         Height
+         <input id="overlay-height" min="0" step="1" type="number" value="1"/>
+        </label>
+       </div>
+       <div class="toggle-grid overlay-formatting">
+        <label>
+         <input id="overlay-auto-grow" type="checkbox"/>
+         Fit to text
+        </label>
+        <label>
+         <input id="overlay-wrap" type="checkbox"/>
+         Wrap
+        </label>
+        <label>
+         <input id="overlay-figlet" type="checkbox"/>
+         FIGlet
+        </label>
+        <label>
+         <input id="overlay-bold" type="checkbox"/>
+         Bold
+        </label>
+        <label>
+         <input id="overlay-italic" type="checkbox"/>
+         Italic
+        </label>
+        <label>
+         <input id="overlay-underline" type="checkbox"/>
+         Underline
+        </label>
+       </div>
+       <label hidden="" id="overlay-figlet-font-control">
+        FIGlet font
+        <select id="overlay-figlet-font">
+        </select>
+       </label>
+       <small id="overlay-figlet-status">
+       </small>
+      </div>
+     </section>
+     <div aria-label="Selected control help" class="control-help">
+      <strong id="control-help-title">
+       General
+      </strong>
+      <p id="control-help-text">
+       Choose a control to see its description. Drag numbers to adjust; Space toggles the last value.
+      </p>
+     </div>
+    </aside>
+    <div aria-controls="panel-general panel-pipeline panel-glyphs panel-text" aria-label="Resize control pane" aria-orientation="vertical" class="pane-divider" id="pane-divider" role="separator" tabindex="0" title="Drag to resize. Double-click to reset.">
+    </div>
+    <section aria-label="Output workspace" class="document-area">
+     <div class="document-toolbar">
+      <span class="pane-title">
+       Output
+      </span>
+      <input accept="image/*,.svg" class="visually-hidden" id="image" type="file"/>
+      <label class="file-button" for="image">
+       Open
+      </label>
+      <button class="primary" id="render-button" type="submit">
+       Render
+      </button>
+      <button hidden="" id="render-cancel" type="button">Stop</button>
+      <button class="copy-output-button" data-copy-output="" disabled="" id="copy-output-toolbar" type="button">
+       Copy
+      </button>
+      <p aria-live="polite" id="status" role="status">
+       Loading WebAssembly…
+      </p>
+      <div aria-label="Glyph detail presets" class="glyph-preset-toolbar">
+       <button aria-pressed="false" data-glyph-preset="smooth" type="button">Smooth</button>
+       <button aria-pressed="false" data-glyph-preset="balanced" type="button">Balanced</button>
+       <button aria-pressed="false" data-glyph-preset="detailed" type="button">Detailed</button>
+      </div>
+      <div aria-label="Edge repair progress" class="render-progress" hidden="" id="render-progress" role="progressbar">
+       <span id="render-progress-label"></span>
+      </div>
+     </div>
+     <div class="canvas-viewport" id="canvas-viewport">
+      <div class="preview-stage" id="preview-stage">
+       <canvas aria-label="Rendered terminal art" hidden="" id="output-canvas" role="img">
+       </canvas>
+       <div aria-label="Rendered terminal art as native browser text" class="output-text" id="output-text" role="img">
+       </div>
+       <div aria-label="Text overlay editor" class="overlay-tools" id="overlay-tools">
+       </div>
+      </div>
+      <div class="output-empty" id="output-placeholder">
+       <strong>
+        No image loaded
+       </strong>
+       <p>
+        Open an image, paste from the clipboard,
+        <br/>
+        or drop a file into this window.
+       </p>
+       <button data-click-target="image" type="button">
+        Open image
+        <kbd>
+         Ctrl+O
+        </kbd>
+       </button>
+      </div>
+     </div>
+     <details class="raw-output-panel" id="raw-output-panel">
+      <summary>
+       Raw IRC/ANSI data
+      </summary>
+      <textarea id="raw-output" readonly="" rows="8"></textarea>
+     </details>
+    </section>
+   </main>
+   <footer class="app-footer">
+    <div class="status-line">
+     <div aria-label="Render statistics" aria-live="polite" class="render-stats" id="render-stats">
+      No render yet.
+     </div>
+    </div>
+    <div aria-label="Keyboard shortcuts" class="shortcut-bar">
+     <span>
+      <kbd>
+       Alt+1–4
+      </kbd>
+      Panes
+     </span>
+     <span>
+      <kbd>
+       Tab
+      </kbd>
+      Focus
+     </span>
+     <span>
+      <kbd>
+       Space
+      </kbd>
+      Toggle
+     </span>
+     <span>
+      <kbd>
+       Alt+↑↓
+      </kbd>
+      Navigate
+     </span>
+     <span>
+      <kbd>
+       Ctrl+O
+      </kbd>
+      Open
+     </span>
+     <span>
+      <kbd>
+       Ctrl+V
+      </kbd>
+      Paste
+     </span>
+     <span>
+      <kbd>
+       Ctrl+S
+      </kbd>
+      Save
+     </span>
+     <span class="shortcut-note">
+      Drag divider to resize
+     </span>
+    </div>
+   </footer>
+  </form>
+  <script src="./main.js" type="module">
+  </script>
   </body>
 </html>

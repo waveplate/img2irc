@@ -57,6 +57,21 @@ mkdir -p \
     "$staging_dir/assets/ocr" \
     "$staging_dir/vendor/ort" \
     "$staging_dir/vendor/paddleocr/assets"
+
+# Prefer the sibling development checkout, retaining a bundled copy so an
+# img2irc-only checkout can still build and deploy without that directory.
+irc2html_source="${IRC2HTML_SOURCE:-$project_root/../irc2html/src/index.js}"
+if [[ ! -f "$irc2html_source" ]]; then
+    irc2html_source="$project_root/web/vendor/irc2html.js"
+fi
+"$project_root/node_modules/.bin/esbuild" "$irc2html_source" \
+    --bundle --format=esm --platform=browser --target=es2020 \
+    --outfile="$staging_dir/vendor/irc2html.js"
+irc2html_license="$(dirname "$irc2html_source")/../LICENSE"
+if [[ ! -f "$irc2html_license" ]]; then
+    irc2html_license="$project_root/web/vendor/irc2html.LICENSE"
+fi
+install -m 0644 "$irc2html_license" "$staging_dir/vendor/irc2html.LICENSE"
 install -m 0644 web/index.html "$staging_dir/index.html"
 install -m 0644 web/main.js "$staging_dir/main.js"
 install -m 0644 web/styles.css "$staging_dir/styles.css"
@@ -239,6 +254,20 @@ PYTHON
 # `dist` is generated output owned by this script. Replace it only after every
 # build and copy step succeeds, so a failed build leaves the prior web root
 # intact.
+python3 - "$staging_dir" <<'PYTHON'
+import gzip, hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+assets = [root / "pkg/img2irc_rs_bg.wasm", root / "glyphs.json"]
+assets += sorted(path for path in (root / "assets/fonts").iterdir() if path.suffix in {".ttf", ".otf"})
+digest = hashlib.sha256()
+for asset in assets:
+    data = asset.read_bytes()
+    digest.update(str(asset.relative_to(root)).encode())
+    digest.update(data)
+    if asset.suffix in {".wasm", ".ttf", ".otf"}:
+        asset.with_name(asset.name + ".gz").write_bytes(gzip.compress(data, compresslevel=9, mtime=0))
+(root / "js/build-info.js").write_text(f"export const BUILD_ID = {json.dumps(digest.hexdigest()[:16])};\n")
+PYTHON
 rm -rf -- "$output_dir"
 mv "$staging_dir" "$output_dir"
 staging_dir=""

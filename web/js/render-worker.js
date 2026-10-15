@@ -1,4 +1,5 @@
 import init, { Img2Irc } from "../pkg/img2irc_rs.js";
+import { compressedAsset } from "./asset-cache.js";
 
 let renderer;
 let pendingFigletFonts;
@@ -24,7 +25,9 @@ self.addEventListener("message", (event) => {
       case "set-font": {
         const bytes = new Uint8Array(event.data.bytes);
         if (renderer) renderer.setFont(bytes);
-        else renderer = new Img2Irc(bytes);
+        else {
+          renderer = new Img2Irc(bytes);
+        }
         if (pendingFigletFonts) {
           renderer.setFigletFonts(pendingFigletFonts);
           pendingFigletFonts = null;
@@ -49,12 +52,19 @@ self.addEventListener("message", (event) => {
         break;
       case "render": {
         const started = performance.now();
-        const result = requireRenderer().renderCurrent(event.data.options);
+        const result = requireRenderer().renderCurrent(event.data.options, (progress) => {
+          self.postMessage({ id, type: "progress", progress });
+        });
         const renderMs = performance.now() - started;
         const transfer = result.previewRgba?.buffer ? [result.previewRgba.buffer] : [];
         respond(id, { result, renderMs }, transfer);
         break;
       }
+      case "optimize-font-size":
+        respond(id, requireRenderer().optimizeFontSize(event.data.options, (progress) => {
+          self.postMessage({ id, type: "progress", progress });
+        }));
+        break;
       case "get-transformed-image": {
         const result = requireRenderer().getTransformedImage(event.data.options);
         const transfer = result.rgba?.buffer ? [result.rgba.buffer] : [];
@@ -74,7 +84,7 @@ self.addEventListener("message", (event) => {
 });
 
 try {
-  await init();
+  await init({ module_or_path: await compressedAsset(new URL("../pkg/img2irc_rs_bg.wasm", import.meta.url)) });
   self.postMessage({ type: "ready" });
 } catch (error) {
   self.postMessage({ type: "fatal", error: errorMessage(error) });

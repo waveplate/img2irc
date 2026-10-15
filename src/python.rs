@@ -26,6 +26,7 @@ struct PythonTimings {
     smoothing_prepare_ms: f64,
     smoothing_search_ms: f64,
     shape_refine_ms: f64,
+    glyph_search_ms: f64,
     final_score_ms: f64,
     encode_ms: f64,
     contour_cache_hits: u64,
@@ -50,6 +51,7 @@ struct PythonResult {
     total_pixels: u64,
     dynamic_scaling_count: u64,
     score: f64,
+    perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
     longest_line_bytes: usize,
     preview_width: u32,
     preview_height: u32,
@@ -149,6 +151,12 @@ fn milliseconds(duration: std::time::Duration) -> f64 {
 #[pyfunction]
 fn default_options_json() -> PyResult<String> {
     serde_json::to_string(&generator::default_options())
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+#[pyfunction]
+fn option_aliases_json() -> PyResult<String> {
+    serde_json::to_string(&generator::render_option_aliases())
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
@@ -553,6 +561,7 @@ fn generate_buffers(
         total_pixels: output.result.total_pixels,
         dynamic_scaling_count: output.result.dynamic_scaling_count,
         score: output.result.score,
+        perceptual_score: output.result.perceptual_score,
         longest_line_bytes: output.result.longest_line_bytes,
         preview_width,
         preview_height,
@@ -567,6 +576,7 @@ fn generate_buffers(
             smoothing_prepare_ms: milliseconds(profile.smoothing_prepare),
             smoothing_search_ms: milliseconds(profile.smoothing_search),
             shape_refine_ms: milliseconds(profile.shape_refine),
+            glyph_search_ms: milliseconds(profile.glyph_search),
             final_score_ms: milliseconds(profile.final_score),
             encode_ms: milliseconds(profile.encode),
             contour_cache_hits: profile.contour_cache_hits,
@@ -639,6 +649,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("ANSI256", palette_rgb(&crate::palette::ANSI256))?;
     module.add("IRC99", palette_rgb(&crate::palette::IRC99))?;
     module.add_function(wrap_pyfunction!(default_options_json, module)?)?;
+    module.add_function(wrap_pyfunction!(option_aliases_json, module)?)?;
     module.add_function(wrap_pyfunction!(resolved_options_json, module)?)?;
     module.add_function(wrap_pyfunction!(generate_json, module)?)?;
     module.add_function(wrap_pyfunction!(process_json, module)?)?;

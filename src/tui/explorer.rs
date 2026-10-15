@@ -14,6 +14,17 @@ use std::{fs::FileType, io::Result, path::PathBuf};
 
 pub type FileFilter = Arc<dyn Fn(&File) -> bool + Send + Sync>;
 
+pub(super) fn preview_image(path: &std::path::Path) -> std::result::Result<image::DynamicImage, Box<dyn std::error::Error>> {
+    if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("svg")) {
+        return Ok(image::open(path)?);
+    }
+    let bytes = std::fs::read(path)?;
+    let svg = crate::rasterize_svg(&bytes, 512)?;
+    let image = image::RgbaImage::from_raw(svg.get_width(), svg.get_height(), svg.get_raw_pixels())
+        .ok_or("Invalid SVG preview")?;
+    Ok(image::DynamicImage::ImageRgba8(image))
+}
+
 #[derive(Clone, Educe)]
 #[educe(Debug, PartialEq, Eq, Hash)]
 pub struct FileExplorer {
@@ -146,6 +157,12 @@ impl FileExplorer {
                     self.selected = 0;
                 }
             }
+            Input::Jump(letter) => {
+                let prefix = letter.to_lowercase().to_string();
+                if let Some(index) = self.files.iter().position(|file| file.name.to_lowercase().starts_with(&prefix)) {
+                    self.selected = index;
+                }
+            }
             _ => {}
         }
 
@@ -264,6 +281,7 @@ pub enum Input {
     Left,
     Right,
     ToggleShowHidden,
+    Jump(char),
     None,
 }
 
@@ -272,17 +290,12 @@ impl From<&Event> for Input {
         if let Event::Key(key) = value {
             if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                 return match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => Input::Down,
-                    KeyCode::Char('k') | KeyCode::Up => Input::Up,
+                    KeyCode::Down => Input::Down,
+                    KeyCode::Up => Input::Up,
                     KeyCode::Left | KeyCode::Backspace => Input::Left,
-                    KeyCode::Char('h') => {
-                        if key.modifiers.contains(KeyModifiers::CONTROL) {
-                            Input::ToggleShowHidden
-                        } else {
-                            Input::Left
-                        }
-                    }
-                    KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => Input::Right,
+                    KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => Input::ToggleShowHidden,
+                    KeyCode::Right | KeyCode::Enter => Input::Right,
+                    KeyCode::Char(c) if c.is_alphabetic() && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => Input::Jump(c),
                     KeyCode::Home => Input::Home,
                     KeyCode::End => Input::End,
                     KeyCode::PageUp => Input::PageUp,

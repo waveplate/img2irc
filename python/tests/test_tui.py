@@ -36,6 +36,19 @@ class TuiTests(unittest.TestCase):
         self.assertTrue(app.change_selected(1))
         self.assertTrue(app.options["invert"])
 
+    def test_ocr_advanced_collapses_without_resetting_values(self):
+        app = PythonTui("picture.png", ocr=True)
+        app.section_index = SECTIONS.index("OCR")
+        self.assertNotIn("ocr_box_threshold", {c.key for c in app.controls})
+        app.options["ocr_box_threshold"] = 0.45
+        self.select(app, "show_ocr_advanced")
+        app.change_selected(1)
+        self.assertIn("ocr_box_threshold", {c.key for c in app.controls})
+        self.select(app, "show_ocr_advanced")
+        app.change_selected(1)
+        self.assertNotIn("ocr_box_threshold", {c.key for c in app.controls})
+        self.assertEqual(app.options["ocr_box_threshold"], 0.45)
+
     def test_output_names(self):
         self.assertEqual(
             _default_output_path("picture.jpg", "Ansi24"), Path("picture.img2irc.ans")
@@ -47,6 +60,36 @@ class TuiTests(unittest.TestCase):
             _default_output_path("https://example.com/picture.jpg", "Ansi24"),
             Path("img2irc-output.ans"),
         )
+
+    def test_space_toggles_numeric_values_and_remembers_manual_edits(self):
+        app = PythonTui("picture.png")
+        for key, value, off in (("pixelize", 5, 0), ("brightness", -45, 0)):
+            with self.subTest(key=key):
+                self.select(app, key)
+                app.options[key] = value
+                self.assertTrue(app.toggle_selected())
+                self.assertEqual(app.options[key], off)
+                self.assertTrue(app.toggle_selected())
+                self.assertEqual(app.options[key], value)
+        self.select(app, "pixelize")
+        app.options["pixelize"] = 1
+        app.change_selected(-1)
+        self.assertEqual(app.options["pixelize"], 0)
+        app.toggle_selected()
+        self.assertEqual(app.options["pixelize"], 1)
+
+    def test_space_respects_numeric_minimum_and_disabled_controls(self):
+        app = PythonTui("picture.png")
+        app.options["smooth"] = True
+        self.select(app, "smooth_candidates")
+        app.options["smooth_candidates"] = 7
+        app.toggle_selected()
+        self.assertEqual(app.options["smooth_candidates"], 1)
+        app.toggle_selected()
+        self.assertEqual(app.options["smooth_candidates"], 7)
+        app.options["smooth"] = False
+        self.assertFalse(app.toggle_selected())
+        self.assertEqual(app.options["smooth_candidates"], 7)
 
     @staticmethod
     def select(app, key):
@@ -217,11 +260,11 @@ class TuiTests(unittest.TestCase):
         self.assertEqual(
             keys,
             {
-                "score_fix",
-                "score_fix_candidates",
-                "score_fix_orderings",
-                "score_fix_geometry_first",
-                "score_fix_neighborhood_guard",
+                "smooth",
+                "smooth_candidates",
+                "smooth_orders",
+                "smooth_shapes",
+                "smooth_neighbors",
                 "contour_bending_weight",
                 "contour_endpoint_weight",
                 "contour_junction_weight",
@@ -232,11 +275,11 @@ class TuiTests(unittest.TestCase):
             },
         )
         app = PythonTui("picture.png")
-        self.select(app, "score_fix_candidates")
+        self.select(app, "smooth_candidates")
         self.assertFalse(app.change_selected(1))
-        self.select(app, "score_fix")
+        self.select(app, "smooth")
         self.assertTrue(app.change_selected(1))
-        for key in keys - {"score_fix"}:
+        for key in keys - {"smooth"}:
             self.select(app, key)
             # Bending/junction already start at the top of their sliders.
             direction = (
@@ -245,23 +288,24 @@ class TuiTests(unittest.TestCase):
                 in {
                     "contour_bending_weight",
                     "contour_junction_weight",
-                    "score_fix_neighborhood_guard",
+                    "smooth_neighbors",
+                    "smooth_orders",
                 }
                 else 1
             )
             self.assertTrue(app.change_selected(direction), key)
-        self.assertEqual(app.options["score_fix_candidates"], 13)
-        self.assertEqual(app.options["score_fix_orderings"], 2)
-        self.assertTrue(app.options["score_fix_geometry_first"])
-        self.assertFalse(app.options["score_fix_neighborhood_guard"])
+        self.assertEqual(app.options["smooth_candidates"], 6)
+        self.assertEqual(app.options["smooth_orders"], 4)
+        self.assertTrue(app.options["smooth_shapes"])
+        self.assertFalse(app.options["smooth_neighbors"])
 
     def test_glyph_sets_and_individual_characters_change_render_options(self):
         app = PythonTui("picture.png")
         app._glyph_catalog = {"default": " ▀", "blocks.full": "█"}
         app.set_glyph_groups(["blocks.full"])
-        self.assertEqual(app.options["blocks"], ["blocks.full"])
+        self.assertEqual(app.options["glyphs"], ["blocks.full"])
         app.set_characters(" ▀█")
-        self.assertEqual(app.options["blocks"], [])
+        self.assertEqual(app.options["glyphs"], [])
         self.assertEqual(app.options["include"], " ▀█")
         app.set_selected_characters(" ▀█", {" ", "█"})
         self.assertEqual(app.options["exclude"], ["▀"])
@@ -289,6 +333,8 @@ class TuiTests(unittest.TestCase):
 
         app = PythonTui("picture.png")
         for control in CONTROLS:
+            if control.key == "show_ocr_advanced":
+                continue  # View state is deliberately excluded from render options.
             with self.subTest(control=control.key):
                 self.assertIn(control.key, app.options)
                 values = (
@@ -313,21 +359,21 @@ class TuiTests(unittest.TestCase):
             self.assertIn("▀", selected)
             app.set_selected_characters(characters, {" ", "█"})
             app.options.update(
-                score_fix=True,
-                score_fix_candidates=3,
-                score_fix_orderings=2,
-                score_fix_geometry_first=True,
-                score_fix_neighborhood_guard=False,
+                smooth=True,
+                smooth_candidates=3,
+                smooth_orders=2,
+                smooth_shapes=True,
+                smooth_neighbors=False,
                 contour_bending_weight=0.5,
                 contour_peak_weight=0.2,
             )
             result = app.render()
-            self.assertEqual(result.options["score_fix_candidates"], 3)
-            self.assertEqual(result.options["score_fix_orderings"], 2)
+            self.assertEqual(result.options["smooth_candidates"], 3)
+            self.assertEqual(result.options["smooth_orders"], 2)
             self.assertEqual(result.options["include"], " ▀█")
             self.assertEqual(result.options["exclude"], ["▀"])
-            self.assertTrue(result.options["score_fix_geometry_first"])
-            self.assertFalse(result.options["score_fix_neighborhood_guard"])
+            self.assertTrue(result.options["smooth_shapes"])
+            self.assertFalse(result.options["smooth_neighbors"])
             self.assertEqual(result.options["contour_bending_weight"], 0.5)
             self.assertAlmostEqual(result.options["contour_peak_weight"], 0.2)
             self.assertTrue(

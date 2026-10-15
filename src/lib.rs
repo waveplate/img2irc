@@ -11,7 +11,8 @@ pub mod effects;
 #[cfg(any(feature = "ocr", feature = "web"))]
 mod figlet_text;
 pub mod font;
-#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+pub mod font_scan;
+#[cfg(any(feature = "ocr", feature = "web"))]
 mod ocr_layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod generator;
@@ -101,7 +102,10 @@ pub mod ocr {
     }
 }
 pub mod palette;
+pub mod perceptual_score;
+pub mod output_colours;
 pub mod pipeline;
+pub mod superpixels;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod colorpicker;
@@ -154,10 +158,11 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         crop = Some((x1, y1, x2, y2));
     }
 
-    RenderArgs {
+    let mut render_args = RenderArgs {
         as_preview: false,
         clear_cache: args.clear_cache,
         auto_optimize_batch_size: args.auto_optimize_batch_size,
+        optimize_log: args.optimize_log.clone(),
 
         image: args.image.clone(),
         width: args
@@ -204,6 +209,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         pixelize: param_base(&args.pixelize) as i32,
         box_blur: args.box_blur,
         gaussian_blur: param_base(&args.gaussian_blur) as i32,
+        median_blur: args.median_blur,
         luma_blur: param_base(&args.luma_blur) as i32,
         oil: args.oil.clone(),
         halftone: args.halftone,
@@ -230,11 +236,19 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         edge_detection: args.edge_detection,
         show_discontinuities: args.show_discontinuities,
         discontinuity_threshold: args.discontinuity_threshold,
-        score_fix: args.smooth,
-        score_fix_candidates: args.smooth_candidates,
-        score_fix_orderings: args.smooth_orders,
-        score_fix_geometry_first: args.smooth_shapes,
-        score_fix_neighborhood_guard: args.smooth_neighbors,
+        smooth: args.smooth,
+        perceptual_score: args.perceptual_score,
+        region_guidance: args.region_guidance,
+        glyph_search: args.glyph_search,
+        show_glyph_defects: args.show_glyph_defects,
+        glyph_search_candidates: args.glyph_search_candidates,
+        glyph_search_passes: args.glyph_search_passes,
+        glyph_search_finalists: args.glyph_search_finalists,
+        smooth_candidates: args.smooth_candidates,
+        smooth_orders: args.smooth_orders,
+        smooth_shapes: args.smooth_shapes,
+        smooth_neighbors: args.smooth_neighbors,
+        superpixel_warp: args.superpixel_warp,
         contour_bending_weight: args.contour_bending_weight,
         contour_endpoint_weight: args.contour_endpoint_weight,
         contour_junction_weight: args.contour_junction_weight,
@@ -295,7 +309,32 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         overlays: Vec::new(),
         config_dir: args.config_dir.clone(),
         figlet_dir: args.figlet_dir.clone(),
+    };
+    let quantize = args.quantize_colours.is_some() || args.quantize_threshold.is_some()
+        || args.quantize_palette.is_some() || args.quantize_source;
+    if quantize || !args.replace_colour.is_empty() || args.replace_from.is_some() {
+        use crate::pipeline::ImageEffect;
+        let mut pipeline = crate::effects::default_pipeline(&render_args);
+        let quantizer = ImageEffect::QuantizePalette {
+            colours: args.quantize_colours.unwrap_or(16),
+            threshold: args.quantize_threshold.unwrap_or(3.0),
+            palette: args.quantize_palette.as_ref().map(|palette| palette.0.clone()).unwrap_or_default(),
+            source: args.quantize_source,
+        };
+        if quantize && args.quantize_source { pipeline.push(quantizer.clone()); }
+        for replacement in &args.replace_colour {
+            pipeline.push(ImageEffect::ReplaceColour { from: replacement.from, to: replacement.to,
+                tolerance: args.replace_tolerance.unwrap_or(5.0) });
+        }
+        if let (Some(from), Some(to)) = (args.replace_from, args.replace_to) {
+            pipeline.push(ImageEffect::ReplaceColour { from, to, tolerance: args.replace_tolerance.unwrap_or(5.0) });
+        }
+        // A finished-art quantizer runs last so replacements cannot exceed its
+        // palette limit. Source cleanup runs before all finished-art edits.
+        if quantize && !args.quantize_source { pipeline.push(quantizer); }
+        render_args.pipeline = pipeline;
     }
+    render_args
 }
 
 /// Build render arguments for the interactive TUI.
@@ -321,6 +360,7 @@ pub fn prepare_canvas(
     image: PhotonImage,
 ) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = effects::apply_effects(args, glyphs, image);
+    let image = apply_superpixel_warp(args, glyphs, image);
 
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(path) = &args.save {
@@ -347,6 +387,29 @@ pub fn prepare_canvas(
         None
     };
     (canvas, luma_canvas)
+}
+
+/// Apply the sextant-lattice deformation after source geometry is resolved.
+/// Braille uses a different lattice and deliberately skips this pass.
+pub fn apply_superpixel_warp(
+    args: &RenderArgs,
+    glyphs: &font::GlyphStore,
+    image: PhotonImage,
+) -> PhotonImage {
+    if args.braille || args.superpixel_warp == 0 {
+        return image;
+    }
+    let warped = superpixels::warp(image, glyphs.metrics, args.superpixel_warp);
+    if warped.stats.anchors > 0 {
+        log::info!(
+            "superpixel warp: anchors={} displacement={:.3} jacobian={:.3} safety={:.3}",
+            warped.stats.anchors,
+            warped.stats.max_displacement,
+            warped.stats.min_jacobian,
+            warped.stats.safety_scale,
+        );
+    }
+    warped.image
 }
 
 pub fn render_from_canvas(
@@ -426,6 +489,22 @@ pub fn resolve_auto_font_size(
 }
 
 pub fn render_output(
+    args: RenderArgs,
+    glyph_store: &font::GlyphStore,
+    image: PhotonImage,
+    glyphs: &[draw::FastGlyph],
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> draw::RenderResult {
+    let result = render_base_output(args.clone(), glyph_store, image, glyphs, abort_flag);
+    output_colours::apply(
+        &result, glyph_store, &args.pipeline, args.render,
+        args.as_preview, args.grayscale_tolerance,
+    )
+}
+
+/// Render the source once, leaving output colour edits to the display layer.
+/// The TUI preview and auto-optimizer share this path so scores agree.
+pub(crate) fn render_base_output(
     mut args: RenderArgs,
     glyph_store: &font::GlyphStore,
     image: PhotonImage,
@@ -516,8 +595,8 @@ pub fn write_encoded_to<W: Write>(
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_image_from_url_or_path(
     image: &str,
-    args: &RenderArgs,
-    glyphs: &font::GlyphStore,
+    _args: &RenderArgs,
+    _glyphs: &font::GlyphStore,
 ) -> Result<PhotonImage, Box<dyn Error>> {
     let bytes = match Url::parse(image) {
         Ok(url) => {
@@ -533,40 +612,8 @@ pub async fn load_image_from_url_or_path(
             && std::str::from_utf8(&bytes[0..10.min(bytes.len())])
                 .map_or(false, |s| s.trim_start().starts_with('<')));
 
-    if is_svg_potential {
-        // Try detecting SVG
-        let opt = resvg::usvg::Options::default();
-        let mut fontdb = resvg::usvg::fontdb::Database::new();
-        fontdb.load_system_fonts(); // Load system fonts to support text in SVGs
-
-        if let Ok(tree) = resvg::usvg::Tree::from_data(&bytes, &opt, &fontdb) {
-            let size = tree.size();
-            let (w, h) = effects::calculate_dimensions(args, glyphs, size.width(), size.height());
-
-            log::info!("Detected SVG. Rendering at {}x{}", w, h);
-
-            let mut pixmap = tiny_skia::Pixmap::new(w, h).ok_or("Failed to create SVG pixmap")?;
-            let render_ts =
-                tiny_skia::Transform::from_scale(w as f32 / size.width(), h as f32 / size.height());
-
-            resvg::render(&tree, render_ts, &mut pixmap.as_mut());
-
-            // Convert RGBA buffer to PhotonImage
-            // tiny-skia uses premultiplied alpha. We might need to demultiply if strict correctness is required, but for
-            // terminal output, it's often negligible. However, let's demultiply to be safe for effects.
-            let mut data = pixmap.data().to_vec();
-            for chunk in data.chunks_mut(4) {
-                let a = chunk[3];
-                if a > 0 && a < 255 {
-                    let scale = 255.0 / a as f32;
-                    chunk[0] = (chunk[0] as f32 * scale).min(255.0) as u8;
-                    chunk[1] = (chunk[1] as f32 * scale).min(255.0) as u8;
-                    chunk[2] = (chunk[2] as f32 * scale).min(255.0) as u8;
-                }
-            }
-
-            return Ok(PhotonImage::new(data, w, h));
-        }
+    if is_svg_potential || image.split('?').next().is_some_and(|path| path.to_lowercase().ends_with(".svg")) {
+        return rasterize_svg(&bytes, 2048);
     }
 
     // Fallback to standard image loading
@@ -577,9 +624,62 @@ pub async fn load_image_from_url_or_path(
     }
 }
 
+/// Keep SVG source pixels independent of render settings, just like a loaded
+/// raster image. Output geometry and effects are applied once, during rendering.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn rasterize_svg(bytes: &[u8], max_side: u32) -> Result<PhotonImage, Box<dyn Error>> {
+    let mut fontdb = resvg::usvg::fontdb::Database::new();
+    fontdb.load_system_fonts();
+    let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default(), &fontdb)?;
+    let size = tree.size();
+    let scale = max_side as f32 / size.width().max(size.height());
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or("Failed to create SVG pixmap")?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    let mut pixels = pixmap.data().to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        if pixel[3] > 0 && pixel[3] < 255 {
+            let factor = 255.0 / pixel[3] as f32;
+            for channel in &mut pixel[..3] { *channel = (*channel as f32 * factor).min(255.0) as u8; }
+        }
+    }
+    Ok(PhotonImage::new(pixels, width, height))
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+
+    #[test]
+    fn base_render_applies_sizing_and_pipeline_once() {
+        let mut args = crate::generator::default_options();
+        args.width = Some(16);
+        args.font_size = 16.0;
+        args.include = Some("█".into());
+        args.render = crate::args::Render::Ansi24;
+        args.trim = Some((1, 2, 3, 4));
+        args.pipeline = vec![crate::pipeline::ImageEffect::Invert];
+        // A nonempty pipeline overrides legacy effect flags. Clearing it
+        // after preprocessing would incorrectly apply this effect as well.
+        args.sepia = true;
+        let glyphs = crate::font::GlyphStore {
+            glyphs: vec![('█', vec![vec![1; 3]; 7], "test".into())],
+            groups: std::collections::HashMap::new(),
+            selected: std::collections::HashSet::from(['█']),
+            metrics: (3, 7),
+            float_metrics: (2.5, 7.4),
+        };
+        let fast = crate::draw::prepare_glyphs(&glyphs, &args);
+        let source = photon_rs::PhotonImage::new(vec![255; 48 * 32 * 4], 48, 32);
+        let result = crate::render_base_output(args, &glyphs, source, &fast, None);
+        // The trimmed source is 42x28: round(16 * (2.5/7.4) / (42/28)) = 4.
+        // Sizing a second time from bitmap dimensions loses a row.
+        assert_eq!(result.grid.len(), 4);
+        assert!(result.grid.iter().all(|row| row.len() == 16));
+        assert!(result.grid.iter().flatten().all(|cell| cell.fg == [0; 3]));
+        assert!(result.score.is_finite());
+    }
 
     #[test]
     fn zero_cli_width_means_auto() {
@@ -731,6 +831,36 @@ mod tests {
         assert_eq!(args.smooth_orders, 3);
         assert!(args.smooth_shapes);
         assert!(!args.smooth_neighbors);
+    }
+
+    #[test]
+    fn smoothing_and_scoring_defaults_can_be_disabled_and_round_trip() {
+        let defaults = crate::generator::default_options();
+        assert_eq!(defaults.smooth_candidates, 5);
+        assert_eq!(defaults.smooth_orders, 5);
+        assert!(defaults.perceptual_score);
+        assert!(!defaults.smooth);
+        let disabled = crate::args::Args::parse_from([
+            "img2irc", "--perceptual-score=false",
+        ]);
+        assert!(!disabled.perceptual_score);
+        assert!(crate::args::Args::try_parse_from([
+            "img2irc", "--smooth", "--perceptual-score", "photo.png",
+        ]).is_ok());
+        let args = crate::args::Args::parse_from(["img2irc", "--perceptual-score"]);
+        let render = crate::args_to_render_args(&args);
+        assert!(render.perceptual_score);
+        assert!(!render.smooth);
+        let mut saved = serde_json::to_value(&render).unwrap();
+        assert!(serde_json::from_value::<crate::args::RenderArgs>(saved.clone())
+            .unwrap()
+            .perceptual_score);
+        saved.as_object_mut().unwrap().remove("perceptual_score");
+        assert!(serde_json::from_value::<crate::args::RenderArgs>(saved.clone())
+            .unwrap()
+            .perceptual_score);
+        saved["perceptual_score"] = false.into();
+        assert!(!serde_json::from_value::<crate::args::RenderArgs>(saved).unwrap().perceptual_score);
     }
 
     #[tokio::test]

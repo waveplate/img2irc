@@ -24,6 +24,10 @@ struct GeometryKey {
     filter: args::SamplingFilter,
     font: Vec<String>,
     font_size: u32,
+    // Browser font bytes can change while the CLI font names stay the same.
+    // Both raster dimensions and terminal advances determine the resize.
+    glyph_metrics: (usize, usize),
+    glyph_float_metrics: (u32, u32),
     blocks: Vec<String>,
     exclude: Vec<char>,
     exclude_range: Vec<String>,
@@ -214,6 +218,8 @@ fn resize_for_output(
         filter: args.filter,
         font: args.font.clone(),
         font_size: args.font_size.to_bits(),
+        glyph_metrics: glyphs.metrics,
+        glyph_float_metrics: (glyphs.float_metrics.0.to_bits(), glyphs.float_metrics.1.to_bits()),
         blocks: args.blocks.clone(),
         exclude: args.exclude.clone(),
         exclude_range: args.exclude_range.clone(),
@@ -356,6 +362,9 @@ pub fn default_pipeline(args: &args::RenderArgs) -> Vec<crate::pipeline::ImageEf
         if args.gaussian_blur > 0 {
             p.push(ImageEffect::GaussBlur(args.gaussian_blur));
         }
+        if args.median_blur > 0 {
+            p.push(ImageEffect::MedianBlur(args.median_blur));
+        }
         if args.pixelize > 0 {
             p.push(ImageEffect::Pixelize(args.pixelize));
         }
@@ -448,7 +457,12 @@ pub fn apply_effects(
     glyphs: &GlyphStore,
     photon_image: PhotonImage,
 ) -> PhotonImage {
-    let pipeline = default_pipeline(args);
+    // These effects act on the matched art and overlays, not on the image
+    // that feeds glyph matching (or OCR).
+    let pipeline = default_pipeline(args)
+        .into_iter()
+        .filter(|effect| !effect.is_output_colour())
+        .collect::<Vec<_>>();
     resize_for_output(args, glyphs, apply_pipeline(args, photon_image, &pipeline))
 }
 
@@ -473,6 +487,8 @@ pub fn apply_pipeline(
     for effect in pipeline.iter().cloned() {
         use crate::pipeline::ImageEffect::*;
         match effect {
+            QuantizeColours(count) => crate::adjustments::quantize_colours(&mut photon_image, count),
+            QuantizePalette { colours, threshold, palette, .. } => crate::adjustments::quantize_palette(&mut photon_image, colours, threshold, &palette),
             ReplaceColour {
                 from,
                 to,
@@ -619,10 +635,11 @@ pub fn apply_pipeline(
             }
             Eyedropper => {} // Implementation comes later
             // Geometry effects applied inline
-            CropTop(_) | CropBottom(_) | CropLeft(_) | CropRight(_) => {
+            Crop { .. } | CropTop(_) | CropBottom(_) | CropLeft(_) | CropRight(_) => {
                 let w = photon_image.get_width();
                 let h = photon_image.get_height();
                 let (top, right, bottom, left) = match &effect {
+                    Crop { top, right, bottom, left } => (*top, *right, *bottom, *left),
                     CropTop(v) => (*v as u32, 0, 0, 0),
                     CropBottom(v) => (0, 0, *v as u32, 0),
                     CropLeft(v) => (0, 0, 0, *v as u32),

@@ -1,9 +1,10 @@
 # Browser OCR assets
 
-The web editor uses the official `@paddleocr/paddleocr-js` SDK and its
-PP-OCRv6 tiny English/Latin-capable detection and recognition models. The
-runtime, worker, and models are copied into the generated web root so OCR does
-not depend on cross-origin model downloads.
+The web editor uses the official `@paddleocr/paddleocr-js` SDK. The runtime,
+worker, and Tiny detection/recognition models are copied into the generated web
+root. Small and Medium are downloaded on demand from the same official model
+host below. All three tiers use IndexedDB to cache archives across visits;
+Tiny remains the default and does not require cross-origin model downloads.
 
 - `PP-OCRv6_tiny_det_onnx_infer.tar`
   - Source: <https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_tiny_det_onnx_infer.tar>

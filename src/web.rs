@@ -4,7 +4,7 @@ use clap::Parser;
 use figlet_rs::FIGlet;
 use photon_rs::PhotonImage;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Cursor, Read};
 use unicode_width::UnicodeWidthChar;
@@ -14,6 +14,8 @@ const DEFAULT_WIDTH: u32 = 80;
 const DEFAULT_FONT_SIZE: f32 = 16.0;
 const MAX_INPUT_PIXELS: u64 = 64 * 1024 * 1024;
 const GLYPH_CACHE_CAPACITY: usize = 2;
+const RESULT_CACHE_CAPACITY: usize = 4;
+const MAX_RESULT_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_FIGLET_FONTS: usize = 128;
 const MAX_FIGLET_FONT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FIGLET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
@@ -29,8 +31,24 @@ export type Img2IrcSamplingFilter =
     | "gaussian"
     | "lanczos3";
 export type Img2IrcColourSpace = "hsl" | "hsv" | "hsluv" | "lch";
+export type Img2IrcPipelineEffect =
+    | "brightness" | "contrast" | "luma-contrast" | "saturation" | "gamma" | "hue"
+    | "crop" | "rotate" | "scale" | "flip-horizontal" | "flip-vertical"
+    | "gaussian-blur" | "median-blur" | "line-thickness" | "box-blur"
+    | "pixelize" | "dither" | "invert" | "grayscale" | "replace" | "quantize"
+    | "luma-blur" | "oil" | "halftone" | "sepia" | "solarize" | "normalize"
+    | "noise" | "sharpen" | "edge-detection" | "emboss" | "frosted-glass"
+    | "laplace" | "identity" | "cali" | "dramatic" | "firenze" | "golden"
+    | "lix" | "lofi" | "neue" | "obsidian" | "pastel-pink" | "ryo";
 
 export interface Img2IrcRenderOptions {
+    pipelineOrder?: Img2IrcPipelineEffect[];
+    extraEffects?: (string | { LumaBlur: number } | { Oil: [number, number] })[];
+    cropTop?: number;
+    cropRight?: number;
+    cropBottom?: number;
+    cropLeft?: number;
+    sourceResolution?: boolean;
     width?: number;
     height?: number;
     fontSize?: number;
@@ -58,6 +76,12 @@ export interface Img2IrcRenderOptions {
     replaceFrom?: [number, number, number];
     replaceTo?: [number, number, number];
     replaceTolerance?: number;
+    quantizeColours?: number;
+    quantizeEnabled?: boolean;
+    quantizeThreshold?: number;
+    quantizePalette?: [number, number, number][];
+    quantizeSource?: boolean;
+    superpixelWarp?: number;
     gamma?: number;
     saturation?: number;
     hue?: number;
@@ -69,11 +93,19 @@ export interface Img2IrcRenderOptions {
     boxBlur?: boolean;
     gaussianBlur?: number;
     smooth?: boolean;
+    perceptualScore?: boolean;
+    regionGuidance?: boolean;
+    glyphSearch?: boolean;
+    discontinuityThreshold?: number;
+    glyphSearchCandidates?: number;
+    glyphSearchPasses?: number;
+    glyphSearchFinalists?: number;
     smoothCandidates?: number;
     smoothOrders?: number;
     smoothShapes?: boolean;
     smoothNeighbors?: boolean;
     includeCells?: boolean;
+    livePreview?: boolean;
     includePreview?: boolean;
     overlays?: Img2IrcTextOverlay[];
 }
@@ -102,6 +134,7 @@ export interface Img2IrcFigletFont {
 
 export interface Img2IrcFigletRequest {
     text: string;
+    lineBounds?: [number, number][];
     baseWidth?: number;
     baseHeight?: number;
     fillAvailable?: boolean;
@@ -136,6 +169,7 @@ export interface Img2IrcRenderResult {
     errorCount: number;
     totalPixels: number;
     score: number;
+    perceptualScore?: { total: number; roughness: number; texture: number; missing: number; extra: number; colour: number; thin_defects: number };
     previewWidth: number;
     previewHeight: number;
     fontSize: number;
@@ -156,6 +190,7 @@ export interface Img2IrcRenderTimings {
     smoothingPrepareMs: number;
     smoothingSearchMs: number;
     shapeRefineMs: number;
+    glyphSearchMs: number;
     finalScoreMs: number;
     encodeMs: number;
     overlayMs: number;
@@ -170,6 +205,25 @@ export interface Img2IrcTransformedImage {
     rgba: Uint8Array;
 }
 
+export interface Img2IrcSearchProgress {
+    stage: "analyzing" | "candidates" | "searching" | "verifying" | "finished";
+    pass: number;
+    passes: number;
+    pairsDone: number;
+    pairsTotal: number;
+    pairWorkDone: number;
+    pairWorkTotal: number;
+    fraction: number;
+    combinations: number;
+    fullChecks: number;
+    moves: number;
+    skipped: number;
+    score: number;
+    elapsedMs: number;
+    message: string;
+    preview?: { columns: number; rows: number; fontSize: number; cellAdvance: number; lineHeight: number; cells: Img2IrcCell[][] };
+}
+
 export interface Img2Irc {
     setFont(fontData: Uint8Array): void;
     setImage(imageData: Uint8Array): void;
@@ -177,7 +231,8 @@ export interface Img2Irc {
     renderFiglet(requests: Img2IrcFigletRequest[]): (Img2IrcFigletArt | undefined)[];
     getTransformedImage(options: Img2IrcRenderOptions): Img2IrcTransformedImage;
     clearCache(): void;
-    renderCurrent(options: Img2IrcRenderOptions): Img2IrcRenderResult;
+    renderCurrent(options: Img2IrcRenderOptions, onProgress?: (progress: Img2IrcSearchProgress) => void): Img2IrcRenderResult;
+    optimizeFontSize(options: Img2IrcRenderOptions, onProgress?: (progress: { completed: number; total: number; fontSize: number; score?: number; best?: { fontSize: number; score: number } }) => void): { fontSize: number; score: number };
     render(imageData: Uint8Array, options: Img2IrcRenderOptions): Img2IrcRenderResult;
 }
 "#;
@@ -248,6 +303,13 @@ impl From<WebColourSpace> for ColourSpace {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct WebOptions {
+    pipeline_order: Option<Vec<String>>,
+    extra_effects: Vec<crate::pipeline::ImageEffect>,
+    crop_top: u32,
+    crop_right: u32,
+    crop_bottom: u32,
+    crop_left: u32,
+    source_resolution: bool,
     width: Option<u32>,
     height: Option<u32>,
     font_size: f32,
@@ -270,11 +332,17 @@ struct WebOptions {
     contrast: f32,
     luma_contrast: f32,
     median_blur: i32,
-    line_thickness: i32,
+    line_thickness: f32,
     light_lines: bool,
     replace_from: Option<[u8; 3]>,
     replace_to: [u8; 3],
     replace_tolerance: f32,
+    quantize_colours: u32,
+    quantize_enabled: Option<bool>,
+    quantize_threshold: f32,
+    quantize_palette: Vec<[u8; 3]>,
+    quantize_source: bool,
+    superpixel_warp: u32,
     gamma: f32,
     saturation: f32,
     hue: f32,
@@ -286,11 +354,19 @@ struct WebOptions {
     box_blur: bool,
     gaussian_blur: i32,
     smooth: bool,
+    perceptual_score: bool,
+    region_guidance: bool,
+    glyph_search: bool,
+    discontinuity_threshold: f32,
+    glyph_search_candidates: u32,
+    glyph_search_passes: u32,
+    glyph_search_finalists: u32,
     smooth_candidates: u32,
     smooth_orders: u32,
     smooth_shapes: bool,
     smooth_neighbors: bool,
     include_cells: bool,
+    live_preview: bool,
     include_preview: bool,
     overlays: Vec<WebTextOverlay>,
 }
@@ -333,6 +409,7 @@ struct WebFigletFont {
 #[serde(default, rename_all = "camelCase")]
 struct WebFigletRequest {
     text: String,
+    line_bounds: Option<Vec<[f64; 2]>>,
     fill_available: bool,
     base_width: usize,
     base_height: usize,
@@ -346,6 +423,7 @@ impl Default for WebFigletRequest {
     fn default() -> Self {
         Self {
             text: String::new(),
+            line_bounds: None,
             fill_available: false,
             base_width: 0,
             base_height: 0,
@@ -402,6 +480,13 @@ impl WebTextOverlay {
 impl Default for WebOptions {
     fn default() -> Self {
         Self {
+            pipeline_order: None,
+            extra_effects: Vec::new(),
+            crop_top: 0,
+            crop_right: 0,
+            crop_bottom: 0,
+            crop_left: 0,
+            source_resolution: false,
             width: Some(DEFAULT_WIDTH),
             height: None,
             font_size: DEFAULT_FONT_SIZE,
@@ -424,9 +509,15 @@ impl Default for WebOptions {
             contrast: 0.0,
             luma_contrast: 0.0,
             median_blur: 0,
-            line_thickness: 0,
+            line_thickness: 0.0,
             light_lines: false,
             replace_from: None,
+            quantize_colours: 0,
+            quantize_enabled: None,
+            quantize_threshold: 0.0,
+            quantize_palette: vec![],
+            quantize_source: false,
+            superpixel_warp: 0,
             replace_to: [0; 3],
             replace_tolerance: 5.0,
             gamma: 0.0,
@@ -440,19 +531,100 @@ impl Default for WebOptions {
             box_blur: false,
             gaussian_blur: 0,
             smooth: false,
-            smooth_candidates: 12,
-            smooth_orders: 1,
+            perceptual_score: true,
+            region_guidance: false,
+            glyph_search: false,
+            discontinuity_threshold: 0.5,
+            glyph_search_candidates: 6,
+            glyph_search_passes: 2,
+            glyph_search_finalists: 3,
+            smooth_candidates: 5,
+            smooth_orders: 5,
             smooth_shapes: false,
             smooth_neighbors: true,
             include_cells: false,
+            live_preview: false,
             include_preview: true,
             overlays: Vec::new(),
         }
     }
 }
 
+const WEB_PIPELINE_IDS: &[&str] = &[
+    "brightness", "contrast", "luma-contrast", "saturation", "gamma", "hue", "crop",
+    "rotate", "scale", "flip-horizontal", "flip-vertical", "gaussian-blur", "median-blur",
+    "line-thickness", "box-blur", "pixelize", "dither", "invert", "grayscale", "replace", "quantize",
+    "luma-blur", "oil", "halftone", "sepia", "solarize", "normalize", "noise", "sharpen",
+    "edge-detection", "emboss", "frosted-glass", "laplace", "identity", "cali", "dramatic",
+    "firenze", "golden", "lix", "lofi", "neue", "obsidian", "pastel-pink", "ryo",
+];
+
+fn extra_effect_id(effect: &crate::pipeline::ImageEffect) -> Option<&'static str> {
+    use crate::pipeline::ImageEffect::*;
+    Some(match effect {
+        LumaBlur(_) => "luma-blur", Oil(_, _) => "oil", Halftone => "halftone",
+        Sepia => "sepia", Solarize => "solarize", Normalize => "normalize",
+        Noise => "noise", Sharpen => "sharpen", EdgeDetect => "edge-detection",
+        Emboss => "emboss", FrostGlass => "frosted-glass", Laplace => "laplace",
+        Identity => "identity", Cali => "cali", Dramatic => "dramatic", Firenze => "firenze",
+        Golden => "golden", Lix => "lix", Lofi => "lofi", Neue => "neue", Obsidian => "obsidian",
+        PastelPink => "pastel-pink", Ryo => "ryo", _ => return None,
+    })
+}
+
 impl WebOptions {
+    fn pipeline_effect(&self, id: &str) -> Option<Vec<crate::pipeline::ImageEffect>> {
+        use crate::pipeline::ImageEffect::*;
+        Some(match id {
+            "brightness" => vec![Brightness(self.brightness)],
+            "contrast" => vec![Contrast(self.contrast)],
+            "luma-contrast" => vec![LumaContrast(self.luma_contrast)],
+            "saturation" => vec![Saturation(self.saturation)],
+            "gamma" => vec![Gamma(self.gamma)],
+            "hue" => vec![Hue(self.hue)],
+            "rotate" => vec![Rotate(self.rotate)],
+            "crop" => vec![Crop { top: self.crop_top, right: self.crop_right, bottom: self.crop_bottom, left: self.crop_left }],
+            "scale" => vec![ScaleX((self.scale_x * 100.0).round() as i32), ScaleY((self.scale_y * 100.0).round() as i32)],
+            "flip-horizontal" => self.flip_horizontal.then_some(FlipH).into_iter().collect(),
+            "flip-vertical" => self.flip_vertical.then_some(FlipV).into_iter().collect(),
+            "gaussian-blur" => vec![GaussBlur(self.gaussian_blur)],
+            "median-blur" => vec![MedianBlur(self.median_blur)],
+            "line-thickness" => {
+                let thickness = self.line_thickness.clamp(-10.0, 10.0);
+                vec![DarkLines(if self.light_lines { -thickness } else { thickness })]
+            }
+            "box-blur" => self.box_blur.then_some(BoxBlur).into_iter().collect(),
+            "pixelize" => vec![Pixelize(self.pixelize)],
+            "dither" => vec![Dither(self.dither)],
+            "invert" => self.invert.then_some(Invert).into_iter().collect(),
+            "grayscale" => self.grayscale.then_some(Grayscale).into_iter().collect(),
+            "replace" => self.replace_from.map(|from| ReplaceColour {
+                from, to: self.replace_to, tolerance: self.replace_tolerance,
+            }).into_iter().collect(),
+            "quantize" => self.quantize_enabled.unwrap_or(self.quantize_colours > 0).then(|| QuantizePalette {
+                colours: self.quantize_colours,
+                threshold: self.quantize_threshold,
+                palette: self.quantize_palette.clone(),
+                source: self.quantize_source,
+            }).into_iter().collect(),
+            _ => self.extra_effects.iter().filter(|effect| extra_effect_id(effect) == Some(id)).cloned().collect(),
+        })
+    }
+
     fn validate(&self) -> Result<(), JsValue> {
+        if self.extra_effects.len() > 64 || self.extra_effects.iter().any(|effect| {
+            extra_effect_id(effect).is_none() || effect.parameters().iter().any(|p| !p.value.is_finite() || p.value < p.min || p.value > p.max)
+        }) {
+            return Err(js_error("extraEffects contains an unsupported effect or invalid parameter"));
+        }
+        if [self.crop_top, self.crop_right, self.crop_bottom, self.crop_left].iter().any(|&v| v > 100_000) {
+            return Err(js_error("crop margins must be between 0 and 100000 pixels"));
+        }
+        if let Some(order) = &self.pipeline_order {
+            if order.len() > 64 || order.iter().any(|id| !WEB_PIPELINE_IDS.contains(&id.as_str())) {
+                return Err(js_error("pipelineOrder must contain at most 64 known effect names"));
+            }
+        }
         if self.height == Some(0) {
             return Err(js_error("height must be greater than zero"));
         }
@@ -468,6 +640,12 @@ impl WebOptions {
         }
         if !self.rotate.is_finite() {
             return Err(js_error("rotate must be a finite number"));
+        }
+        if self.superpixel_warp > crate::superpixels::MAX_STRENGTH {
+            return Err(js_error("superpixelWarp must be between 0 and 100"));
+        }
+        if self.quantize_colours > 256 || !self.quantize_threshold.is_finite() || !(0.0..=100.0).contains(&self.quantize_threshold) || self.quantize_palette.len() > 256 {
+            return Err(js_error("quantization requires 0–256 colours, a threshold between 0 and 100, and at most 256 palette entries"));
         }
         let has_explicit_glyphs = self.glyphs.as_ref().is_some_and(|value| !value.is_empty())
             || self.include.as_ref().is_some_and(|value| !value.is_empty())
@@ -506,6 +684,14 @@ impl WebOptions {
 
     fn canvas_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
+        self.pipeline_order.is_some().hash(&mut hasher);
+        if let Some(order) = &self.pipeline_order {
+            // Output-colour edits still reuse expensive matching/search results.
+            let source_order: Vec<_> = order.iter().filter(|id| {
+                id.as_str() != "replace" && (id.as_str() != "quantize" || self.quantize_source)
+            }).collect();
+            source_order.hash(&mut hasher);
+        }
         self.glyph_cache_key().hash(&mut hasher);
         self.width.hash(&mut hasher);
         self.height.hash(&mut hasher);
@@ -521,11 +707,17 @@ impl WebOptions {
         self.contrast.to_bits().hash(&mut hasher);
         self.luma_contrast.to_bits().hash(&mut hasher);
         self.median_blur.hash(&mut hasher);
-        self.line_thickness.hash(&mut hasher);
+        self.line_thickness.to_bits().hash(&mut hasher);
         self.light_lines.hash(&mut hasher);
-        self.replace_from.hash(&mut hasher);
-        self.replace_to.hash(&mut hasher);
-        self.replace_tolerance.to_bits().hash(&mut hasher);
+        // Finished-art colour edits reuse glyph matches. Pixel cleanup must
+        // invalidate the prepared canvas, including when it is disabled again.
+        if self.quantize_source && self.quantize_enabled.unwrap_or(self.quantize_colours > 0) {
+            self.quantize_colours.hash(&mut hasher);
+            self.quantize_threshold.to_bits().hash(&mut hasher);
+            self.quantize_palette.hash(&mut hasher);
+            self.quantize_source.hash(&mut hasher);
+        }
+        self.superpixel_warp.hash(&mut hasher);
         self.gamma.to_bits().hash(&mut hasher);
         self.saturation.to_bits().hash(&mut hasher);
         self.hue.to_bits().hash(&mut hasher);
@@ -536,20 +728,11 @@ impl WebOptions {
         self.pixelize.hash(&mut hasher);
         self.box_blur.hash(&mut hasher);
         self.gaussian_blur.hash(&mut hasher);
+        [self.crop_top, self.crop_right, self.crop_bottom, self.crop_left].hash(&mut hasher);
+        format!("{:?}", self.extra_effects).hash(&mut hasher);
         hasher.finish()
     }
 
-    fn result_cache_key(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.canvas_cache_key().hash(&mut hasher);
-        (self.render as u8).hash(&mut hasher);
-        self.smooth.hash(&mut hasher);
-        self.smooth_candidates.hash(&mut hasher);
-        self.smooth_orders.hash(&mut hasher);
-        self.smooth_shapes.hash(&mut hasher);
-        self.smooth_neighbors.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 #[derive(Serialize)]
@@ -580,6 +763,17 @@ impl From<&draw::RenderedCell> for WebCell {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct WebSearchPreview {
+    columns: usize,
+    rows: usize,
+    font_size: f32,
+    cell_advance: f32,
+    line_height: f32,
+    cells: Vec<Vec<WebCell>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WebRenderResult {
     content: String,
     columns: usize,
@@ -589,6 +783,8 @@ struct WebRenderResult {
     error_count: u64,
     total_pixels: u64,
     score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
     preview_width: u32,
     preview_height: u32,
     font_size: f32,
@@ -617,6 +813,7 @@ struct WebRenderTimings {
     smoothing_prepare_ms: f64,
     smoothing_search_ms: f64,
     shape_refine_ms: f64,
+    glyph_search_ms: f64,
     final_score_ms: f64,
     encode_ms: f64,
     overlay_ms: f64,
@@ -643,8 +840,29 @@ struct CanvasCache {
 }
 
 struct ResultCache {
-    key: u64,
+    key: Vec<u8>,
     result: draw::RenderResult,
+    bytes: usize,
+}
+
+impl ResultCache {
+    fn key(args: &crate::RenderArgs) -> Result<Vec<u8>, JsValue> {
+        // Match every Rust render setting. Overlays and finished-art colours
+        // are reapplied below, so they do not invalidate the expensive base.
+        let mut base_args = args.clone();
+        base_args.overlays.clear();
+        base_args.save = None;
+        base_args.pipeline.retain(|effect| !effect.is_output_colour());
+        serde_json::to_vec(&base_args).map_err(js_error)
+    }
+
+    fn size(result: &draw::RenderResult) -> usize {
+        result.content.len()
+            + result.save_content.as_ref().map_or(0, String::len)
+            + result.grid.iter().map(Vec::len).sum::<usize>()
+                * std::mem::size_of::<draw::RenderedCell>()
+            + result.glyph_defects.as_ref().map_or(0, |map| map.priorities.len() * 6)
+    }
 }
 
 fn normalize_figlet_art(source: String, rendered: &str) -> Option<WebFigletArt> {
@@ -746,6 +964,31 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
     if text.is_empty() || request.max_width == 0 || request.max_height == 0 {
         return None;
     }
+    // Optional JS fields can be explicitly undefined after structured cloning.
+    // Deserialize them as Option rather than asking for an iterable on undefined.
+    let line_bounds = request.line_bounds.as_deref().unwrap_or_default();
+    if line_bounds.len() > 1 {
+        let compose = |font: Option<&WebFigletFont>| -> Option<WebFigletArt> {
+            let parts = text.lines().filter(|line| !line.trim().is_empty()).map(|line| match font {
+                Some(font) => render_figlet_font(font, line),
+                None => plain_figlet_art(line, request.max_width, request.max_height),
+            }).collect::<Option<Vec<_>>>()?;
+            let source = parts.first()?.source.clone();
+            let rows = parts.iter().map(|part| part.text.lines().map(|line| line.chars().collect::<Vec<_>>()).collect::<Vec<_>>()).collect::<Vec<_>>();
+            let rows = crate::ocr_layout::space_line_art(&rows, line_bounds)?;
+            let art = normalize_figlet_art(source, &rows.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>().join("\n"))?;
+            (art.width <= request.max_width && art.height <= request.max_height).then_some(art)
+        };
+        let mut candidates = if request.use_figlet {
+            fonts.iter().filter(|font| request.font_name.as_ref().is_none_or(|name| name.eq_ignore_ascii_case(&font.name)))
+                .filter_map(|font| compose(Some(font)).map(|art| (art, font))).collect::<Vec<_>>()
+        } else { Vec::new() };
+        candidates.sort_by_key(|(art, font)| (
+            if request.fill_available { 0 } else { art.width.saturating_sub(request.base_width) },
+            std::cmp::Reverse(font.height), font.priority,
+        ));
+        return candidates.into_iter().next().map(|(art, _)| art).or_else(|| compose(None));
+    }
     let base_w = if request.base_width > 0 { request.base_width } else { request.max_width };
     let base_h = if request.base_height > 0 { request.base_height } else { request.max_height };
 
@@ -833,7 +1076,7 @@ pub struct WebRenderer {
     font_data: Vec<u8>,
     glyph_caches: Vec<GlyphCache>,
     canvas_cache: Option<CanvasCache>,
-    result_cache: Option<ResultCache>,
+    result_cache: VecDeque<ResultCache>,
     figlet_fonts: Vec<WebFigletFont>,
     source_image: Option<PhotonImage>,
     cli: Args,
@@ -854,7 +1097,7 @@ impl WebRenderer {
             font_data: font_data.to_vec(),
             glyph_caches: Vec::with_capacity(GLYPH_CACHE_CAPACITY),
             canvas_cache: None,
-            result_cache: None,
+            result_cache: VecDeque::with_capacity(RESULT_CACHE_CAPACITY),
             figlet_fonts: Vec::new(),
             source_image: None,
             // Parsing Clap defaults is relatively expensive in WASM. Do it
@@ -870,7 +1113,7 @@ impl WebRenderer {
     pub fn set_image(&mut self, image_data: &[u8]) -> Result<(), JsValue> {
         self.source_image = Some(decode_image(image_data)?);
         self.canvas_cache = None;
-        self.result_cache = None;
+        self.result_cache.clear();
         Ok(())
     }
 
@@ -886,7 +1129,7 @@ impl WebRenderer {
         self.font_data.extend_from_slice(font_data);
         self.glyph_caches.clear();
         self.canvas_cache = None;
-        self.result_cache = None;
+        self.result_cache.clear();
         Ok(())
     }
 
@@ -1015,7 +1258,15 @@ impl WebRenderer {
             .map_err(js_error)?
         };
 
-        let transformed = crate::effects::apply_effects(&args, &store, source.clone());
+        // OCR can choose a new output grid. Align features once, when that
+        // final grid is known in prepare_canvas, rather than deforming this
+        // intermediate image and then warping it a second time during rendering.
+        let transformed = if options.source_resolution {
+            let pipeline: Vec<_> = args.pipeline.iter().filter(|effect| !effect.is_output_colour()).cloned().collect();
+            crate::effects::apply_pipeline(&args, source, &pipeline)
+        } else {
+            crate::effects::apply_effects(&args, &store, source)
+        };
         let width = transformed.get_width();
         let height = transformed.get_height();
         let rgba = transformed.get_raw_pixels();
@@ -1034,15 +1285,15 @@ impl WebRenderer {
 
     /// Render the image most recently supplied to `setImage`.
     #[wasm_bindgen(js_name = renderCurrent)]
-    pub fn render_current(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
-        self.render_loaded(options)
+    pub fn render_current(&mut self, options: JsValue, on_progress: Option<js_sys::Function>) -> Result<JsValue, JsValue> {
+        self.render_loaded(options, on_progress)
     }
 
     /// Compatibility entry point which loads and renders an image in one call.
     /// Repeated browser renders should prefer `setImage` plus `renderCurrent`.
     pub fn render(&mut self, image_data: &[u8], options: JsValue) -> Result<JsValue, JsValue> {
         self.set_image(image_data)?;
-        self.render_loaded(options)
+        self.render_loaded(options, None)
     }
 
     /// Drop cached rasterized glyphs after changing the supplied font outside
@@ -1051,8 +1302,42 @@ impl WebRenderer {
     pub fn clear_cache(&mut self) {
         self.glyph_caches.clear();
         self.canvas_cache = None;
-        self.result_cache = None;
+        self.result_cache.clear();
         crate::contour_score::clear_cache();
+    }
+
+    /// Compare the plain glyph match at every size, preserving the caller's
+    /// options so the winning size can be rendered with refinements afterwards.
+    #[wasm_bindgen(js_name = optimizeFontSize)]
+    pub fn optimize_font_size(&mut self, options: JsValue, on_progress: Option<js_sys::Function>) -> Result<JsValue, JsValue> {
+        let scan_options = js_sys::Object::new();
+        if !options.is_null() && !options.is_undefined() {
+            js_sys::Object::assign(&scan_options, &js_sys::Object::from(options));
+        }
+        for (name, value) in [
+            ("perceptualScore", JsValue::TRUE), ("smooth", JsValue::FALSE),
+            ("glyphSearch", JsValue::FALSE), ("regionGuidance", JsValue::FALSE),
+            ("showGlyphDefects", JsValue::FALSE),
+            ("superpixelWarp", JsValue::from_f64(0.0)),
+            ("includeCells", JsValue::FALSE), ("includePreview", JsValue::FALSE),
+            ("livePreview", JsValue::FALSE), ("overlays", js_sys::Array::new().into()),
+        ] {
+            js_sys::Reflect::set(&scan_options, &JsValue::from_str(name), &value)?;
+        }
+        let best = crate::font_scan::scan(|size| {
+            js_sys::Reflect::set(&scan_options, &JsValue::from_str("fontSize"), &JsValue::from_f64(size as f64))?;
+            let result = self.render_loaded(scan_options.clone().into(), None)?;
+            let perceptual = js_sys::Reflect::get(&result, &JsValue::from_str("perceptualScore"))?;
+            if perceptual.is_null() || perceptual.is_undefined() { return Ok(f64::INFINITY); }
+            Ok::<f64, JsValue>(js_sys::Reflect::get(&perceptual, &JsValue::from_str("total"))?.as_f64().unwrap_or(f64::INFINITY))
+        }, |progress| {
+            if let Some(callback) = &on_progress {
+                if let Ok(value) = serde_wasm_bindgen::to_value(&progress) {
+                    let _ = callback.call1(&JsValue::NULL, &value);
+                }
+            }
+        })?.ok_or_else(|| js_error("No font size produced a valid Perceptual score"))?;
+        serde_wasm_bindgen::to_value(&best).map_err(|error| js_error(error.to_string()))
     }
 }
 
@@ -1095,6 +1380,14 @@ impl WebRenderer {
         cli.box_blur = options.box_blur;
         cli.gaussian_blur = Param::Fixed(options.gaussian_blur as f32);
         cli.smooth = options.smooth;
+        cli.perceptual_score = options.perceptual_score;
+        cli.region_guidance = options.region_guidance;
+        cli.glyph_search = options.glyph_search;
+        cli.discontinuity_threshold = options.discontinuity_threshold.max(0.0);
+        cli.glyph_search_candidates = options.glyph_search_candidates.clamp(1, 64);
+        cli.glyph_search_passes = options.glyph_search_passes.clamp(1, 20);
+        cli.glyph_search_finalists = options.glyph_search_finalists.min(4096);
+        cli.superpixel_warp = options.superpixel_warp;
         cli.smooth_candidates = options.smooth_candidates.max(1);
         cli.smooth_orders = options.smooth_orders.clamp(1, 5);
         cli.smooth_shapes = options.smooth_shapes;
@@ -1103,6 +1396,10 @@ impl WebRenderer {
         let mut args = args_to_render_args(&cli);
         use crate::pipeline::ImageEffect;
         args.pipeline = crate::effects::default_pipeline(&args);
+        args.pipeline.extend(options.extra_effects.iter().cloned());
+        if [options.crop_top, options.crop_right, options.crop_bottom, options.crop_left].iter().any(|&v| v != 0) {
+            args.pipeline.insert(0, ImageEffect::Crop { top: options.crop_top, right: options.crop_right, bottom: options.crop_bottom, left: options.crop_left });
+        }
         if let Some(from) = options.replace_from {
             args.pipeline.insert(0, ImageEffect::ReplaceColour {
                 from,
@@ -1112,8 +1409,38 @@ impl WebRenderer {
         }
         args.pipeline.push(ImageEffect::LumaContrast(options.luma_contrast));
         args.pipeline.push(ImageEffect::MedianBlur(options.median_blur));
-        let thickness = options.line_thickness.clamp(-10, 10);
+        let thickness = options.line_thickness.clamp(-10.0, 10.0);
         args.pipeline.push(ImageEffect::DarkLines(if options.light_lines { -thickness } else { thickness }));
+        if options.quantize_enabled.unwrap_or(options.quantize_colours > 0) {
+            args.pipeline.push(ImageEffect::QuantizePalette {
+                colours: options.quantize_colours,
+                threshold: options.quantize_threshold,
+                palette: options.quantize_palette.clone(),
+                source: options.quantize_source,
+            });
+        }
+        if let Some(order) = &options.pipeline_order {
+            args.pipeline = order.iter().flat_map(|id| options.pipeline_effect(id).unwrap_or_default()).collect();
+            // Clear legacy effect fields so an explicit empty pipeline cannot
+            // fall back to effects omitted from the supplied order.
+            args.brightness = 0.0;
+            args.contrast = 0.0;
+            args.gamma = 0.0;
+            args.saturation = 0.0;
+            args.hue = 0.0;
+            args.gaussian_blur = 0;
+            args.median_blur = 0;
+            args.pixelize = 0;
+            args.dither = 0;
+            args.invert = false;
+            args.box_blur = false;
+            args.grayscale = false;
+            // Geometry now runs at its selected position, exactly once.
+            args.scale = None;
+            args.rotate = 0.0;
+            args.fliph = false;
+            args.flipv = false;
+        }
         args.ocr = false;
         args.save = None;
         args.fft_debug_dir = None;
@@ -1126,8 +1453,8 @@ impl WebRenderer {
         args
     }
 
-    fn render_loaded(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
-        let mut options = if options.is_null() || options.is_undefined() {
+    fn render_loaded(&mut self, options: JsValue, on_progress: Option<js_sys::Function>) -> Result<JsValue, JsValue> {
+        let mut options: WebOptions = if options.is_null() || options.is_undefined() {
             WebOptions::default()
         } else {
             serde_wasm_bindgen::from_value(options)
@@ -1180,57 +1507,94 @@ impl WebRenderer {
             });
         }
 
+        let result_key = ResultCache::key(&args)?;
+        let result_cache_index = self.result_cache.iter().position(|cache| cache.key == result_key);
+        let result_cache_hit = result_cache_index.is_some();
         let canvas_key = options.canvas_cache_key();
         let canvas_cache_hit =
             self.canvas_cache.as_ref().map(|cache| cache.key) == Some(canvas_key);
-        let prepare_started = draw::RenderInstant::now();
-        if !canvas_cache_hit {
-            let cache = self.glyph_caches.last().expect("glyph cache initialized");
-            let image = self.source_image.as_ref().expect("source checked").clone();
-            let (canvas, luma_canvas) = crate::prepare_canvas(&args, &cache.store, image);
-            self.canvas_cache = Some(CanvasCache {
-                key: canvas_key,
-                canvas,
-                luma_canvas,
-            });
-        }
-
-        let cache = self.glyph_caches.last().expect("glyph cache initialized");
-        let canvas_cache = self
-            .canvas_cache
-            .as_ref()
-            .expect("canvas cache initialized");
-        let prepare_canvas_time = prepare_started.elapsed();
-        let result_key = options.result_cache_key();
-        let result_cache_hit =
-            self.result_cache.as_ref().map(|cache| cache.key) == Some(result_key);
-        let mut base_result = if result_cache_hit {
-            self.result_cache
-                .as_ref()
-                .expect("result cache key checked")
-                .result
-                .clone()
+        let mut prepare_canvas_time = std::time::Duration::ZERO;
+        let mut base_result = if let Some(index) = result_cache_index {
+            let cached = self.result_cache.remove(index).expect("result cache key checked");
+            let result = cached.result.clone();
+            self.result_cache.push_back(cached);
+            result
         } else {
+            let prepare_started = draw::RenderInstant::now();
+            if !canvas_cache_hit {
+                let cache = self.glyph_caches.last().expect("glyph cache initialized");
+                let image = self.source_image.as_ref().expect("source checked").clone();
+                let (canvas, luma_canvas) = crate::prepare_canvas(&args, &cache.store, image);
+                self.canvas_cache = Some(CanvasCache {
+                    key: canvas_key,
+                    canvas,
+                    luma_canvas,
+                });
+            }
+            prepare_canvas_time = prepare_started.elapsed();
+            let cache = self.glyph_caches.last().expect("glyph cache initialized");
+            let canvas_cache = self.canvas_cache.as_ref().expect("canvas cache initialized");
             let mut base_args = args.clone();
             base_args.overlays.clear();
-            let mut rendered = crate::render_from_canvas(
+            let render = || crate::render_from_canvas(
                 &base_args,
                 &canvas_cache.canvas,
                 canvas_cache.luma_canvas.as_ref(),
                 &cache.fast_glyphs,
                 None,
             );
+            let mut rendered = if let Some(callback) = on_progress {
+                let include_preview = options.live_preview && options.include_cells;
+                let preview_args = args.clone();
+                let preview_store = include_preview.then(|| cache.store.clone());
+                let last_preview = std::cell::Cell::new(0usize);
+                draw::search_status::observe_glyph_search_with_preview(move |progress| {
+                    if let Ok(value) = serde_wasm_bindgen::to_value(progress) {
+                        let _ = js_sys::Reflect::set(&value, &JsValue::from_str("fraction"), &JsValue::from_f64(progress.fraction()));
+                        if let (Some(preview), Some(store)) = (&progress.preview, &preview_store) {
+                            let pointer = std::sync::Arc::as_ptr(preview) as usize;
+                            if last_preview.replace(pointer) != pointer {
+                                let frame = draw::apply_overlays_to_result(&preview.result, &preview_args.overlays,
+                                    preview_args.render, false, preview_args.grayscale_tolerance);
+                                let frame = crate::output_colours::apply(&frame, store, &preview_args.pipeline,
+                                    preview_args.render, false, preview_args.grayscale_tolerance);
+                                let frame = WebSearchPreview {
+                                    columns: preview.defects.columns,
+                                    rows: preview.defects.rows,
+                                    font_size: preview_args.font_size,
+                                    cell_advance: store.float_metrics.0,
+                                    line_height: store.float_metrics.1,
+                                    cells: frame.grid.iter().map(|row| row.iter().map(WebCell::from).collect()).collect(),
+                                };
+                                if let Ok(frame) = serde_wasm_bindgen::to_value(&frame) {
+                                    let _ = js_sys::Reflect::set(&value, &JsValue::from_str("preview"), &frame);
+                                }
+                            }
+                        }
+                        let _ = callback.call1(&JsValue::NULL, &value);
+                    }
+                }, include_preview, render)
+            } else { render() };
             rendered.profile.prepare_canvas = prepare_canvas_time;
-            self.result_cache = Some(ResultCache {
-                key: result_key,
-                result: rendered.clone(),
-            });
+            let bytes = ResultCache::size(&rendered);
+            if !rendered.grid.is_empty() && rendered.content != "Cancelled" && bytes <= MAX_RESULT_CACHE_BYTES {
+                while self.result_cache.len() >= RESULT_CACHE_CAPACITY
+                    || self.result_cache.iter().map(|cache| cache.bytes).sum::<usize>() + bytes > MAX_RESULT_CACHE_BYTES {
+                    self.result_cache.pop_front();
+                }
+                self.result_cache.push_back(ResultCache {
+                    key: result_key,
+                    result: rendered.clone(),
+                    bytes,
+                });
+            }
             rendered
         };
         if result_cache_hit {
             base_result.profile = draw::RenderProfile::default();
             base_result.profile.prepare_canvas = prepare_canvas_time;
         }
+        let cache = self.glyph_caches.last().expect("glyph cache initialized");
         let overlay_started = draw::RenderInstant::now();
         let result = draw::apply_overlays_to_result(
             &base_result,
@@ -1238,6 +1602,10 @@ impl WebRenderer {
             args.render,
             false,
             args.grayscale_tolerance,
+        );
+        let result = crate::output_colours::apply(
+            &result, &cache.store, &args.pipeline,
+            args.render, false, args.grayscale_tolerance,
         );
         let overlay_time = overlay_started.elapsed();
         let preview_started = draw::RenderInstant::now();
@@ -1266,6 +1634,7 @@ impl WebRenderer {
             smoothing_prepare_ms: duration_ms(result.profile.smoothing_prepare),
             smoothing_search_ms: duration_ms(result.profile.smoothing_search),
             shape_refine_ms: duration_ms(result.profile.shape_refine),
+            glyph_search_ms: duration_ms(result.profile.glyph_search),
             final_score_ms: duration_ms(result.profile.final_score),
             encode_ms: duration_ms(result.profile.encode),
             overlay_ms: duration_ms(overlay_time),
@@ -1281,6 +1650,7 @@ impl WebRenderer {
             error_count: result.error_count,
             total_pixels: result.total_pixels,
             score: result.score,
+            perceptual_score: result.perceptual_score,
             preview_width,
             preview_height,
             font_size: options.font_size,

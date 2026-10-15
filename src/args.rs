@@ -53,8 +53,55 @@ fn default_true() -> bool {
     true
 }
 
-fn default_score_fix_orderings() -> u32 {
-    1
+fn default_smooth_orders() -> u32 {
+    5
+}
+
+fn default_glyph_search_candidates() -> u32 { 6 }
+fn default_glyph_search_passes() -> u32 { 2 }
+fn default_glyph_search_finalists() -> u32 { 3 }
+
+#[derive(Clone, Debug)]
+pub struct ColourPalette(pub Vec<[u8; 3]>);
+
+#[derive(Clone, Debug)]
+pub struct ColourReplacement {
+    pub from: [u8; 3],
+    pub to: [u8; 3],
+}
+
+fn parse_hex_colour(input: &str) -> Result<[u8; 3], String> {
+    let value = input.trim().trim_start_matches('#');
+    if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid colour {input:?}; use #RRGGBB or RRGGBB"));
+    }
+    let packed = u32::from_str_radix(value, 16).map_err(|error| error.to_string())?;
+    Ok([(packed >> 16) as u8, (packed >> 8) as u8, packed as u8])
+}
+
+fn parse_colour_palette(input: &str) -> Result<ColourPalette, String> {
+    let mut colours = Vec::new();
+    for value in input.split(|c: char| c.is_whitespace() || c == ',' || c == ';').filter(|value| !value.is_empty()) {
+        let rgb = parse_hex_colour(value)?;
+        if !colours.contains(&rgb) { colours.push(rgb); }
+    }
+    if colours.is_empty() || colours.len() > 256 {
+        return Err("a palette requires 1–256 distinct #RRGGBB colours".into());
+    }
+    Ok(ColourPalette(colours))
+}
+
+fn parse_colour_replacement(input: &str) -> Result<ColourReplacement, String> {
+    let (from, to) = input.split_once('=').ok_or("use FROM=TO, for example '#ffffff=#000000'")?;
+    Ok(ColourReplacement { from: parse_hex_colour(from)?, to: parse_hex_colour(to)? })
+}
+
+fn parse_percentage(input: &str) -> Result<f32, String> {
+    let value = input.parse::<f32>().map_err(|_| "expected a percentage between 0 and 100")?;
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err("expected a finite percentage between 0 and 100".into());
+    }
+    Ok(value)
 }
 
 fn default_contour_bending_weight() -> f32 {
@@ -289,9 +336,9 @@ pub struct TextOverlay {
     pub wrap: bool,
     #[serde(default)]
     pub auto_grow: bool,
-    /// Leave whitespace cells untouched instead of painting them over the
-    /// existing image. FIGlet overlays enable this so only banner strokes are
-    /// composited onto the output grid.
+    /// Leave whitespace cells untouched when no background is specified.
+    /// FIGlet overlays enable this to composite only banner strokes. An
+    /// explicit background fills the entire overlay bounding box instead.
     #[serde(default)]
     pub transparent_spaces: bool,
     #[serde(default)]
@@ -319,6 +366,9 @@ pub struct RenderArgs {
 
     pub auto_optimize_batch_size: u32,
 
+    #[serde(default)]
+    pub optimize_log: Option<std::path::PathBuf>,
+
     pub image: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -331,6 +381,7 @@ pub struct RenderArgs {
     pub flipv: bool,
     pub render: Render,
     pub braille: bool,
+    #[serde(rename = "glyphs", alias = "blocks")]
     pub blocks: Vec<String>,
     pub include_range: Vec<String>,
     pub include: Option<String>,
@@ -361,6 +412,8 @@ pub struct RenderArgs {
     pub pixelize: i32,
     pub box_blur: bool,
     pub gaussian_blur: i32,
+    #[serde(default)]
+    pub median_blur: i32,
     pub luma_blur: i32,
     pub oil: Option<String>,
     pub halftone: bool,
@@ -388,14 +441,34 @@ pub struct RenderArgs {
     pub show_discontinuities: bool,
     #[serde(default = "default_discontinuity_threshold")]
     pub discontinuity_threshold: f32,
-    pub score_fix: bool,
-    pub score_fix_candidates: u32,
-    #[serde(default = "default_score_fix_orderings")]
-    pub score_fix_orderings: u32,
-    #[serde(default)]
-    pub score_fix_geometry_first: bool,
+    pub smooth: bool,
     #[serde(default = "default_true")]
-    pub score_fix_neighborhood_guard: bool,
+    pub perceptual_score: bool,
+    /// Experimental connected-region guidance for glyph colours and boundaries.
+    #[serde(default)]
+    pub region_guidance: bool,
+    /// Search neighbouring glyph combinations using the perceptual score.
+    #[serde(default)]
+    pub glyph_search: bool,
+    /// Request the glyph-search defect map without requiring the search itself.
+    #[serde(default)]
+    pub show_glyph_defects: bool,
+    #[serde(default = "default_glyph_search_candidates")]
+    pub glyph_search_candidates: u32,
+    #[serde(default = "default_glyph_search_passes")]
+    pub glyph_search_passes: u32,
+    #[serde(default = "default_glyph_search_finalists")]
+    pub glyph_search_finalists: u32,
+    pub smooth_candidates: u32,
+    #[serde(default = "default_smooth_orders")]
+    pub smooth_orders: u32,
+    #[serde(default)]
+    pub smooth_shapes: bool,
+    #[serde(default = "default_true")]
+    pub smooth_neighbors: bool,
+    /// Experimental image warp that attracts strong features to the sextant lattice.
+    #[serde(default)]
+    pub superpixel_warp: u32,
     #[serde(default = "default_contour_bending_weight")]
     pub contour_bending_weight: f32,
     #[serde(default = "default_contour_zero_weight")]
@@ -482,6 +555,10 @@ pub struct RenderArgs {
 }
 
 impl RenderArgs {
+    pub fn uses_perceptual_score(&self) -> bool {
+        self.perceptual_score || self.glyph_search
+    }
+
     /// Detection resolution never depends on the output grid or auto-fit toggle.
     pub fn ocr_detection_budget(&self) -> Option<f32> {
         self.ocr_megapixels.or_else(|| {
@@ -496,6 +573,7 @@ impl RenderArgs {
 
 #[derive(Parser, Clone, Debug)]
 #[command(name = "img2irc", author, version = env!("IMG2IRC_VERSION"), about, long_about = None)]
+#[command(group(clap::ArgGroup::new("colour_replacements").args(["replace_colour", "replace_from"]).multiple(true)))]
 pub struct Args {
     /// print bundled font licenses
     #[arg(long, default_value_t = false)]
@@ -520,6 +598,10 @@ pub struct Args {
     /// Number of auto-optimize permutations processed at once
     #[arg(long, default_value_t = 10)]
     pub auto_optimize_batch_size: u32,
+
+    /// append auto-optimize settings, trial scores and timing as JSON Lines
+    #[arg(long, value_name = "PATH")]
+    pub optimize_log: Option<std::path::PathBuf>,
 
     #[arg(help = "input image path or URL")]
     pub image: Option<String>,
@@ -729,6 +811,47 @@ pub struct Args {
     #[arg(long = "gaussianblur", default_value = "0")]
     pub gaussian_blur: Param,
 
+    /// median filter radius in source pixels; 0 disables it
+    #[arg(
+        long = "median-blur",
+        visible_alias = "medianblur",
+        default_value_t = 0,
+        value_parser = clap::value_parser!(i32).range(0..=10)
+    )]
+    pub median_blur: i32,
+
+    /// reduce to 0–256 colours; 0 merges shades without limiting their count
+    #[arg(long = "quantize-colours", visible_aliases = ["quantize-colors", "quantize"], value_name = "COUNT", value_parser = clap::value_parser!(u32).range(0..=256))]
+    pub quantize_colours: Option<u32>,
+
+    /// merge similar shades before quantization (0–100%; default 3; implies quantization)
+    #[arg(long = "quantize-threshold", value_name = "PERCENT", value_parser = parse_percentage)]
+    pub quantize_threshold: Option<f32>,
+
+    /// quantize to explicit hex colours separated by commas or spaces; overrides count/threshold
+    #[arg(long = "quantize-palette", value_name = "COLOURS", value_parser = parse_colour_palette)]
+    pub quantize_palette: Option<ColourPalette>,
+
+    /// quantize source pixels before glyph matching instead of finished art (default 16 colours)
+    #[arg(long = "quantize-source", action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true", default_value_t = false)]
+    pub quantize_source: bool,
+
+    /// replace a finished-art colour, including overlays; repeat for multiple replacements
+    #[arg(long = "replace-colour", visible_aliases = ["replace-color", "replace"], value_name = "FROM=TO", value_parser = parse_colour_replacement)]
+    pub replace_colour: Vec<ColourReplacement>,
+
+    /// finished-art colour to replace, in #RRGGBB or RRGGBB form
+    #[arg(long = "replace-from", value_name = "COLOUR", value_parser = parse_hex_colour, requires = "replace_to")]
+    pub replace_from: Option<[u8; 3]>,
+
+    /// replacement colour; use with --replace-from
+    #[arg(long = "replace-to", value_name = "COLOUR", value_parser = parse_hex_colour, requires = "replace_from")]
+    pub replace_to: Option<[u8; 3]>,
+
+    /// replacement colour tolerance (0–100%; default 5)
+    #[arg(long = "replace-tolerance", value_name = "PERCENT", value_parser = parse_percentage, requires = "colour_replacements")]
+    pub replace_tolerance: Option<f32>,
+
     /// gaussian blur radius (only luminance)
     #[arg(long = "lumablur", default_value = "0")]
     pub luma_blur: Param,
@@ -833,7 +956,7 @@ pub struct Args {
     )]
     pub show_discontinuities: bool,
 
-    /// threshold above which a cell is treated as a discontinuity
+    /// discontinuity / glyph-search defect threshold; 0 searches all non-flat cells
     #[arg(
         long = "disc-threshold",
         visible_alias = "discontinuity-threshold",
@@ -842,44 +965,73 @@ pub struct Args {
     pub discontinuity_threshold: f32,
 
     /// smooth rough glyph transitions using the preview contour score
-    #[arg(long = "smooth", alias = "score-fix", default_value_t = false)]
+    #[arg(long = "smooth", default_value_t = false)]
     pub smooth: bool,
 
+    /// use experimental perceptual quality scoring for status and auto-optimization
+    #[arg(long = "perceptual-score", default_value_t = true, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub perceptual_score: bool,
+
+    /// guide glyph colours and boundaries with connected image regions (experimental)
+    #[arg(long = "region-guidance", default_value_t = false, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub region_guidance: bool,
+
+    /// search neighbouring glyph combinations, keeping full-image perceptual improvements
+    #[arg(long = "glyph-search", default_value_t = false, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub glyph_search: bool,
+
+    /// preview glyph-search targets in red and neighbouring search cells in amber
+    #[arg(long = "show-glyph-defects", default_value_t = false, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub show_glyph_defects: bool,
+
+    /// source-fit and seam-fit alternatives per cell, in addition to its current glyph
+    #[arg(long = "glyph-search-candidates", default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=64))]
+    pub glyph_search_candidates: u32,
+
+    /// maximum passes over neighbouring glyph pairs
+    #[arg(long = "glyph-search-passes", default_value_t = 2, value_parser = clap::value_parser!(u32).range(1..=20))]
+    pub glyph_search_passes: u32,
+
+    /// local finalists checked against the full image per pair; 0 checks every combination
+    #[arg(long = "glyph-search-finalists", default_value_t = 3, value_parser = clap::value_parser!(u32).range(0..=4096))]
+    pub glyph_search_finalists: u32,
+
     /// number of source-matching glyph states tried during smoothing
-    #[arg(
-        long = "smooth-candidates",
-        alias = "score-fix-candidates",
-        default_value = "12"
-    )]
+    #[arg(long = "smooth-candidates", default_value = "5")]
     pub smooth_candidates: u32,
 
     /// number of independent cell scan orders tried during smoothing
     #[arg(
         long = "smooth-orders",
-        alias = "score-fix-orderings",
-        default_value = "1",
+        default_value = "5",
         value_parser = clap::value_parser!(u32).range(1..=5)
     )]
     pub smooth_orders: u32,
 
     /// further refine shapes with a broader glyph search
-    #[arg(
-        long = "smooth-shapes",
-        alias = "score-fix-geometry-first",
-        default_value_t = false
-    )]
+    #[arg(long = "smooth-shapes", default_value_t = false)]
     pub smooth_shapes: bool,
 
     /// keep a smoothing change only when it also works with neighboring cells
     #[arg(
         long = "smooth-neighbors",
-        alias = "score-fix-neighborhood-guard",
         default_value = "true",
         action = clap::ArgAction::Set,
         num_args = 0..=1,
         default_missing_value = "true"
     )]
     pub smooth_neighbors: bool,
+
+    /// attract image features to the sextant half-cell/third-cell lattice;
+    /// 0 disables and 100 requests full alignment; a bare flag uses 100
+    #[arg(
+        long = "superpixel-warp",
+        default_value_t = 0,
+        num_args = 0..=1,
+        default_missing_value = "100",
+        value_parser = clap::value_parser!(u32).range(0..=crate::superpixels::MAX_STRENGTH as i64)
+    )]
+    pub superpixel_warp: u32,
 
     #[arg(long = "contour-bending-weight", default_value = "10.0")]
     pub contour_bending_weight: f32,
@@ -1142,8 +1294,8 @@ pub struct Args {
 }
 
 const OPTIONAL_BOOLEAN_VALUE_FLAGS: &[&str] = &[
+    "--quantize-source",
     "--smooth-neighbors",
-    "--score-fix-neighborhood-guard",
     "--ocr-auto-width",
     "--ocr-textline-orientation",
     "--ocr-figlet",

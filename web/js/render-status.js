@@ -48,7 +48,7 @@ export class RenderStatus {
       stat("Raster", `${result.previewWidth} × ${result.previewHeight} px`),
       stat("Cell", `${result.cellWidth} × ${result.cellHeight} px`),
       stat("Longest", `line ${longestLineNumber(result.content)} · ${result.longestLineBytes} bytes`, true),
-      stat("Contour", result.score.toFixed(3), true),
+      stat(result.perceptualScore ? "Perceptual" : "Contour", result.score.toFixed(3), true),
     ];
 
     const toggleBtn = document.createElement("button");
@@ -73,6 +73,17 @@ export class RenderStatus {
       ];
 
       const timings = result.timings;
+      const quality = result.perceptualScore;
+      if (quality) {
+        detailStats.push(
+          stat("Roughness", quality.roughness.toFixed(3)),
+          stat("Fine texture", quality.texture.toFixed(3)),
+          stat("Thin defects", (quality.thin_defects ?? 0).toFixed(3)),
+          stat("Missing edges", quality.missing.toFixed(3)),
+          stat("Extra edges", quality.extra.toFixed(3)),
+          stat("Colour", quality.colour.toFixed(3)),
+        );
+      }
       if (timings) {
         detailStats.push(
           stat("Prepare", timings.canvasCacheHit ? "cached" : `${timings.prepareCanvasMs.toFixed(1)} ms`),
@@ -80,6 +91,7 @@ export class RenderStatus {
           stat("Smooth prep", `${timings.smoothingPrepareMs.toFixed(1)} ms`),
           stat("Smooth", `${timings.smoothingSearchMs.toFixed(1)} ms`),
           stat("Shapes", `${timings.shapeRefineMs.toFixed(1)} ms`),
+          stat("Edge repair", `${(timings.glyphSearchMs ?? 0).toFixed(1)} ms`),
           stat("Score", `${timings.finalScoreMs.toFixed(1)} ms`),
           stat("Encode", `${timings.encodeMs.toFixed(1)} ms`),
           stat("Text", `${timings.overlayMs.toFixed(1)} ms`),

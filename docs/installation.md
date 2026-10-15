@@ -11,7 +11,7 @@ cargo build --release
 ./target/release/img2irc photo.png --width 80
 ```
 
-to install on your Cargo `PATH`, run `cargo install --path . --locked`. Rust/Cargo and a C/C++ build toolchain are required. the repository selects `lld` on x86_64 GNU/Linux; OpenSSL development files and `pkg-config` may also be needed by native dependencies.
+to install on your Cargo `PATH`, run `cargo install --path . --locked`. Rust/Cargo and a C/C++ build toolchain are required. OpenSSL development files and `pkg-config` may also be needed by native dependencies.
 
 OCR is included by default. normal native builds download a prebuilt ONNX Runtime; use `cargo build --release --no-default-features` to omit OCR. rendering fonts are embedded in the binary.
 

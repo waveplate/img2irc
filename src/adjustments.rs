@@ -33,6 +33,26 @@ pub fn replace_colour(image: &mut PhotonImage, from: [u8; 3], to: [u8; 3], toler
     *image = PhotonImage::new(pixels, image.get_width(), image.get_height());
 }
 
+/// Pixel-only counterpart used by Advanced.process (which does not render glyphs).
+pub fn quantize_colours(image: &mut PhotonImage, count: u32) {
+    quantize_palette(image, count, 0.0, &[]);
+}
+
+pub fn quantize_palette(image: &mut PhotonImage, count: u32, threshold: f32, palette: &[[u8; 3]]) {
+    let mut pixels = image.get_raw_pixels();
+    let mut counts = std::collections::BTreeMap::new();
+    for pixel in pixels.chunks_exact(4).filter(|pixel| pixel[3] > 0) {
+        *counts.entry([pixel[0], pixel[1], pixel[2]]).or_default() += u64::from(pixel[3]);
+    }
+    let map = crate::output_colours::palette_map(&counts, count as usize, threshold, palette);
+    for pixel in pixels.chunks_exact_mut(4).filter(|pixel| pixel[3] > 0) {
+        if let Some(rgb) = map.get(&[pixel[0], pixel[1], pixel[2]]) {
+            pixel[..3].copy_from_slice(rgb);
+        }
+    }
+    *image = PhotonImage::new(pixels, image.get_width(), image.get_height());
+}
+
 /// Replace palette-visible colours rather than inaccessible source RGB values.
 /// Every source pixel is first assigned to the same palette bucket used by the
 /// renderer, so selecting a displayed colour replaces the complete bucket.
@@ -155,19 +175,45 @@ pub fn median_blur(image: &mut PhotonImage, radius: i32) {
     *image = PhotonImage::new(output, w as u32, h as u32);
 }
 
-/// Positive amounts grow lines; negative amounts shrink them. Select whole RGB
-/// pixels by luma so morphology does not invent colours at coloured edges.
-pub fn line_thickness(image: &mut PhotonImage, amount: i32, light_lines: bool) {
-    let radius = amount.unsigned_abs().min(10) as usize;
-    if radius == 0 {
+/// Positive amounts grow lines; negative amounts shrink them. Integer radii
+/// select whole RGB pixels by luma; fractional radii blend adjacent results
+/// for gradual changes in stroke coverage without shifting individual channels.
+pub fn line_thickness(image: &mut PhotonImage, amount: f32, light_lines: bool) {
+    if amount == 0.0 || !amount.is_finite() {
         return;
     }
     let (w, h) = (image.get_width() as usize, image.get_height() as usize);
     if w == 0 || h == 0 {
         return;
     }
-    let choose_light = (amount > 0) == light_lines;
-    let mut source = image.get_raw_pixels();
+    let radius = amount.abs().min(10.0);
+    let lower = radius.floor() as usize;
+    let fraction = radius - lower as f32;
+    let choose_light = (amount > 0.0) == light_lines;
+    let source = image.get_raw_pixels();
+    let mut output = line_thickness_pixels(source.clone(), w, h, lower, choose_light);
+    if fraction > 0.0 {
+        let upper = line_thickness_pixels(source, w, h, lower + 1, choose_light);
+        for (pixel, next) in output.chunks_exact_mut(4).zip(upper.chunks_exact(4)) {
+            for c in 0..3 {
+                pixel[c] = (pixel[c] as f32 + fraction * (next[c] as f32 - pixel[c] as f32))
+                    .round() as u8;
+            }
+        }
+    }
+    *image = PhotonImage::new(output, w as u32, h as u32);
+}
+
+fn line_thickness_pixels(
+    mut source: Vec<u8>,
+    w: usize,
+    h: usize,
+    radius: usize,
+    choose_light: bool,
+) -> Vec<u8> {
+    if radius == 0 {
+        return source;
+    }
     // A square min/max filter is separable into horizontal and vertical passes.
     for vertical in [false, true] {
         let mut output = source.clone();
@@ -206,7 +252,7 @@ pub fn line_thickness(image: &mut PhotonImage, amount: i32, light_lines: bool) {
         }
         source = output;
     }
-    *image = PhotonImage::new(source, w as u32, h as u32);
+    source
 }
 
 #[cfg(test)]
@@ -244,6 +290,24 @@ mod tests {
         assert_eq!(&pixels[8..11], &[250, 8, 8]);
     }
     #[test]
+    fn palette_cleanup_preserves_alpha_and_transparent_pixels() {
+        let mut img = PhotonImage::new(
+            vec![200, 40, 40, 255, 202, 41, 40, 100, 0, 0, 0, 255, 1, 2, 3, 0],
+            4,
+            1,
+        );
+        quantize_palette(&mut img, 2, 3.0, &[]);
+        assert_eq!(
+            img.get_raw_pixels(),
+            vec![200, 40, 40, 255, 200, 40, 40, 100, 0, 0, 0, 255, 1, 2, 3, 0]
+        );
+        quantize_palette(&mut img, 1, 100.0, &[[255; 3], [0; 3]]);
+        let p = img.get_raw_pixels();
+        assert_eq!(&p[0..3], &[255; 3]);
+        assert_eq!(&p[8..11], &[0; 3]);
+        assert_eq!(&p[12..], &[1, 2, 3, 0]);
+    }
+    #[test]
     fn contrast_preserves_chroma_even_at_gamut_boundary() {
         let mut img = PhotonImage::new(vec![180, 150, 130, 77, 250, 210, 180, 255], 2, 1);
         luma_contrast(&mut img, 200.0);
@@ -276,7 +340,7 @@ mod tests {
                 })
                 .collect();
             let mut img = PhotonImage::new(pixels, 7, 1);
-            line_thickness(&mut img, 1, light);
+            line_thickness(&mut img, 1.0, light);
             assert_eq!(
                 img.get_raw_pixels()
                     .chunks_exact(4)
@@ -284,7 +348,7 @@ mod tests {
                     .count(),
                 3
             );
-            line_thickness(&mut img, -1, light);
+            line_thickness(&mut img, -1.0, light);
             assert_eq!(
                 img.get_raw_pixels()
                     .chunks_exact(4)

@@ -136,6 +136,10 @@ export class TextControls {
       return group;
     }));
     select.disabled = this.#figletFonts.length === 0;
+    if (this.#figletFonts.length === 0) {
+      this.#renderEditor();
+      return;
+    }
 
     let changed = false;
     const names = new Set(this.#figletFonts.map((font) => font.name));
@@ -175,6 +179,13 @@ export class TextControls {
   }
 
   refresh() {
+    this.#render();
+  }
+
+  selection() { return this.#keyForOverlay(this.#selected); }
+
+  restoreSelection(key) {
+    this.#selected = key ? this.#overlayForKey(key) : undefined;
     this.#render();
   }
 

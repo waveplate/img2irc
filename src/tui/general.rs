@@ -88,6 +88,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
     f.render_widget(panel, area);
 
     app.control_areas.clear();
+    app.font_scan_area = Rect::default();
 
     let buf = f.buffer_mut();
 
@@ -130,7 +131,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
 
         let conditional_depth = ctrl.id.conditional_depth();
         let indent = conditional_depth.saturating_mul(2).min(inner.width);
-        let ctrl_area = Rect::new(
+        let mut ctrl_area = Rect::new(
             inner.x.saturating_add(indent),
             y,
             inner.width.saturating_sub(indent),
@@ -149,6 +150,15 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
             item_height.min(inner.y + inner.height - y),
         );
         buf.set_style(group_area, Style::new().bg(control_bg));
+
+        if ctrl.id == ControlId::FontSize && ctrl_area.width >= 20 {
+            let button_area = Rect::new(ctrl_area.right() - 8, ctrl_area.y, 8, 1);
+            ctrl_area.width -= 8;
+            app.font_scan_area = button_area;
+            buf.set_string(button_area.x, button_area.y,
+                if app.font_scan_running { " [Stop] " } else { " [Auto] " },
+                Style::new().fg(ACCENT).bg(control_bg).add_modifier(Modifier::BOLD));
+        }
 
         let label_text = if ctrl.id == ControlId::AutoOptimize && app.is_optimizing {
             "🛑 STOP AUTO-OPTIMIZE".to_string()
@@ -183,6 +193,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                     } else if matches!(
                         ctrl.id,
                         ControlId::DiscThreshold
+                            | ControlId::GlyphSearchThreshold
                             | ControlId::ContourBendingWeight
                             | ControlId::ContourEndpointWeight
                             | ControlId::ContourJunctionWeight
@@ -297,7 +308,11 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 format!(" {} ", control.label)
             };
             f.render_widget(
-                Paragraph::new(text)
+                Paragraph::new(if app.smooth_hint_until.is_some_and(|until| until > Instant::now()) {
+                    "Tip: select the Smooth glyph set for Smoothing and Repair Edges."
+                } else if app.font_scan_running {
+                    &app.optimization_progress
+                } else { text })
                     .block(Block::default().borders(Borders::TOP).title(title).border_style(Style::new().fg(BORDER)))
                     .style(Style::new().fg(if reason.is_some() { Color::Yellow } else { TEXT_DIM }))
                     .wrap(ratatui::widgets::Wrap { trim: true }),

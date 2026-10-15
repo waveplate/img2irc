@@ -5,6 +5,7 @@ export class EditorState {
   fontKey = "local:iosevka-fixed-extended";
   outputFontSize = 16;
   sourceBlob = undefined;
+  originalBlob = undefined;
   sourceRevision = 0;
 
   manualOverlays = [];
@@ -37,11 +38,12 @@ export class EditorState {
     this.ocrOverlaysDirty = false;
   }
 
-  setSource(objectUrl, blob) {
+  setSource(objectUrl, blob, originalBlob = blob) {
     if (this.sourceObjectUrl) URL.revokeObjectURL(this.sourceObjectUrl);
     this.hasImage = true;
     this.sourceObjectUrl = objectUrl;
     this.sourceBlob = blob;
+    this.originalBlob = originalBlob;
     this.sourceRevision += 1;
     this.result = undefined;
     this.clearOcrOverlays();

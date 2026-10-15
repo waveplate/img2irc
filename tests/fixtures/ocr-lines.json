@@ -81,10 +81,22 @@
     "blocks": [[[0, 1], [2], [3], [4]]]
   },
   {
-    "name": "short aligned connector follows an established list across an empty line",
+    "name": "short aligned connector after a paragraph break stays separate",
     "boxes": [[10, 0, 180, 20], [10, 30, 190, 50], [10, 60, 175, 80], [10, 109, 36, 121]],
     "groups": [[0], [1], [2], [3]],
-    "blocks": [[[0], [1], [2], [3]]]
+    "blocks": [[[0], [1], [2]], [[3]]]
+  },
+  {
+    "name": "uneven leading breaks a block before the gap becomes very large",
+    "boxes": [[0, 0, 60, 20], [0, 25, 60, 45], [0, 63, 60, 83]],
+    "groups": [[0], [1], [2]],
+    "blocks": [[[0], [1]], [[2]]]
+  },
+  {
+    "name": "widely spaced left aligned labels are independent",
+    "boxes": [[0, 0, 60, 20], [0, 45, 60, 65]],
+    "groups": [[0], [1]],
+    "blocks": [[[0]], [[1]]]
   },
   {
     "name": "empty input",

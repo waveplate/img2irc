@@ -11,6 +11,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod region_guidance;
+mod glyph_search;
+
+pub mod search_status;
+mod smooth_features;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type RenderInstant = std::time::Instant;
 
@@ -1283,6 +1289,7 @@ pub struct RenderProfile {
     pub smoothing_prepare: std::time::Duration,
     pub smoothing_search: std::time::Duration,
     pub shape_refine: std::time::Duration,
+    pub glyph_search: std::time::Duration,
     pub final_score: std::time::Duration,
     pub encode: std::time::Duration,
     pub contour_cache_hits: u64,
@@ -1297,6 +1304,7 @@ impl Default for RenderProfile {
             smoothing_prepare: std::time::Duration::ZERO,
             smoothing_search: std::time::Duration::ZERO,
             shape_refine: std::time::Duration::ZERO,
+            glyph_search: std::time::Duration::ZERO,
             final_score: std::time::Duration::ZERO,
             encode: std::time::Duration::ZERO,
             contour_cache_hits: 0,
@@ -1309,12 +1317,13 @@ impl RenderProfile {
     pub fn summary(&self) -> String {
         let millis = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
         format!(
-            "prepare={:.1}ms match={:.1}ms smooth-prep={:.1}ms smooth={:.1}ms shapes={:.1}ms score={:.1}ms encode={:.1}ms contour-cache={}/{}",
+            "prepare={:.1}ms match={:.1}ms smooth-prep={:.1}ms smooth={:.1}ms shapes={:.1}ms glyph-search={:.1}ms score={:.1}ms encode={:.1}ms contour-cache={}/{}",
             millis(self.prepare_canvas),
             millis(self.glyph_match),
             millis(self.smoothing_prepare),
             millis(self.smoothing_search),
             millis(self.shape_refine),
+            millis(self.glyph_search),
             millis(self.final_score),
             millis(self.encode),
             self.contour_cache_hits,
@@ -1332,6 +1341,9 @@ pub struct RenderResult {
     pub dynamic_scaling_count: u64,
     pub grid: Vec<Vec<RenderedCell>>,
     pub score: f64,
+    pub perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
+    /// The first-pass search plan, before glyph changes. Display diagnostics only.
+    pub glyph_defects: Option<std::sync::Arc<search_status::GlyphDefectMap>>,
     pub longest_line_bytes: usize,
     pub initial_time: std::time::Duration,
     pub profile: RenderProfile,
@@ -1347,6 +1359,8 @@ impl From<&str> for RenderResult {
             dynamic_scaling_count: 0,
             grid: Vec::new(),
             score: 0.0,
+            perceptual_score: None,
+            glyph_defects: None,
             longest_line_bytes: 0,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
@@ -1367,7 +1381,30 @@ pub fn apply_overlays_to_result(
         // Nothing to apply; just return a clone with corrected content
         return base.clone();
     }
+    encode_grid_with_overlays(
+        base, overlays, render, as_preview, grayscale_tolerance, false,
+    )
+}
 
+pub(crate) fn encode_output_colours(
+    base: &RenderResult,
+    render: Render,
+    as_preview: bool,
+    grayscale_tolerance: u8,
+) -> RenderResult {
+    encode_grid_with_overlays(
+        base, &[], render, as_preview, grayscale_tolerance, true,
+    )
+}
+
+fn encode_grid_with_overlays(
+    base: &RenderResult,
+    overlays: &[crate::args::TextOverlay],
+    render: Render,
+    as_preview: bool,
+    grayscale_tolerance: u8,
+    exact_palette: bool,
+) -> RenderResult {
     let mut content = String::new();
     let mut alt_out = String::new();
     let mut grid = base.grid.clone();
@@ -1408,14 +1445,6 @@ pub fn apply_overlays_to_result(
             for prepared in &prepared_overlays {
                 let ov = prepared.overlay;
                 if let Some(opt_c) = prepared.at(cx, cy) {
-                    if (ov.transparent_spaces || ov.figlet_enabled())
-                        && opt_c.is_none_or(|character| character.is_whitespace())
-                    {
-                        continue;
-                    }
-                    if opt_c.is_none() && ov.bg.is_none() {
-                        continue;
-                    }
                     let ch = opt_c.unwrap_or(' ');
                     ov_char = Some(ch);
                     ov_bold = ov.bold;
@@ -1484,12 +1513,29 @@ pub fn apply_overlays_to_result(
                 };
             }
 
-            let fg_colour = Colour::RGB(draw_fg_raw);
-            let bg_colour = draw_bg_raw.map(Colour::RGB);
+            let encode_render = if exact_palette && as_preview && render == Render::Irc {
+                Render::Ansi24
+            } else {
+                render
+            };
+            let colour = |rgb: [u8; 3]| {
+                if exact_palette && encode_render != Render::Ansi24 {
+                    let palette = if render == Render::Irc {
+                        &IRC99[..]
+                    } else {
+                        &ANSI256[..]
+                    };
+                    Colour::Index(nearest_hex_colour_fast(make_rgb_u32(&rgb), palette))
+                } else {
+                    Colour::RGB(rgb)
+                }
+            };
+            let fg_colour = colour(draw_fg_raw);
+            let bg_colour = draw_bg_raw.map(colour);
 
             emit_colourized(
                 &mut content,
-                render,
+                encode_render,
                 as_preview,
                 fg_colour.clone(),
                 bg_colour.clone(),
@@ -1510,7 +1556,7 @@ pub fn apply_overlays_to_result(
                 // IRC alt output: quantize RGB → IRC99
                 let irc_colour_from_rgb = |rgb: [u8; 3]| -> Colour {
                     let col = make_rgb_u32(&rgb);
-                    let idx = if !is_near_grayscale(col, grayscale_tolerance) {
+                    let idx = if !exact_palette && !is_near_grayscale(col, grayscale_tolerance) {
                         nearest_distinctly_chromatic_hex_colour(col, &IRC99, grayscale_tolerance)
                             .unwrap_or_else(|| nearest_hex_colour_fast(col, &IRC99))
                     } else {
@@ -1572,6 +1618,8 @@ pub fn apply_overlays_to_result(
         total_pixels: base.total_pixels,
         dynamic_scaling_count: base.dynamic_scaling_count,
         score: base.score,
+        perceptual_score: base.perceptual_score,
+        glyph_defects: base.glyph_defects.clone(),
         longest_line_bytes,
         initial_time: base.initial_time,
         profile: base.profile.clone(),
@@ -2576,6 +2624,7 @@ fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool,
         let mut pool: Vec<(usize, bool, u64)> = costs
             .iter()
             .enumerate()
+            .filter(|(_, cost)| **cost != u64::MAX)
             .map(|(idx, &cost)| (idx / 2, idx % 2 == 1, cost))
             .collect();
         pool.sort_by_key(|&(_, _, cost)| cost);
@@ -2585,6 +2634,9 @@ fn best_candidate_pool_pre(costs: &[u64], pool_size: usize) -> Vec<(usize, bool,
     let mut pool = Vec::with_capacity(pool_size + 1);
 
     for (idx, &cost) in costs.iter().enumerate() {
+        if cost == u64::MAX {
+            continue;
+        }
         let candidate = (idx / 2, idx % 2 == 1, cost);
         let insert_at = pool
             .iter()
@@ -3012,46 +3064,50 @@ pub(crate) fn layout_overlay_text(text: &str, wrap_width: Option<usize>) -> Vec<
 struct PreparedTextOverlay<'a> {
     overlay: &'a crate::args::TextOverlay,
     lines: Vec<Vec<char>>,
+    width: usize,
+    height: usize,
 }
 
 impl<'a> PreparedTextOverlay<'a> {
     fn new(overlay: &'a crate::args::TextOverlay) -> Self {
         let wrap_width = (overlay.wrap && overlay.w > 0).then_some(overlay.w as usize);
+        let lines = layout_overlay_text(&overlay.text, wrap_width);
+        let width = if overlay.w > 0 { overlay.w as usize }
+            else { lines.iter().map(Vec::len).max().unwrap_or(0).max(1) };
+        let height = if overlay.h > 0 { overlay.h as usize }
+            else { lines.len().max(1) };
         Self {
             overlay,
-            lines: layout_overlay_text(&overlay.text, wrap_width),
+            lines,
+            width,
+            height,
         }
     }
 
     fn at(&self, cx: i32, cy: i32) -> Option<Option<char>> {
         let ov = self.overlay;
-        if cy < ov.y {
+        if cx < ov.x || cy < ov.y {
             return None;
         }
-        let dy = (cy - ov.y) as usize;
-
-        if ov.w > 0 && ov.h > 0 {
-            if cx < ov.x || cx >= ov.x + ov.w || cy >= ov.y + ov.h {
-                return None;
-            }
-
-            let dx = (cx - ov.x) as usize;
-            return Some(self.lines.get(dy).and_then(|line| line.get(dx)).copied());
-        }
-
-        if cx < ov.x {
+        let dx = (cx as i64 - ov.x as i64) as usize;
+        let dy = (cy as i64 - ov.y as i64) as usize;
+        if dx >= self.width || dy >= self.height {
             return None;
         }
-        let dx = (cx - ov.x) as usize;
-        self.lines
-            .get(dy)
-            .and_then(|line| line.get(dx))
-            .copied()
-            .map(Some)
+        let character = self.lines.get(dy).and_then(|line| line.get(dx)).copied();
+        // An explicit background makes the entire bounding box opaque. Only
+        // overlays without a background may leave banner whitespace untouched.
+        if ov.bg.is_none() && (character.is_none()
+            || ((ov.transparent_spaces || ov.figlet_enabled())
+                && character.is_some_and(char::is_whitespace)))
+        {
+            return None;
+        }
+        Some(character)
     }
 }
 
-struct ScoreFixPrefixStats {
+struct SmoothPrefixStats {
     target_count: usize,
     candidate_trials: usize,
     duplicate_candidates_skipped: usize,
@@ -3066,7 +3122,7 @@ struct ScoreFixPrefixStats {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct ScoreFixGlyphPreview {
+struct SmoothGlyphPreview {
     #[allow(dead_code)]
     mask: u128,
     internal_boundary_length: usize,
@@ -3076,8 +3132,8 @@ struct ScoreFixGlyphPreview {
     bottom_edge: u8,
 }
 
-struct ScoreFixBandCache {
-    glyph_previews: Vec<ScoreFixGlyphPreview>,
+struct SmoothBandCache {
+    glyph_previews: Vec<SmoothGlyphPreview>,
     reference_patch_lengths: Vec<usize>,
     output_patch_lengths: Vec<Option<usize>>,
     global_reference_length: usize,
@@ -3085,14 +3141,14 @@ struct ScoreFixBandCache {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ScoreFixBandCandidate {
+struct SmoothBandCandidate {
     current_score: f64,
     candidate_score: f64,
     global_boundary_delta: isize,
 }
 
 #[inline]
-fn score_fix_band_only(weights: &crate::contour_score::ContourScoreWeights) -> bool {
+fn smooth_band_only(weights: &crate::contour_score::ContourScoreWeights) -> bool {
     weights.boundary_balance > 0.0
         && weights.bending <= 0.0
         && weights.endpoints <= 0.0
@@ -3101,7 +3157,7 @@ fn score_fix_band_only(weights: &crate::contour_score::ContourScoreWeights) -> b
         && weights.fidelity <= 0.0
 }
 
-fn score_fix_has_at_most_eight_colours<'a>(pixels: impl IntoIterator<Item = &'a [u8; 3]>) -> bool {
+fn smooth_has_at_most_eight_colours<'a>(pixels: impl IntoIterator<Item = &'a [u8; 3]>) -> bool {
     let mut colours = Vec::with_capacity(9);
     for &pixel in pixels {
         if !colours.contains(&pixel) {
@@ -3114,7 +3170,7 @@ fn score_fix_has_at_most_eight_colours<'a>(pixels: impl IntoIterator<Item = &'a 
     true
 }
 
-fn score_fix_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> ScoreFixGlyphPreview {
+fn smooth_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> SmoothGlyphPreview {
     let mut mask = 0u128;
     for y in 0..crate::contour_score::PREVIEW_CELL_HEIGHT {
         let source_y = y * gh / crate::contour_score::PREVIEW_CELL_HEIGHT;
@@ -3144,7 +3200,7 @@ fn score_fix_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> ScoreFixG
             & 1) as u16)
             << y;
     }
-    ScoreFixGlyphPreview {
+    SmoothGlyphPreview {
         mask,
         internal_boundary_length: horizontal + vertical,
         left_edge,
@@ -3155,7 +3211,7 @@ fn score_fix_preview_glyph(glyph: &FastGlyph, gw: usize, gh: usize) -> ScoreFixG
 }
 
 #[inline]
-fn score_fix_edge_mismatches(
+fn smooth_edge_mismatches(
     a_data: &BlockData,
     a_mask: u16,
     a_inverted: bool,
@@ -3186,9 +3242,9 @@ fn score_fix_edge_mismatches(
 
 #[cfg(test)]
 #[inline]
-fn score_fix_preview_pixel(
+fn smooth_preview_pixel(
     data: &BlockData,
-    glyph: ScoreFixGlyphPreview,
+    glyph: SmoothGlyphPreview,
     inverted: bool,
     x: usize,
     y: usize,
@@ -3201,7 +3257,7 @@ fn score_fix_preview_pixel(
     }
 }
 
-fn score_fix_preview_internal_lengths(
+fn smooth_preview_internal_lengths(
     preview: &[[u8; 3]],
     grid_w: usize,
     grid_h: usize,
@@ -3236,7 +3292,7 @@ fn score_fix_preview_internal_lengths(
 }
 
 #[inline]
-fn score_fix_preview_at(
+fn smooth_preview_at(
     preview: &[[u8; 3]],
     preview_width: usize,
     cell_idx: usize,
@@ -3251,7 +3307,7 @@ fn score_fix_preview_at(
         + x]
 }
 
-fn score_fix_patch_boundary_length(
+fn smooth_patch_boundary_length(
     preview: &[[u8; 3]],
     internal_lengths: &[usize],
     center_idx: usize,
@@ -3283,14 +3339,14 @@ fn score_fix_patch_boundary_length(
     for row in cells {
         for pair in row.windows(2) {
             for y in 0..cell_h {
-                length += (score_fix_preview_at(
+                length += (smooth_preview_at(
                     preview,
                     preview_width,
                     pair[0],
                     grid_w,
                     cell_w - 1,
                     y,
-                ) != score_fix_preview_at(preview, preview_width, pair[1], grid_w, 0, y))
+                ) != smooth_preview_at(preview, preview_width, pair[1], grid_w, 0, y))
                     as usize;
             }
         }
@@ -3298,14 +3354,14 @@ fn score_fix_patch_boundary_length(
     for rows in cells.windows(2) {
         for x in 0..3 {
             for pixel_x in 0..cell_w {
-                length += (score_fix_preview_at(
+                length += (smooth_preview_at(
                     preview,
                     preview_width,
                     rows[0][x],
                     grid_w,
                     pixel_x,
                     cell_h - 1,
-                ) != score_fix_preview_at(
+                ) != smooth_preview_at(
                     preview,
                     preview_width,
                     rows[1][x],
@@ -3321,13 +3377,13 @@ fn score_fix_patch_boundary_length(
 
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-fn score_fix_patch_boundary_length_with_candidate(
+fn smooth_patch_boundary_length_with_candidate(
     preview: &[[u8; 3]],
     internal_lengths: &[usize],
     center_idx: usize,
     changed_idx: usize,
     data: &BlockData,
-    glyph: ScoreFixGlyphPreview,
+    glyph: SmoothGlyphPreview,
     inverted: bool,
     candidate_internal_length: usize,
     grid_w: usize,
@@ -3359,9 +3415,9 @@ fn score_fix_patch_boundary_length_with_candidate(
 
     let pixel = |idx, x, y| {
         if idx == changed_idx {
-            score_fix_preview_pixel(data, glyph, inverted, x, y)
+            smooth_preview_pixel(data, glyph, inverted, x, y)
         } else {
-            score_fix_preview_at(preview, preview_width, idx, grid_w, x, y)
+            smooth_preview_at(preview, preview_width, idx, grid_w, x, y)
         }
     };
     let cell_w = crate::contour_score::PREVIEW_CELL_WIDTH;
@@ -3384,10 +3440,10 @@ fn score_fix_patch_boundary_length_with_candidate(
     length
 }
 
-fn score_fix_patch_boundary_length_from_cells(
+fn smooth_patch_boundary_length_from_cells(
     grid_state: &[(usize, bool)],
     grid_data: &[BlockData],
-    glyph_previews: &[ScoreFixGlyphPreview],
+    glyph_previews: &[SmoothGlyphPreview],
     center_idx: usize,
     changed: Option<(usize, (usize, bool))>,
     grid_w: usize,
@@ -3432,7 +3488,7 @@ fn score_fix_patch_boundary_length_from_cells(
             let right = pair[1];
             let left_choice = choice_at(left);
             let right_choice = choice_at(right);
-            length += score_fix_edge_mismatches(
+            length += smooth_edge_mismatches(
                 &grid_data[left],
                 glyph_previews[left_choice.0].right_edge,
                 left_choice.1,
@@ -3449,7 +3505,7 @@ fn score_fix_patch_boundary_length_from_cells(
             let bottom = rows[1][x];
             let top_choice = choice_at(top);
             let bottom_choice = choice_at(bottom);
-            length += score_fix_edge_mismatches(
+            length += smooth_edge_mismatches(
                 &grid_data[top],
                 glyph_previews[top_choice.0].bottom_edge as u16,
                 top_choice.1,
@@ -3463,7 +3519,7 @@ fn score_fix_patch_boundary_length_from_cells(
     length
 }
 
-fn score_fix_grid_boundary_length(
+fn smooth_grid_boundary_length(
     preview: &[[u8; 3]],
     internal_lengths: &[usize],
     grid_w: usize,
@@ -3478,14 +3534,14 @@ fn score_fix_grid_boundary_length(
             let left = cell_y * grid_w + cell_x - 1;
             let right = left + 1;
             for y in 0..cell_h {
-                length += (score_fix_preview_at(
+                length += (smooth_preview_at(
                     preview,
                     preview_width,
                     left,
                     grid_w,
                     cell_w - 1,
                     y,
-                ) != score_fix_preview_at(preview, preview_width, right, grid_w, 0, y))
+                ) != smooth_preview_at(preview, preview_width, right, grid_w, 0, y))
                     as usize;
             }
         }
@@ -3495,14 +3551,14 @@ fn score_fix_grid_boundary_length(
             let top = (cell_y - 1) * grid_w + cell_x;
             let bottom = top + grid_w;
             for x in 0..cell_w {
-                length += (score_fix_preview_at(
+                length += (smooth_preview_at(
                     preview,
                     preview_width,
                     top,
                     grid_w,
                     x,
                     cell_h - 1,
-                ) != score_fix_preview_at(preview, preview_width, bottom, grid_w, x, 0))
+                ) != smooth_preview_at(preview, preview_width, bottom, grid_w, x, 0))
                     as usize;
             }
         }
@@ -3511,10 +3567,10 @@ fn score_fix_grid_boundary_length(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn score_fix_center_boundary_contribution(
+fn smooth_center_boundary_contribution(
     grid_state: &[(usize, bool)],
     grid_data: &[BlockData],
-    glyph_previews: &[ScoreFixGlyphPreview],
+    glyph_previews: &[SmoothGlyphPreview],
     cell_idx: usize,
     grid_w: usize,
     grid_h: usize,
@@ -3534,7 +3590,7 @@ fn score_fix_center_boundary_contribution(
 
     let mut add_vertical_seam = |neighbor_idx: usize, center_mask: u16, neighbor_mask: u16| {
         let neighbor_choice = grid_state[neighbor_idx];
-        length += score_fix_edge_mismatches(
+        length += smooth_edge_mismatches(
             center_data,
             center_mask,
             center_choice.1,
@@ -3558,7 +3614,7 @@ fn score_fix_center_boundary_contribution(
 
     let mut add_horizontal_seam = |neighbor_idx: usize, center_mask: u8, neighbor_mask: u8| {
         let neighbor_choice = grid_state[neighbor_idx];
-        length += score_fix_edge_mismatches(
+        length += smooth_edge_mismatches(
             center_data,
             center_mask as u16,
             center_choice.1,
@@ -3582,7 +3638,7 @@ fn score_fix_center_boundary_contribution(
 }
 
 #[inline]
-fn score_fix_band_score(reference_length: usize, output_length: usize, weight: f64) -> f64 {
+fn smooth_band_score(reference_length: usize, output_length: usize, weight: f64) -> f64 {
     weight.max(0.0)
         * 100.0
         * (((output_length as f64 + 1.0) / (reference_length as f64 + 1.0))
@@ -3591,7 +3647,7 @@ fn score_fix_band_score(reference_length: usize, output_length: usize, weight: f
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_score_fix_band_cache(
+fn prepare_smooth_band_cache(
     source_preview: &[[u8; 3]],
     output_preview: &[[u8; 3]],
     grid_data: &[BlockData],
@@ -3601,8 +3657,8 @@ fn prepare_score_fix_band_cache(
     grid_h: usize,
     gw: usize,
     gh: usize,
-) -> Option<ScoreFixBandCache> {
-    if !score_fix_band_only(weights)
+) -> Option<SmoothBandCache> {
+    if !smooth_band_only(weights)
         || grid_w == 0
         || grid_h == 0
         || source_preview.len()
@@ -3610,8 +3666,8 @@ fn prepare_score_fix_band_cache(
                 * grid_h
                 * crate::contour_score::PREVIEW_CELL_WIDTH
                 * crate::contour_score::PREVIEW_CELL_HEIGHT
-        || !score_fix_has_at_most_eight_colours(source_preview)
-        || !score_fix_has_at_most_eight_colours(
+        || !smooth_has_at_most_eight_colours(source_preview)
+        || !smooth_has_at_most_eight_colours(
             grid_data.iter().flat_map(|data| [&data.fg, &data.bg]),
         )
     {
@@ -3620,16 +3676,16 @@ fn prepare_score_fix_band_cache(
 
     let glyph_previews = glyphs
         .par_iter()
-        .map(|glyph| score_fix_preview_glyph(glyph, gw, gh))
+        .map(|glyph| smooth_preview_glyph(glyph, gw, gh))
         .collect::<Vec<_>>();
     let reference_internal_lengths =
-        score_fix_preview_internal_lengths(source_preview, grid_w, grid_h);
+        smooth_preview_internal_lengths(source_preview, grid_w, grid_h);
     let output_internal_lengths =
-        score_fix_preview_internal_lengths(output_preview, grid_w, grid_h);
+        smooth_preview_internal_lengths(output_preview, grid_w, grid_h);
     let reference_patch_lengths = (0..grid_w * grid_h)
         .into_par_iter()
         .map(|idx| {
-            score_fix_patch_boundary_length(
+            smooth_patch_boundary_length(
                 source_preview,
                 &reference_internal_lengths,
                 idx,
@@ -3638,20 +3694,20 @@ fn prepare_score_fix_band_cache(
             )
         })
         .collect::<Vec<_>>();
-    let global_reference_length = score_fix_grid_boundary_length(
+    let global_reference_length = smooth_grid_boundary_length(
         source_preview,
         &reference_internal_lengths,
         grid_w,
         grid_h,
     );
-    let global_output_length = score_fix_grid_boundary_length(
+    let global_output_length = smooth_grid_boundary_length(
         output_preview,
         &output_internal_lengths,
         grid_w,
         grid_h,
     );
 
-    Some(ScoreFixBandCache {
+    Some(SmoothBandCache {
         glyph_previews,
         reference_patch_lengths,
         output_patch_lengths: vec![None; grid_w * grid_h],
@@ -3661,8 +3717,8 @@ fn prepare_score_fix_band_cache(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn evaluate_score_fix_band_candidate(
-    cache: &mut ScoreFixBandCache,
+fn evaluate_smooth_band_candidate(
+    cache: &mut SmoothBandCache,
     grid_state: &[(usize, bool)],
     grid_data: &[BlockData],
     curr_idx: usize,
@@ -3670,9 +3726,9 @@ fn evaluate_score_fix_band_candidate(
     boundary_weight: f64,
     grid_w: usize,
     grid_h: usize,
-) -> ScoreFixBandCandidate {
+) -> SmoothBandCandidate {
     let current_patch_length = cache.output_patch_lengths[curr_idx].unwrap_or_else(|| {
-        let length = score_fix_patch_boundary_length_from_cells(
+        let length = smooth_patch_boundary_length_from_cells(
             grid_state,
             grid_data,
             &cache.glyph_previews,
@@ -3684,7 +3740,7 @@ fn evaluate_score_fix_band_candidate(
         cache.output_patch_lengths[curr_idx] = Some(length);
         length
     });
-    let current_local_contribution = score_fix_center_boundary_contribution(
+    let current_local_contribution = smooth_center_boundary_contribution(
         grid_state,
         grid_data,
         &cache.glyph_previews,
@@ -3694,7 +3750,7 @@ fn evaluate_score_fix_band_candidate(
         None,
         true,
     );
-    let candidate_local_contribution = score_fix_center_boundary_contribution(
+    let candidate_local_contribution = smooth_center_boundary_contribution(
         grid_state,
         grid_data,
         &cache.glyph_previews,
@@ -3715,7 +3771,7 @@ fn evaluate_score_fix_band_candidate(
     {
         candidate_local_contribution as isize - current_local_contribution as isize
     } else {
-        let current_global_contribution = score_fix_center_boundary_contribution(
+        let current_global_contribution = smooth_center_boundary_contribution(
             grid_state,
             grid_data,
             &cache.glyph_previews,
@@ -3725,7 +3781,7 @@ fn evaluate_score_fix_band_candidate(
             None,
             false,
         );
-        let candidate_global_contribution = score_fix_center_boundary_contribution(
+        let candidate_global_contribution = smooth_center_boundary_contribution(
             grid_state,
             grid_data,
             &cache.glyph_previews,
@@ -3738,13 +3794,13 @@ fn evaluate_score_fix_band_candidate(
         candidate_global_contribution as isize - current_global_contribution as isize
     };
     let reference_length = cache.reference_patch_lengths[curr_idx];
-    ScoreFixBandCandidate {
-        current_score: score_fix_band_score(
+    SmoothBandCandidate {
+        current_score: smooth_band_score(
             reference_length,
             current_patch_length,
             boundary_weight,
         ),
-        candidate_score: score_fix_band_score(
+        candidate_score: smooth_band_score(
             reference_length,
             candidate_patch_length,
             boundary_weight,
@@ -3753,10 +3809,10 @@ fn evaluate_score_fix_band_candidate(
     }
 }
 
-fn apply_score_fix_band_commit(
-    cache: &mut ScoreFixBandCache,
+fn apply_smooth_band_commit(
+    cache: &mut SmoothBandCache,
     curr_idx: usize,
-    candidate: ScoreFixBandCandidate,
+    candidate: SmoothBandCandidate,
     grid_w: usize,
     grid_h: usize,
 ) {
@@ -3777,7 +3833,7 @@ fn apply_score_fix_band_commit(
 }
 
 #[derive(Clone, Copy, Debug)]
-enum ScoreFixOrdering {
+enum SmoothOrdering {
     WorstFirst,
     SpiralIn,
     SpiralOut,
@@ -3785,7 +3841,7 @@ enum ScoreFixOrdering {
     AlternatingReverse,
 }
 
-impl ScoreFixOrdering {
+impl SmoothOrdering {
     // Keep worst-first first and only append strategies: SF Orders=k is a
     // strict superset of SF Orders=k-1, so increasing it cannot discard the
     // previously selected result.
@@ -3808,7 +3864,7 @@ impl ScoreFixOrdering {
     }
 }
 
-fn score_fix_spiral_ranks(grid_w: usize, grid_h: usize) -> Vec<usize> {
+fn smooth_spiral_ranks(grid_w: usize, grid_h: usize) -> Vec<usize> {
     let mut ranks = vec![0usize; grid_w * grid_h];
     let mut rank = 0usize;
     let (mut left, mut top) = (0usize, 0usize);
@@ -3844,25 +3900,25 @@ fn score_fix_spiral_ranks(grid_w: usize, grid_h: usize) -> Vec<usize> {
     ranks
 }
 
-fn score_fix_order_priority(
-    ordering: ScoreFixOrdering,
+fn smooth_order_priority(
+    ordering: SmoothOrdering,
     spiral_ranks: &[usize],
     cell_idx: usize,
     prefix_index: usize,
     cell_count: usize,
 ) -> usize {
     match ordering {
-        ScoreFixOrdering::WorstFirst => 0,
-        ScoreFixOrdering::SpiralIn => cell_count - spiral_ranks[cell_idx],
-        ScoreFixOrdering::SpiralOut => spiral_ranks[cell_idx] + 1,
-        ScoreFixOrdering::AlternatingForward => {
+        SmoothOrdering::WorstFirst => 0,
+        SmoothOrdering::SpiralIn => cell_count - spiral_ranks[cell_idx],
+        SmoothOrdering::SpiralOut => spiral_ranks[cell_idx] + 1,
+        SmoothOrdering::AlternatingForward => {
             if prefix_index % 2 == 0 {
                 cell_count - cell_idx
             } else {
                 cell_idx + 1
             }
         }
-        ScoreFixOrdering::AlternatingReverse => {
+        SmoothOrdering::AlternatingReverse => {
             if prefix_index % 2 == 0 {
                 cell_idx + 1
             } else {
@@ -3873,14 +3929,14 @@ fn score_fix_order_priority(
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ScoreFixPriorityEntry {
+struct SmoothPriorityEntry {
     order_priority: usize,
     score: f32,
     cell_idx: usize,
     version: u32,
 }
 
-impl PartialEq for ScoreFixPriorityEntry {
+impl PartialEq for SmoothPriorityEntry {
     fn eq(&self, other: &Self) -> bool {
         self.order_priority == other.order_priority
             && self.score.total_cmp(&other.score).is_eq()
@@ -3889,15 +3945,15 @@ impl PartialEq for ScoreFixPriorityEntry {
     }
 }
 
-impl Eq for ScoreFixPriorityEntry {}
+impl Eq for SmoothPriorityEntry {}
 
-impl PartialOrd for ScoreFixPriorityEntry {
+impl PartialOrd for SmoothPriorityEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for ScoreFixPriorityEntry {
+impl Ord for SmoothPriorityEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.order_priority
             .cmp(&other.order_priority)
@@ -4085,7 +4141,7 @@ fn curvature_flow_regularity(pixels: &[[u8; 3]], width: usize, height: usize) ->
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct GeometryScoreFixStats {
+struct GeometrySmoothStats {
     target_count: usize,
     distinct_states: usize,
     candidate_evaluations: usize,
@@ -4107,7 +4163,7 @@ struct GeometryCandidateEvaluation {
     fidelity_sum: f64,
 }
 
-fn geometry_score_fix_weights(args: &RenderArgs) -> crate::contour_score::ContourScoreWeights {
+fn geometry_smooth_weights(args: &RenderArgs) -> crate::contour_score::ContourScoreWeights {
     // Keep raw topology and fidelity measurements available when their UI
     // weights are zero. This epsilon is below the acceptance tolerance, so it
     // only enables the anti-artifact measurements used below.
@@ -4123,7 +4179,7 @@ fn geometry_score_fix_weights(args: &RenderArgs) -> crate::contour_score::Contou
     }
 }
 
-fn geometry_score_fix_fidelity_allowance() -> f64 {
+fn geometry_smooth_fidelity_allowance() -> f64 {
     let patch_width = (NEIGHBORHOOD_RADIUS * 2 + 1)
         * crate::contour_score::PREVIEW_CELL_WIDTH;
     let patch_height = (NEIGHBORHOOD_RADIUS * 2 + 1)
@@ -4206,7 +4262,8 @@ fn top_unique_geometry_choices(
     let mut choices = Vec::with_capacity(limit + 1);
     for state in ranked {
         let class_id = catalog.class_ids[state];
-        if catalog.uniform[state]
+        if costs[state] == u64::MAX
+            || catalog.uniform[state]
             || class_id == current_class
             || !seen_classes.insert(class_id)
         {
@@ -4267,7 +4324,7 @@ fn paint_geometry_candidate_in_patch(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_geometry_score_fix(
+fn run_geometry_smooth(
     args: &RenderArgs,
     raster: &mut Vec<[u8; 3]>,
     grid_state: &mut Vec<(usize, bool)>,
@@ -4281,11 +4338,11 @@ fn run_geometry_score_fix(
     gw: usize,
     gh: usize,
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<GeometryScoreFixStats, ()> {
-    let weights = geometry_score_fix_weights(args);
+) -> Result<GeometrySmoothStats, ()> {
+    let weights = geometry_smooth_weights(args);
     let flow_weight = args.contour_bending_weight.max(0.0) as f64
         * GEOMETRY_FLOW_STRENGTH;
-    let fidelity_allowance = geometry_score_fix_fidelity_allowance();
+    let fidelity_allowance = geometry_smooth_fidelity_allowance();
     let threshold = args.discontinuity_threshold.max(0.0);
     let cell_count = grid_w * grid_h;
     let mut target_mask = vec![false; cell_count];
@@ -4295,7 +4352,7 @@ fn run_geometry_score_fix(
         if score >= threshold && grid_data[cell_idx].fg != grid_data[cell_idx].bg {
             target_mask[cell_idx] = true;
             priority_scores[cell_idx] = score;
-            queue.push(ScoreFixPriorityEntry {
+            queue.push(SmoothPriorityEntry {
                 order_priority: 0,
                 score,
                 cell_idx,
@@ -4313,11 +4370,11 @@ fn run_geometry_score_fix(
         }
     }
 
-    // Geometry used to ignore Score Fix N and exhaustively try every enabled
+    // Geometry used to ignore smooth_candidates and exhaustively try every enabled
     // glyph/inversion state. Freeze the same source-ranked, render-deduplicated
-    // top-N alternatives used by Score Fix. Keep the initial state as a free
+    // top-N alternatives used by smoothing. Keep the initial state as a free
     // rollback choice if neighboring edits later make it useful again.
-    let candidate_limit = args.score_fix_candidates.max(1) as usize;
+    let candidate_limit = args.smooth_candidates.max(1) as usize;
     let baseline_state = grid_state.clone();
     let state_catalog = geometry_rendered_state_catalog(glyphs);
     let candidate_lists = (0..cell_count)
@@ -4687,7 +4744,7 @@ fn run_geometry_score_fix(
             priority_scores[affected_idx] = score;
             versions[affected_idx] = versions[affected_idx].wrapping_add(1);
             if score >= threshold {
-                queue.push(ScoreFixPriorityEntry {
+                queue.push(SmoothPriorityEntry {
                     order_priority: 0,
                     score,
                     cell_idx: affected_idx,
@@ -4697,7 +4754,7 @@ fn run_geometry_score_fix(
         }
     }
 
-    Ok(GeometryScoreFixStats {
+    Ok(GeometrySmoothStats {
         target_count,
         distinct_states,
         candidate_evaluations,
@@ -4710,7 +4767,7 @@ fn run_geometry_score_fix(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn refresh_score_fix_priorities(
+fn refresh_smooth_priorities(
     changed_idx: usize,
     raster: &[[u8; 3]],
     grid_w: usize,
@@ -4723,8 +4780,8 @@ fn refresh_score_fix_priorities(
     processed: &[bool],
     priority_scores: &mut [f32],
     priority_versions: &mut [u32],
-    queue: &mut BinaryHeap<ScoreFixPriorityEntry>,
-    ordering: ScoreFixOrdering,
+    queue: &mut BinaryHeap<SmoothPriorityEntry>,
+    ordering: SmoothOrdering,
     spiral_ranks: &[usize],
 ) -> usize {
     let mut refreshed = 0usize;
@@ -4737,8 +4794,8 @@ fn refresh_score_fix_priorities(
         priority_versions[idx] = priority_versions[idx].wrapping_add(1);
         refreshed += 1;
         if !processed[idx] && score >= threshold {
-            queue.push(ScoreFixPriorityEntry {
-                order_priority: score_fix_order_priority(
+            queue.push(SmoothPriorityEntry {
+                order_priority: smooth_order_priority(
                     ordering,
                     spiral_ranks,
                     idx,
@@ -4755,9 +4812,9 @@ fn refresh_score_fix_priorities(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_score_fix_prefix_search(
+fn run_smooth_prefix_search(
     args: &RenderArgs,
-    ordering: ScoreFixOrdering,
+    ordering: SmoothOrdering,
     raster: &mut Vec<[u8; 3]>,
     grid_state: &mut Vec<(usize, bool)>,
     grid_data: &[BlockData],
@@ -4771,15 +4828,15 @@ fn run_score_fix_prefix_search(
     gw: usize,
     gh: usize,
     abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<ScoreFixPrefixStats, ()> {
+) -> Result<SmoothPrefixStats, ()> {
     // Preserve the established N=1 behaviour for the primary search: Score
     // Fix being enabled must still produce a visible alternative even when
     // that first alternative does not beat N=0.  Extra ordering trials are
     // exploratory, however.  Forcing their first candidate into every cell
     // makes the completed N=1 grid independent of visit order, and that grid
     // commonly wins every trial before ordering can have any effect.
-    let force_first_prefix = matches!(ordering, ScoreFixOrdering::WorstFirst);
-    let spiral_ranks = score_fix_spiral_ranks(grid_w, grid_h);
+    let force_first_prefix = matches!(ordering, SmoothOrdering::WorstFirst);
+    let spiral_ranks = smooth_spiral_ranks(grid_w, grid_h);
     let threshold = args.discontinuity_threshold.max(0.0);
     let mut targets = target_scores
         .into_iter()
@@ -4793,11 +4850,12 @@ fn run_score_fix_prefix_search(
         priority_scores[idx] = score;
     }
 
-    let candidate_count = args.score_fix_candidates.max(1) as usize;
+    let candidate_count = args.smooth_candidates.max(1) as usize;
     let baseline_state = grid_state.clone();
     let mut candidate_lists = vec![Vec::new(); grid_w * grid_h];
     let mut candidate_trials = 0usize;
     let mut duplicate_candidates_skipped = 0usize;
+    let candidate_catalog = geometry_rendered_state_catalog(glyphs);
 
     // Freeze the target set and complete candidate rankings before changing
     // the raster. Candidate k must mean the same thing in an N=k and N>k run;
@@ -4816,11 +4874,16 @@ fn run_score_fix_prefix_search(
             };
             let candidates_with_duplicates = best_candidate_pool_pre(costs, costs.len());
             let original_count = candidates_with_duplicates.len();
-            let mut candidates = deduplicate_rendered_candidates(
-                candidates_with_duplicates,
-                glyphs,
-                current_choice,
-            );
+            // Classify exact native bitmaps once per glyph set. Comparing
+            // every candidate bitmap with every earlier candidate was
+            // quadratic in the glyph count for EACH target cell.
+            let mut seen = vec![false; glyphs.len() * 2];
+            seen[candidate_catalog.class_ids[current_choice.0 * 2 + current_choice.1 as usize]] = true;
+            let mut candidates = candidates_with_duplicates;
+            candidates.retain(|&(g, inverted, _)| {
+                let class = candidate_catalog.class_ids[g * 2 + inverted as usize];
+                !std::mem::replace(&mut seen[class], true)
+            });
             let skipped = original_count.saturating_sub(candidates.len());
             candidates.truncate(candidate_count.min(candidates.len()));
             (curr_idx, candidates, skipped)
@@ -4860,7 +4923,7 @@ fn run_score_fix_prefix_search(
         gw,
         gh,
     );
-    let mut band_cache = prepare_score_fix_band_cache(
+    let mut band_cache = prepare_smooth_band_cache(
         &source_preview,
         &global_output_preview,
         grid_data,
@@ -4881,7 +4944,7 @@ fn run_score_fix_prefix_search(
         )
     });
     let initial_score = if let Some(cache) = band_cache.as_ref() {
-        score_fix_band_score(
+        smooth_band_score(
             cache.global_reference_length,
             cache.global_output_length,
             contour_weights.boundary_balance,
@@ -4898,7 +4961,7 @@ fn run_score_fix_prefix_search(
         .total
     };
     if prefix_count == 0 {
-        return Ok(ScoreFixPrefixStats {
+        return Ok(SmoothPrefixStats {
             target_count,
             candidate_trials,
             duplicate_candidates_skipped,
@@ -4915,7 +4978,7 @@ fn run_score_fix_prefix_search(
 
     let mut reference_needed = vec![false; grid_w * grid_h];
     for &(target_idx, _) in &targets {
-        if args.score_fix_neighborhood_guard {
+        if args.smooth_neighbors {
             for affected_idx in affected_discontinuity_cell_indices(target_idx, grid_w, grid_h) {
                 reference_needed[affected_idx] = true;
             }
@@ -4964,8 +5027,8 @@ fn run_score_fix_prefix_search(
         for &(cell_idx, _) in &targets {
             let score = priority_scores[cell_idx];
             if candidate_lists[cell_idx].get(prefix_index).is_some() && score >= threshold {
-                priority_queue.push(ScoreFixPriorityEntry {
-                    order_priority: score_fix_order_priority(
+                priority_queue.push(SmoothPriorityEntry {
+                    order_priority: smooth_order_priority(
                         ordering,
                         &spiral_ranks,
                         cell_idx,
@@ -5000,7 +5063,7 @@ fn run_score_fix_prefix_search(
                 continue;
             }
             let band_candidate = band_cache.as_mut().map(|cache| {
-                evaluate_score_fix_band_candidate(
+                evaluate_smooth_band_candidate(
                     cache,
                     grid_state,
                     grid_data,
@@ -5042,11 +5105,11 @@ fn run_score_fix_prefix_search(
                 if let (Some(cache), Some(evaluation)) =
                     (band_cache.as_mut(), band_candidate)
                 {
-                    apply_score_fix_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
+                    apply_smooth_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
                 }
                 changes += 1;
                 prefix_changed = true;
-                priority_refreshes += refresh_score_fix_priorities(
+                priority_refreshes += refresh_smooth_priorities(
                     curr_idx,
                     raster,
                     grid_w,
@@ -5153,7 +5216,7 @@ fn run_score_fix_prefix_search(
                 continue;
             }
 
-            if !args.score_fix_neighborhood_guard {
+            if !args.smooth_neighbors {
                 apply_choice_to_raster(
                     raster,
                     grid_data,
@@ -5179,13 +5242,13 @@ fn run_score_fix_prefix_search(
                 if let (Some(cache), Some(evaluation)) =
                     (band_cache.as_mut(), band_candidate)
                 {
-                    apply_score_fix_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
+                    apply_smooth_band_commit(cache, curr_idx, evaluation, grid_w, grid_h);
                 }
                 for idx in affected_discontinuity_cell_indices(curr_idx, grid_w, grid_h) {
                     cached_cell_scores[idx] = None;
                 }
                 cached_cell_scores[curr_idx] = Some(if let Some(cache) = band_cache.as_mut() {
-                    let length = score_fix_patch_boundary_length_from_cells(
+                    let length = smooth_patch_boundary_length_from_cells(
                         grid_state,
                         grid_data,
                         &cache.glyph_previews,
@@ -5195,7 +5258,7 @@ fn run_score_fix_prefix_search(
                         grid_h,
                     );
                     cache.output_patch_lengths[curr_idx] = Some(length);
-                    score_fix_band_score(
+                    smooth_band_score(
                         cache.reference_patch_lengths[curr_idx],
                         length,
                         contour_weights.boundary_balance,
@@ -5205,7 +5268,7 @@ fn run_score_fix_prefix_search(
                 });
                 changes += 1;
                 prefix_changed = true;
-                priority_refreshes += refresh_score_fix_priorities(
+                priority_refreshes += refresh_smooth_priorities(
                     curr_idx,
                     raster,
                     grid_w,
@@ -5231,7 +5294,7 @@ fn run_score_fix_prefix_search(
                 if cached_cell_scores[idx].is_none() {
                     cached_cell_scores[idx] = Some(if let Some(cache) = band_cache.as_mut() {
                         let length = cache.output_patch_lengths[idx].unwrap_or_else(|| {
-                            let length = score_fix_patch_boundary_length_from_cells(
+                            let length = smooth_patch_boundary_length_from_cells(
                                 grid_state,
                                 grid_data,
                                 &cache.glyph_previews,
@@ -5243,7 +5306,7 @@ fn run_score_fix_prefix_search(
                             cache.output_patch_lengths[idx] = Some(length);
                             length
                         });
-                        score_fix_band_score(
+                        smooth_band_score(
                             cache.reference_patch_lengths[idx],
                             length,
                             contour_weights.boundary_balance,
@@ -5281,7 +5344,7 @@ fn run_score_fix_prefix_search(
                 (band_cache.as_ref(), band_candidate)
             {
                 for (slot, &idx) in affected.iter().enumerate() {
-                    let length = score_fix_patch_boundary_length_from_cells(
+                    let length = smooth_patch_boundary_length_from_cells(
                         grid_state,
                         grid_data,
                         &cache.glyph_previews,
@@ -5291,7 +5354,7 @@ fn run_score_fix_prefix_search(
                         grid_h,
                     );
                     band_patch_lengths[slot] = length;
-                    new_scores[slot] = score_fix_band_score(
+                    new_scores[slot] = smooth_band_score(
                         cache.reference_patch_lengths[idx],
                         length,
                         contour_weights.boundary_balance,
@@ -5361,7 +5424,7 @@ fn run_score_fix_prefix_search(
                 if let (Some(cache), Some(evaluation)) =
                     (band_cache.as_mut(), band_candidate)
                 {
-                    apply_score_fix_band_commit(
+                    apply_smooth_band_commit(
                         cache,
                         curr_idx,
                         evaluation,
@@ -5383,7 +5446,7 @@ fn run_score_fix_prefix_search(
                 }
                 changes += 1;
                 prefix_changed = true;
-                priority_refreshes += refresh_score_fix_priorities(
+                priority_refreshes += refresh_smooth_priorities(
                     curr_idx,
                     raster,
                     grid_w,
@@ -5435,7 +5498,7 @@ fn run_score_fix_prefix_search(
             continue;
         }
         let prefix_score = if let Some(cache) = band_cache.as_ref() {
-            score_fix_band_score(
+            smooth_band_score(
                 cache.global_reference_length,
                 cache.global_output_length,
                 contour_weights.boundary_balance,
@@ -5461,7 +5524,7 @@ fn run_score_fix_prefix_search(
 
     raster.copy_from_slice(&best_prefix_raster);
     grid_state.copy_from_slice(&best_prefix_state);
-    Ok(ScoreFixPrefixStats {
+    Ok(SmoothPrefixStats {
         target_count,
         candidate_trials,
         duplicate_candidates_skipped,
@@ -5529,7 +5592,7 @@ fn canonical_shape_hash(indices: &[u8]) -> u64 {
     hasher.finish()
 }
 
-fn glyph_set_cache_hash(glyphs: &[FastGlyph], gw: usize, gh: usize) -> u64 {
+pub(crate) fn glyph_set_cache_hash(glyphs: &[FastGlyph], gw: usize, gh: usize) -> u64 {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -5665,14 +5728,15 @@ pub fn render_blocks_smooth(
                             if let Some(c) = cached.filter(|&(gi, _)| gi < glyphs.len()) {
                                 c
                             } else {
-                                let mut unique_block_colors = [0u8; 32];
+                                // Include every palette index. Truncation here
+                                // both misses dominant colours at high indices
+                                // and leaves their slow-path counters uncleared.
+                                let mut unique_block_colors = [0u8; 256];
                                 let mut num_unique_colors = 0usize;
                                 for idx in 0..256 {
                                     if base_cnt[idx] > 0 {
-                                        if num_unique_colors < 32 {
-                                            unique_block_colors[num_unique_colors] = idx as u8;
-                                            num_unique_colors += 1;
-                                        }
+                                        unique_block_colors[num_unique_colors] = idx as u8;
+                                        num_unique_colors += 1;
                                     }
                                 }
                                 let active_colors = &unique_block_colors[0..num_unique_colors];
@@ -5839,7 +5903,7 @@ pub fn render_blocks_smooth(
                         } else {
                             let mut ones_rgb = None;
                             for i in 0..bp {
-                                let is_under_ones = fglyph.ones.contains(&i);
+                                let is_under_ones = fglyph.bitmap[i] == 1;
                                 let is_target = if !scale_best_inv {
                                     is_under_ones
                                 } else {
@@ -5856,7 +5920,7 @@ pub fn render_blocks_smooth(
 
                             let mut zeros_rgb = None;
                             for i in 0..bp {
-                                let is_under_ones = fglyph.ones.contains(&i);
+                                let is_under_ones = fglyph.bitmap[i] == 1;
                                 let is_target = if !scale_best_inv {
                                     !is_under_ones
                                 } else {
@@ -6001,6 +6065,18 @@ pub fn render_blocks_smooth(
         return "Cancelled".into();
     }
 
+    let source_raster = build_source_raster(image, grid_w, grid_h, gw, gh);
+    let region_guidance = if args.region_guidance {
+        region_guidance::run(
+            args, image, &source_raster, &mut grid_data, &mut grid_state,
+            glyphs, grid_w, grid_h, gw, gh, abort_flag.as_deref(),
+        )
+    } else {
+        None
+    };
+    if abort_flag.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+        return "Cancelled".into();
+    }
     let glyph_match_time = process_start_time.elapsed();
     let smoothing_prepare_started = RenderInstant::now();
 
@@ -6019,7 +6095,6 @@ pub fn render_blocks_smooth(
     } else {
         None
     };
-    let source_raster = build_source_raster(image, grid_w, grid_h, gw, gh);
     let contour_weights = contour_score_weights(args);
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
@@ -6028,10 +6103,10 @@ pub fn render_blocks_smooth(
         }
     }
 
-    // Score Fix can identify its target cells before building candidate
+    // Smoothing can identify its target cells before building candidate
     // costs. This avoids doing glyph work for the usually much larger set of
     // cells below the discontinuity threshold.
-    let mut score_fix_initial_disc_scores = if args.score_fix {
+    let mut smooth_initial_disc_scores = if args.smooth {
         Some(all_cell_discontinuity_scores(
             rendered_raster
                 .as_ref()
@@ -6045,12 +6120,12 @@ pub fn render_blocks_smooth(
         None
     };
 
-    let block_glyph_costs: Vec<Vec<u64>> = if args.score_fix {
+    let block_glyph_costs: Vec<Vec<u64>> = if args.smooth {
         grid_data
             .par_iter()
             .enumerate()
             .map(|(curr_idx, data)| {
-                if score_fix_initial_disc_scores
+                if smooth_initial_disc_scores
                     .as_ref()
                     .is_some_and(|scores| scores[curr_idx] < args.discontinuity_threshold.max(0.0))
                 {
@@ -6089,6 +6164,9 @@ pub fn render_blocks_smooth(
 
                 let mut base_cost = 0u64;
                 let mut diff = vec![0i64; bp];
+                let guide = region_guidance.as_ref().and_then(|guidance| guidance.cells[curr_idx]);
+                let mut source_base = 0i64;
+                let mut source_diff = guide.map(|_| vec![0i64; bp]);
 
                 for i in 0..bp {
                     let lx = i % gw;
@@ -6101,6 +6179,10 @@ pub fn render_blocks_smooth(
 
                     let c_fg = p_sq + fg_p.sq - 2 * (p_r * fg_p.r + p_g * fg_p.g + p_b * fg_p.b);
                     let c_bg = p_sq + bg_p.sq - 2 * (p_r * bg_p.r + p_g * bg_p.g + p_b * bg_p.b);
+                    if let Some(source_diff) = source_diff.as_mut() {
+                        source_base += c_bg as i64;
+                        source_diff[i] = c_fg as i64 - c_bg as i64;
+                    }
                     let bg_wins = if c_bg <= c_fg { 0i64 } else { 1i64 };
                     base_cost += bg_wins as u64;
                     let fg_wins = if c_fg <= c_bg { 0i64 } else { 1i64 };
@@ -6108,6 +6190,7 @@ pub fn render_blocks_smooth(
                 }
 
                 let total_diff: i64 = diff.iter().sum();
+                let source_total: i64 = source_diff.as_ref().map_or(0, |diff| diff.iter().sum());
                 let mut costs = Vec::with_capacity(glyphs.len() * 2);
 
                 for (gi, fglyph) in glyphs.iter().enumerate() {
@@ -6120,15 +6203,30 @@ pub fn render_blocks_smooth(
                     }
 
                     let mut dot = 0i64;
+                    let mut source_dot = 0i64;
                     for &i in &fglyph.ones {
                         dot += unsafe { *diff.get_unchecked(i) };
+                        if let Some(source_diff) = source_diff.as_ref() {
+                            source_dot += source_diff[i];
+                        }
                     }
 
                     let c_total_f = (base_cost as i64 + dot).max(0) as u64;
                     let c_total_t = (base_cost as i64 + total_diff - dot).max(0) as u64;
 
-                    costs.push(c_total_f);
-                    costs.push(c_total_t);
+                    let allowed = |inverted: bool| {
+                        let Some(guide) = guide else { return true; };
+                        let mask = region_guidance.as_ref().unwrap().masks[gi]
+                            ^ if inverted { u128::MAX } else { 0 };
+                        let error = if inverted {
+                            source_base + source_total - source_dot
+                        } else {
+                            source_base + source_dot
+                        };
+                        guide.allows(mask, error as u64)
+                    };
+                    costs.push(if allowed(false) { c_total_f } else { u64::MAX });
+                    costs.push(if allowed(true) { c_total_t } else { u64::MAX });
                 }
 
                 costs
@@ -6143,99 +6241,50 @@ pub fn render_blocks_smooth(
     let mut smoothing_search_time = std::time::Duration::ZERO;
     let mut shape_refine_time = std::time::Duration::ZERO;
 
-    if args.score_fix {
-        let raster = rendered_raster
-            .as_mut()
-            .expect("rendered raster should exist when smoothing is enabled");
+    if args.smooth {
         let started = RenderInstant::now();
-        let target_scores = score_fix_initial_disc_scores
+        let target_scores = smooth_initial_disc_scores
             .take()
-            .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
-        let baseline_raster = raster.clone();
-        let baseline_state = grid_state.clone();
-        let ordering_count = (args.score_fix_orderings as usize).clamp(1, ScoreFixOrdering::ALL.len());
-        let trial_results = ScoreFixOrdering::ALL[..ordering_count]
-            .par_iter()
-            .map(|&ordering| {
-                let mut trial_raster = baseline_raster.clone();
-                let mut trial_state = baseline_state.clone();
-                let stats = run_score_fix_prefix_search(
-                    args,
-                    ordering,
-                    &mut trial_raster,
-                    &mut trial_state,
-                    &grid_data,
-                    glyphs,
-                    &block_glyph_costs,
-                    target_scores.clone(),
-                    &source_raster,
-                    &contour_weights,
-                    grid_w,
-                    grid_h,
-                    gw,
-                    gh,
-                    abort_flag.as_ref(),
-                )?;
-                Ok((ordering, stats, trial_raster, trial_state))
-            })
-            .collect::<Vec<Result<_, ()>>>();
-        let mut trials = Vec::with_capacity(trial_results.len());
-        for result in trial_results {
-            match result {
-                Ok(trial) => trials.push(trial),
-                Err(()) => return "Cancelled".into(),
-            }
+            .expect("smoothing targets should be prepared");
+        if smooth_features::run(
+            args,
+            &mut grid_state,
+            &grid_data,
+            glyphs,
+            &block_glyph_costs,
+            &target_scores,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            abort_flag.as_deref(),
+        )
+        .is_err()
+        {
+            return "Cancelled".into();
         }
-        let mut best_trial_idx = 0usize;
-        for idx in 1..trials.len() {
-            if trials[idx].1.best_score + 1e-9 < trials[best_trial_idx].1.best_score {
-                best_trial_idx = idx;
-            }
-        }
-        let order_scores = trials
-            .iter()
-            .map(|(ordering, stats, _, _)| {
-                format!("{}={:.6}", ordering.name(), stats.best_score)
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        let selected_ordering = trials[best_trial_idx].0;
-        let (_, stats, best_raster, best_state) = trials.swap_remove(best_trial_idx);
-        raster.copy_from_slice(&best_raster);
-        grid_state.copy_from_slice(&best_state);
+        rendered_raster = Some(build_rendered_raster(
+            &grid_data,
+            &grid_state,
+            glyphs,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        ));
         smoothing_search_time = started.elapsed();
-        log::info!(
-            "smoothing order search [{}] selected {}; selected {} cells, tried {} frozen alternatives (skipped {} duplicate/current rasters), made {} progressive changes, refreshed {} affected priorities, and rejected {} neighbor regressions; evaluated N=1..{}, retained N={} with contour {:.6} (N=0 was {:.6}) using {} in {:?}",
-            order_scores,
-            selected_ordering.name(),
-            stats.target_count,
-            stats.candidate_trials,
-            stats.duplicate_candidates_skipped,
-            stats.changes,
-            stats.priority_refreshes,
-            stats.rejected,
-            stats.prefix_count,
-            stats.best_prefix,
-            stats.best_score,
-            stats.initial_score,
-            if stats.used_band_fast_path {
-                "incremental Band scorer"
-            } else {
-                "general contour scorer"
-            },
-            smoothing_search_time,
-        );
     }
 
-    // Start from normal Score Fix, then exhaustively search every distinct
+
+    // Start from feature smoothing, then search every distinct
     // rendered glyph state using the overlapping local geometry energy.
-    if args.score_fix && args.score_fix_geometry_first {
+    if args.smooth && args.smooth_shapes {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
         let started = RenderInstant::now();
         let target_scores = all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh);
-        let stats = match run_geometry_score_fix(
+        let stats = match run_geometry_smooth(
             args,
             raster,
             &mut grid_state,
@@ -6269,13 +6318,13 @@ pub fn render_blocks_smooth(
 
     // Kept temporarily as a compile-checked reference for the recovered
     // single-pass implementation. Prefix search above is the active path.
-    if false && args.score_fix {
+    if false && args.smooth {
         let raster = rendered_raster
             .as_mut()
             .expect("rendered raster should exist when smoothing is enabled");
         let started = RenderInstant::now();
-        let pre_score_fix_raster = raster.clone();
-        let pre_score_fix_grid_state = grid_state.clone();
+        let pre_smooth_raster = raster.clone();
+        let pre_smooth_grid_state = grid_state.clone();
         let before_global = preview_contour_score(
             &source_raster,
             raster,
@@ -6288,7 +6337,7 @@ pub fn render_blocks_smooth(
         .total;
 
         let threshold = args.discontinuity_threshold.max(0.0);
-        let target_scores = score_fix_initial_disc_scores
+        let target_scores = smooth_initial_disc_scores
             .take()
             .unwrap_or_else(|| all_cell_discontinuity_scores(raster, grid_w, grid_h, gw, gh));
         let mut targets = target_scores
@@ -6299,7 +6348,7 @@ pub fn render_blocks_smooth(
         targets.sort_by(|a, b| b.1.total_cmp(&a.1));
         let target_count = targets.len();
 
-        let candidate_count = args.score_fix_candidates.max(1) as usize;
+        let candidate_count = args.smooth_candidates.max(1) as usize;
         let mut changes = 0usize;
         let mut rejected = 0usize;
         let mut candidate_trials = 0usize;
@@ -6308,7 +6357,7 @@ pub fn render_blocks_smooth(
         let mut cached_cell_scores = vec![None::<f64>; grid_w * grid_h];
         let mut reference_needed = vec![false; grid_w * grid_h];
         for &(target_idx, _) in &targets {
-            if args.score_fix_neighborhood_guard {
+            if args.smooth_neighbors {
                 for affected_idx in
                     affected_discontinuity_cell_indices(target_idx, grid_w, grid_h)
                 {
@@ -6481,7 +6530,7 @@ pub fn render_blocks_smooth(
             }
 
             if best_choice != current_choice {
-                if !args.score_fix_neighborhood_guard {
+                if !args.smooth_neighbors {
                     apply_choice_to_raster(
                         raster,
                         &grid_data,
@@ -6592,15 +6641,15 @@ pub fn render_blocks_smooth(
         .total;
         let rolled_back = after_global > before_global + 1e-9;
         if rolled_back {
-            raster.copy_from_slice(&pre_score_fix_raster);
-            grid_state.copy_from_slice(&pre_score_fix_grid_state);
+            raster.copy_from_slice(&pre_smooth_raster);
+            grid_state.copy_from_slice(&pre_smooth_grid_state);
             after_global = before_global;
         }
         log::info!(
             "smoothing selected {} cells at threshold {:.1}; mode={}; tried {} unique candidates (skipped {} duplicate rasters), kept {} regional improvements, rejected {} neighbor regressions: local -{:.6}, global {:.6} -> {:.6}, full rollback={} in {:?}",
             target_count,
             threshold,
-            if args.score_fix_neighborhood_guard { "overlap-guard" } else { "center-3x3" },
+            if args.smooth_neighbors { "overlap-guard" } else { "center-3x3" },
             candidate_trials,
             duplicate_candidates_skipped,
             changes,
@@ -6613,17 +6662,45 @@ pub fn render_blocks_smooth(
         );
     }
 
+    let mut glyph_search_time = std::time::Duration::ZERO;
+    let mut glyph_defects = None;
+    if args.glyph_search {
+        let started = RenderInstant::now();
+        match glyph_search::run(
+            args, &source_raster, &grid_data, &mut grid_state, glyphs,
+            grid_w, grid_h, gw, gh, abort_flag.as_deref(),
+        ) {
+            Ok(map) => glyph_defects = map,
+            Err(()) => return "Cancelled".into(),
+        }
+        rendered_raster = Some(build_rendered_raster(
+            &grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh,
+        ));
+        glyph_search_time = started.elapsed();
+    } else if args.show_glyph_defects {
+        glyph_defects = glyph_search::inspect(
+            args, &source_raster, &grid_data, &grid_state, glyphs,
+            grid_w, grid_h, gw, gh,
+        );
+    }
+
     let disc_threshold = args.discontinuity_threshold.max(0.0);
     let t_disc_score = RenderInstant::now();
-    let cell_disc_scores = all_cell_discontinuity_scores(
-        rendered_raster
-            .as_ref()
-            .expect("rendered raster should exist when scoring discontinuities"),
-        grid_w,
-        grid_h,
-        gw,
-        gh,
-    );
+    // These expensive diagnostics are only consumed by the highlight overlay.
+    // Computing them on every render used to dominate the final-score stage.
+    let cell_disc_scores = if args.show_discontinuities {
+        all_cell_discontinuity_scores(
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring discontinuities"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+        )
+    } else {
+        Vec::new()
+    };
     let relative_disc_score = if cell_disc_scores.is_empty() {
         0.0
     } else {
@@ -6634,32 +6711,59 @@ pub fn render_blocks_smooth(
             .sum::<f32>() as f64
             / cell_disc_scores.len() as f64
     };
-    let contour_score = preview_contour_score(
-        &source_raster,
-        rendered_raster
-            .as_ref()
-            .expect("rendered raster should exist when scoring contours"),
-        grid_w,
-        grid_h,
-        gw,
-        gh,
-        &contour_weights,
-    );
+    let final_raster = rendered_raster
+        .as_ref()
+        .expect("rendered raster should exist when scoring");
+    let perceptual_score = args.uses_perceptual_score().then(|| {
+        let (source, width, height) =
+            crate::contour_score::normalize_preview_raster(&source_raster, grid_w, grid_h, gw, gh);
+        let (output, _, _) =
+            crate::contour_score::normalize_preview_raster(final_raster, grid_w, grid_h, gw, gh);
+        crate::perceptual_score::score(
+            &source,
+            &output,
+            width,
+            height,
+            crate::contour_score::PREVIEW_CELL_WIDTH,
+        )
+    });
+    let contour_score = if perceptual_score.is_none() {
+        preview_contour_score(
+            &source_raster,
+            rendered_raster
+                .as_ref()
+                .expect("rendered raster should exist when scoring contours"),
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            &contour_weights,
+        )
+    } else {
+        crate::contour_score::ReferenceContourScore::default()
+    };
     let disc_score_time = t_disc_score.elapsed();
-    log::info!(
-        "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
-        contour_score.total,
-        contour_score.contour.bending,
-        contour_score.contour.endpoints,
-        contour_score.contour.junctions,
-        contour_score.contour.fragments,
-        contour_score.contour.boundary_length,
-    );
-    log::info!(
-        "Contour Reference: fidelity={:.4}, boundary_balance={:.4}",
-        contour_score.fidelity,
-        contour_score.boundary_balance,
-    );
+    if let Some(score) = perceptual_score {
+        log::info!(
+            "Perceptual Score: total={:.4}, roughness={:.4}, texture={:.4}, missing={:.4}, extra={:.4}, colour={:.4}, thin_defects={:.4}",
+            score.total, score.roughness, score.texture, score.missing, score.extra, score.colour, score.thin_defects,
+        );
+    } else {
+        log::info!(
+            "Contour Score: total={:.4}, bending={:.4}, endpoints={:.4}, junctions={:.4}, fragments={:.4}, boundary_length={}",
+            contour_score.total,
+            contour_score.contour.bending,
+            contour_score.contour.endpoints,
+            contour_score.contour.junctions,
+            contour_score.contour.fragments,
+            contour_score.contour.boundary_length,
+        );
+        log::info!(
+            "Contour Reference: fidelity={:.4}, boundary_balance={:.4}",
+            contour_score.fidelity,
+            contour_score.boundary_balance,
+        );
+    }
 
     if let (Some(root), Some(raster)) = (fft_debug_root.as_ref(), rendered_raster.as_ref()) {
         if let Err(err) = dump_fft_stage_inputs(root, "final", raster, grid_w, grid_h, gw, gh) {
@@ -6692,11 +6796,13 @@ pub fn render_blocks_smooth(
     };
 
     log::info!(
-        "Discontinuity scoring completed in {:?} (threshold {:.2})",
+        "Final quality scoring completed in {:?} (discontinuity threshold {:.2})",
         disc_score_time,
         disc_threshold
     );
-    log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
+    if args.show_discontinuities {
+        log::info!("Image Discontinuity Score: {:.2}", relative_disc_score);
+    }
 
     let encode_started = RenderInstant::now();
 
@@ -6760,9 +6866,6 @@ pub fn render_blocks_smooth(
             for prepared in &prepared_overlays {
                 let ov = prepared.overlay;
                 if let Some(opt_c) = prepared.at(x as i32, y as i32) {
-                    if opt_c.is_none() && ov.bg.is_none() {
-                        continue;
-                    }
                     text_overlay = Some(ov);
                     overlay_char = opt_c;
                     break;
@@ -7131,7 +7234,9 @@ pub fn render_blocks_smooth(
         total_pixels: (bp * grid_h * grid_w) as u64,
         dynamic_scaling_count: 0,
         grid: grid_out,
-        score: contour_score.total,
+        score: perceptual_score.map_or(contour_score.total, |score| score.total),
+        perceptual_score,
+        glyph_defects,
         longest_line_bytes,
         initial_time,
         profile: RenderProfile {
@@ -7139,6 +7244,7 @@ pub fn render_blocks_smooth(
             smoothing_prepare: smoothing_prepare_time,
             smoothing_search: smoothing_search_time,
             shape_refine: shape_refine_time,
+            glyph_search: glyph_search_time,
             final_score: disc_score_time,
             encode: encode_time,
             contour_cache_hits: contour_cache_end.0.saturating_sub(contour_cache_start.0),
@@ -7254,9 +7360,6 @@ pub fn render_braille(
             for prepared in &prepared_overlays {
                 let ov = prepared.overlay;
                 if let Some(opt_c) = prepared.at((x / 2) as i32, (y / 4) as i32) {
-                    if opt_c.is_none() && ov.bg.is_none() {
-                        continue;
-                    }
                     if let Some(fg_param) = &ov.fg {
                         final_fg = match fg_param {
                             crate::args::ColorSpec::Index(i) => Colour::Index(*i),
@@ -7328,9 +7431,6 @@ pub fn render_braille(
                 for prepared in &prepared_overlays {
                     let ov = prepared.overlay;
                     if let Some(opt_c) = prepared.at((x / 2) as i32, (y / 4) as i32) {
-                        if opt_c.is_none() && ov.bg.is_none() {
-                            continue;
-                        }
                         if let Some(fg_param) = &ov.fg {
                             alt_fg = match fg_param {
                                 crate::args::ColorSpec::Index(i) => Colour::Index(*i),
@@ -7404,6 +7504,8 @@ pub fn render_braille(
         dynamic_scaling_count: 0,
         grid: grid_out,
         score: 0.0,
+        perceptual_score: None,
+        glyph_defects: None,
         longest_line_bytes,
         initial_time: std::time::Duration::ZERO,
         profile: RenderProfile::default(),
@@ -7521,6 +7623,30 @@ fn procedural_braille_bitmap(ch: char, w: usize, h: usize) -> Option<Vec<Vec<u8>
         }
     }
     Some(cell)
+}
+
+/// Number of visible foreground pixels, using the same glyph/fallback rules as
+/// the exported preview. Cache this per character when counting output colours.
+pub(crate) fn glyph_ink_pixels(glyphs: &GlyphStore, ch: char) -> u64 {
+    if ch == ' ' || ch == '\0' {
+        return 0;
+    }
+    let (gw, gh) = glyphs.metrics;
+    let count = |bitmap: &[Vec<u8>]| {
+        bitmap.iter().take(gh)
+            .flat_map(|row| row.iter().take(gw))
+            .filter(|&&v| v != 0).count() as u64
+    };
+    if let Some((_, bitmap, _)) = glyphs.glyphs.iter().find(|(c, _, _)| *c == ch) {
+        return count(bitmap);
+    }
+    if let Some(bitmap) = crate::font::procedural_block_bitmap(ch, gw, gh)
+        .or_else(|| procedural_braille_bitmap(ch, gw, gh))
+    {
+        return count(&bitmap);
+    }
+    glyphs.glyphs.iter().find(|(c, _, _)| *c == '?')
+        .map_or(0, |(_, bitmap, _)| count(bitmap))
 }
 
 fn render_result_pixels_indexed<const CHANNELS: usize>(
@@ -7748,7 +7874,9 @@ mod tests {
             dynamic_scaling_count: 0,
             grid: vec![vec![base_cell]],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 1,
+            glyph_defects: None,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
         };
@@ -7780,7 +7908,7 @@ mod tests {
     }
 
     #[test]
-    fn transparent_overlay_spaces_preserve_the_complete_base_cell() {
+    fn transparent_overlay_without_background_preserves_the_complete_base_cell() {
         let cells = ['a', 'b', 'c']
             .into_iter()
             .enumerate()
@@ -7802,7 +7930,9 @@ mod tests {
             dynamic_scaling_count: 0,
             grid: vec![cells],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 3,
+            glyph_defects: None,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
         };
@@ -7815,7 +7945,7 @@ mod tests {
             w: 3,
             h: 1,
             fg: Some(crate::args::ColorSpec::Rgb([240, 230, 220])),
-            bg: Some(crate::args::ColorSpec::Rgb([8, 9, 10])),
+            bg: None,
             wrap: false,
             auto_grow: false,
             transparent_spaces: true,
@@ -7867,7 +7997,9 @@ mod tests {
                 underline: false,
             }]],
             score: 0.0,
+            perceptual_score: None,
             longest_line_bytes: 1,
+            glyph_defects: None,
             initial_time: std::time::Duration::ZERO,
             profile: RenderProfile::default(),
         };
@@ -7918,6 +8050,56 @@ mod tests {
         assert_eq!(result.grid.len(), 1);
         assert_eq!(result.grid[0].len(), 1);
         assert!((0x2800..=0x28ff).contains(&(result.grid[0][0].char as u32)));
+    }
+
+    #[test]
+    fn feature_smoothing_keeps_fit_budget_and_cancels_without_committing() {
+        let (gw, gh) = (8, 16);
+        let mut bitmap = vec![0; gw * gh];
+        bitmap[8 * gw + 4] = 1;
+        let glyphs = vec![
+            make_test_glyph('n', &bitmap, gw, gh),
+            make_test_glyph(' ', &vec![0; gw * gh], gw, gh),
+        ];
+        let data = vec![BlockData {
+            fg: [255; 3],
+            bg: [0; 3],
+            fg_col: None,
+            bg_col: None,
+            alt_fg_col: None,
+            alt_bg_col: None,
+        }];
+        let args = crate::generator::default_options();
+        let mut state = vec![(0, false)];
+        let contrast = 3 * 255 * 255;
+        let costs = vec![vec![0, u64::MAX, contrast, u64::MAX]];
+        smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, None,
+        )
+        .unwrap();
+        assert_eq!(
+            state, vec![(1, false)],
+            "a supported improvement should be made"
+        );
+
+        // The blank would reduce regularity, but its source error exceeds the
+        // original-fit budget. Several sweeps must not relax that budget.
+        let costs = vec![vec![
+            0, u64::MAX, contrast * (gw * gh / 16 + 1) as u64, u64::MAX,
+        ]];
+        state[0] = (0, false);
+        smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, None,
+        )
+        .unwrap();
+        assert_eq!(state, vec![(0, false)]);
+
+        let cancelled = std::sync::atomic::AtomicBool::new(true);
+        assert!(smooth_features::run(
+            &args, &mut state, &data, &glyphs, &costs, &[1.0], 1, 1, gw, gh, Some(&cancelled),
+        )
+        .is_err());
+        assert_eq!(state, vec![(0, false)]);
     }
 
     fn make_test_glyph(ch: char, bitmap: &[u8], gw: usize, gh: usize) -> FastGlyph {
@@ -8276,7 +8458,52 @@ mod tests {
     }
 
     #[test]
-    fn score_fix_band_candidate_delta_matches_repainted_preview() {
+    fn glyph_matching_keeps_dominant_colours_after_32_minor_colours() {
+        // Exercise both the u128 matcher and the larger-font counter path.
+        for (gw, gh) in [(8, 16), (8, 32)] {
+            let bp = gw * gh;
+            let masks: Vec<Vec<u8>> = vec![
+                (0..bp).map(|i| (i % 2) as u8).collect(),
+                (0..bp).map(|i| u8::from(i < 80)).collect(),
+            ];
+            let glyphs = vec![
+                make_test_glyph('a', &masks[0], gw, gh),
+                make_test_glyph('b', &masks[1], gw, gh),
+            ];
+            let store = GlyphStore {
+                glyphs: ['a', 'b'].into_iter().zip(&masks).map(|(ch, mask)| {
+                    (ch, mask.chunks(gw).map(|row| row.to_vec()).collect(), "Test".into())
+                }).collect(),
+                groups: HashMap::new(),
+                selected: std::collections::HashSet::from(['a', 'b']),
+                metrics: (gw, gh),
+                float_metrics: (gw as f32, gh as f32),
+            };
+            let pixels: Vec<_> = (0..bp).map(|i| {
+                let index = if i < 32 { i as u8 } else if i < 80 { 200 } else { 201 };
+                AnsiPixel {
+                    orig: ANSI256[index as usize],
+                    ansi_std: index, ansi_ng: index, ansi_part: index,
+                    irc_std: 0, irc_ng: 0, irc_part: 0,
+                    ansi_distinct: true, irc_distinct: true,
+                }
+            }).collect();
+            let canvas = AnsiImage {
+                bitmap: pixels.chunks(gw).map(|row| row.iter().map(|p| p.orig).collect()).collect(),
+                block: vec![vec![AnsiPixelBlock {
+                    pixels: pixels.chunks(gw).map(|row| row.to_vec()).collect(),
+                }]],
+                glyphs: store,
+            };
+            let mut args = crate::generator::default_options();
+            args.smooth = false;
+            let result = render_blocks_smooth(&canvas, &args, Render::Ansi24, &glyphs, None);
+            assert_eq!(result.grid[0][0].char, 'b', "font size {gw}×{gh}");
+        }
+    }
+
+    #[test]
+    fn smooth_band_candidate_delta_matches_repainted_preview() {
         let grid_w = 3;
         let grid_h = 3;
         let gw = 12;
@@ -8292,10 +8519,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let glyph = make_test_glyph('x', &bitmap, gw, gh);
-        let glyph_preview = score_fix_preview_glyph(&glyph, gw, gh);
+        let glyph_preview = smooth_preview_glyph(&glyph, gw, gh);
         let empty_glyph = make_test_glyph(' ', &vec![0; gw * gh], gw, gh);
         let glyph_previews = vec![
-            score_fix_preview_glyph(&empty_glyph, gw, gh),
+            smooth_preview_glyph(&empty_glyph, gw, gh),
             glyph_preview,
         ];
         let data = BlockData {
@@ -8309,7 +8536,7 @@ mod tests {
         let grid_data = vec![data.clone(); grid_w * grid_h];
         let grid_state = vec![(0usize, false); grid_w * grid_h];
         let changed_idx = 4;
-        let initial_internal = score_fix_preview_internal_lengths(&preview, grid_w, grid_h);
+        let initial_internal = smooth_preview_internal_lengths(&preview, grid_w, grid_h);
         let mut painted = preview.clone();
         paint_global_preview_cell(
             &mut painted,
@@ -8323,16 +8550,16 @@ mod tests {
             gh,
         );
         let painted_internal =
-            score_fix_preview_internal_lengths(&painted, grid_w, grid_h);
+            smooth_preview_internal_lengths(&painted, grid_w, grid_h);
         assert_eq!(
             glyph_preview.internal_boundary_length,
             painted_internal[changed_idx]
         );
         let initial_global =
-            score_fix_grid_boundary_length(&preview, &initial_internal, grid_w, grid_h);
+            smooth_grid_boundary_length(&preview, &initial_internal, grid_w, grid_h);
         let painted_global =
-            score_fix_grid_boundary_length(&painted, &painted_internal, grid_w, grid_h);
-        let current_contribution = score_fix_center_boundary_contribution(
+            smooth_grid_boundary_length(&painted, &painted_internal, grid_w, grid_h);
+        let current_contribution = smooth_center_boundary_contribution(
             &grid_state,
             &grid_data,
             &glyph_previews,
@@ -8342,7 +8569,7 @@ mod tests {
             None,
             false,
         );
-        let candidate_contribution = score_fix_center_boundary_contribution(
+        let candidate_contribution = smooth_center_boundary_contribution(
             &grid_state,
             &grid_data,
             &glyph_previews,
@@ -8367,7 +8594,7 @@ mod tests {
         };
 
         for center_idx in 0..grid_w * grid_h {
-            let virtual_length = score_fix_patch_boundary_length_with_candidate(
+            let virtual_length = smooth_patch_boundary_length_with_candidate(
                 &preview,
                 &initial_internal,
                 center_idx,
@@ -8379,7 +8606,7 @@ mod tests {
                 grid_w,
                 grid_h,
             );
-            let painted_length = score_fix_patch_boundary_length(
+            let painted_length = smooth_patch_boundary_length(
                 &painted,
                 &painted_internal,
                 center_idx,
@@ -8387,7 +8614,7 @@ mod tests {
                 grid_h,
             );
             assert_eq!(virtual_length, painted_length, "center={center_idx}");
-            let bit_parallel_length = score_fix_patch_boundary_length_from_cells(
+            let bit_parallel_length = smooth_patch_boundary_length_from_cells(
                 &grid_state,
                 &grid_data,
                 &glyph_previews,
@@ -8422,15 +8649,15 @@ mod tests {
     }
 
     #[test]
-    fn score_fix_spiral_ranks_visit_every_cell_once() {
+    fn smooth_spiral_ranks_visit_every_cell_once() {
         for (grid_w, grid_h) in [(1, 1), (1, 5), (5, 1), (2, 2), (4, 3), (5, 4)] {
-            let ranks = score_fix_spiral_ranks(grid_w, grid_h);
+            let ranks = smooth_spiral_ranks(grid_w, grid_h);
             let mut sorted = ranks.clone();
             sorted.sort_unstable();
             assert_eq!(sorted, (0..grid_w * grid_h).collect::<Vec<_>>());
         }
         assert_eq!(
-            score_fix_spiral_ranks(3, 3),
+            smooth_spiral_ranks(3, 3),
             vec![0, 1, 2, 7, 8, 3, 6, 5, 4]
         );
     }

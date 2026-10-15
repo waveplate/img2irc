@@ -1,6 +1,6 @@
 [package]
 name = "img2irc-rs"
-version = "2.0.0-alpha"
+version = "2.2.0"
 authors = ["waveplate"]
 repository = "https://github.com/waveplate/img2irc"
 description = "CLI utility to convert images to halfblock ANSI or IRC art with various optional post-processing filters"

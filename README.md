@@ -1,4 +1,4 @@
-# img2irc (2.0.0-alpha)
+# img2irc (2.2.0)
 
 *img2irc* converts images to IRC and ANSI art using real font glyphs. it has a CLI, an interactive terminal editor, a browser editor, and Python/JavaScript APIs.
 

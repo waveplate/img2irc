@@ -49,11 +49,18 @@ class Control:
 
 
 SECTIONS = ("General", "Smoothing", "OCR", "Effects")
+OCR_BASIC = {"ocr", "ocr_auto_width", "ocr_megapixels", "ocr_min_confidence", "ocr_figlet", "show_ocr_advanced"}
 
 CONTROLS = (
     Control("width", "Width", "int", 4, 0, 4096),
     Control("render", "Mode", "choice", choices=("Ansi24", "Ansi", "Irc")),
     Control("braille", "Braille"),
+    Control("perceptual_score", "Perceptual score (experimental)"),
+    Control("glyph_search", "Repair edges"),
+    Control("discontinuity_threshold", "Defect threshold (0=all)", "float", 0.1, 0, 100, depends_on="glyph_search"),
+    Control("glyph_search_candidates", "Search alternatives", "int", 1, 1, 64, depends_on="glyph_search"),
+    Control("glyph_search_passes", "Search passes", "int", 1, 1, 20, depends_on="glyph_search"),
+    Control("glyph_search_finalists", "Full checks (0=all)", "int", 1, 0, 4096, depends_on="glyph_search"),
     Control("font_size", "Font size (0=auto)", "int", 1, 0, 256),
     Control(
         "filter",
@@ -72,39 +79,38 @@ CONTROLS = (
     ),
     Control("grayscale_tolerance", "Grayscale tolerance", "int", 1, 0, 255),
     Control("show_discontinuities", "Show discontinuities"),
-    Control("discontinuity_threshold", "Discontinuity threshold", "float", 1, 0, 1000),
-    Control("score_fix", "Smoothing", section="Smoothing"),
+    Control("smooth", "Smoothing", section="Smoothing"),
     Control(
-        "score_fix_candidates",
+        "smooth_candidates",
         "Candidates",
         "int",
         1,
         1,
         256,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
-        "score_fix_orderings",
+        "smooth_orders",
         "Scan patterns",
         "int",
         1,
         1,
         5,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
-        "score_fix_geometry_first",
+        "smooth_shapes",
         "Refine shapes",
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
-        "score_fix_neighborhood_guard",
+        "smooth_neighbors",
         "Protect neighbors",
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_bending_weight",
@@ -114,7 +120,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_endpoint_weight",
@@ -124,7 +130,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_junction_weight",
@@ -134,7 +140,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_fragment_weight",
@@ -144,7 +150,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_fidelity_weight",
@@ -154,7 +160,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_boundary_weight",
@@ -164,7 +170,7 @@ CONTROLS = (
         0,
         10,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control(
         "contour_peak_weight",
@@ -174,9 +180,14 @@ CONTROLS = (
         0,
         1,
         section="Smoothing",
-        depends_on="score_fix",
+        depends_on="smooth",
     ),
     Control("ocr", "OCR", section="OCR"),
+    Control("show_ocr_advanced", "Advanced OCR", section="OCR"),
+    Control("ocr_min_ascii_ratio", "Minimum ASCII ratio", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_box_score_threshold", "Box confidence", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_box_threshold", "Binarization threshold", "float", 0.05, 0, 1, section="OCR", depends_on="ocr"),
+    Control("ocr_unclip_ratio", "Box expansion", "float", 0.1, 1, 4, section="OCR", depends_on="ocr"),
     Control("ocr_auto_width", "Auto width", section="OCR", depends_on="ocr"),
     Control(
         "ocr_megapixels",
@@ -316,6 +327,8 @@ class PythonTui:
         self.image = image
         self.font = font
         self.options = Advanced.defaults()
+        self._defaults = self.options.copy()
+        self._slider_previous: dict[str, object] = {}
         self.options.update(
             {
                 "width": width,
@@ -327,7 +340,7 @@ class PythonTui:
             }
         )
         if blocks is not None:
-            self.options["blocks"] = list(blocks)
+            self.options["glyphs"] = list(blocks)
         if characters is not None:
             self.set_characters(characters)
         self._output_explicit = output is not None
@@ -341,6 +354,7 @@ class PythonTui:
             self._protect_source(font, is_image=False)
         self.section_index = 0
         self.selected = 0
+        self.show_ocr_advanced = False
         self.result: Output | None = None
         self.status = "Ready"
         self.render_seconds = 0.0
@@ -354,6 +368,7 @@ class PythonTui:
             control
             for control in CONTROLS
             if control.section == SECTIONS[self.section_index]
+            and (control.section != "OCR" or self.show_ocr_advanced or control.key in OCR_BASIC)
         )
 
     def next_section(self, direction: int = 1) -> None:
@@ -368,7 +383,7 @@ class PythonTui:
                 return "Enable OCR first"
         if control.depends_on and not self.options[control.depends_on]:
             return (
-                f"Enable {control.depends_on.replace('score_fix', 'smoothing')} first"
+                f"Enable {control.depends_on.replace('smooth', 'smoothing')} first"
             )
         if (
             control.key == "width"
@@ -380,6 +395,9 @@ class PythonTui:
 
     def change_selected(self, direction: int) -> bool:
         control = self.controls[self.selected]
+        if control.key == "show_ocr_advanced":
+            self.show_ocr_advanced = not self.show_ocr_advanced
+            return False  # UI only; preserve the rendered result.
         reason = self.disabled_reason(control)
         if reason:
             self.status = reason
@@ -388,12 +406,41 @@ class PythonTui:
         self.options[control.key] = control.change(old_value, direction)
         if old_value == self.options[control.key]:
             return False
+        if control.kind in ("int", "float") and old_value != max(0, control.minimum):
+            self._slider_previous[control.key] = old_value
         if control.key == "render" and not self._output_explicit:
             self.output_path = _default_output_path(
                 self.image, str(self.options["render"])
             )
             if not self._preview_explicit:
                 self.preview_path = _default_preview_path(self.output_path)
+        self.result = None
+        return True
+
+    def toggle_selected(self) -> bool:
+        control = self.controls[self.selected]
+        if control.kind not in ("int", "float"):
+            return self.change_selected(1)
+        reason = self.disabled_reason(control)
+        if reason:
+            self.status = reason
+            return False
+        off = max(control.minimum, min(control.maximum, 0))
+        current = self.options[control.key]
+        if current != off:
+            self._slider_previous[control.key] = current
+            value = off
+        else:
+            fallback = {"font_size": 16, "width": 80}.get(
+                control.key, self._defaults[control.key]
+            )
+            if not isinstance(fallback, (int, float)) or fallback == off:
+                fallback = control.change(off, 1)
+            value = self._slider_previous.get(control.key, fallback)
+        value = max(control.minimum, min(control.maximum, float(value)))
+        self.options[control.key] = int(value) if control.kind == "int" else value
+        if current == self.options[control.key]:
+            return False
         self.result = None
         return True
 
@@ -435,13 +482,13 @@ class PythonTui:
         unknown = set(groups) - self.glyph_catalog().keys()
         if unknown:
             raise ValueError(f"Unknown glyph sets: {', '.join(sorted(unknown))}")
-        self.options.update(blocks=list(groups), include=None)
+        self.options.update(glyphs=list(groups), include=None)
         self.result = None
 
     def set_characters(self, characters: str) -> None:
         if not characters:
             raise ValueError("Select at least one character")
-        self.options.update(blocks=[], include=characters, exclude=[])
+        self.options.update(glyphs=[], include=characters, exclude=[])
         self.result = None
 
     def glyph_characters(self) -> tuple[str, set[str]]:
@@ -627,7 +674,7 @@ def _draw(screen: curses.window, app: PythonTui, colour: bool) -> None:
         range(scroll, min(len(controls), scroll + available_rows)), 2
     ):
         control = controls[index]
-        value = control.display(app.options[control.key])
+        value = control.display(app.show_ocr_advanced if control.key == "show_ocr_advanced" else app.options[control.key])
         marker = ">" if index == app.selected else " "
         label = f"{marker} {control.label[:panel_width - 11]:<{panel_width - 11}} {value:>7}"
         attribute = curses.A_REVERSE if index == app.selected else curses.A_NORMAL
@@ -654,7 +701,7 @@ def _draw(screen: curses.window, app: PythonTui, colour: bool) -> None:
         screen,
         height - 1,
         0,
-        "Tab section  ↑↓ select  ←→ change  g sets  c chars  e custom  f font  o open  q quit",
+        "Tab section  ↑↓ select  ←→ change  Space off/restore  g sets  c chars  e custom  f font  o open  q quit",
         curses.A_DIM,
     )
     screen.refresh()
@@ -778,7 +825,7 @@ def _edit_glyphs(screen: curses.window, app: PythonTui, *, individual: bool) -> 
             for name in catalog
             if any(
                 name == block or name.startswith(block + ".")
-                for block in app.options["blocks"]
+                for block in app.options["glyphs"]
             )
         }
         changed = _checklist(screen, "Glyph sets", items, selected)
@@ -830,8 +877,10 @@ def _run(screen: curses.window, app: PythonTui) -> None:
             app.selected = (app.selected + 1) % len(app.controls)
         elif key in (curses.KEY_LEFT, "h", "-"):
             dirty = app.change_selected(-1)
-        elif key in (curses.KEY_RIGHT, "l", "+", " "):
+        elif key in (curses.KEY_RIGHT, "l", "+"):
             dirty = app.change_selected(1)
+        elif key == " ":
+            dirty = app.toggle_selected()
         elif key in ("r", "R"):
             dirty = True
         elif key in ("o", "O"):
