@@ -34,7 +34,7 @@ fn text_toggle_button(
 pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let main_block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(BORDER))
+        .border_style(Style::default().fg(if matches!(app.pane_focus, Pane::TextPalette | Pane::TextInput | Pane::TextList) { ACCENT } else { BORDER }))
         .border_set(ratatui::symbols::border::ROUNDED)
         .title(Span::styled(
             " Text Settings ",
@@ -53,6 +53,9 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         Constraint::Length(5),  // Instructions / status
     ])
     .split(inner);
+    app.register_pane(Pane::TextPalette, Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, chunks[0].height + chunks[1].height));
+    app.register_pane(Pane::TextInput, Rect::new(chunks[2].x, chunks[2].y, chunks[2].width, chunks[2].height + chunks[3].height));
+    app.register_pane(Pane::TextList, chunks[4]);
 
     // Color Picker always visible
     let cp_rect = chunks[0];
@@ -471,7 +474,7 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         "Click canvas + type = fit box · double-click + drag = fixed box\n\
 Hover = outline · either lower-right edge = 🢆 resize · inside = move\n\
 Palette: left = selected · middle = FG · right = BG\n\
-Tab moves focus · Enter/Space activates · Esc finishes",
+Tab changes pane · Arrows move focus · Enter/Space activates · Esc finishes",
     );
 
     if !cfg!(feature = "ocr") {

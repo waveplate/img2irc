@@ -6,7 +6,8 @@ const HELP = Object.freeze({
   font: "The monospace font whose glyph shapes are used for matching. Google fonts are downloaded only when selected.",
   "font-size": "Raster resolution used to analyze and match glyph shapes. Larger values can preserve more detail but take longer; this does not set the displayed preview size.",
   "optimize-font-size": "Compare every integer font size from 9 through 30 and select the lowest Perceptual score. The scan skips smoothing, edge repair, region guidance, warp and OCR; your enabled features are preserved for the final render.",
-  filter: "Resampling algorithm used while resizing the source to the output grid. Sharper filters preserve detail; softer filters can reduce aliasing.",
+  filter: "Resampling algorithm used when Blend colours is on. With blending off, nearest sampling preserves exact source colours.",
+  "blend-colours": "Off selects foreground and background from actual source pixels under each glyph mask. On allows interpolated colours and the legacy fit. Explicit colour effects and output palette limits still apply.",
   "grayscale-tolerance": "Controls when near-neutral colours are treated as grayscale during palette selection. Higher values classify more colours as gray.",
   "colour-space": "Colour model used when comparing and adjusting colours. Different models weight hue and brightness differences differently.",
   smooth: "Runs the more expensive continuity pass to reduce rough transitions between neighboring glyph cells.",
@@ -134,7 +135,7 @@ export function initializeControlHelp(root) {
     let control = target.matches("label") ? target.querySelector("input, select, textarea") : target;
     if (control?.matches("summary")) control = control.closest("details");
     if (!control?.id) control = target.closest("[data-pipeline-effect]")?.querySelector("input[id], select[id]");
-    const text = HELP[control?.id] ?? (control?.id === "smoothing-section" ? HELP.smooth : undefined);
+    const text = HELP[control?.dataset.effectControl ?? control?.id] ?? (control?.id === "smoothing-section" ? HELP.smooth : undefined);
     if (!text) return;
     const caption = control.closest("label")?.querySelector(".label-caption");
     const title = caption?.firstChild?.textContent?.trim() || control.getAttribute("aria-label")
@@ -168,44 +169,51 @@ export function initializeControlHelp(root) {
     tooltip.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - bounds.width - 8))}px`;
   };
 
-  for (const [id, text] of Object.entries(HELP)) {
-    const control = root.querySelector(`#${id}`);
-    const label = control?.closest("label");
-    if (!control || !label || label.classList.contains("feature-enable")) continue;
-    const caption = captionFor(label, control);
-    if (!caption) continue;
+  const initialized = new WeakSet();
+  const install = (scope) => {
+    for (const control of scope.querySelectorAll("input[id], select[id], textarea[id], button[id]")) {
+      const text = HELP[control.dataset.effectControl ?? control.id];
+      if (!text || initialized.has(control)) continue;
+      initialized.add(control);
+      const label = control?.closest("label");
+      if (!control || !label || label.classList.contains("feature-enable")) continue;
+      const caption = captionFor(label, control);
+      if (!caption) continue;
 
-    const icon = document.createElement("span");
-    icon.className = "info-button";
-    icon.textContent = "i";
-    icon.tabIndex = 0;
-    icon.role = "button";
-    icon.setAttribute("aria-label", `Explain ${caption.textContent}`);
-    icon.setAttribute("aria-describedby", tooltip.id);
-    icon.addEventListener("mouseenter", () => show(icon, text));
-    icon.addEventListener("mouseleave", hide);
-    icon.addEventListener("focus", () => show(icon, text));
-    icon.addEventListener("blur", hide);
-    icon.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    icon.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (active === icon && !tooltip.hidden) hide();
-      else show(icon, text);
-    });
-    icon.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") hide();
-      if (event.key === "Enter" || event.key === " ") {
+      const icon = document.createElement("span");
+      icon.className = "info-button";
+      icon.textContent = "i";
+      icon.tabIndex = 0;
+      icon.role = "button";
+      icon.setAttribute("aria-label", `Explain ${caption.textContent}`);
+      icon.setAttribute("aria-describedby", tooltip.id);
+      icon.addEventListener("mouseenter", () => show(icon, text));
+      icon.addEventListener("mouseleave", hide);
+      icon.addEventListener("focus", () => show(icon, text));
+      icon.addEventListener("blur", hide);
+      icon.addEventListener("pointerdown", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+      });
+      icon.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         if (active === icon && !tooltip.hidden) hide();
         else show(icon, text);
-      }
-    });
-    caption.append(icon);
-  }
+      });
+      icon.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") hide();
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (active === icon && !tooltip.hidden) hide();
+          else show(icon, text);
+        }
+      });
+      caption.append(icon);
+    }
+  };
+  install(root);
+  root.addEventListener("pipelineentry", (event) => install(event.detail.node));
 
   addEventListener("scroll", hide, true);
   addEventListener("resize", hide);

@@ -9,6 +9,7 @@ fn same(a: V3, b: V3) -> bool {
     a.map(f32::to_bits) == b.map(f32::to_bits)
 }
 
+#[derive(Clone)]
 struct CachedBlur {
     horizontal: Vec<V3>,
     output: Vec<V3>,
@@ -19,6 +20,14 @@ struct CachedBlur {
 }
 
 impl CachedBlur {
+    fn copy_from(&mut self, base: &Self) {
+        self.horizontal.clone_from(&base.horizontal);
+        self.output.clone_from(&base.output);
+        self.rows.clone_from(&base.rows);
+        self.columns.clone_from(&base.columns);
+        self.changed.clear();
+        self.radius = base.radius;
+    }
     fn new(pixels: &[V3], width: usize, height: usize, radius: usize) -> Self {
         let mut horizontal = Vec::new();
         let mut output = Vec::new();
@@ -72,12 +81,17 @@ impl CachedBlur {
     }
 }
 
+#[derive(Clone)]
 struct DirtyPixels {
     seen: Vec<bool>,
     pixels: Vec<usize>,
 }
 
 impl DirtyPixels {
+    fn copy_from(&mut self, base: &Self) {
+        self.seen.clone_from(&base.seen);
+        self.pixels.clone_from(&base.pixels);
+    }
     fn new(len: usize) -> Self {
         Self {
             seen: vec![false; len],
@@ -100,6 +114,7 @@ impl DirtyPixels {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct GeometryCache {
     #[cfg(not(target_arch = "wasm32"))]
     profile: super::stage_profile::Profile,
@@ -121,6 +136,22 @@ pub(crate) struct GeometryCache {
 }
 
 impl GeometryCache {
+    pub(crate) fn copy_from(&mut self, base: &Self) {
+        self.smooth.copy_from(&base.smooth);
+        self.coarse.copy_from(&base.coarse);
+        self.curvature.copy_from(&base.curvature);
+        self.edges.clone_from(&base.edges);
+        self.moments.clone_from(&base.moments);
+        self.dispersion.clone_from(&base.dispersion);
+        self.terms.clone_from(&base.terms);
+        self.active_blocks.clone_from(&base.active_blocks);
+        self.sums.copy_from(&base.sums);
+        self.fine_sums.copy_from(&base.fine_sums);
+        self.dirty.copy_from(&base.dirty);
+        self.missing_dirty.copy_from(&base.missing_dirty);
+        self.scaled_changed.clear();
+        self.edge_changed.clear();
+    }
     pub(crate) fn new(reference: &PreparedReference, output: &OutputCache) -> Self {
         let (width, height) = (reference.width, reference.height);
         let smooth = CachedBlur::new(&output.scaled, width, height, 1);

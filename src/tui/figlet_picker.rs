@@ -260,7 +260,7 @@ mod tests {
         };
         args.overlays.push(original.clone());
         let flag = Arc::new(AtomicBool::new(false));
-        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
         let (_result_tx, result_rx) = mpsc::channel(1);
         let mut app = App::new(args, tx, result_rx, flag);
         let picker = || FigletPicker {

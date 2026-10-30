@@ -237,12 +237,15 @@ label:hover .info-button, label:focus-within .info-button { color: var(--accent)
 .toolbar-spacer { flex: 1; }
 .file-button { cursor: pointer; padding: .28em .6ch; border: 1px solid var(--border); border-radius: 2px; background: #0f0f14; }
 .auto-render-toggle { display: flex; align-items: center; gap: .5ch; color: var(--muted); }
-.glyph-preset-toolbar { display: flex; gap: .4ch; margin-left: auto; }
+.glyph-preset-toolbar { position: relative; z-index: 10; display: flex; gap: .4ch; margin-left: auto; }
 .glyph-preset-toolbar button[aria-pressed="true"] { color: #fff; background: var(--selected); border-color: var(--accent); }
 .font-size-controls { display: flex; align-items: center; gap: .5ch; min-width: 0; }
 .font-size-controls input { min-width: 0; }
 .font-size-controls button { flex: none; }
-.glyph-hint { margin: .4em 0; padding: .3em 0; color: var(--muted); font-size: .85em; }
+.glyph-hint { position: absolute; top: calc(100% + .6em); left: 0; display: grid; gap: .6em; width: 100%; padding: .7em 2.2em .7em .8em; background: var(--panel-raised); border: 1px solid var(--accent); border-radius: 3px; box-shadow: 0 .4rem 1rem rgb(0 0 0 / 35%); color: var(--text); font-size: .9em; line-height: 1.45; }
+.glyph-hint::before { content: ""; position: absolute; top: -.4em; left: 2.8ch; width: .7em; height: .7em; background: var(--panel-raised); border-top: 1px solid var(--accent); border-left: 1px solid var(--accent); transform: rotate(45deg); }
+#hint-use-smooth { justify-self: start; }
+#hint-dismiss { position: absolute; top: .15em; right: .15em; padding: .1em .4em; background: transparent; border-color: transparent; color: var(--muted); }
 .crop-margins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5em; }
 .crop-dialog { width: min(90vw, 1050px); max-height: 90vh; overflow: auto; background: var(--panel); color: var(--text); border: 1px solid var(--accent); }
 .crop-dialog::backdrop { background: rgb(0 0 0 / 65%); }
@@ -326,9 +329,9 @@ label:hover .info-button, label:focus-within .info-button { color: var(--accent)
 .shortcut-bar > span { white-space: nowrap; }
 .shortcut-bar kbd { background: var(--accent); color: #1e1e2a; padding: .1em .5ch; }
 .shortcut-note { margin-left: auto; color: var(--muted); }
-#replace-picker { margin: .5em .5ch; padding: .5em .5ch; border: 1px solid var(--accent); background: var(--panel); }
-#replace-canvas { display: block; max-width: 100%; max-height: 40vh; width: auto; height: auto; cursor: crosshair; image-rendering: pixelated; }
-#quantize-swatches button { border-left-width: 1.25em; font-size: .9em; }
+[data-effect-control="replace-picker"] { margin: .5em .5ch; padding: .5em .5ch; border: 1px solid var(--accent); background: var(--panel); }
+[data-effect-control="replace-canvas"] { display: block; max-width: 100%; max-height: 40vh; width: auto; height: auto; cursor: crosshair; image-rendering: pixelated; }
+[data-effect-control="quantize-swatches"] button { border-left-width: 1.25em; font-size: .9em; }
 
 @media (prefers-reduced-motion: reduce) {
   #status[data-busy="true"]::before { animation: none; }

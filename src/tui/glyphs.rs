@@ -19,6 +19,8 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
         Constraint::Min(5),
     ])
     .split(area);
+    app.register_pane(Pane::GlyphTree, chunks[0]);
+    app.register_pane(Pane::GlyphList, chunks[2]);
 
     let splitter_style = Style::new().fg(BORDER).bg(BG);
     f.render_widget(Block::default().style(splitter_style), chunks[1]);
@@ -33,7 +35,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
     });
 
     // Render tree in the first section
-    let tree_focused = app.current_tab == 2 && app.selected_control == 0;
+    let tree_focused = app.pane_focus == Pane::GlyphTree && app.selected_control == 0;
     let tree_block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::new().fg(if tree_focused { ACCENT } else { BORDER }))
@@ -51,7 +53,7 @@ pub(crate) fn render_glyphs_tab(f: &mut ratatui::Frame, app: &mut App, area: Rec
     app.glyph_list_area = chunks[2];
     app.preview_area = chunks[4];
 
-    let is_focused = app.current_tab == 2 && app.selected_control == 1;
+    let is_focused = app.pane_focus == Pane::GlyphList && app.selected_control == 1;
     let border_style = if is_focused {
         Style::new().fg(ACCENT)
     } else {
@@ -298,7 +300,7 @@ pub(crate) fn render_tree(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         let actual_idx = start_idx + i;
         let selected = actual_idx == app.tree_state.selected_idx;
 
-        let is_tree_focused = app.current_tab == 2 && app.selected_control == 0;
+        let is_tree_focused = app.pane_focus == Pane::GlyphTree && app.selected_control == 0;
         let style = if selected && is_tree_focused {
             Style::new()
                 .bg(ACCENT)
@@ -418,6 +420,7 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
             title.chars().count() as u16,
         );
         app.preview_area = render_area;
+        app.register_pane(Pane::GlyphPreview, render_area);
         if is_floating {
             f.render_widget(Clear, render_area);
         }
@@ -425,6 +428,7 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
         let block = Block::default()
             .borders(Borders::ALL)
             .title(title)
+            .border_style(Style::new().fg(if app.pane_focus == Pane::GlyphPreview { ACCENT } else { BORDER }))
             .style(Style::new().bg(SURFACE));
         let inner = block.inner(render_area);
         f.render_widget(block, render_area);
@@ -447,6 +451,7 @@ pub(crate) fn render_block_bitmap(f: &mut ratatui::Frame, app: &mut App, area: R
             preview_area,
         );
     } else {
+        app.register_pane(Pane::GlyphPreview, area);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" Preview: {} ({}) ", ch, font_name));

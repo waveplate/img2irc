@@ -5,14 +5,7 @@ pub fn quantize_rgb(rgb: [u8; 3], palette: &[u32]) -> [u8; 3] {
     if palette.is_empty() {
         return rgb;
     }
-    let packed = u32::from(rgb[0]) << 16 | u32::from(rgb[1]) << 8 | u32::from(rgb[2]);
-    let index = crate::draw::nearest_hex_colour_fast(packed, palette) as usize;
-    let colour = palette[index.min(palette.len() - 1)];
-    [
-        ((colour >> 16) & 0xff) as u8,
-        ((colour >> 8) & 0xff) as u8,
-        (colour & 0xff) as u8,
-    ]
+    crate::colour_quantization::snap_to_palette(rgb, palette)
 }
 
 pub fn replace_colour(image: &mut PhotonImage, from: [u8; 3], to: [u8; 3], tolerance: f32) {
@@ -45,10 +38,12 @@ pub fn quantize_palette(image: &mut PhotonImage, count: u32, threshold: f32, pal
         *counts.entry([pixel[0], pixel[1], pixel[2]]).or_default() += u64::from(pixel[3]);
     }
     let map = crate::output_colours::palette_map(&counts, count as usize, threshold, palette);
-    for pixel in pixels.chunks_exact_mut(4).filter(|pixel| pixel[3] > 0) {
-        if let Some(rgb) = map.get(&[pixel[0], pixel[1], pixel[2]]) {
-            pixel[..3].copy_from_slice(rgb);
-        }
+    let colours: Vec<_> = pixels.chunks_exact(4).map(|pixel| [pixel[0], pixel[1], pixel[2]]).collect();
+    let weights: Vec<_> = pixels.chunks_exact(4).map(|pixel| u64::from(pixel[3])).collect();
+    let colours = crate::colour_quantization::spatial_assign(&colours, &weights,
+        image.get_width() as usize, image.get_height() as usize, 1, &map);
+    for (pixel, colour) in pixels.chunks_exact_mut(4).zip(colours) {
+        if pixel[3] > 0 { pixel[..3].copy_from_slice(&colour); }
     }
     *image = PhotonImage::new(pixels, image.get_width(), image.get_height());
 }

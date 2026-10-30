@@ -5,32 +5,18 @@ use crate::{args::Render, draw, font::GlyphStore, pipeline::ImageEffect};
 
 type Rgb = [u8; 3];
 
-/// Keep the most common original colours, mapping rarer ones to their nearest
-/// retained neighbour in OKLab. RGB ordering makes equal-frequency ties stable.
+/// Fit observed palette colours by weighted perceptual error.
 pub(crate) fn reduction_map(counts: &BTreeMap<Rgb, u64>, limit: usize) -> BTreeMap<Rgb, Rgb> {
     if limit == 0 || counts.len() <= limit {
         return BTreeMap::new();
     }
-    let mut ranked: Vec<_> = counts.iter().collect();
-    ranked.sort_by(|(a, na), (b, nb)| nb.cmp(na).then_with(|| a.cmp(b)));
-    let retained: Vec<_> = ranked[..limit]
-        .iter()
-        .map(|(rgb, _)| (**rgb, draw::rgb_to_oklab(**rgb)))
+    let retained: Vec<_> = crate::colour_quantization::select_palette(counts, limit)
+        .into_iter()
+        .map(|rgb| (rgb, draw::rgb_to_oklab(rgb)))
         .collect();
-    ranked[limit..]
-        .iter()
-        .map(|(rgb, _)| {
-            let lab = draw::rgb_to_oklab(**rgb);
-            let nearest = retained
-                .iter()
-                .min_by(|a, b| {
-                    draw::oklab_distance_squared(lab, a.1)
-                        .total_cmp(&draw::oklab_distance_squared(lab, b.1))
-                })
-                .unwrap()
-                .0;
-            (**rgb, nearest)
-        })
+    counts
+        .keys()
+        .map(|rgb| (*rgb, nearest(*rgb, &retained)))
         .collect()
 }
 
@@ -84,7 +70,8 @@ pub(crate) fn palette_map(
                         for &index in indices {
                             let (seed, seed_lab) = seeds[index];
                             let distance = draw::oklab_distance_squared(lab, seed_lab);
-                            if distance <= radius * radius
+                            if crate::colour_quantization::chroma_compatible(lab, seed_lab)
+                                && distance <= radius * radius
                                 && best.is_none_or(|(d, r)| {
                                     distance < d || (distance == d && seed < r)
                                 })
@@ -109,16 +96,31 @@ pub(crate) fn palette_map(
         assignments.insert(rgb, seed);
     }
     let reduced = reduction_map(&pooled, limit);
-    for seed in assignments.values_mut() {
-        *seed = reduced.get(seed).copied().unwrap_or(*seed);
+    if !reduced.is_empty() {
+        let retained: Vec<_> = reduced
+            .values()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|rgb| (rgb, draw::rgb_to_oklab(rgb)))
+            .collect();
+        for (rgb, seed) in assignments.iter_mut() {
+            *seed = nearest(*rgb, &retained);
+        }
     }
     assignments
 }
 
 fn nearest(rgb: Rgb, retained: &[(Rgb, draw::Oklab)]) -> Rgb {
     let lab = draw::rgb_to_oklab(rgb);
+    let compatible = retained
+        .iter()
+        .any(|(_, target)| crate::colour_quantization::chroma_compatible(lab, *target));
     retained
         .iter()
+        .filter(|(_, target)| {
+            !compatible || crate::colour_quantization::chroma_compatible(lab, *target)
+        })
         .min_by(|a, b| {
             draw::oklab_distance_squared(lab, a.1)
                 .total_cmp(&draw::oklab_distance_squared(lab, b.1))
@@ -209,10 +211,14 @@ pub fn apply(
                     continue;
                 }
                 let mut counts = BTreeMap::new();
+                let mut samples = Vec::new();
+                let mut weights = Vec::new();
                 for cell in result.grid.iter().flatten() {
                     let ink = *ink_cache
                         .entry(cell.char)
                         .or_insert_with(|| draw::glyph_ink_pixels(glyphs, cell.char));
+                    samples.extend([cell.fg, cell.bg.unwrap_or([0; 3])]);
+                    weights.extend([ink.min(area), area.saturating_sub(ink)]);
                     if ink > 0 {
                         *counts.entry(cell.fg).or_default() += ink;
                     }
@@ -221,15 +227,25 @@ pub fn apply(
                     }
                 }
                 let map = palette_map(&counts, limit as usize, threshold, &chosen);
-                // Hidden foregrounds/backgrounds must not introduce extra
-                // colours in the encoded output either.
-                let Some(&fallback) = map.values().next() else {
+                if map.is_empty() {
                     continue;
-                };
-                let remap = |rgb: Rgb| map.get(&rgb).copied().unwrap_or_else(|| fallback);
-                for cell in result.grid.iter_mut().flatten() {
-                    cell.fg = remap(cell.fg);
-                    cell.bg = Some(remap(cell.bg.unwrap_or([0; 3])));
+                }
+                let colours = crate::colour_quantization::spatial_assign(
+                    &samples,
+                    &weights,
+                    result.grid.first().map_or(0, Vec::len),
+                    result.grid.len(),
+                    2,
+                    &map,
+                );
+                for (cell, colours) in result
+                    .grid
+                    .iter_mut()
+                    .flatten()
+                    .zip(colours.chunks_exact(2))
+                {
+                    cell.fg = colours[0];
+                    cell.bg = Some(colours[1]);
                 }
             }
             _ => {}
@@ -249,7 +265,7 @@ mod tests {
         let noisy = [202, 41, 40];
         let black = [0; 3];
         let counts = [(red, 100), (noisy, 90), (black, 5)].into_iter().collect();
-        assert_eq!(reduction_map(&counts, 2).get(&black), Some(&red));
+        assert_eq!(reduction_map(&counts, 2).get(&black), Some(&black));
         let map = palette_map(&counts, 2, 3.0, &[]);
         assert_eq!(map[&noisy], red);
         assert_eq!(map[&black], black);

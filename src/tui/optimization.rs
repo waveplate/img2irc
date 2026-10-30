@@ -57,6 +57,8 @@ impl App {
         self.optimization_progress = "Scanning font sizes 9–30...".to_string();
         let (tx, rx) = mpsc::channel(32);
         self.rx_optimization = Some(rx);
+        let video_frame = self.video.as_ref().and_then(|_| self.source_preview.lock().ok()
+            .and_then(|slot| slot.as_ref().map(|(_, image)| (**image).clone())));
 
         tokio::spawn(async move {
             let result = async {
@@ -65,8 +67,10 @@ impl App {
                 let glyphs = tokio::task::spawn_blocking(move || {
                     load_glyphs(&initial_args, crate::font_scan::MAX_SIZE as f32, initial_cancel)
                 }).await.map_err(|error| format!("Font preparation failed: {error}"))?;
-                let image = crate::load_image_from_url_or_path(&path, &args, &glyphs).await
-                    .map_err(|error| error.to_string())?;
+                let image = if let Some(frame) = video_frame { frame } else {
+                    crate::load_image_from_url_or_path(&path, &args, &glyphs).await
+                        .map_err(|error| error.to_string())?
+                };
                 let progress_tx = tx.clone();
                 tokio::task::spawn_blocking(move || {
                     let mut log = OptimizationLog::new(&args, false);
@@ -355,7 +359,7 @@ mod tests {
 
         for randomize in [false, true] {
             let flag = Arc::new(AtomicBool::new(false));
-            let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+            let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
             let (_result_tx, result_rx) = mpsc::channel(1);
             let mut app = App::new(args.clone(), tx, result_rx, flag);
             // A preview with stale glyphs must not affect the baseline or the

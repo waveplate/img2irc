@@ -75,6 +75,13 @@ pub enum ImageEffect {
         #[serde(default)]
         source: bool,
     },
+    /// Fill nearly uniform connected regions with an observed colour.
+    FlatFill,
+    FlatFillWithOptions(crate::flat_fill::Options),
+    /// Vectorize connected regions, then rasterize before glyph matching.
+    Img2Svg(crate::svg_effect::Options),
+    /// Make narrow dark marks black without globally darkening flat fills.
+    DarkenOutlines(crate::outline_darkening::Options),
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +109,9 @@ impl ImageEffect {
             ImageEffect::LumaContrast(_) => "Luma Contrast",
             ImageEffect::MedianBlur(_) => "Median Blur",
             ImageEffect::DarkLines(_) | ImageEffect::LightLines(_) => "Line Thickness",
+            ImageEffect::FlatFill | ImageEffect::FlatFillWithOptions(_) => "Flat Fill",
+            ImageEffect::Img2Svg(_) => "img2svg",
+            ImageEffect::DarkenOutlines(_) => "Darken Outlines",
             ImageEffect::ReplaceColour { .. } => "Replace Colour",
             ImageEffect::QuantizeColours(_) | ImageEffect::QuantizePalette { .. } => {
                 "Quantize Colours"
@@ -176,6 +186,9 @@ impl ImageEffect {
                 | ImageEffect::Pixelize(_)
                 | ImageEffect::Dither(_)
                 | ImageEffect::Oil(_, _)
+                | ImageEffect::FlatFillWithOptions(_)
+                | ImageEffect::Img2Svg(_)
+                | ImageEffect::DarkenOutlines(_)
                 | ImageEffect::CropTop(_)
                 | ImageEffect::Crop { .. }
                 | ImageEffect::CropBottom(_)
@@ -189,6 +202,9 @@ impl ImageEffect {
     /// Get param as f32 for display
     pub fn param_f32(&self) -> Option<f32> {
         match self {
+            Self::Img2Svg(options) => Some(options.colors() as f32),
+            Self::DarkenOutlines(options) => Some(options.strength),
+            Self::FlatFillWithOptions(options) => Some(options.tolerance),
             Self::Crop { top, .. } => Some(*top as f32),
             ImageEffect::Brightness(v)
             | ImageEffect::LumaContrast(v)
@@ -223,6 +239,9 @@ impl ImageEffect {
     /// Get param range (min, max) for slider display
     pub fn param_range(&self) -> Option<(f32, f32)> {
         match self {
+            Self::Img2Svg(_) => Some((0.0, 256.0)),
+            Self::DarkenOutlines(_) => Some((0.0, 100.0)),
+            Self::FlatFillWithOptions(_) => Some((0.0, 100.0)),
             Self::Crop { .. } => Some((0.0, 100_000.0)),
             ImageEffect::Brightness(_)
             | ImageEffect::LumaContrast(_)
@@ -252,6 +271,9 @@ impl ImageEffect {
     /// Set param from f32
     pub fn set_param(&mut self, val: f32) {
         match self {
+            Self::Img2Svg(options) => options.colors = Some(val.round().clamp(0.0, 256.0) as u32),
+            Self::DarkenOutlines(options) => options.strength = val.clamp(0.0, 100.0),
+            Self::FlatFillWithOptions(options) => options.tolerance = val.clamp(0.0, 100.0),
             Self::Crop { top, .. } => *top = val.clamp(0.0, 100_000.0).round() as u32,
             ImageEffect::Brightness(v)
             | ImageEffect::LumaContrast(v)
@@ -283,6 +305,7 @@ impl ImageEffect {
 
     pub fn param_step(&self) -> f32 {
         match self {
+            Self::FlatFillWithOptions(_) => 0.1,
             Self::DarkLines(_) | Self::LightLines(_) => 0.1,
             _ => 1.0,
         }
@@ -298,6 +321,21 @@ impl ImageEffect {
             step,
         };
         match self {
+            Self::Img2Svg(options) => options.parameters(),
+            Self::DarkenOutlines(options) => vec![
+                parameter("Strength %", options.strength, 0.0, 100.0, 1.0),
+                parameter("Radius (pixels)", options.radius as f32, 1.0, 64.0, 1.0),
+                parameter("Max luminance %", options.threshold, 0.0, 100.0, 1.0),
+                parameter("Minimum contrast %", options.contrast, 0.0, 100.0, 1.0),
+            ],
+            Self::FlatFillWithOptions(options) => vec![
+                parameter("Colour tolerance %", options.tolerance, 0.0, 100.0, 0.1),
+                parameter("Flatness %", options.flatness, 0.0, 100.0, 0.1),
+                parameter("Minimum area (pixels)", options.min_area as f32, 1.0, 100_000_000.0, 1.0),
+                parameter("Gradient threshold % (0=off)", options.gradient, 0.0, 100.0, 0.1),
+                parameter("Strength %", options.strength, 0.0, 100.0, 1.0),
+                parameter("Video stability % (0=off)", options.temporal_tolerance, 0.0, 100.0, 0.1),
+            ],
             Self::Crop {
                 top,
                 right,
@@ -342,6 +380,15 @@ impl ImageEffect {
         let value =
             ((value / parameter.step).round() * parameter.step).clamp(parameter.min, parameter.max);
         match (self, index) {
+            (Self::DarkenOutlines(options), 1) => options.radius = value as u32,
+            (Self::DarkenOutlines(options), 2) => options.threshold = value,
+            (Self::DarkenOutlines(options), 3) => options.contrast = value,
+            (Self::Img2Svg(options), index) => options.set_parameter(index, value),
+            (Self::FlatFillWithOptions(options), 1) => options.flatness = value,
+            (Self::FlatFillWithOptions(options), 2) => options.min_area = value as u32,
+            (Self::FlatFillWithOptions(options), 3) => options.gradient = value,
+            (Self::FlatFillWithOptions(options), 4) => options.strength = value,
+            (Self::FlatFillWithOptions(options), 5) => options.temporal_tolerance = value,
             (Self::Crop { right, .. }, 1) => *right = value as u32,
             (Self::Crop { bottom, .. }, 2) => *bottom = value as u32,
             (Self::Crop { left, .. }, 3) => *left = value as u32,
@@ -360,6 +407,13 @@ impl ImageEffect {
                 palette: vec![],
                 source: false,
             };
+        }
+    }
+
+    pub fn parameter_choices(&self, index: usize) -> Option<&'static [&'static str]> {
+        match self {
+            Self::Img2Svg(_) => crate::svg_effect::Options::choices(index),
+            _ => None,
         }
     }
 }

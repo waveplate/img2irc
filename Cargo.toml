@@ -70,6 +70,7 @@ regex = "1.11"
 zip = { version = "0.6", default-features = false, features = ["deflate"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+img2svg = { version = "=0.1.15", path = "vendor/img2svg", features = ["quiet"] }
 ab_glyph = "0.2"
 ansi-to-tui = "8"
 arboard = "3.4.1"
@@ -90,7 +91,10 @@ reqwest = { version = "0.11.14", features = ["blocking"] }
 resvg = "0.41.0"
 simplelog = "0.12.2"
 tiny-skia = "0.11.0"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+rand = "0.10"
+russh = { version = "0.64.1", default-features = false, features = ["ring", "flate2"] }
+socket2 = "0.6"
 ureq = { version = "2.12.1", optional = true }
 url = "2.3.1"
 

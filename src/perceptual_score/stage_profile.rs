@@ -5,10 +5,12 @@ use std::time::Instant;
 
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("IMG2IRC_REPAIR_PROFILE").is_some())
+    // Keep the deeply nested timers and per-cache logs separate from the
+    // end-to-end ranking profile: they add substantial measurement overhead.
+    *ENABLED.get_or_init(|| std::env::var_os("IMG2IRC_REPAIR_SCORE_PROFILE").is_some())
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Profile {
     pub(super) nanos: [u128; 8],
     pub(super) updates: usize,

@@ -1,4 +1,5 @@
 /target
+/video_ssh_host_ed25519
 img2irc.log
 /inputs
 /web/pkg

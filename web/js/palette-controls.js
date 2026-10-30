@@ -1,4 +1,5 @@
 import { parsePalette } from "./render-options.js";
+import { effectControl } from "./effect-catalog.js";
 
 const hex = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
 
@@ -14,7 +15,7 @@ export function visiblePalette(result) {
 }
 
 export function initializePaletteControls(root, result, changed) {
-  const element = (id) => root.querySelector(`#${id}`);
+  const element = (id) => effectControl(root, id);
   const input = element("quantize-palette");
   const swatches = element("quantize-swatches");
   const refresh = () => {
@@ -56,9 +57,6 @@ export function initializePaletteControls(root, result, changed) {
     refresh();
     changed();
   });
-  element("reset-adjustments").addEventListener("click", () => {
-    input.value = "";
-    refresh();
-  });
+  root.addEventListener("effectreset", refresh);
   refresh();
 }

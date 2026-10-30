@@ -223,11 +223,6 @@
         </span>
        </label>
       </div>
-      <div class="glyph-hint" hidden="" id="smooth-glyph-hint" role="status">
-       Try the Smooth glyph set for cleaner edges.
-       <button id="hint-use-smooth" type="button">Use Smooth</button>
-       <button aria-label="Dismiss glyph hint" id="hint-dismiss" type="button">×</button>
-      </div>
       <div class="feature-group">
       <label class="feature-enable">
        <input aria-label="Enable OCR" id="ocr-enabled" type="checkbox"/>
@@ -445,6 +440,10 @@
            Lanczos3
           </option>
          </select>
+        </label>
+        <label>
+         <input id="blend-colours" type="checkbox"/>
+         Blend colours
         </label>
         <label>
          Grayscale tolerance
@@ -995,9 +994,14 @@
        Loading WebAssembly…
       </p>
       <div aria-label="Glyph detail presets" class="glyph-preset-toolbar">
-       <button aria-pressed="false" data-glyph-preset="smooth" type="button">Smooth</button>
+       <button aria-pressed="false" data-glyph-preset="smooth" id="glyph-preset-smooth" type="button">Smooth</button>
        <button aria-pressed="false" data-glyph-preset="balanced" type="button">Balanced</button>
        <button aria-pressed="false" data-glyph-preset="detailed" type="button">Detailed</button>
+       <div class="glyph-hint" hidden="" id="smooth-glyph-hint" role="status">
+        <span id="smooth-glyph-hint-text">Try the Smooth glyph set for cleaner edges.</span>
+        <button id="hint-use-smooth" type="button">Use Smooth</button>
+        <button aria-label="Dismiss glyph hint" id="hint-dismiss" type="button">×</button>
+       </div>
       </div>
       <div aria-label="Edge repair progress" class="render-progress" hidden="" id="render-progress" role="progressbar">
        <span id="render-progress-label"></span>

@@ -94,8 +94,9 @@ pub(crate) fn render_pipeline_catalog_list(f: &mut ratatui::Frame, app: &mut App
 pub(crate) fn render_active_pipeline_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     app.ensure_pipeline_selection();
     let area = render_effect_controls(f, app, area);
+    app.register_pane(Pane::Controls, area);
     app.pipeline_active_area = area;
-    let is_focused = app.current_tab == 1 && !app.effect_controls.has_focus();
+    let is_focused = app.current_tab == 1 && app.pane_focus == Pane::Controls;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if is_focused { ACCENT } else { BORDER }))

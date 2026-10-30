@@ -96,10 +96,18 @@ fn parse_colour_replacement(input: &str) -> Result<ColourReplacement, String> {
     Ok(ColourReplacement { from: parse_hex_colour(from)?, to: parse_hex_colour(to)? })
 }
 
-fn parse_percentage(input: &str) -> Result<f32, String> {
+pub fn parse_percentage(input: &str) -> Result<f32, String> {
     let value = input.parse::<f32>().map_err(|_| "expected a percentage between 0 and 100")?;
     if !value.is_finite() || !(0.0..=100.0).contains(&value) {
         return Err("expected a finite percentage between 0 and 100".into());
+    }
+    Ok(value)
+}
+
+pub fn parse_line_thickness(input: &str) -> Result<f32, String> {
+    let value = input.parse::<f32>().map_err(|_| "expected line thickness between -10 and 10")?;
+    if !value.is_finite() || !(-10.0..=10.0).contains(&value) {
+        return Err("expected finite line thickness between -10 and 10".into());
     }
     Ok(value)
 }
@@ -376,6 +384,9 @@ pub struct RenderArgs {
     pub crop: Option<(u32, u32, u32, u32)>,
     pub trim: Option<(u32, u32, u32, u32)>,
     pub filter: SamplingFilter,
+    /// Allow interpolated source colours instead of exact local samples.
+    #[serde(default)]
+    pub blend_colours: bool,
     pub rotate: f32,
     pub fliph: bool,
     pub flipv: bool,
@@ -573,6 +584,7 @@ impl RenderArgs {
 
 #[derive(Parser, Clone, Debug)]
 #[command(name = "img2irc", author, version = env!("IMG2IRC_VERSION"), about, long_about = None)]
+#[command(after_help = "Video: img2irc video <preview|encode|play|serve|serve-ssh> --help\nOpen a video in the editor: img2irc --tui clip.mp4")]
 #[command(group(clap::ArgGroup::new("colour_replacements").args(["replace_colour", "replace_from"]).multiple(true)))]
 pub struct Args {
     /// print bundled font licenses
@@ -650,6 +662,10 @@ pub struct Args {
     /// sampling filter
     #[arg(long, value_enum, default_value_t = SamplingFilter::Nearest)]
     pub filter: SamplingFilter,
+
+    /// Allow blended colours during resizing and SVG rasterization; off by default.
+    #[arg(long = "blend-colours", visible_alias = "blend-colors", default_value_t = false, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    pub blend_colours: bool,
 
     /// rotate degrees
     #[arg(long, default_value = "0.0")]
@@ -819,6 +835,26 @@ pub struct Args {
         value_parser = clap::value_parser!(i32).range(0..=10)
     )]
     pub median_blur: i32,
+
+    /// grow dark lines with positive values, light lines with negative values (-10 to 10; fractional pixels)
+    #[arg(long = "line-thickness", default_value_t = 0.0, allow_hyphen_values = true, value_parser = parse_line_thickness)]
+    pub line_thickness: f32,
+    /// Darken narrow dark outlines before glyph matching; full strength makes them black.
+    #[arg(long)]
+    pub darken_outlines: bool,
+    #[command(flatten)]
+    pub outline_options: crate::outline_darkening::Options,
+    /// Flatten nearly uniform connected colour regions before glyph matching.
+    #[arg(long)]
+    pub flat_fill: bool,
+    #[command(flatten)]
+    pub flat_fill_options: crate::flat_fill::Options,
+
+    /// Vectorize with img2svg and rasterize the result before glyph matching (native only).
+    #[arg(long)]
+    pub img2svg: bool,
+    #[command(flatten)]
+    pub img2svg_options: crate::svg_effect::Options,
 
     /// reduce to 0–256 colours; 0 merges shades without limiting their count
     #[arg(long = "quantize-colours", visible_aliases = ["quantize-colors", "quantize"], value_name = "COUNT", value_parser = clap::value_parser!(u32).range(0..=256))]

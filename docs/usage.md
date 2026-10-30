@@ -7,11 +7,142 @@ img2irc https://i.imgur.com/qP1uBCK.png --width 80
 
 width is in columns and height is in rows. leaving one unset preserves aspect ratio; omitted width or `--width 0` selects automatic sizing. native loading also supports SVG. `--help` is the full option reference.
 
+Open a video in the same editor with `img2irc --tui clip.mp4`, or supply video
+clipping and rendering arguments with `img2irc video preview clip.mp4 --start 6
+--duration 2 --glyphs smooth --height 60`. Ctrl+Enter or Shift+Enter plays/pauses, `[`/`]` step frames,
+F6 focuses clip controls, and F7 encodes the current settings to `.i2v` (press
+again to cancel). Ctrl+Q exits. Videos also open through Ctrl+O.
+Page Up/Down seek backward/forward 1% of the selected clip; Shift increases this
+to 10%, with a minimum step of one frame,
+pausing playback and stopping at the selected clip's first or last frame.
+See [video usage](../examples/README.md) for encoding, playback and servers.
+
 | `--render` | output |
 | --- | --- |
 | `irc` | 99-colour IRC codes |
 | `ansi` | 256-colour ANSI; default |
 | `ansi24` | 24-bit RGB ANSI |
+
+Colour blending is off by default. For 24-bit output, each cell's foreground
+and background are selected independently as the most common exact source RGB
+under that part of the chosen glyph. This is repeated after glyph refinement,
+so a colour cannot be carried over from a different mask. Ties are deterministic;
+no channel averages or first-pixel palette-bucket samples are used. An empty
+mask reuses the other side's colour because that side is invisible.
+
+With blending off, resize/scale/rotate and the optional lattice warp use nearest
+sampling. Native SVG loading and the img2svg effect rasterize with hard path
+coverage, avoiding the extra intermediate shades created by SVG antialiasing.
+The video decoder converts to RGBA before nearest resizing too. Existing
+antialiased pixels already present in a raster input remain source pixels.
+
+Enable **Blend colours** in General or pass `--blend-colours` (also
+`--blend-colors`) to restore interpolating filters, SVG antialiasing and legacy
+colour selection. Both the image and video CLIs accept `--blend-colours false`
+to disable it explicitly; the setting is saved with the editor configuration.
+`--filter` selects the resize filter when blending is enabled.
+
+The source for colour selection is the image after explicitly enabled effects:
+contrast, blur, img2svg's mean recolouring, gradients, and other deliberate colour
+changes still apply. Use `--img2svg-recolor-mode mode` to preserve observed
+colours rather than its mean recolouring. Explicit output colour edits still
+apply afterwards. ANSI-256 and IRC output must map source colours to their
+fixed palettes; use `--render ansi24` (video: `--palette ansi24`) for exact RGB.
+
+`--line-thickness` adjusts source lines before glyph matching. Values from -10
+to 10 are supported, including fractions such as `--line-thickness 1.3`.
+Positive values grow dark lines, negative values grow light lines, and zero
+leaves them unchanged. It can be combined with contrast and colour quantization.
+
+`--darken-outlines` darkens narrow dark marks against lighter surroundings
+before glyph matching. At the default 100% strength, selected pixels become
+exactly black. It detects local dark valleys rather than darkening the whole
+image or drawing a black border around every colour change. Broad flat fills
+are preserved; small dark details can also qualify.
+
+The TUI's **Pipeline → Effects → Darken Outlines** and the browser pipeline
+expose the same controls:
+
+| Option | Default | Behaviour |
+| --- | --- | --- |
+| `--outline-strength` | 100 | Percent darkening; 100 makes selected outlines black, 0 leaves them unchanged. |
+| `--outline-radius` | 3 | Detection radius in source pixels (1–64). Increase for thicker outlines. |
+| `--outline-threshold` | 40 | Maximum outline luminance in percent. Lower excludes lighter coloured features; raise to include pale outlines. |
+| `--outline-contrast` | 8 | Minimum luminance difference from the surrounding fill, in percent. Lower includes faint lines and more texture. |
+
+```bash
+img2irc drawing.svg --render ansi24 --darken-outlines
+img2irc video preview clip.mp4 --darken-outlines --outline-radius 4 \
+  --outline-threshold 35 --outline-strength 100
+```
+
+Radius is measured at the effect's position in the source pipeline, before the
+final output resize; SVG input is rasterized first. This is a local shape
+heuristic, so use radius/threshold/contrast to include the desired line widths
+and tones. Detection uses sliding min/max passes with linear work per pixel.
+The CLI places this effect after img2svg and Flat Fill, before colour quantization.
+In the editor, move it after other effects that might lighten the outlines.
+
+`--flat-fill` automatically fills nearly uniform connected regions with an
+observed colour nearest its perceptual mean before glyph matching. This experimental effect targets
+flat-shaded artwork and compression noise, keeping strong boundaries, small
+features and gradual ramps. It needs no palette size or merge threshold.
+Use `--flat-fill-tolerance` (default 2.5%) to control region growth,
+`--flat-fill-flatness` (1.2%) to accept more or less texture, and
+`--flat-fill-min-area` (16 raster pixels) to preserve small details.
+`--flat-fill-gradient` (0.6%) controls gradient protection; zero disables it.
+`--flat-fill-strength` (100%) blends toward the chosen colour; zero is a no-op.
+For video, `--flat-fill-temporal-tolerance` (1% OKLab, zero to disable) stabilises
+matching regions against the previous frame. Seeks reset history. The effect
+uses current-frame region boundaries rather than copying old pixels.
+
+`--img2svg` adds the native [img2svg](https://github.com/yingkitw/img2svg)
+vectorizer as a source-image effect. It traces the image in memory, then
+rasterizes the SVG at the original dimensions before glyph matching. It works
+with images, video preview and video encode. In the TUI, add **img2svg** from
+Pipeline → Adjustments, beside Quantize Colours and Flat Fill. Up/Down or the
+mouse wheel selects a parameter and scrolls the controls; Left/Right adjusts
+it, Enter edits numbers or cycles named choices and On/Off toggles. Pipelines
+save these options and the video encoder uses the editor's current pipeline.
+
+```bash
+img2irc drawing.png --img2svg --img2svg-colors 16 --img2svg-recolor-mode mode
+img2irc video preview ~/Videos/dexterslab.mp4 --start 6 --duration 2 \
+  --height 60 --glyphs smooth --img2svg --img2svg-preset logo \
+  --img2svg-colors 16 --img2svg-recolor-mode mode
+```
+
+The conversion flags use an `--img2svg-` prefix. Setting parameters requires
+`--img2svg` to enable the effect. It can be used by itself; Flat Fill and
+Quantize Colours are separate optional effects.
+
+| Options | Behaviour |
+| --- | --- |
+| `colors` / `colours` | Palette limit; default 16, zero selects automatic sizing. |
+| `preset` | `none`, `logo`, `photo`, or `icon`; explicit colour, threshold, smoothing, preprocessing and logo-mode settings override it. |
+| `recolor-mode` | `mean`, `median`, or `mode`. Mode selects the most common original colour in a quantized bucket. |
+| `preprocess [true/false]` | Edge-preserving photo preprocessing; on by default for Bezier, off for logo/icon presets. |
+| `max-size` | Maximum tracing dimension in pixels, default 4096. Smaller values reduce tracing work; output dimensions stay unchanged. |
+| `threshold` | Bezier edge threshold, 0–1; default 0.1. |
+| `min-region-area`, `no-despeckle` | Remove islands below the area threshold (default 20 tracing pixels); zero or `no-despeckle` disables this. |
+| `superpixel`, `centerline`, `logo-mode [true/false]` | SLIC quantization, line-art stroke tracing, or separate logo fills and outlines. |
+| `optimize-corners`, `optimize-curves`, `optimize-tolerance` | Bezier corner optimization and curve merging; merge tolerance defaults to 1.5 pixels. |
+| `curve-tolerance`, `simplification-tolerance`, `corner-threshold` | Bezier fitting and simplification tolerances (2 and 1.5 pixels), and corner angle (60 degrees). |
+| `smoothing-passes`, `smooth-window` | Bezier colour-label smoothing passes (2) and contour smoothing window (3). |
+| `recolor true/false` | Recolour regions from original image pixels; default true. |
+| `no-subpixel-contours` | Use midpoint placement instead of interpolated contours. |
+| `gradients`, `gradient-error` | Enable gradient fills and set their maximum fit error (default 50). |
+| `autotrace` | Let img2svg override tuning options using its image heuristics. |
+| `precision` / `quality-preset` | SVG coordinate decimals (1–6, default 2); also accepts `low`, `medium`, or `high`. |
+| `group-by-color` | Group SVG paths by colour; no effect on the rasterized appearance. |
+| `original`, `smooth`, `hierarchical` | Select the original line-segment tracer, its smoothing level (0–10, default 5), and nested contours. Bezier options apply to the default tracer. |
+
+Export paths/formats, HTML tuning grids, statistics and progress flags are
+handled by img2irc rather than exposed as image effects. Upstream `advanced`
+produces the same original-tracer SVG, so it needs no separate parameter.
+This effect processes each frame independently; it does not add temporal
+tracking to img2svg. Parameters and heuristics retain img2svg's behaviour,
+including its automatic minimum smoothing for some images.
 
 ## glyphs and smoothing
 
@@ -303,16 +434,30 @@ preserving readable lettering.
 
 **Replace Colour** has inline From/To hex fields, a tolerance slider and an eyedropper. In the terminal, click a hex field or press `f` / `t` to edit it, then Enter to apply. Pick art samples foregrounds with a left click and backgrounds with a right click. The browser shows its sampling canvas inline. Replacement runs after glyph matching and text overlays, so the picked colour is the colour it replaces.
 
-**Quantize Colours** has independent maximum-colour and merge-threshold sliders. Similar shades are grouped in OKLab before colours are ranked by visible area, so small compression variations share one palette slot. Start with a threshold of 3% and increase gradually; 0% preserves exact shades. Set maximum colours to 0 to merge shades without imposing a cap. Automatic palettes retain original colours; distinct low-frequency accents can still be removed if the cap is too small.
+**Quantize Colours** has independent maximum-colour and merge-threshold sliders.
+Similar shades are grouped in OKLab, then palette slots are fitted by weighted
+perceptual error rather than simply retaining the most frequent colours. Palette
+colours remain observed colours. Assignment also prefers neighbouring regions,
+weighted by source-colour similarity and visible pixel/ink area, with a bounded
+colour-error allowance to protect edges. This applies to source pixels and
+finished glyph cells. Start with a merge threshold of 3%; zero disables shade
+pooling. Set maximum colours to zero to merge without a cap.
+
+Neutral and significantly chromatic colours are protected in both directions
+when the palette can represent both. Automatic palettes reserve both families
+when they occur and at least two slots are available. Explicit palettes and a
+one-colour cap can make preservation impossible; the nearest available colour
+is then used. Neighbour preference cannot override this protection.
 
 Choose **source image** to clean pixels before matching glyphs, or **finished art** to change colours while preserving glyphs and including text overlays. The colour cap applies at the chosen stage; source cleanup can still produce additional shades during resizing or matching. To cap the final palette, use a finished-art quantizer last. Enter an explicit palette as space-separated `#RRGGBB` values to map to exactly those colours (IRC/ANSI snap to their supported palettes); this overrides both sliders. **Use current art** freezes the visible palette for editing, and **Automatic palette** returns to shade grouping.
 
 Effects expose their controls below the active pipeline. In the terminal,
-Tab and Shift+Tab move through every input and action, including palette
-swatches and eyedroppers. Up/Down also move between inputs while controls have
-focus; Left/Right adjust numeric values, and Shift makes larger changes. Enter
-edits a number or hex value, or activates the selected action. Tab applies an
-edit and moves to the next input. Esc cancels an edit or picker; another Esc
+Tab and Shift+Tab move focus between visible panes on the current page.
+Click an effect control or press `]` to focus
+its inputs; Up/Down move between them, Left/Right adjust numeric values, and
+Shift makes larger changes. Enter edits a number or hex value, or activates
+the selected action. Tab commits a valid edit and switches panes; invalid edits
+keep the previous value. Esc cancels an edit or picker; another Esc
 returns to the effect list. Clicking elsewhere also leaves text editing.
 `[` / `]` remain shortcuts for selecting numeric parameters. Oil has separate
 radius and intensity controls.
@@ -322,6 +467,7 @@ colours), `u` (use current art), and `a` (automatic). The image picker shows the
 source after preceding source effects, before quantization. Click to add
 colours repeatedly, or move with arrows and press Enter; Esc finishes. This
 keeps the original colours available even after the output has been quantized.
+Press `i` again to close the picker; it toggles without requiring Esc.
 Click a palette swatch to edit its hex colour; right click or focused Delete
 removes it. Ctrl+U clears an edit and Ctrl+V pastes. Existing saved quantizers
 retain their original exact-colour behaviour until edited.
@@ -338,21 +484,27 @@ containing separate crop-side effects remain supported.
 img2irc --tui photo.png
 ```
 
-CLI settings provide the initial state. the general, pipeline, glyphs, and text panes edit the output against a live preview. click pane headers to show/hide them; `Ctrl+Left` / `Ctrl+Right` navigates visible panes.
+CLI settings provide the initial state. The General, Pipeline, Glyphs, and Text
+pages edit the output against a live preview. Click a page header or use
+`Ctrl+Left` / `Ctrl+Right` to change pages. Tab leaves the selected page unchanged
+and moves focus between its visible panes, including output and Video.
 
 | shortcut | action |
 | --- | --- |
 | `Ctrl+O` / `Ctrl+V` | open / paste an image |
 | `Ctrl+S` / `Ctrl+P` | save encoded text / PNG |
 | `Ctrl+Q` | quit |
-| `Tab` / `Shift+Tab` | cycle focus |
+| `Tab` / `Shift+Tab` | next / previous visible pane on the current page |
+| `Page Up` / `Page Down` | seek video backward / forward 1% of the selected clip |
+| `Shift+Page Up` / `Shift+Page Down` | seek video backward / forward 10% |
+| `Alt+Up` / `Alt+Down` | move between glyph tree, glyph list and glyph actions |
 | arrows | select controls and change values |
 | Enter / space | edit a value / toggle |
 | Escape | cancel a dialog, render, or effect preview |
 
 Pipeline effects run in order. With the effect list focused, Enter opens the
 library; drag nodes to reorder, Space disables/enables, and Delete removes.
-Crop, flip, rotate and scale act on the source before output sizing. Tab enters
+Crop, flip, rotate and scale act on the source before output sizing. `]` enters
 the selected effect's controls; Esc returns to the list. Replace Colour offers
 separate From/To hex fields and Pick art buttons in that same focus order.
 

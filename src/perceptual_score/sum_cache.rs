@@ -5,6 +5,7 @@
 
 use super::REDUCTION_BLOCK;
 
+#[derive(Clone)]
 pub(super) struct SumCache<const N: usize> {
     nodes: Vec<[f64; N]>,
     leaves: usize,
@@ -13,6 +14,12 @@ pub(super) struct SumCache<const N: usize> {
 }
 
 impl<const N: usize> SumCache<N> {
+    pub(super) fn copy_from(&mut self, base: &Self) {
+        self.nodes.clone_from(&base.nodes);
+        self.leaves = base.leaves;
+        self.listed.clone_from(&base.listed);
+        self.dirty.clone_from(&base.dirty);
+    }
     pub(super) fn new(pixels: usize) -> Self {
         let blocks = pixels.div_ceil(REDUCTION_BLOCK);
         let leaves = blocks.max(1).next_power_of_two();

@@ -12,7 +12,35 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod region_guidance;
+mod source_colours;
 mod glyph_search;
+mod flow_cache;
+
+/// Configure exact local Repair Edges memoization on the calling render thread.
+/// Zero disables reuse. Full-image acceptance is always recalculated.
+pub fn set_glyph_search_cache_budget(bytes: usize) {
+    configure_glyph_search_cache(bytes, 0);
+}
+
+/// A nonzero per-channel RGB tolerance reuses approximate local rankings.
+/// Candidate acceptance still requires a fresh full-image improvement.
+pub fn configure_glyph_search_cache(bytes: usize, tolerance: u8) {
+    glyph_search::rank_cache::configure(bytes, tolerance);
+}
+
+/// Opt in to warm starts and changed-region searches across video frames.
+pub fn set_glyph_search_temporal(enabled: bool) {
+    glyph_search::temporal::configure(enabled);
+}
+
+pub fn glyph_search_temporal_reused_cells() -> usize {
+    glyph_search::temporal::reused()
+}
+
+/// Cumulative local ranking cache hits and misses on this render thread.
+pub fn glyph_search_cache_stats() -> (u64, u64) {
+    glyph_search::rank_cache::stats()
+}
 
 pub mod search_status;
 mod smooth_features;
@@ -842,16 +870,10 @@ impl AnsiImage {
         let w = img.get_width() as usize;
         let raw = img.get_raw_pixels();
         let flat: Vec<u32> = raw.par_chunks(4).map(make_rgb_u32).collect();
-        let mut bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
-
-        if !bitmap.len().is_multiple_of(2) {
-            bitmap.push(vec![0; w]);
-        }
-        for row in &mut bitmap {
-            if row.len() % 2 != 0 {
-                row.push(0);
-            }
-        }
+        // block_bitmap pads partial glyph cells itself. Rounding the raster to
+        // even pixel dimensions here adds a whole cell when a glyph dimension
+        // and the requested number of cells are both odd.
+        let bitmap: Vec<Vec<u32>> = flat.chunks(w).map(|r| r.to_vec()).collect();
 
         let block = block_bitmap(&bitmap, &glyphs, tolerance, nograyscale);
         AnsiImage {
@@ -4116,6 +4138,12 @@ fn symmetric_prepared_boundary_distance(
 /// Intrinsic stability under one and two median-flow steps. Straight regions
 /// remain unchanged, while teeth, spikes, and abrupt pixel-scale turns move.
 fn curvature_flow_regularity(pixels: &[[u8; 3]], width: usize, height: usize) -> f64 {
+    flow_cache::score(pixels, width, height, || {
+        curvature_flow_regularity_uncached(pixels, width, height)
+    })
+}
+
+fn curvature_flow_regularity_uncached(pixels: &[[u8; 3]], width: usize, height: usize) -> f64 {
     let labels = pixels
         .iter()
         .map(|pixel| {
@@ -5897,7 +5925,11 @@ pub fn render_blocks_smooth(
                         let fgi = if fg_len == 0 { bgi_raw } else { fgi_raw };
                         let bgi = if bg_len == 0 { fgi_raw } else { bgi_raw };
 
-                        if render != Render::Ansi24 {
+                        if render == Render::Ansi24 && !args.blend_colours {
+                            (scale_best_fg, scale_best_bg) = source_colours::observed(
+                                pixels.iter().map(|p| [p.r as u8, p.g as u8, p.b as u8]),
+                                fglyph, scale_best_inv);
+                        } else if render != Render::Ansi24 {
                             scale_best_fg = unpack_rgb(palette[fgi.min(palette.len() - 1)]);
                             scale_best_bg = unpack_rgb(palette[bgi.min(palette.len() - 1)]);
                         } else {
@@ -6662,6 +6694,11 @@ pub fn render_blocks_smooth(
         );
     }
 
+    if source_colours::refit(image, args, render, &mut grid_data, &grid_state, glyphs, grid_w) {
+        rendered_raster = Some(build_rendered_raster(
+            &grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh));
+    }
+
     let mut glyph_search_time = std::time::Duration::ZERO;
     let mut glyph_defects = None;
     if args.glyph_search {
@@ -6682,6 +6719,18 @@ pub fn render_blocks_smooth(
             args, &source_raster, &grid_data, &grid_state, glyphs,
             grid_w, grid_h, gw, gh,
         );
+    }
+
+    if args.glyph_search
+        && source_colours::refit(image, args, render, &mut grid_data, &grid_state, glyphs, grid_w) {
+        rendered_raster = Some(build_rendered_raster(
+            &grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh));
+        // Search diagnostics describe its scored colours. Recompute them if
+        // enforcing the final local masks changed those colours.
+        if args.show_glyph_defects {
+            glyph_defects = glyph_search::inspect(args, &source_raster, &grid_data,
+                &grid_state, glyphs, grid_w, grid_h, gw, gh);
+        }
     }
 
     let disc_threshold = args.discontinuity_threshold.max(0.0);
@@ -8032,6 +8081,27 @@ mod tests {
     }
 
     #[test]
+    fn ansi_image_does_not_add_cells_for_odd_pixel_dimensions() {
+        let glyphs = GlyphStore {
+            glyphs: vec![('█', vec![vec![1; 3]; 7], "test".into())],
+            groups: HashMap::new(),
+            selected: std::collections::HashSet::from(['█']),
+            metrics: (3, 7),
+            float_metrics: (3.0, 7.0),
+        };
+        for (width, height) in [(9, 21), (8, 20)] {
+            let image = PhotonImage::new(vec![255; width * height * 4], width as u32, height as u32);
+            let canvas = AnsiImage::new(image, glyphs.clone(), 32, false);
+            assert_eq!(canvas.bitmap.len(), height);
+            assert!(canvas.bitmap.iter().all(|row| row.len() == width));
+            assert_eq!(canvas.block.len(), 3);
+            assert!(canvas.block.iter().all(|row| row.len() == 3));
+            let last_pixel = &canvas.block[2][2].pixels[(height - 1) % 7][(width - 1) % 3];
+            assert_eq!(last_pixel.orig, 0xffffff);
+        }
+    }
+
+    #[test]
     fn braille_render_populates_the_structured_grid() {
         let glyphs = GlyphStore {
             glyphs: Vec::new(),
@@ -8050,6 +8120,25 @@ mod tests {
         assert_eq!(result.grid.len(), 1);
         assert_eq!(result.grid[0].len(), 1);
         assert!((0x2800..=0x28ff).contains(&(result.grid[0][0].char as u32)));
+    }
+
+    #[test]
+    fn braille_render_handles_odd_pixel_dimensions_without_raster_padding() {
+        let glyphs = GlyphStore {
+            glyphs: Vec::new(),
+            groups: HashMap::new(),
+            selected: std::collections::HashSet::new(),
+            metrics: (2, 4),
+            float_metrics: (2.0, 4.0),
+        };
+        let image = PhotonImage::new(vec![255; 3 * 5 * 4], 3, 5);
+        let canvas = AnsiImage::new(image, glyphs, 32, false);
+        let cli = crate::args::Args::parse_from(["img2irc", "--braille"]);
+        let args = crate::args_to_render_args(&cli);
+        let result = render_braille(&canvas, &canvas, &args, Render::Ansi);
+
+        assert_eq!(result.grid.len(), 2);
+        assert!(result.grid.iter().all(|row| row.len() == 2));
     }
 
     #[test]

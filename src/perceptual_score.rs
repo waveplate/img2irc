@@ -506,6 +506,13 @@ impl PreparedReference {
         OutputCache::new(output, self.fine_width, self.fine_height, self.sample_step)
     }
 
+    pub(crate) fn prepare_geometry(&self, output: &OutputCache) -> GeometryCache {
+        let mut cache = GeometryCache::new(self, output);
+        cache.fine_totals(self, output);
+        cache.totals();
+        cache
+    }
+
     pub(crate) fn score_prepared(
         &self,
         output: &OutputCache,
@@ -796,6 +803,34 @@ mod tests {
         (0..64 * 64)
             .map(|i| [if f(i % 64, i / 64) { 240 } else { 16 }; 3])
             .collect()
+    }
+
+    #[test]
+    fn copied_geometry_and_deferred_restores_keep_score_bounds() {
+        let (width, height) = (65, 63);
+        let source: Vec<_> = (0..width * height).map(|p| [((p * 17) % 256) as u8, ((p / width * 31) % 256) as u8, 90]).collect();
+        let reference = PreparedReference::new(&source, width, height, 8).unwrap();
+        let mut output = source.clone();
+        let mut features = reference.prepare_output(&output);
+        let base = reference.prepare_geometry(&features);
+        let mut cache = base.clone();
+        let first = [3, 7, 11, 13];
+        for y in first[1]..first[3] { for x in first[0]..first[2] { output[y * width + x] = [255, 0, 0]; } }
+        features.update(&output, first);
+        reference.score_incremental_estimate(&features, &mut cache, first);
+        for y in first[1]..first[3] { for x in first[0]..first[2] { output[y * width + x] = source[y * width + x]; } }
+        features.update(&output, first);
+        let second = [40, 5, 48, 13];
+        for y in second[1]..second[3] { for x in second[0]..second[2] { output[y * width + x] = [0, 255, 32]; } }
+        features.update(&output, second);
+        let estimate = reference.score_incremental_estimate(&features, &mut cache, [3, 5, 48, 13]);
+        let exact = reference.score(&output).total;
+        assert!(estimate.lower <= exact && exact <= estimate.upper);
+        cache.copy_from(&base);
+        let features = reference.prepare_output(&source);
+        let estimate = reference.score_incremental_estimate(&features, &mut cache, [0; 4]);
+        let exact = reference.score(&source).total;
+        assert!(estimate.lower <= exact && exact <= estimate.upper);
     }
 
     fn measure(reference: &[[u8; 3]], output: &[[u8; 3]]) -> PerceptualScore {

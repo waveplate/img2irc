@@ -61,7 +61,7 @@ export class EditorPersistence {
 
 export function captureControls(root) {
   return Object.fromEntries([...root.querySelectorAll("input[id], select[id], textarea[id]")]
-    .filter((input) => input.type !== "file" && input.id !== "raw-output" && !input.id.startsWith("overlay-"))
+    .filter((input) => input.type !== "file" && input.id !== "raw-output" && !input.id.startsWith("overlay-") && !input.closest(".pipeline-effect"))
     .map((input) => [input.id, input.type === "checkbox" ? input.checked : input.value]));
 }
 

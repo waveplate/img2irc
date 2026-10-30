@@ -412,6 +412,10 @@ impl WarpResult {
 /// `image` must already have its final size: this is a geometry pass immediately
 /// before glyph matching, after crop/scale/resize and before palette conversion.
 pub fn warp(image: PhotonImage, cell: (usize, usize), strength: u32) -> WarpResult {
+    warp_with_blending(image, cell, strength, true)
+}
+
+pub fn warp_with_blending(image: PhotonImage, cell: (usize, usize), strength: u32, blend_colours: bool) -> WarpResult {
     let (w, h) = (image.get_width() as usize, image.get_height() as usize);
     let (gw, gh) = cell;
     let mut result = WarpResult {
@@ -469,6 +473,12 @@ pub fn warp(image: PhotonImage, cell: (usize, usize), strength: u32) -> WarpResu
             let u = result.displacement(x as f32 + 0.5, y as f32 + 0.5);
             let sx = (x as f32 + u.x * result.step.x).clamp(0.0, (w - 1) as f32);
             let sy = (y as f32 + u.y * result.step.y).clamp(0.0, (h - 1) as f32);
+            if !blend_colours {
+                let source_index = (sy.round() as usize * w + sx.round() as usize) * 4;
+                pixels[(y * w + x) * 4..][..4]
+                    .copy_from_slice(&source[source_index..][..4]);
+                continue;
+            }
             let (ix, iy) = (sx as usize, sy as usize);
             let (fx, fy) = (sx - ix as f32, sy - iy as f32);
             let mut sum = [0.0; 4];

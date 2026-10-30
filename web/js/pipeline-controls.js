@@ -1,4 +1,4 @@
-import { EXTRA_EFFECTS, installExtraEffectControls } from "./effect-catalog.js";
+import { EXTRA_EFFECTS, effectControl, installExtraEffectControls } from "./effect-catalog.js";
 
 const EFFECTS = [
   ["brightness", "Brightness", "Adjustments", { brightness: 0 }],
@@ -34,8 +34,10 @@ export function initializePipelineControls(root) {
   const catalog = element("pipeline-catalog");
   const effects = element("pipeline-effects");
   const states = [];
+  const templates = new Map();
+  let nextInstance = 0;
   const entries = () => [...effects.children].filter((node) => !node.hidden);
-  const order = () => entries().map((node) => node.dataset.pipelineEffect).join(",");
+  const order = () => entries().map((node) => node.dataset.pipelineInstance).join(",");
   const reordered = () => effects.dispatchEvent(new CustomEvent("pipelinechange", { bubbles: true }));
   let drag;
   effects.addEventListener("pointermove", (event) => {
@@ -81,24 +83,42 @@ export function initializePipelineControls(root) {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
   const refresh = () => {
+    const count = states.filter((state) => state.added).length;
     for (const state of states) {
       state.node.hidden = !state.added;
       state.node.dataset.disabled = String(!state.enabled);
       state.parameters.disabled = !state.enabled;
       state.toggle.checked = state.enabled;
-      state.add.disabled = state.added;
+      state.add.disabled = count >= 64;
     }
-    const count = states.filter((state) => state.added).length;
     element("pipeline-count").textContent = `${count} effect${count === 1 ? "" : "s"}`;
     element("pipeline-empty").hidden = count !== 0;
   };
 
-  let category;
-  const groupOrder = ["Adjustments", "Geometry", "Effects", "Stylize", "Colour"];
-  const catalogEffects = [...EFFECTS].sort((a, b) => groupOrder.indexOf(a[2]) - groupOrder.indexOf(b[2]));
-  for (const [id, title, group, neutral] of catalogEffects) {
-    const node = root.querySelector(`[data-pipeline-effect="${id}"]`);
-    const fields = Object.entries(neutral).map(([key, off]) => [element(key), off]);
+  const createState = ([id, title, , neutral], add, original) => {
+    const node = original ?? templates.get(id).cloneNode(true);
+    const instance = String(++nextInstance);
+    node.dataset.pipelineInstance = instance;
+    const renamed = new Map();
+    for (const input of node.querySelectorAll("[id]")) {
+      input.dataset.effectControl = input.id;
+      if (!original) {
+        renamed.set(input.id, `effect-${instance}-${input.id}`);
+        input.id = renamed.get(input.id);
+        if (input.matches("input, textarea, select")) {
+          if (input.type === "checkbox") input.checked = input.defaultChecked;
+          else input.value = input.defaultValue;
+        }
+      }
+    }
+    for (const control of node.querySelectorAll("[aria-describedby], [for]")) {
+      for (const attribute of ["aria-describedby", "for"]) {
+        if (!control.hasAttribute(attribute)) continue;
+        control.setAttribute(attribute, control.getAttribute(attribute).split(/\s+/).map((key) => renamed.get(key) ?? key).join(" "));
+      }
+    }
+    if (!original) effects.append(node);
+    const fields = Object.entries(neutral).map(([key, off]) => [effectControl(node, key), off]);
     for (const [input, off] of fields) input.dataset.neutralValue = String(off);
     const primary = fields[0][0];
     const isToggle = primary.type === "checkbox";
@@ -156,6 +176,33 @@ export function initializePipelineControls(root) {
     node.prepend(header);
     parameters.hidden = !parameters.querySelector("input, select, textarea, button");
 
+    const state = { node, parameters, toggle, add, fields, enabled, added: enabled };
+    states.push(state);
+
+    toggle.addEventListener("input", () => {
+      state.enabled = toggle.checked;
+      refresh();
+    });
+    remove.addEventListener("click", () => {
+      state.added = false;
+      state.enabled = false;
+      refresh();
+      state.node.dispatchEvent(new Event("effectreset"));
+      toggle.dispatchEvent(new Event("change", { bubbles: true }));
+      reordered();
+      element("pipeline-add").querySelector("summary").focus();
+    });
+    effects.dispatchEvent(new CustomEvent("pipelineentry", { bubbles: true, detail: { node } }));
+    return state;
+  };
+
+  let category;
+  const groupOrder = ["Adjustments", "Geometry", "Effects", "Stylize", "Colour"];
+  const catalogEffects = [...EFFECTS].sort((a, b) => groupOrder.indexOf(a[2]) - groupOrder.indexOf(b[2]));
+  for (const definition of catalogEffects) {
+    const [id, title, group] = definition;
+    const node = root.querySelector(`[data-pipeline-effect="${id}"]`);
+    templates.set(id, node.cloneNode(true));
     if (category !== group) {
       category = group;
       const heading = document.createElement("h2");
@@ -169,30 +216,25 @@ export function initializePipelineControls(root) {
     add.textContent = title;
     add.dataset.name = `${title} ${group}`.toLowerCase();
     catalog.append(add);
-    const state = { node, parameters, toggle, add, fields, enabled, added: enabled };
-    states.push(state);
-
-    toggle.addEventListener("input", () => {
-      state.enabled = toggle.checked;
-      refresh();
-    });
-    remove.addEventListener("click", () => {
-      for (const [input, off] of fields) write(input, off);
-      state.added = false;
-      state.enabled = false;
-      refresh();
-      for (const [input] of fields) notify(input);
-      element("pipeline-add").querySelector("summary").focus();
-    });
+    createState(definition, add, node);
     add.addEventListener("click", () => {
+      if (entries().length >= 64) return;
+      const state = states.find((entry) => entry.node.dataset.pipelineEffect === id && !entry.added)
+        ?? createState(definition, add);
+      for (const input of state.node.querySelectorAll("input, textarea, select")) {
+        if (input.type === "checkbox") input.checked = input.defaultChecked;
+        else input.value = input.defaultValue;
+        if (input.type === "range") input.nextElementSibling.value = input.value;
+      }
       state.added = true;
       state.enabled = true;
-      if (isToggle) primary.checked = true;
-      effects.append(node);
+      state.toggle.checked = true;
+      effects.append(state.node);
       refresh();
-      node.scrollIntoView({ block: "nearest" });
-      (isToggle ? toggle : primary).focus();
-      notify(primary);
+      state.node.dispatchEvent(new Event("effectreset"));
+      state.node.scrollIntoView({ block: "nearest" });
+      (state.fields[0][0].type === "checkbox" ? state.toggle : state.fields[0][0]).focus();
+      notify(state.toggle);
     });
   }
 
@@ -204,32 +246,50 @@ export function initializePipelineControls(root) {
     if (event.currentTarget.open) element("pipeline-filter").focus();
   });
   element("reset-adjustments").addEventListener("click", () => {
-    // The app's reset listener restores the input defaults in this event too.
-    queueMicrotask(() => {
-      for (const state of states) {
-        for (const [input, off] of state.fields) write(input, off);
-        state.added = false;
-        state.enabled = false;
+    for (const state of states) {
+      for (const [input, off] of state.fields) write(input, off);
+      state.added = false;
+      state.enabled = false;
+    }
+    refresh();
+    for (const state of states) {
+      for (const input of state.node.querySelectorAll("input, textarea, select")) {
+        if (input.type === "checkbox") input.checked = input.defaultChecked;
+        else input.value = input.defaultValue;
+        if (input.type === "range") input.nextElementSibling.value = input.value;
       }
-      refresh();
-    });
+      state.toggle.checked = false;
+      state.node.dispatchEvent(new Event("effectreset"));
+    }
   });
   refresh();
   return {
     snapshot: () => entries().map((node) => ({
       id: node.dataset.pipelineEffect,
       enabled: states.find((state) => state.node === node).enabled,
+      values: Object.fromEntries([...node.querySelectorAll("input[data-effect-control], textarea[data-effect-control], select[data-effect-control]")]
+        .map((input) => [input.dataset.effectControl, input.type === "checkbox" ? input.checked : input.value])),
     })),
     restore: (saved = []) => {
       for (const state of states) { state.added = false; state.enabled = false; }
       for (const entry of saved) {
-        const state = states.find((state) => state.node.dataset.pipelineEffect === entry.id);
-        if (!state) continue;
+        const definition = EFFECTS.find(([id]) => id === entry.id);
+        if (!definition || states.filter((state) => state.added).length >= 64) continue;
+        const state = states.find((state) => state.node.dataset.pipelineEffect === entry.id && !state.added)
+          ?? createState(definition, states.find((state) => state.node.dataset.pipelineEffect === entry.id).add);
+        for (const [key, next] of Object.entries(entry.values ?? {})) {
+          const input = effectControl(state.node, key);
+          if (!input?.matches("input, textarea, select")) continue;
+          if (input.type === "checkbox") input.checked = Boolean(next);
+          else input.value = String(next);
+        }
         state.added = true;
         state.enabled = entry.enabled;
         effects.append(state.node);
       }
       refresh();
+      return saved.some((entry) => !EFFECTS.some(([id]) => id === entry.id));
     },
+    nodes: () => states.map((state) => state.node),
   };
 }

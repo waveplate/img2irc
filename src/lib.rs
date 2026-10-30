@@ -2,12 +2,16 @@ pub const VERSION: &str = env!("IMG2IRC_VERSION");
 pub const BUILD_NUMBER: &str = env!("BUILD_NUMBER");
 
 pub mod adjustments;
+mod colour_quantization;
 pub mod args;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod config;
 pub mod contour_score;
 pub mod draw;
 pub mod effects;
+pub mod flat_fill;
+pub mod outline_darkening;
+pub mod svg_effect;
 #[cfg(any(feature = "ocr", feature = "web"))]
 mod figlet_text;
 pub mod font;
@@ -111,6 +115,8 @@ pub mod superpixels;
 pub mod colorpicker;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tui;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod video;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod web;
 #[cfg(all(feature = "python", not(target_arch = "wasm32")))]
@@ -175,6 +181,7 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         crop,
         trim: args.trim,
         filter: args.filter.clone(),
+        blend_colours: args.blend_colours,
         rotate: param_base(&args.rotate),
         fliph: args.fliph,
         flipv: args.flipv,
@@ -312,9 +319,13 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
     };
     let quantize = args.quantize_colours.is_some() || args.quantize_threshold.is_some()
         || args.quantize_palette.is_some() || args.quantize_source;
-    if quantize || !args.replace_colour.is_empty() || args.replace_from.is_some() {
+    if args.darken_outlines || args.img2svg || args.flat_fill || args.line_thickness != 0.0 || quantize || !args.replace_colour.is_empty() || args.replace_from.is_some() {
         use crate::pipeline::ImageEffect;
         let mut pipeline = crate::effects::default_pipeline(&render_args);
+        if args.line_thickness != 0.0 { pipeline.push(ImageEffect::DarkLines(args.line_thickness)); }
+        if args.flat_fill { pipeline.push(ImageEffect::FlatFillWithOptions(args.flat_fill_options)); }
+        if args.img2svg { pipeline.push(ImageEffect::Img2Svg(args.img2svg_options)); }
+        if args.darken_outlines { pipeline.push(ImageEffect::DarkenOutlines(args.outline_options)); }
         let quantizer = ImageEffect::QuantizePalette {
             colours: args.quantize_colours.unwrap_or(16),
             threshold: args.quantize_threshold.unwrap_or(3.0),
@@ -399,7 +410,7 @@ pub fn apply_superpixel_warp(
     if args.braille || args.superpixel_warp == 0 {
         return image;
     }
-    let warped = superpixels::warp(image, glyphs.metrics, args.superpixel_warp);
+    let warped = superpixels::warp_with_blending(image, glyphs.metrics, args.superpixel_warp, args.blend_colours);
     if warped.stats.anchors > 0 {
         log::info!(
             "superpixel warp: anchors={} displacement={:.3} jacobian={:.3} safety={:.3}",
@@ -595,7 +606,7 @@ pub fn write_encoded_to<W: Write>(
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load_image_from_url_or_path(
     image: &str,
-    _args: &RenderArgs,
+    args: &RenderArgs,
     _glyphs: &font::GlyphStore,
 ) -> Result<PhotonImage, Box<dyn Error>> {
     let bytes = match Url::parse(image) {
@@ -613,7 +624,7 @@ pub async fn load_image_from_url_or_path(
                 .map_or(false, |s| s.trim_start().starts_with('<')));
 
     if is_svg_potential || image.split('?').next().is_some_and(|path| path.to_lowercase().ends_with(".svg")) {
-        return rasterize_svg(&bytes, 2048);
+        return rasterize_svg_with_blending(&bytes, 2048, args.blend_colours);
     }
 
     // Fallback to standard image loading
@@ -628,9 +639,53 @@ pub async fn load_image_from_url_or_path(
 /// raster image. Output geometry and effects are applied once, during rendering.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn rasterize_svg(bytes: &[u8], max_side: u32) -> Result<PhotonImage, Box<dyn Error>> {
+    rasterize_svg_with_blending(bytes, max_side, false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn parse_svg(
+    bytes: &[u8],
+    blend_colours: bool,
+    fontdb: &resvg::usvg::fontdb::Database,
+) -> Result<resvg::usvg::Tree, Box<dyn Error>> {
+    use resvg::usvg::{Group, Node, Options, ShapeRendering, Tree, WriteOptions};
+    let options = Options {
+        shape_rendering: if blend_colours { ShapeRendering::GeometricPrecision } else { ShapeRendering::CrispEdges },
+        ..Options::default()
+    };
+    let tree = Tree::from_data(bytes, &options, fontdb)?;
+    fn has_antialiasing(group: &Group) -> bool {
+        for node in group.children() {
+            if matches!(node, Node::Path(path) if path.rendering_mode().use_shape_antialiasing()) {
+                return true;
+            }
+            if let Node::Group(group) = node {
+                if has_antialiasing(group) { return true; }
+            }
+            let mut found = false;
+            node.subroots(|root| found |= has_antialiasing(root));
+            if found { return true; }
+        }
+        false
+    }
+    if !blend_colours && has_antialiasing(tree.root()) {
+        // Explicit per-element shape-rendering overrides the parser default.
+        // Normalize once (including text outlines/CSS), then force every path
+        // to use hard coverage. Generated img2svg paths need no second parse.
+        let normalized = tree.to_string(&WriteOptions::default())
+            .replace(" shape-rendering=\"crispEdges\"", "")
+            .replace(" shape-rendering=\"optimizeSpeed\"", "")
+            .replace("<path ", "<path shape-rendering=\"crispEdges\" ");
+        return Ok(Tree::from_str(&normalized, &options, fontdb)?);
+    }
+    Ok(tree)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn rasterize_svg_with_blending(bytes: &[u8], max_side: u32, blend_colours: bool) -> Result<PhotonImage, Box<dyn Error>> {
     let mut fontdb = resvg::usvg::fontdb::Database::new();
     fontdb.load_system_fonts();
-    let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default(), &fontdb)?;
+    let tree = parse_svg(bytes, blend_colours, &fontdb)?;
     let size = tree.size();
     let scale = max_side as f32 / size.width().max(size.height());
     let width = (size.width() * scale).round().max(1.0) as u32;
@@ -650,6 +705,29 @@ pub(crate) fn rasterize_svg(bytes: &[u8], max_side: u32) -> Result<PhotonImage, 
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+
+    #[test]
+    fn cli_line_thickness_keeps_fractional_polarity_with_other_effects() {
+        for (amount, background) in [("1.3", 255u8), ("-1.3", 0u8)] {
+            for quantize in [false, true] {
+                let mut argv = vec!["img2irc", "--line-thickness", amount, "--contrast", "20"];
+                if quantize { argv.extend(["--quantize-colours", "8"]); }
+                let args = crate::args_to_render_args(&crate::args::Args::parse_from(argv));
+                let pipeline = crate::effects::default_pipeline(&args).into_iter()
+                    .filter(|effect| !effect.is_output_colour()).collect::<Vec<_>>();
+                let foreground = 255 - background;
+                let pixels = (0..7).flat_map(|x| {
+                    let value = if x == 3 { foreground } else { background };
+                    [value, value, value, 255]
+                }).collect();
+                let image = photon_rs::PhotonImage::new(pixels, 7, 1);
+                let output = crate::effects::apply_pipeline(&args, image, &pipeline);
+                let pixels = output.get_raw_pixels();
+                assert_eq!(pixels.chunks_exact(4).filter(|p| p[0] == foreground).count(), 3);
+                assert!(pixels[4] > 0 && pixels[4] < 255, "fractional outer edge should be blended");
+            }
+        }
+    }
 
     #[test]
     fn base_render_applies_sizing_and_pipeline_once() {

@@ -1,13 +1,17 @@
 // Keep the last active value per input, including values entered with the mouse
 // or keyboard before the user manually returns a control to zero.
+const initialized = new WeakSet();
+
 export function initializeSliderToggles(root) {
   for (const input of root.querySelectorAll('input[type="range"], input[type="number"]')) {
+    if (initialized.has(input)) continue;
+    initialized.add(input);
     const min = input.min === "" ? -Infinity : Number(input.min);
     const max = input.max === "" ? Infinity : Number(input.max);
     const clamp = (value) => Math.max(min, Math.min(max, value));
     const off = input.hasAttribute("data-off-value")
       ? input.getAttribute("data-off-value")
-      : String(clamp(input.id === "scale-x" || input.id === "scale-y" ? 1 : 0));
+      : String(clamp(["scale-x", "scale-y"].includes(input.dataset.effectControl ?? input.id) ? 1 : 0));
     const isOff = (value) => value === off
       || (value !== "" && off !== "" && Number(value) === Number(off));
     let previous;

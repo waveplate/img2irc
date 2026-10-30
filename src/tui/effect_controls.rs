@@ -25,6 +25,7 @@ pub(crate) struct EffectControls {
     node: Option<usize>,
     hits: Vec<(Rect, Control)>,
     pub(crate) parameter: usize,
+    parameter_scroll: usize,
     focused: Option<Control>,
     dragging: Option<usize>,
     editing: Option<(Control, String)>,
@@ -40,6 +41,10 @@ pub(crate) struct EffectControls {
 impl EffectControls {
     pub(crate) fn has_focus(&self) -> bool {
         self.focused.is_some() || self.editing.is_some() || self.sampling.is_some()
+    }
+
+    pub(super) fn is_editing(&self) -> bool {
+        self.editing.is_some() || self.sampling.is_some()
     }
 }
 
@@ -119,6 +124,10 @@ fn parameters(app: &App, effect: &ImageEffect) -> Vec<crate::pipeline::EffectPar
 }
 
 fn focus(app: &mut App, control: Option<Control>) {
+    if control.is_some() {
+        app.pane_focus = Pane::EffectControls;
+        if let Some(video) = app.video.as_mut() { video.focused = false; }
+    } else if app.pane_focus == Pane::EffectControls { app.pane_focus = Pane::Controls; }
     app.effect_controls.focused = control;
     if control.is_none() {
         app.effect_controls.parameter = 0;
@@ -268,6 +277,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
         return area;
     }
     let parts = Layout::vertical([Constraint::Min(4), Constraint::Length(height)]).split(area);
+    app.register_pane(Pane::EffectControls, parts[1]);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app.effect_controls.has_focus() {
@@ -279,9 +289,26 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
     let inner = block.inner(parts[1]);
     f.render_widget(block, parts[1]);
     app.effect_controls.parameter = app.effect_controls.parameter.min(parameters.len() - 1);
-    for (index, parameter) in parameters.iter().enumerate() {
-        let label_width = 22.min(inner.width.saturating_sub(8));
-        let bar_width = inner.width.saturating_sub(label_width + 7) as usize;
+    let visible = inner.height.saturating_sub(1).max(1) as usize;
+    let selected_parameter = app.effect_controls.parameter;
+    if selected_parameter < app.effect_controls.parameter_scroll {
+        app.effect_controls.parameter_scroll = selected_parameter;
+    } else if selected_parameter >= app.effect_controls.parameter_scroll + visible {
+        app.effect_controls.parameter_scroll = selected_parameter + 1 - visible;
+    }
+    app.effect_controls.parameter_scroll = app.effect_controls
+        .parameter_scroll
+        .min(parameters.len().saturating_sub(visible));
+    let scroll = app.effect_controls.parameter_scroll;
+    for (index, parameter) in parameters.iter().enumerate().skip(scroll).take(visible) {
+        let row_index = (index - scroll) as u16;
+        let choices = effect.parameter_choices(index);
+        let value_width = choices.map_or(7, |values| {
+            values.iter().map(|s| s.len() as u16 + 2)
+                .max().unwrap_or(7).max(7)
+        });
+        let label_width = 22.min(inner.width.saturating_sub(value_width + 1));
+        let bar_width = inner.width.saturating_sub(label_width + value_width) as usize;
         let units =
             quantized_slider_units_f32(parameter.value, parameter.min, parameter.max, bar_width);
         let selected = app.effect_controls.focused == Some(Control::Number(index));
@@ -289,7 +316,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
             f,
             app,
             inner,
-            index as u16,
+            row_index,
             Line::from(vec![
                 Span::styled(
                     format!(
@@ -314,7 +341,15 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
                         .as_ref()
                         .filter(|(control, _)| *control == Control::Number(index))
                         .map(|(_, value)| format!(" {value}▏"))
-                        .unwrap_or_else(|| format!(" {:>5.1}", parameter.value)),
+                        .unwrap_or_else(|| {
+                            if let Some(choices) = choices {
+                                format!(" {}", choices[parameter.value.round() as usize % choices.len()])
+                            } else if parameter.step < 0.1 {
+                                format!(" {:>5.2}", parameter.value)
+                            } else {
+                                format!(" {:>5.1}", parameter.value)
+                            }
+                        }),
                 ),
             ]),
             Control::Number(index),
@@ -323,19 +358,19 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
             rect.x += label_width;
             rect.width = bar_width as u16;
         }
-        if index < inner.height as usize {
+        if row_index < inner.height {
             let value_x = inner.x.saturating_add(label_width + bar_width as u16);
             app.effect_controls.hits.push((
                 Rect::new(
                     value_x,
-                    inner.y + index as u16,
+                    inner.y + row_index,
                     inner.right().saturating_sub(value_x),
                     1,
                 ),
                 Control::EditNumber(index),
             ));
             app.effect_controls.hits.push((
-                Rect::new(inner.x, inner.y + index as u16, label_width, 1),
+                Rect::new(inner.x, inner.y + row_index, label_width, 1),
                 Control::Select(index),
             ));
         }
@@ -592,11 +627,15 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
     let message = if !app.effect_controls.error.is_empty() {
         app.effect_controls.error.clone()
     } else if app.effect_controls.editing.is_some() {
-        " Enter applies · Tab applies and moves · Esc cancels".into()
+        " Enter applies · Tab changes pane · Esc cancels".into()
     } else if app.effect_controls.sampling.is_some() {
         " Click a colour in the art · Esc cancels".into()
     } else {
-        " Tab / Shift-Tab select input · arrows adjust · Enter edits · Esc = list".into()
+        if parameters.len() > visible {
+            format!(" {}/{} · ↑↓/wheel scroll · ←→ adjust · Enter edits/toggles", selected_parameter + 1, parameters.len())
+        } else {
+            " ↑↓ select input · ←→ adjust · Enter edits/toggles · Esc = list · Tab = pane".into()
+        }
     };
     if inner.height > 0 {
         f.render_widget(
@@ -1008,7 +1047,12 @@ fn activate(app: &mut App, control: Control) {
     match (&mut node.effect, control) {
         (effect, Control::Number(index)) => {
             if let Some(parameter) = effect.parameters().get(index) {
-                app.effect_controls.editing = Some((control, parameter.value.to_string()));
+                if let Some(choices) = effect.parameter_choices(index) {
+                    effect.set_parameter(index, (parameter.value + 1.0) % choices.len() as f32);
+                    dirty = true;
+                } else {
+                    app.effect_controls.editing = Some((control, parameter.value.to_string()));
+                }
             }
         }
         (
@@ -1105,6 +1149,26 @@ fn slide(app: &mut App, index: usize, column: u16) {
     app.mark_args_dirty();
 }
 
+pub(super) fn focus_first_effect_control(app: &mut App) {
+    let control = app.pipeline_nodes.get(app.selected_control)
+        .and_then(|node| controls(&node.effect).first().copied());
+    focus(app, control);
+}
+
+pub(super) fn leave_effect_controls(app: &mut App) {
+    if app.effect_controls.editing.is_some() {
+        handle_effect_controls(app, &Event::Key(event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    }
+    // Invalid edits retain the previous value without trapping pane focus.
+    app.effect_controls.editing = None;
+    focus(app, None);
+    app.effect_controls.dragging = None;
+    app.effect_controls.sampling = None;
+    app.effect_controls.sample_image = None;
+    app.effect_controls.crop_drag = None;
+    app.effect_controls.crop_box = None;
+}
+
 pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
     if app.current_tab != 1 || app.pipeline_expanded.is_some() {
         return false;
@@ -1136,7 +1200,7 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                     app.effect_controls.editing = None;
                     app.effect_controls.error.clear();
                 }
-                KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab
+                KeyCode::Enter
                     if matches!(control, Control::Number(_)) =>
                 {
                     if let Some(value) =
@@ -1151,15 +1215,12 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                         app.effect_controls.editing = None;
                         app.effect_controls.error.clear();
                         app.mark_args_dirty();
-                        if key.code != KeyCode::Enter {
-                            move_focus(app, if key.code == KeyCode::BackTab { -1 } else { 1 });
-                        }
                     } else {
                         app.effect_controls.error =
                             "Enter a finite number, or Esc to cancel".into();
                     }
                 }
-                KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab => match parse_palette(&buffer) {
+                KeyCode::Enter => match parse_palette(&buffer) {
                     Ok(colours) if control == Control::Palette || colours.len() == 1 => {
                         if let Some(node) = app.pipeline_nodes.get_mut(app.selected_control) {
                             match (&mut node.effect, control) {
@@ -1187,9 +1248,6 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                         app.effect_controls.editing = None;
                         app.effect_controls.error.clear();
                         app.mark_args_dirty();
-                        if key.code != KeyCode::Enter {
-                            move_focus(app, if key.code == KeyCode::BackTab { -1 } else { 1 });
-                        }
                     }
                     Ok(_) => app.effect_controls.error = "Enter one #RRGGBB colour".into(),
                     Err(error) => app.effect_controls.error = error,
@@ -1213,30 +1271,15 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
             }
             _ => {}
         }
-        // Invalid input must not trap focus. Tab leaves its previous value
-        // intact and advances; Enter keeps the editor open for correction.
-        if let Event::Key(key) = event {
-            if key.kind == KeyEventKind::Press
-                && matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
-                && app.effect_controls.editing.is_some()
-            {
-                app.effect_controls.editing = None;
-                app.effect_controls.error.push_str(" · previous value kept");
-                move_focus(app, if key.code == KeyCode::BackTab { -1 } else { 1 });
-            }
-        }
         return true;
     }
     if app.effect_controls.sampling.is_some() {
-        if matches!(event, Event::Key(key) if matches!(key.code, KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab))
+        if matches!(event, Event::Key(key) if key.code == KeyCode::Esc
+            || (matches!(key.code, KeyCode::Char('i' | 'I'))
+                && !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)))
         {
             app.effect_controls.sampling = None;
             app.effect_controls.sample_image = None;
-            if let Event::Key(key) = event {
-                if key.code != KeyCode::Esc {
-                    move_focus(app, if key.code == KeyCode::BackTab { -1 } else { 1 });
-                }
-            }
             return true;
         }
         if app.effect_controls.sampling == Some(Control::SelectCrop) {
@@ -1284,6 +1327,21 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
     }
     match event {
         Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                if app.pane_areas.iter().any(|(pane, area)| *pane == Pane::EffectControls
+                    && area.contains(ratatui::layout::Position::new(mouse.column, mouse.row))) =>
+            {
+                let count = app.pipeline_nodes.get(app.selected_control)
+                    .map_or(0, |node| node.effect.parameters().len());
+                if count > 0 {
+                    let current = app.effect_controls.parameter;
+                    let next = if mouse.kind == MouseEventKind::ScrollUp {
+                        current.saturating_sub(1)
+                    } else { (current + 1).min(count - 1) };
+                    focus(app, Some(Control::Number(next)));
+                }
+                return true;
+            }
             MouseEventKind::Down(MouseButton::Right) => {
                 let pos = ratatui::layout::Position::new(mouse.column, mouse.row);
                 if let Some((_, Control::Colour(index))) = app
@@ -1339,10 +1397,6 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                 return false;
             }
             match key.code {
-                KeyCode::Tab | KeyCode::BackTab => {
-                    move_focus(app, if key.code == KeyCode::BackTab { -1 } else { 1 });
-                    return true;
-                }
                 KeyCode::Esc if app.effect_controls.focused.is_some() => {
                     focus(app, None);
                     return true;
@@ -1417,7 +1471,7 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                 KeyCode::Char('s') => activate(app, Control::Stage),
                 KeyCode::Char('a') => activate(app, Control::Automatic),
                 KeyCode::Char('u') => activate(app, Control::Current),
-                KeyCode::Char('i') => {
+                KeyCode::Char('i' | 'I') => {
                     let crop = matches!(
                         app.pipeline_nodes
                             .get(app.selected_control)
@@ -1461,7 +1515,7 @@ mod tests {
         let parsed = crate::args::Args::parse_from(["img2irc"]);
         let args = crate::args_to_render_args(&parsed);
         let flag = Arc::new(AtomicBool::new(false));
-        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
         let (_tx, rx) = mpsc::channel(1);
         let mut app = App::new(args, tx, rx, flag);
         app.pipeline_nodes = vec![crate::pipeline::ImageEffectNode {
@@ -1486,6 +1540,29 @@ mod tests {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
         Event::Key(crossterm::event::KeyEvent::new(code, modifiers))
+    }
+
+    #[test]
+    fn tab_commits_valid_palette_edits_and_leaves_the_pipeline_pane() {
+        let mut app = app(ImageEffect::QuantizePalette { colours: 16, threshold: 3.0, palette: vec![], source: true });
+        app.effect_controls.editing = Some((Control::Palette, "#ff0000 #00ff00".into()));
+        assert!(handle_pane_tab(&mut app, &key(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(app.current_tab, 1);
+        assert_eq!(app.pane_focus, Pane::Output);
+        assert!(!app.effect_controls.has_focus());
+        assert!(matches!(&app.pipeline_nodes[0].effect, ImageEffect::QuantizePalette { palette, .. }
+            if palette == &vec![[255, 0, 0], [0, 255, 0]]));
+    }
+
+    #[test]
+    fn invalid_effect_edits_do_not_trap_pane_navigation() {
+        let mut app = app(ImageEffect::Oil(3, 55.0));
+        app.effect_controls.editing = Some((Control::Number(0), "invalid".into()));
+        assert!(handle_pane_tab(&mut app, &key(KeyCode::BackTab, KeyModifiers::SHIFT)));
+        assert_eq!(app.current_tab, 1);
+        assert_eq!(app.pane_focus, Pane::Output);
+        assert_eq!(app.pipeline_nodes[0].effect, ImageEffect::Oil(3, 55.0));
+        assert!(!app.effect_controls.has_focus());
     }
 
     #[test]

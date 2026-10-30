@@ -22,6 +22,7 @@ struct GeometryKey {
     flipv: bool,
     rotate: u32,
     filter: args::SamplingFilter,
+    blend_colours: bool,
     font: Vec<String>,
     font_size: u32,
     // Browser font bytes can change while the CLI font names stay the same.
@@ -203,6 +204,13 @@ fn resize_for_output(
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
 ) -> PhotonImage {
+    // Interpolating filters invent shades at boundaries. Exact-colour mode
+    // samples the processed source without mixing neighbouring pixels.
+    let mut geometry_args = args.clone();
+    if !args.blend_colours {
+        geometry_args.filter = args::SamplingFilter::Nearest;
+    }
+    let args = &geometry_args;
     let src_hash = hash_image(&photon_image);
 
     let geometry_key = GeometryKey {
@@ -216,6 +224,7 @@ fn resize_for_output(
         flipv: args.flipv,
         rotate: args.rotate.to_bits(),
         filter: args.filter,
+        blend_colours: args.blend_colours,
         font: args.font.clone(),
         font_size: args.font_size.to_bits(),
         glyph_metrics: glyphs.metrics,
@@ -321,7 +330,7 @@ fn resize_for_output(
             let rotated = rotate_about_center(
                 &image_buffer,
                 angle_radians,
-                Interpolation::Bilinear,
+                if args.blend_colours { Interpolation::Bilinear } else { Interpolation::Nearest },
                 Rgba([0, 0, 0, 0]),
             );
             let rotated_buffer = rotated.into_raw();
@@ -487,6 +496,10 @@ pub fn apply_pipeline(
     for effect in pipeline.iter().cloned() {
         use crate::pipeline::ImageEffect::*;
         match effect {
+            DarkenOutlines(options) => crate::outline_darkening::apply(&mut photon_image, &options),
+            Img2Svg(options) => crate::svg_effect::apply_with_blending(&mut photon_image, &options, args.blend_colours),
+            FlatFill => crate::flat_fill::apply(&mut photon_image),
+            FlatFillWithOptions(options) => crate::flat_fill::apply_with_options(&mut photon_image, &options),
             QuantizeColours(count) => crate::adjustments::quantize_colours(&mut photon_image, count),
             QuantizePalette { colours, threshold, palette, .. } => crate::adjustments::quantize_palette(&mut photon_image, colours, threshold, &palette),
             ReplaceColour {
@@ -674,7 +687,7 @@ pub fn apply_pipeline(
                     let rotated = rotate_about_center(
                         &buf,
                         angle_rad,
-                        Interpolation::Bilinear,
+                        if args.blend_colours { Interpolation::Bilinear } else { Interpolation::Nearest },
                         Rgba([0, 0, 0, 0]),
                     );
                     photon_image = PhotonImage::new(rotated.into_raw(), w, h);
@@ -683,12 +696,12 @@ pub fn apply_pipeline(
             ScaleX(sx) => {
                 let w = ((photon_image.get_width() as f32 * sx as f32 / 100.0) as u32).max(1);
                 let h = photon_image.get_height();
-                photon_image = resize(&photon_image, w, h, SamplingFilter::Lanczos3);
+                photon_image = resize(&photon_image, w, h, if args.blend_colours { SamplingFilter::Lanczos3 } else { SamplingFilter::Nearest });
             }
             ScaleY(sy) => {
                 let w = photon_image.get_width();
                 let h = ((photon_image.get_height() as f32 * sy as f32 / 100.0) as u32).max(1);
-                photon_image = resize(&photon_image, w, h, SamplingFilter::Lanczos3);
+                photon_image = resize(&photon_image, w, h, if args.blend_colours { SamplingFilter::Lanczos3 } else { SamplingFilter::Nearest });
             }
         }
     }

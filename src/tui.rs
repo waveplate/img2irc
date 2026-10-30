@@ -9,6 +9,9 @@ mod figlet_picker;
 use figlet_picker::*;
 mod optimization;
 mod render_cache;
+mod pane_focus;
+use pane_focus::Pane;
+mod video;
 use optimization::{load_glyphs, optimization_score, OptimizationLog};
 pub(crate) use general::*;
 pub(crate) use glyphs::*;
@@ -29,7 +32,8 @@ use ansi_to_tui::IntoText;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-        MouseButton, MouseEventKind,
+        KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -170,6 +174,7 @@ enum ControlId {
     FontSize,
     Font,
     Filter,
+    BlendColours,
     Eyedropper,
     GrayTol,
     Brightness,
@@ -275,6 +280,7 @@ impl ControlId {
             ControlId::FontSize => "font-size",
             ControlId::Font => "font",
             ControlId::Filter => "sampling-filter",
+            ControlId::BlendColours => "blend-colours",
             ControlId::Eyedropper => "eyedropper",
             ControlId::GrayTol => "grayscale-tolerance",
             ControlId::Brightness => "brightness",
@@ -371,6 +377,8 @@ impl ControlId {
 
     fn help(self) -> &'static str {
         match self {
+            Self::BlendColours => "Off: disable SVG antialiasing, use nearest sampling, and choose each glyph colour from source pixels under its foreground/background mask. On: allow interpolated colours and the legacy colour fit. Explicit colour effects and output palette limits still apply.",
+            Self::Filter => "Resampling filter used with Blend colours on. With blending off, nearest sampling keeps colours from actual source pixels.",
             Self::Ocr => "Recognize text in the image, remove its original pixels and preserve it as editable text overlays.",
             Self::OcrAutoWidth => "Fit the output grid to recognized text. OCR input resolution is controlled separately by OCR Megapixels and remains editable.",
             Self::OcrLock => "Freeze current detections, text overlays and grid size while you adjust the image or edit text. Unlock to apply OCR settings again.",
@@ -866,6 +874,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         },
     },
     ControlDef {
+        id: ControlId::BlendColours,
+        label: "Blend colours",
+        kind: ControlKind::Toggle { default: false },
+    },
+    ControlDef {
         id: ControlId::GrayTol,
         label: "Gray Tol",
         kind: ControlKind::Slider {
@@ -1138,6 +1151,9 @@ impl CatalogItem {
             Some(ImageEffect::Ryo) => "ryo",
             Some(ImageEffect::LumaBlur(_)) => "luma-blur",
             Some(ImageEffect::Oil(_, _)) => "oil",
+            Some(ImageEffect::FlatFill | ImageEffect::FlatFillWithOptions(_)) => "flat-fill",
+            Some(ImageEffect::Img2Svg(_)) => "img2svg",
+            Some(ImageEffect::DarkenOutlines(_)) => "darken-outlines",
         }
     }
 }
@@ -1166,6 +1182,16 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
     CatalogItem {
         label: "Quantize Colours",
         effect: Some(crate::pipeline::ImageEffect::QuantizePalette { colours: 16, threshold: 3.0, palette: vec![], source: true }),
+    },
+    CatalogItem {
+        label: "Flat Fill",
+        effect: Some(crate::pipeline::ImageEffect::FlatFillWithOptions(crate::flat_fill::Options {
+            tolerance: 2.5, flatness: 1.2, min_area: 16, gradient: 0.6, strength: 100.0, temporal_tolerance: 1.0,
+        })),
+    },
+    CatalogItem {
+        label: "img2svg",
+        effect: Some(crate::pipeline::ImageEffect::Img2Svg(crate::svg_effect::Options::DEFAULT)),
     },
     CatalogItem {
         label: "Luma Contrast",
@@ -1222,6 +1248,10 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
     CatalogItem {
         label: "Line Thickness (+dark / -light)",
         effect: Some(crate::pipeline::ImageEffect::DarkLines(0.1)),
+    },
+    CatalogItem {
+        label: "Darken Outlines",
+        effect: Some(crate::pipeline::ImageEffect::DarkenOutlines(crate::outline_darkening::Options::DEFAULT)),
     },
     CatalogItem {
         label: "Gauss Blur",
@@ -1469,6 +1499,22 @@ fn arrange_pipeline_catalog(layout: &crate::config::ItemLayout) -> Vec<CatalogIt
         }
     }
 
+    // Keep new colour effects in Adjustments when loading older layouts.
+    for (id, anchors) in [
+        ("flat-fill", ["quantize-colours", "adjustments"]),
+        ("img2svg", ["flat-fill", "quantize-colours"]),
+        ("darken-outlines", ["line-thickness", "effects"]),
+    ] {
+        if !layout.order.iter().any(|requested| normalized_layout_id(requested) == id) {
+            if let Some(index) = arranged.iter().position(|item| item.layout_id() == id) {
+                let item = arranged.remove(index);
+                let anchor = anchors.iter().find_map(|anchor|
+                    arranged.iter().position(|item| item.layout_id() == *anchor));
+                arranged.insert(anchor.map_or(index.min(arranged.len()), |index| index + 1), item);
+            }
+        }
+    }
+
     if !arranged.iter().any(|item| item.effect.is_some()) {
         log::warn!("Pipeline layout hid every effect; keeping 'select-color' visible");
         arranged.push(
@@ -1517,6 +1563,91 @@ fn clamp_output_scroll(scroll: u16, line_count: u16, viewport_height: u16) -> u1
 mod ui_layout_tests {
     use super::*;
     use clap::Parser;
+
+    fn navigation_app() -> App {
+        let args = crate::args_to_render_args(&crate::args::Args::parse_from(["img2irc"]));
+        let flag = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
+        let (_tx, rx) = mpsc::channel(1);
+        App::new(args, tx, rx, flag)
+    }
+
+    #[test]
+    fn tab_moves_focus_without_changing_page_and_commits_numeric_edits() {
+        let mut app = navigation_app();
+        let tab = Event::Key(event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let back = Event::Key(event::KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+        app.selected_control = app.tab_controls(0).iter().position(|control| control.id == ControlId::Width).unwrap();
+        app.input_mode = InputMode::ValueEdit;
+        app.value_edit_buffer = "43".into();
+        for expected in [Pane::Output, Pane::Controls] {
+            assert!(handle_pane_tab(&mut app, &tab));
+            assert_eq!(app.pane_focus, expected);
+            assert_eq!(app.current_tab, 0);
+        }
+        assert_eq!(app.width, 43);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        for expected in [Pane::Output, Pane::Controls] {
+            assert!(handle_pane_tab(&mut app, &back));
+            assert_eq!(app.pane_focus, expected);
+            assert_eq!(app.current_tab, 0);
+        }
+    }
+
+    #[test]
+    fn tab_cycles_only_panes_painted_on_each_page() {
+        let mut app = navigation_app();
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(180, 70)).unwrap();
+        let tab = Event::Key(event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        for page in 0..4 {
+            app.toggle_tab(page);
+            terminal.draw(|frame| ui(frame, &mut app)).unwrap();
+            let panes = app.visible_panes();
+            assert!(panes.contains(&Pane::Output));
+            let original = app.pane_focus;
+            for _ in 0..panes.len() {
+                handle_pane_tab(&mut app, &tab);
+                assert_eq!(app.current_tab, page);
+                assert!(panes.contains(&app.pane_focus));
+            }
+            assert_eq!(app.pane_focus, original);
+        }
+    }
+
+    #[test]
+    fn changing_page_clears_glyph_button_and_options_hitboxes() {
+        let mut app = navigation_app();
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(180, 70)).unwrap();
+        app.toggle_tab(2);
+        terminal.draw(|frame| ui(frame, &mut app)).unwrap();
+        let old_button = app.glyph_select_all_area;
+        assert!(!old_button.is_empty());
+        app.toggle_tab(0);
+        terminal.draw(|frame| ui(frame, &mut app)).unwrap();
+        for area in [app.tree_area, app.glyph_list_area, app.glyph_select_all_area,
+            app.glyph_select_none_area, app.glyph_add_area, app.glyph_delete_area] {
+            assert!(area.is_empty());
+        }
+        app.focus_pane_at(old_button.x, old_button.y);
+        assert_eq!(app.current_tab, 0);
+        assert!(app.pane_areas.iter().all(|(pane, _)| !matches!(pane, Pane::GlyphTree | Pane::GlyphList | Pane::GlyphPreview)));
+    }
+
+    #[test]
+    fn old_layouts_keep_flat_fill_beside_quantization_and_respect_explicit_layouts() {
+        let mut layout = toml::from_str::<crate::config::UiLayout>(include_str!("../layout.toml")).unwrap().pipeline;
+        layout.order.retain(|id| id != "flat-fill");
+        let catalog = arrange_pipeline_catalog(&layout);
+        let quantize = catalog.iter().position(|item| item.layout_id() == "quantize-colours").unwrap();
+        assert_eq!(catalog[quantize + 1].layout_id(), "flat-fill");
+        layout.hidden.push("flat_fill".into());
+        assert!(!arrange_pipeline_catalog(&layout).iter().any(|item| item.layout_id() == "flat-fill"));
+        layout.hidden.clear();
+        layout.order.insert(0, "flat_fill".into());
+        let catalog = arrange_pipeline_catalog(&layout);
+        assert_eq!(catalog[0].layout_id(), "flat-fill");
+        assert_eq!(catalog.iter().filter(|item| item.layout_id() == "flat-fill").count(), 1);
+    }
 
     #[test]
     fn older_layouts_keep_all_ocr_options_beside_the_parent() {
@@ -1608,7 +1739,7 @@ mod ui_layout_tests {
         let parsed = crate::args::Args::parse_from(["img2irc", "--ocr", "--ocr-auto-width", "true"]);
         let args = crate::args_to_render_args(&parsed);
         let flag = Arc::new(AtomicBool::new(false));
-        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
         let (_result_tx, result_rx) = mpsc::channel(1);
         let mut app = App::new(args, tx, result_rx, flag);
         assert!(!app.show_ocr_advanced);
@@ -1702,7 +1833,7 @@ mod ui_layout_tests {
         let parsed = crate::args::Args::parse_from(["img2irc", "--width=75"]);
         let args = crate::args_to_render_args(&parsed);
         let flag = Arc::new(AtomicBool::new(false));
-        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now()));
+        let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
         let (_result_tx, result_rx) = mpsc::channel(1);
         let mut app = App::new(args, tx, result_rx, flag);
         app.selected_control = app.tab_controls(0).iter()
@@ -2842,6 +2973,8 @@ pub(crate) struct App {
     input_mode: InputMode,
     selected_control: usize,
     current_tab: usize, // Focused pane group: 0=general, 1=pipeline, 2=glyphs
+    pane_focus: Pane,
+    pane_areas: Vec<(Pane, Rect)>,
     general_controls: Vec<ControlDef>,
     show_general: bool,
     show_pipeline: bool,
@@ -2850,7 +2983,8 @@ pub(crate) struct App {
     general_scroll_offset: usize,
 
     // Cancellation & Debouncing
-    tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant)>,
+    tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant, Option<crate::video::editor::Request>)>,
+    video: Option<video::State>,
     current_cancel_flag: Arc<AtomicBool>,
     args_dirty: bool,
     last_args_change: Option<Instant>,
@@ -3532,7 +3666,7 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 impl App {
     fn new(
         render_args: RenderArgs,
-        tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant)>,
+        tx_args: watch::Sender<(RenderArgs, Arc<AtomicBool>, Instant, Option<crate::video::editor::Request>)>,
         rx_result: mpsc::Receiver<(
             draw::RenderResult,
             Arc<font::GlyphStore>,
@@ -3572,6 +3706,8 @@ impl App {
             input_mode: InputMode::Normal,
             selected_control: 0,
             current_tab: 0,
+            pane_focus: Pane::Controls,
+            pane_areas: Vec::new(),
             general_controls,
             show_general: true,
             show_pipeline: true,
@@ -3579,6 +3715,7 @@ impl App {
             scroll: 0,
             general_scroll_offset: 0,
             tx_args,
+            video: None,
             current_cancel_flag: initial_flag,
             args_dirty: false,
             last_args_change: None,
@@ -3602,7 +3739,9 @@ impl App {
             source_preview: Arc::new(std::sync::Mutex::new(None)),
             output_preview_protocol: None,
             output_preview_dirty: true,
-            preview_picker: Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
+            preview_picker: if cfg!(test) { Picker::halfblocks() } else {
+                Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks())
+            },
             last_preview_path: None,
 
             show_font_picker: false,
@@ -4134,6 +4273,14 @@ impl App {
                 self.current_tab = 3;
             }
         }
+        self.pane_focus = match target {
+            FocusTarget::GlyphTree => Pane::GlyphTree,
+            FocusTarget::GlyphList | FocusTarget::GlyphSelectAll | FocusTarget::GlyphSelectNone
+                | FocusTarget::GlyphAdd | FocusTarget::GlyphDelete => Pane::GlyphList,
+            FocusTarget::Text => Pane::TextList,
+            _ => Pane::Controls,
+        };
+        if let Some(video) = self.video.as_mut() { video.focused = false; }
     }
 
     fn cycle_focus_target(&mut self, direction: i32) {
@@ -4166,6 +4313,7 @@ impl App {
     fn toggle_tab(&mut self, tab: usize) {
         self.current_tab = tab.min(3);
         self.selected_control = 0;
+        self.focus_pane(self.primary_pane());
     }
 
     fn focus_next_visible_tab(&mut self, direction: i32) {
@@ -4181,8 +4329,7 @@ impl App {
             .position(|tab| *tab == self.current_tab)
             .unwrap_or(0) as i32;
         let next_idx = (current_idx + direction).rem_euclid(visible.len() as i32) as usize;
-        self.current_tab = visible[next_idx];
-        self.selected_control = 0;
+        self.toggle_tab(visible[next_idx]);
     }
 
     fn pipeline_selected_index(&self) -> Option<usize> {
@@ -4264,6 +4411,7 @@ impl App {
             ControlId::FontSize => (self.font_size * 10.0).round() as i32,
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
+            ControlId::BlendColours => self.render_args.blend_colours as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
             ControlId::Brightness => self.brightness,
             ControlId::Contrast => self.contrast,
@@ -4400,6 +4548,7 @@ impl App {
             ControlId::FontSize => self.font_size = (val as f32 / 10.0).round(),
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
+            ControlId::BlendColours => self.render_args.blend_colours = val != 0,
             ControlId::GrayTol => self.grayscale_tolerance = val,
             ControlId::Brightness => self.brightness = val,
             ControlId::Contrast => self.contrast = val,
@@ -4893,6 +5042,8 @@ impl App {
         args.score = true;
 
         let image_path = self.image_path.clone();
+        let video_frame = self.video.as_ref().and_then(|_| self.source_preview.lock().ok()
+            .and_then(|slot| slot.as_ref().map(|(_, image)| (**image).clone())));
 
         tokio::spawn(async move {
             let mut optimization_log = OptimizationLog::new(&args, optimize_shortest_longest_line);
@@ -4917,7 +5068,7 @@ impl App {
                 let cancel = cancel_flag.clone();
                 move || load_glyphs(&a, if a.font_size == 0.0 { 24.0 } else { a.font_size }, cancel)
             }).await.unwrap();
-            let image = if image_path.is_empty() {
+            let image = if let Some(frame) = video_frame { frame } else if image_path.is_empty() {
                 PhotonImage::new(vec![0; 4], 1, 1)
             } else {
                 match crate::load_image_from_url_or_path(&image_path, &args, &glyph_store)
@@ -5352,7 +5503,10 @@ impl App {
         args_for_render.overlays = Vec::new();
         let _ = self
             .tx_args
-            .send((args_for_render, new_flag, Instant::now()));
+            .send((args_for_render, new_flag, Instant::now(), self.video.as_mut().map(|video| {
+                video.waiting = true;
+                video.request()
+            })));
         log::info!(
             "Flushing render args: width={}, scale={:?}, font={:?}",
             self.width,
@@ -5379,6 +5533,7 @@ impl App {
                     matches!(
                         ext.as_str(),
                         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "svg"
+                        | "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "mpeg" | "mpg" | "ts"
                     )
                 });
                 explorer = explorer.with_filter(filter).unwrap();
@@ -5464,6 +5619,17 @@ impl App {
     }
 
     fn load_image(&mut self, path: String) {
+        if crate::video::editor::is_video(&path) {
+            match crate::video::editor::Clip::open(path.clone().into()) {
+                Ok(clip) => {
+                    self.video = Some(video::State::new(clip));
+                    self.ocr = false;
+                }
+                Err(error) => { self.clipboard_paste_status = Some(error.to_string()); return; }
+            }
+        } else {
+            self.video = None;
+        }
         if path.to_lowercase().ends_with(".png") {
             if let Ok(file) = std::fs::File::open(&path) {
                 let reader = std::io::BufReader::new(file);
@@ -5535,9 +5701,7 @@ impl App {
         match rx.try_recv() {
             Ok(ClipboardPasteResult::Loaded { path, bytes }) => {
                 log::info!("Loaded image from clipboard: {} ({} bytes)", path, bytes);
-                self.image_path = path.clone();
-                self.render_args.image = Some(path);
-                self.scroll = 0;
+                self.load_image(path);
                 self.clipboard_paste_in_progress = false;
                 self.clipboard_paste_status = Some(format!("Pasted image ({} bytes)", bytes));
                 self.mark_args_dirty();
@@ -6514,7 +6678,18 @@ impl From<&RenderArgs> for OcrInferenceKey {
     }
 }
 
-pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
+pub async fn run(render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
+    let clip = render_args.image.as_deref().filter(|path| crate::video::editor::is_video(path))
+        .map(|path| crate::video::editor::Clip::open(path.into())).transpose()?;
+    run_editor(render_args, clip).await
+}
+
+pub(crate) async fn run_video(render_args: RenderArgs, clip: crate::video::editor::Clip) -> Result<(), Box<dyn Error>> {
+    run_editor(render_args, Some(clip)).await
+}
+
+async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::editor::Clip>) -> Result<(), Box<dyn Error>> {
+    if clip.is_some() && render_args.font_size <= 0.0 { render_args.font_size = 16.0; }
     if !cfg!(feature = "ocr") && render_args.ocr {
         return Err("OCR support is not compiled in; rebuild with `--features ocr`".into());
     }
@@ -6550,7 +6725,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
 
     log::info!("Starting img2irc TUI...");
 
-    render_args.render = Render::Ansi;
+    if render_args.render == Render::Irc { render_args.render = Render::Ansi; }
     render_args.as_preview = true;
 
     let no_initial_image = render_args
@@ -6585,7 +6760,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     };
     let initial_glyphs_loaded = !no_initial_image;
 
-    let image = if let Some(path) = &render_args.image {
+    let image = if clip.is_some() { PhotonImage::new(vec![0; 4], 1, 1) } else if let Some(path) = &render_args.image {
         match crate::load_image_from_url_or_path(path, &render_args, &glyph_store).await {
             Ok(img) => img,
             Err(e) => {
@@ -6603,10 +6778,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     let arc_glyphs = Arc::new(glyph_store);
 
     let initial_flag = Arc::new(AtomicBool::new(false));
+    let video = clip.map(video::State::new);
     let (tx_args, mut rx_args) = watch::channel((
         render_args.clone(),
         initial_flag.clone(),
         Instant::now(),
+        video.as_ref().map(video::State::request),
     ));
     let (tx_result, rx_result) = mpsc::channel(1);
     let (tx_search_progress, rx_search_progress) = watch::channel(None::<SearchProgressUpdate>);
@@ -6617,11 +6794,13 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     let initial_image_path = render_args.image.clone();
     let thread_render_args = render_args.clone();
     tokio::spawn(async move {
+        let mut video_source = crate::video::editor::Source::default();
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
         let mut completed_renders = render_cache::CompletedRenderCache::default();
         let mut glyph_signature = 0;
         let mut arc_image = arc_image;
         let mut current_image_path = initial_image_path;
+        let mut current_image_blending = thread_render_args.blend_colours;
         let mut image_revision = 0u64;
         let mut ocr_detection_cache: Option<(
             u64,
@@ -6648,9 +6827,38 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
             rendering_flag2.store(true, Ordering::Relaxed);
             tx_search_progress.send_replace(None);
 
-            let (current_args, cancel_flag, render_requested_at) = {
+            let (current_args, cancel_flag, render_requested_at, video_request) = {
                 rx_args.borrow_and_update().clone()
             };
+
+            if let Some(request) = video_request {
+                let progress_tx = tx_search_progress.clone();
+                let progress_cancel = cancel_flag.clone();
+                let frame = video_source.render(current_args, &request, cancel_flag.clone(), move |glyphs, progress| {
+                    if !progress_cancel.load(Ordering::Relaxed) {
+                        progress_tx.send_replace(Some((progress_cancel.clone(), glyphs, progress.clone())));
+                    }
+                }).map_err(|e| e.to_string());
+                match frame {
+                    Ok(frame) if !cancel_flag.load(Ordering::Relaxed) => {
+                        if let Ok(mut preview) = source_preview_worker.lock() {
+                            *preview = Some((request.clip.input.to_string_lossy().into_owned(), frame.image));
+                        }
+                        rendering_flag2.store(false, Ordering::Relaxed);
+                        if tx_result.send((frame.result, frame.glyphs, Vec::new(), render_requested_at)).await.is_err() { break; }
+                    }
+                    Err(error) if !cancel_flag.load(Ordering::Relaxed) => {
+                        if let Ok(mut status) = request.status.lock() { *status = error.to_string(); }
+                    }
+                    _ => {}
+                }
+                rendering_flag2.store(false, Ordering::Relaxed);
+                if rx_args.changed().await.is_err() { break; }
+                continue;
+            }
+
+            // Switching back to an image releases the video decoder and caches.
+            video_source = crate::video::editor::Source::default();
 
             if current_args
                 .image
@@ -6673,8 +6881,9 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                 continue;
             }
 
-            // Reload image if path changed
-            if current_args.image != current_image_path {
+            // SVG coverage depends on the blend setting as well as the path.
+            if current_args.image != current_image_path
+                || current_args.blend_colours != current_image_blending {
                 if let Some(path) = &current_args.image {
                     match crate::load_image_from_url_or_path(path, &current_args, &arc_glyphs).await
                     {
@@ -6684,6 +6893,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
                                 *preview = Some((path.clone(), arc_image.clone()));
                             }
                             current_image_path = Some(path.clone());
+                            current_image_blending = current_args.blend_colours;
                             image_revision = image_revision.wrapping_add(1);
                             ocr_detection_cache = None;
                             last_locked_ocr_detections = None;
@@ -6914,6 +7124,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     });
 
     let mut app = App::new(render_args, tx_args, rx_result, initial_flag);
+    app.video = video;
     app.source_preview = source_preview;
     app.is_rendering = rendering_flag;
     app.rx_search_progress = Some(rx_search_progress);
@@ -6921,11 +7132,12 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     // Don't trigger update immediately here, we have initial args
     // However, we want to ensure any logic in update_render_args runs, so lets run flush
     // Actually just mark dirty and let loop handle it
-    app.mark_args_dirty();
+    if app.video.is_none() { app.mark_args_dirty(); }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -6934,6 +7146,7 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        PopKeyboardEnhancementFlags,
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
@@ -6945,12 +7158,58 @@ pub async fn run(mut render_args: RenderArgs) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        self.current_cancel_flag.store(true, Ordering::Relaxed);
+        if let Some(cancel) = &self.auto_optimize_cancel { cancel.store(true, Ordering::Relaxed); }
+    }
+}
+
 // ── App Loop ─────────────────────────────────────────────────────────────────
+fn finish_value_edit(app: &mut App) {
+    if let Ok(value) = app.value_edit_buffer.parse::<f32>() {
+        let controls = app.tab_controls(app.current_tab);
+        if let Some(control) = controls.get(app.selected_control) {
+            if let ControlKind::Slider { min, max, .. } = &control.kind {
+                let raw = if matches!(control.id, ControlId::FontSize | ControlId::OcrMegapixels | ControlId::GlyphSearchThreshold) {
+                    (value * 10.0).round() as i32
+                } else { value.round() as i32 };
+                set_control_value(app, app.selected_control, raw.clamp(*min, *max));
+            }
+        }
+    }
+    app.input_mode = InputMode::Normal;
+    app.value_edit_buffer.clear();
+}
+
+// Handle pane traversal before editors can interpret Tab as input traversal.
+fn handle_pane_tab(app: &mut App, event: &Event) -> bool {
+    let Event::Key(key) = event else { return false; };
+    if key.kind != KeyEventKind::Press || !matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+        || !matches!(app.input_mode, InputMode::Normal | InputMode::ValueEdit | InputMode::TextEdit)
+        || app.show_font_picker || app.show_unicode_explorer || app.figlet_picker.is_some()
+        || app.explorer_dialog.is_some() {
+        return false;
+    }
+    let current = app.pane_focus;
+    match app.input_mode {
+        InputMode::ValueEdit => finish_value_edit(app),
+        InputMode::TextEdit => finish_text_edit(app),
+        _ => {}
+    }
+    video::finish_edit(app);
+    leave_effect_controls(app);
+    let direction = if key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT) { -1 } else { 1 };
+    app.cycle_pane_from(current, direction);
+    true
+}
+
 async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<()> {
     loop {
         app.render_tick = app.render_tick.wrapping_add(1);
         app.poll_clipboard_paste();
         app.poll_search_progress();
+        video::tick(&mut app);
 
         if let Some(mut rx) = app.rx_optimization.take() {
             while let Ok(update) = rx.try_recv() {
@@ -6998,6 +7257,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
         while let Ok((result, glyphs, ocr_overlays, render_requested_at)) =
             app.rx_result.try_recv()
         {
+            if render_requested_at < app.tx_args.borrow().2 { continue; }
             if result.content == "Cancelled" {
                 continue;
             }
@@ -7043,6 +7303,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
             // output. Include debounce/queueing, font reload, effects, smoothing,
             // geometry refinement, channel wait, and overlay application.
             app.last_render_latency = Some(render_requested_at.elapsed());
+            if let Some(video) = app.video.as_mut() { video.waiting = false; }
         }
 
         terminal
@@ -7051,6 +7312,12 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
         if crossterm::event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
+            if matches!(&event, Event::Key(key) if key.kind == KeyEventKind::Press
+                && key.code == KeyCode::Char('q') && key.modifiers.contains(KeyModifiers::CONTROL)) {
+                return Ok(());
+            }
+            if handle_pane_tab(&mut app, &event) { continue; }
+            if video::handle_event(&mut app, &event) { continue; }
             if handle_effect_controls(&mut app, &event) { continue; }
             if app.figlet_picker.is_some() {
                 handle_figlet_picker(&mut app, event);
@@ -7362,24 +7629,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                     if key.kind == KeyEventKind::Press {
                         match key.code {
                             KeyCode::Enter => {
-                                // Confirm: parse and apply the value
-                                if let Ok(val) = app.value_edit_buffer.parse::<f32>() {
-                                    let controls = app.tab_controls(app.current_tab);
-                                    if let Some(ctrl) = controls.get(app.selected_control) {
-                                        if let ControlKind::Slider { min, max, .. } = &ctrl.kind {
-                                            let raw_value = if matches!(ctrl.id, ControlId::FontSize | ControlId::OcrMegapixels | ControlId::GlyphSearchThreshold) {
-                                                (val * 10.0).round() as i32
-                                            } else {
-                                                val.round() as i32
-                                            };
-                                            let clamped = raw_value.clamp(*min, *max);
-                                            let sc = app.selected_control;
-                                            set_control_value(&mut app, sc, clamped);
-                                        }
-                                    }
-                                }
-                                app.input_mode = InputMode::Normal;
-                                app.value_edit_buffer.clear();
+                                finish_value_edit(&mut app);
                             }
                             KeyCode::Esc => {
                                 // Cancel
@@ -7404,14 +7654,6 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 if let Event::Key(key) = event {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Tab => {
-                                finish_text_edit(&mut app);
-                                app.cycle_text_field_focus(1);
-                            }
-                            KeyCode::BackTab => {
-                                finish_text_edit(&mut app);
-                                app.cycle_text_field_focus(-1);
-                            }
                             KeyCode::Enter => {
                                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                                     // Ctrl+Enter finishes editing; plain Enter is a newline.
@@ -7642,6 +7884,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
             match event {
                 Event::Mouse(mouse) => {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        app.focus_pane_at(mouse.column, mouse.row);
+                    }
                     if app.current_tab == 3
                         && app.input_mode == InputMode::TextEdit
                         && mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -7786,7 +8031,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
                             // Replaced with fallback scrolling
 
-                            if mouse.column >= app.tree_area.x
+                            if app.current_tab == 2 && mouse.column >= app.tree_area.x
                                 && mouse.column < app.tree_area.x + app.tree_area.width
                                 && mouse.row >= app.tree_area.y
                                 && mouse.row < app.tree_area.y + app.tree_area.height
@@ -7796,7 +8041,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.tree_state.select_prev();
                                 continue;
                             }
-                            if mouse.column >= app.glyph_list_area.x
+                            if app.current_tab == 2 && mouse.column >= app.glyph_list_area.x
                                 && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
                                 && mouse.row >= app.glyph_list_area.y
                                 && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
@@ -7869,7 +8114,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
 
                             // Replaced with fallback scrolling
 
-                            if mouse.column >= app.tree_area.x
+                            if app.current_tab == 2 && mouse.column >= app.tree_area.x
                                 && mouse.column < app.tree_area.x + app.tree_area.width
                                 && mouse.row >= app.tree_area.y
                                 && mouse.row < app.tree_area.y + app.tree_area.height
@@ -7879,7 +8124,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.tree_state.select_next();
                                 continue;
                             }
-                            if mouse.column >= app.glyph_list_area.x
+                            if app.current_tab == 2 && mouse.column >= app.glyph_list_area.x
                                 && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
                                 && mouse.row >= app.glyph_list_area.y
                                 && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
@@ -8233,7 +8478,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 continue;
                             }
 
-                            if mouse.column >= app.tree_area.x
+                            if app.current_tab == 2 && mouse.column >= app.tree_area.x
                                 && mouse.column < app.tree_area.x + app.tree_area.width
                                 && mouse.row >= app.tree_area.y
                                 && mouse.row < app.tree_area.y + app.tree_area.height
@@ -8268,7 +8513,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     app.last_glyph_list_key = None;
                                 }
                                 continue;
-                            } else if mouse.column >= app.glyph_list_area.x
+                            } else if app.current_tab == 2 && mouse.column >= app.glyph_list_area.x
                                 && mouse.column < app.glyph_list_area.x + app.glyph_list_area.width
                                 && mouse.row >= app.glyph_list_area.y
                                 && mouse.row < app.glyph_list_area.y + app.glyph_list_area.height
@@ -8294,7 +8539,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                                 continue;
-                            } else if mouse.column >= app.glyph_select_all_area.x
+                            } else if app.current_tab == 2 && mouse.column >= app.glyph_select_all_area.x
                                 && mouse.column
                                     < app.glyph_select_all_area.x + app.glyph_select_all_area.width
                                 && mouse.row >= app.glyph_select_all_area.y
@@ -8305,7 +8550,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.selected_control = 2;
                                 app.set_all_glyphs_selected(true);
                                 continue;
-                            } else if mouse.column >= app.glyph_select_none_area.x
+                            } else if app.current_tab == 2 && mouse.column >= app.glyph_select_none_area.x
                                 && mouse.column
                                     < app.glyph_select_none_area.x + app.glyph_select_none_area.width
                                 && mouse.row >= app.glyph_select_none_area.y
@@ -8317,7 +8562,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.selected_control = 3;
                                 app.set_all_glyphs_selected(false);
                                 continue;
-                            } else if mouse.column >= app.glyph_add_area.x
+                            } else if app.current_tab == 2 && mouse.column >= app.glyph_add_area.x
                                 && mouse.column < app.glyph_add_area.x + app.glyph_add_area.width
                                 && mouse.row >= app.glyph_add_area.y
                                 && mouse.row < app.glyph_add_area.y + app.glyph_add_area.height
@@ -8326,7 +8571,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.selected_control = 4;
                                 app.open_unicode_explorer();
                                 continue;
-                            } else if mouse.column >= app.glyph_delete_area.x
+                            } else if app.current_tab == 2 && mouse.column >= app.glyph_delete_area.x
                                 && mouse.column
                                     < app.glyph_delete_area.x + app.glyph_delete_area.width
                                 && mouse.row >= app.glyph_delete_area.y
@@ -9098,7 +9343,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 }
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
-                        if app.current_tab == 0
+                        if pane_focus::handle_key(&mut app, &key) { continue; }
+                        if app.current_tab == 0 && app.pane_focus == Pane::Controls
                             && app.get_current_control_id() == ControlId::Font
                         {
                             if let KeyCode::Char(c) = key.code {
@@ -9197,19 +9443,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             {
                                 app.perform_font_size_scan();
                             }
-                            KeyCode::Tab => {
-                                if app.current_tab == 3 {
-                                    app.cycle_text_field_focus(1);
-                                } else {
-                                    app.cycle_focus_target(1);
-                                }
-                            }
-                            KeyCode::BackTab => {
-                                if app.current_tab == 3 {
-                                    app.cycle_text_field_focus(-1);
-                                } else {
-                                    app.cycle_focus_target(-1);
-                                }
+                            KeyCode::Up | KeyCode::Down if app.current_tab == 2
+                                && key.modifiers.contains(KeyModifiers::ALT) => {
+                                app.cycle_focus_target(if key.code == KeyCode::Up { -1 } else { 1 });
                             }
                             KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(());
@@ -9969,6 +10205,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     let root = Layout::vertical([
         Constraint::Length(1), // title/tabs
         Constraint::Min(0),    // content
+        Constraint::Length(if app.video.is_some() { 10 } else { 0 }),
         Constraint::Length(1), // status bar
     ])
     .split(area);
@@ -9976,16 +10213,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
     // ── Title bar with tabs ──
     render_title_bar(f, app, root[0]);
 
-    app.control_areas.clear();
-    app.font_scan_area = Rect::default();
-    app.general_area = Rect::default();
-    app.pipeline_column_area = Rect::default();
-    app.pipeline_active_area = Rect::default();
-    app.glyphs_area = Rect::default();
-    app.tree_area = Rect::default();
-    app.glyph_list_area = Rect::default();
-    app.preview_area = Rect::default();
-    app.splitter_areas.clear();
+    app.begin_pane_frame();
 
     let splitter_style = Style::new().fg(BORDER).bg(BG);
 
@@ -10048,11 +10276,19 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         }
     }
 
+    app.register_pane(Pane::Output, panes[2]);
     render_output(f, app, panes[2]);
     render_source_picker(f, app, panes[2]);
 
     // ── Status bar ──
-    render_status_bar(f, app, root[2]);
+    if app.video.is_some() { app.register_pane(Pane::Video, root[2]); }
+    video::render(f, app, root[2]);
+    let visible_panes = app.visible_panes();
+    if !visible_panes.contains(&app.pane_focus) {
+        let primary = app.primary_pane();
+        app.focus_pane(if visible_panes.contains(&primary) { primary } else { visible_panes[0] });
+    }
+    render_status_bar(f, app, root[3]);
 
     // ── Font Picker Overlay ──
     if app.show_font_picker {
@@ -10546,7 +10782,7 @@ fn render_normal_output_content(f: &mut ratatui::Frame, app: &mut App, area: Rec
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
+        .border_style(Style::new().fg(if app.pane_focus == Pane::Output { ACCENT } else { BORDER }))
         .border_set(symbols::border::ROUNDED)
         .title(Span::styled(
             title_status,
@@ -11053,7 +11289,7 @@ fn set_output_preview_cell(
 
 fn render_status_bar(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let keys = [
-        ("Tab", "Switch"),
+        ("Tab", "Pane"),
         ("↑↓", "Navigate"),
         ("←→", "Adjust"),
         ("Space", "Toggle"),

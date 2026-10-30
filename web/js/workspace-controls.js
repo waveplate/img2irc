@@ -93,15 +93,18 @@ export function initializeWorkspaceControls(root) {
 
   // Keep real, keyboard-accessible checkboxes; the visible ON/OFF marker
   // follows their checked state directly rather than keeping another value.
-  for (const input of root.querySelectorAll('.control-panel input[type="checkbox"]')) {
-    const label = input.closest("label");
-    if (!label || label.classList.contains("glyph-row") || label.closest(".overlay-colors")) continue;
-    label.classList.add("tui-toggle");
-    const state = document.createElement("span");
-    state.className = "toggle-state";
-    state.setAttribute("aria-hidden", "true");
-    label.append(state);
-  }
+  const installToggles = (scope) => {
+    for (const input of scope.querySelectorAll('input[type="checkbox"]')) {
+      const label = input.closest("label");
+      if (!label || !input.closest(".control-panel") || label.classList.contains("tui-toggle") || label.classList.contains("glyph-row") || label.closest(".overlay-colors")) continue;
+      label.classList.add("tui-toggle");
+      const state = document.createElement("span");
+      state.className = "toggle-state";
+      state.setAttribute("aria-hidden", "true");
+      label.append(state);
+    }
+  };
+  installToggles(root);
   const ranges = [...root.querySelectorAll('input[type="range"]')];
   const updateRange = (input) => {
     const span = Number(input.max) - Number(input.min);
@@ -109,6 +112,13 @@ export function initializeWorkspaceControls(root) {
     input.style.setProperty("--range-fill", `${Math.max(0, Math.min(100, fill))}%`);
   };
   ranges.forEach(updateRange);
+  root.addEventListener("pipelineentry", (event) => {
+    installToggles(event.detail.node);
+    event.detail.node.querySelectorAll('input[type="range"]').forEach(updateRange);
+  });
+  root.addEventListener("effectreset", (event) => {
+    event.target.querySelectorAll('input[type="range"]').forEach(updateRange);
+  }, true);
   root.addEventListener("input", (event) => {
     if (event.target.type === "range") updateRange(event.target);
   });

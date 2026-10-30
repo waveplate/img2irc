@@ -15,9 +15,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 type Choice = (usize, bool);
+pub(super) mod rank_cache;
+pub(super) mod temporal;
 
 fn cancelled(abort: Option<&AtomicBool>) -> bool {
     abort.is_some_and(|flag| flag.load(Ordering::Relaxed))
+}
+
+fn detailed_profiling() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("IMG2IRC_REPAIR_PROFILE").is_some())
 }
 
 fn squared_error(a: [u8; 3], b: [u8; 3]) -> i64 {
@@ -46,6 +53,7 @@ fn defect_map(
     priorities: Vec<f32>,
     data: &[BlockData],
     threshold: f32,
+    allowed: Option<&[bool]>,
     grid_w: usize,
     grid_h: usize,
 ) -> Arc<GlyphDefectMap> {
@@ -53,7 +61,9 @@ fn defect_map(
         .iter()
         .enumerate()
         .map(|(cell, &score)| {
-            data[cell].fg != data[cell].bg && (threshold <= 0.0 || score >= threshold)
+            data[cell].fg != data[cell].bg
+                && (threshold <= 0.0 || score >= threshold)
+                && allowed.is_none_or(|allowed| allowed[cell])
         })
         .collect();
     let mut active = targets.clone();
@@ -96,6 +106,7 @@ pub(super) fn inspect(
         reference.defect_cells(&output, CW, CH),
         data,
         args.discontinuity_threshold.max(0.0),
+        None,
         grid_w,
         grid_h,
     ))
@@ -305,6 +316,7 @@ struct Patch {
     reference: PreparedReference,
     output: Vec<[u8; 3]>,
     features: OutputCache,
+    geometry: Option<GeometryCache>,
     width: usize,
     cell_x: usize,
     cell_y: usize,
@@ -327,6 +339,7 @@ impl Patch {
         b: usize,
         grid_w: usize,
         grid_h: usize,
+        incremental: bool,
     ) -> Self {
         // Context reduces clipping bias in the ranking. The full-image check
         // remains authoritative, including all untouched neighbouring cells.
@@ -345,10 +358,12 @@ impl Patch {
             .expect("valid glyph search patch");
         let output = extract(output);
         let features = reference.prepare_output(&output);
+        let geometry = incremental.then(|| reference.prepare_geometry(&features));
         Self {
             reference,
             output,
             features,
+            geometry,
             width,
             cell_x: x0,
             cell_y: y0,
@@ -363,12 +378,29 @@ struct TrialWorkspace {
     output: Vec<[u8; 3]>,
     features: OutputCache,
     score: ScoreWorkspace,
+    geometry: Option<GeometryCache>,
+    copy_ms: f64,
+    patch_ms: f64,
+    features_ms: f64,
+    scoring_ms: f64,
 }
 
 impl TrialWorkspace {
-    fn reset(&mut self, output: &Vec<[u8; 3]>, features: &OutputCache) {
+    fn reset(
+        &mut self,
+        output: &Vec<[u8; 3]>,
+        features: &OutputCache,
+        geometry: Option<&GeometryCache>,
+    ) {
         self.output.clone_from(output);
         self.features.copy_from(features);
+        if let Some(geometry) = geometry {
+            if let Some(cache) = &mut self.geometry {
+                cache.copy_from(geometry);
+            } else {
+                self.geometry = Some(geometry.clone());
+            }
+        }
     }
 }
 
@@ -425,6 +457,8 @@ struct Trial {
     a: Choice,
     b: Choice,
     local: f64,
+    local_lower: f64,
+    local_upper: f64,
 }
 
 fn pair_trials(
@@ -444,6 +478,8 @@ fn pair_trials(
                     a: ca,
                     b: cb,
                     local: 0.0,
+                    local_lower: 0.0,
+                    local_upper: 0.0,
                 });
             }
         }
@@ -578,32 +614,288 @@ fn score_trials(
     reference: &PreparedReference,
     output: &Vec<[u8; 3]>,
     features: &OutputCache,
+    geometry: Option<&GeometryCache>,
     painter: &PairPainter<'_>,
     workers: &mut [TrialWorkspace],
     abort: Option<&AtomicBool>,
+    profiling: bool,
 ) -> Result<(), ()> {
     if trials.is_empty() {
         return Ok(());
     }
     let chunk_size = trials.len().div_ceil(workers.len());
     let rect = painter.rect();
+    let score_chunk = |trials: &mut [Trial], work: &mut TrialWorkspace| -> Result<(), ()> {
+        let copy_started = profiling.then(RenderInstant::now);
+        work.reset(output, features, geometry);
+        if let Some(started) = copy_started {
+            work.copy_ms += started.elapsed().as_secs_f64() * 1000.0;
+        }
+        for trial in trials {
+            if cancelled(abort) {
+                return Err(());
+            }
+            let features_started = profiling.then(RenderInstant::now);
+            painter.paint(&mut work.output, trial.a, trial.b);
+            work.features.update(&work.output, rect);
+            if let Some(started) = features_started {
+                work.features_ms += started.elapsed().as_secs_f64() * 1000.0;
+            }
+            let scoring_started = profiling.then(RenderInstant::now);
+            let score = if geometry.is_some() {
+                reference.score_incremental_estimate(
+                    &work.features,
+                    work.geometry.as_mut().unwrap(),
+                    rect,
+                )
+            } else {
+                ScoreEstimate::exact(
+                    reference
+                        .score_prepared(&work.features, &mut work.score)
+                        .total,
+                )
+            };
+            if let Some(started) = scoring_started {
+                work.scoring_ms += started.elapsed().as_secs_f64() * 1000.0;
+            }
+            trial.local = score.value;
+            trial.local_lower = score.lower;
+            trial.local_upper = score.upper;
+        }
+        Ok(())
+    };
+    if workers.len() == 1 {
+        return score_chunk(trials, &mut workers[0]);
+    }
     trials
         .par_chunks_mut(chunk_size)
         .zip(workers.par_iter_mut())
-        .try_for_each(|(trials, work)| {
-            work.reset(output, features);
-            for trial in trials {
-                if cancelled(abort) {
-                    return Err(());
-                }
-                painter.paint(&mut work.output, trial.a, trial.b);
-                work.features.update(&work.output, rect);
-                trial.local = reference
-                    .score_prepared(&work.features, &mut work.score)
-                    .total;
+        .try_for_each(|(trials, work)| score_chunk(trials, work))
+}
+
+// Incremental totals use a different f64 reduction order. Only overlapping
+// intervals can alter the finalist order; settle those with the original scorer.
+fn settle_local_order(
+    trials: &mut [Trial],
+    patch: &Patch,
+    painter: PairPainter<'_>,
+    work: &mut TrialWorkspace,
+) {
+    let mut order: Vec<_> = (0..trials.len()).collect();
+    order.sort_unstable_by(|&a, &b| trials[a].local.total_cmp(&trials[b].local));
+    let mut exact = vec![false; trials.len()];
+    for pair in order.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        if trials[a].local_upper >= trials[b].local_lower {
+            exact[a] = true;
+            exact[b] = true;
+        }
+    }
+    let rect = painter.rect();
+    let copying = detailed_profiling().then(RenderInstant::now);
+    work.reset(&patch.output, &patch.features, None);
+    if let Some(start) = copying { work.copy_ms += start.elapsed().as_secs_f64() * 1000.0; }
+    for (trial, exact) in trials.iter_mut().zip(exact) {
+        if !exact {
+            continue;
+        }
+        let painting = detailed_profiling().then(RenderInstant::now);
+        painter.paint(&mut work.output, trial.a, trial.b);
+        work.features.update(&work.output, rect);
+        if let Some(start) = painting { work.features_ms += start.elapsed().as_secs_f64() * 1000.0; }
+        let scoring = detailed_profiling().then(RenderInstant::now);
+        trial.local = patch
+            .reference
+            .score_prepared(&work.features, &mut work.score)
+            .total;
+        trial.local_lower = trial.local;
+        trial.local_upper = trial.local;
+        if let Some(start) = scoring { work.scoring_ms += start.elapsed().as_secs_f64() * 1000.0; }
+    }
+}
+
+struct PreparedGroup {
+    trials: Vec<Trial>,
+    versions: Vec<(usize, u64)>,
+    patch: Patch,
+}
+
+struct RankContext<'a> {
+    source: &'a [[u8; 3]],
+    output: &'a [[u8; 3]],
+    data: &'a [BlockData],
+    glyphs: &'a [FastGlyph],
+    pools: &'a [Vec<Choice>],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    finalists: usize,
+    abort: Option<&'a AtomicBool>,
+}
+
+impl RankContext<'_> {
+    fn rank(
+        &self,
+        a: usize,
+        b: usize,
+        states: &[Choice],
+        work: &mut TrialWorkspace,
+    ) -> Result<(Vec<Trial>, Patch), ()> {
+        if cancelled(self.abort) {
+            return Err(());
+        }
+        let setup = detailed_profiling().then(RenderInstant::now);
+        let patch = Patch::new(
+            self.source,
+            self.output,
+            a,
+            b,
+            self.grid_w,
+            self.grid_h,
+            true,
+        );
+        if let Some(start) = setup { work.patch_ms += start.elapsed().as_secs_f64() * 1000.0; }
+        let trials = self.rank_patch(a, b, states, work, &patch)?;
+        Ok((trials, patch))
+    }
+
+    fn rank_patch(
+        &self,
+        a: usize,
+        b: usize,
+        states: &[Choice],
+        work: &mut TrialWorkspace,
+        patch: &Patch,
+    ) -> Result<Vec<Trial>, ()> {
+        debug_assert!(self.finalists > 0);
+        let painter = PairPainter {
+            a,
+            b,
+            grid_w: self.grid_w,
+            width: patch.width,
+            cell_x: patch.cell_x,
+            cell_y: patch.cell_y,
+            data: self.data,
+            glyphs: self.glyphs,
+            gw: self.gw,
+            gh: self.gh,
+        };
+        let mut trials = pair_trials(a, b, states[a], states[b], self.pools);
+        score_trials(
+            &mut trials,
+            &patch.reference,
+            &patch.output,
+            &patch.features,
+            patch.geometry.as_ref(),
+            &painter,
+            std::slice::from_mut(work),
+            self.abort,
+            detailed_profiling(),
+        )?;
+        settle_local_order(&mut trials, &patch, painter, work);
+        trials.retain(|trial| trial.local.is_finite());
+        trials.sort_unstable_by(|a, b| {
+            a.local
+                .total_cmp(&b.local)
+                .then_with(|| (a.a, a.b).cmp(&(b.a, b.b)))
+        });
+        Ok(trials)
+    }
+
+    fn refresh(
+        &self,
+        a: usize,
+        b: usize,
+        states: &[Choice],
+        versions: &[u64],
+        ready: &mut PreparedGroup,
+        work: &mut TrialWorkspace,
+    ) -> Result<Vec<Trial>, ()> {
+        let setup = detailed_profiling().then(RenderInstant::now);
+        let patch = &mut ready.patch;
+        let painter = PairPainter {
+            a,
+            b,
+            grid_w: self.grid_w,
+            width: patch.width,
+            cell_x: patch.cell_x,
+            cell_y: patch.cell_y,
+            data: self.data,
+            glyphs: self.glyphs,
+            gw: self.gw,
+            gh: self.gh,
+        };
+        let mut dirty = [usize::MAX, usize::MAX, 0, 0];
+        for &(cell, version) in &ready.versions {
+            if versions[cell] == version {
+                continue;
             }
-            Ok(())
-        })
+            painter.paint_cell(&mut patch.output, cell, states[cell]);
+            let (x, y) = (
+                cell % self.grid_w - patch.cell_x,
+                cell / self.grid_w - patch.cell_y,
+            );
+            dirty = [
+                dirty[0].min(x * CW),
+                dirty[1].min(y * CH),
+                dirty[2].max((x + 1) * CW),
+                dirty[3].max((y + 1) * CH),
+            ];
+        }
+        if dirty[0] < dirty[2] {
+            patch.features.update(&patch.output, dirty);
+            patch
+                .geometry
+                .as_mut()
+                .unwrap()
+                .update(&patch.reference, &patch.features, dirty);
+        }
+        if let Some(start) = setup { work.patch_ms += start.elapsed().as_secs_f64() * 1000.0; }
+        self.rank_patch(a, b, states, work, patch)
+    }
+
+    fn prepare(
+        &self,
+        groups: &[(usize, usize)],
+        states: &[Choice],
+        versions: &[u64],
+        timings: Option<&mut [f64; 4]>,
+    ) -> Result<Vec<Option<PreparedGroup>>, ()> {
+        let chunk = groups.len().div_ceil(cpu_workers()).max(1);
+        let chunks: Result<Vec<(Vec<_>, [f64; 4])>, ()> = groups
+            .par_chunks(chunk)
+            .map(|groups| {
+                let mut work = TrialWorkspace::default();
+                let prepared = groups
+                    .iter()
+                    .map(|&(a, b)| {
+                        let (trials, patch) = self.rank(a, b, states, &mut work)?;
+                        let [x0, y0, x1, y1] = Patch::bounds(a, b, self.grid_w, self.grid_h);
+                        let versions = (y0..y1)
+                            .flat_map(|y| {
+                                (x0..x1).map(move |x| {
+                                    let cell = y * self.grid_w + x;
+                                    (cell, versions[cell])
+                                })
+                            })
+                            .collect();
+                        Ok(Some(PreparedGroup {
+                            trials,
+                            versions,
+                            patch,
+                        }))
+                    })
+                    .collect::<Result<Vec<_>, ()>>()?;
+                Ok((prepared, [work.patch_ms, work.copy_ms, work.features_ms, work.scoring_ms]))
+            })
+            .collect();
+        let chunks = chunks?;
+        if let Some(timings) = timings {
+            for (_, times) in &chunks { for i in 0..4 { timings[i] += times[i]; } }
+        }
+        Ok(chunks.into_iter().flat_map(|(groups, _)| groups).collect())
+    }
 }
 
 /// Key the exact edits against the current committed image. Single-cell edits
@@ -666,6 +958,26 @@ pub(super) fn run(
     if !best_score.is_finite() {
         return Ok(None);
     }
+    let initial_score = best_score;
+    let initial_states = states.to_vec();
+    let temporal_key = temporal::key(args, glyphs, grid_w, grid_h, gw, gh);
+    let mut temporal_targets = temporal_key
+        .as_deref()
+        .and_then(|key| temporal::reuse(key, &source, data, states, grid_w, grid_h));
+    if let Some(targets) = &temporal_targets {
+        let warm = build_rendered_raster(data, states, glyphs, grid_w, grid_h, gw, gh);
+        let (warm, _, _) =
+            crate::contour_score::normalize_preview_raster(&warm, grid_w, grid_h, gw, gh);
+        let score = reference.score(&warm).total;
+        if score.is_finite() && score <= initial_score {
+            temporal::record_reused(targets.iter().filter(|&&target| !target).count());
+            best_score = score;
+            output = warm;
+        } else {
+            states.copy_from_slice(&initial_states);
+            temporal_targets = None;
+        }
+    }
     let mut best_estimate = ScoreEstimate::exact(best_score);
     let mut verification_raster = Vec::new();
     let mut precision_checks = 0usize;
@@ -674,6 +986,7 @@ pub(super) fn run(
     let finalists = args.glyph_search_finalists.min(4096) as usize;
     let full_worker_count = full_workers(finalists, output.len(), reference.geometry_pixels());
     let mut geometry = (full_worker_count == 1).then(|| GeometryCache::new(&reference, &features));
+    let mut pending_geometry: Option<[usize; 4]> = None;
     let mut full_workspaces: Vec<Option<FullTrialWorkspace>> =
         (0..full_worker_count).map(|_| None).collect();
     let mut commits = Vec::new();
@@ -682,8 +995,6 @@ pub(super) fn run(
     let mut score_cache: HashMap<ScoreKey, ScoreEstimate> = HashMap::new();
     let mut score_cache_hits = 0usize;
     status.score = best_score;
-    let initial_score = best_score;
-    let initial_states = states.to_vec();
     let masks: Vec<_> = glyphs
         .iter()
         .map(|glyph| smooth_preview_glyph(glyph, gw, gh).mask)
@@ -693,11 +1004,27 @@ pub(super) fn run(
     let mut moves = 0usize;
     let mut joint_moves = 0usize;
     let mut ranking_ms = 0.0;
+    let mut key_ms = 0.0;
+    let mut patch_ms = 0.0;
+    let mut dispatch_ms = 0.0;
+    let mut batch_ms = 0.0;
+    let mut batch_worker_ms = [0.0; 4];
+    let profiling = std::env::var_os("IMG2IRC_REPAIR_PROFILE").is_some();
+    let incremental_rank = std::env::var_os("IMG2IRC_REPAIR_INCREMENTAL_RANK").is_some();
     let mut checking_ms = 0.0;
     let threshold = args.discontinuity_threshold.max(0.0);
     let focused = threshold > 0.0;
     let mut contexts = HashMap::new();
     let mut skipped = 0usize;
+    let mut versions = vec![0_u64; states.len()];
+    let mut prepared_reused = 0usize;
+    let mut prepared_stale = 0usize;
+    let batch_size = std::env::var("IMG2IRC_REPAIR_BATCH_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(if cfg!(target_arch = "wasm32") { 0 } else { 64 })
+        .min(256);
+    let mut prepared: Vec<Option<PreparedGroup>> = Vec::new();
     log::info!(
         "Glyph search: starting perceptual={:.6}, {} alternatives/cell, {} passes, {}, CPU workers={} local / {} full-image, guarded incremental full-image scoring with cached block totals",
         initial_score,
@@ -727,6 +1054,7 @@ pub(super) fn run(
             reference.defect_cells(&output, CW, CH),
             data,
             threshold,
+            temporal_targets.as_deref(),
             grid_w,
             grid_h,
         );
@@ -794,6 +1122,31 @@ pub(super) fn run(
             if cancelled(abort) {
                 return Err(());
             }
+            if batch_size > 0 && finalists != 0 && group_index % batch_size == 0 {
+                let started = RenderInstant::now();
+                let context = RankContext {
+                    source: &source,
+                    output: &output,
+                    data,
+                    glyphs,
+                    pools: &pools,
+                    grid_w,
+                    grid_h,
+                    gw,
+                    gh,
+                    finalists,
+                    abort,
+                };
+                prepared = context.prepare(
+                    &groups[group_index..(group_index + batch_size).min(groups.len())],
+                    states,
+                    &versions,
+                    Some(&mut batch_worker_ms),
+                )?;
+                let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                ranking_ms += elapsed;
+                batch_ms += elapsed;
+            }
             let fingerprint = context_fingerprint(&output, a, b, &pools, grid_w, grid_h);
             if focused && contexts.get(&(a, b)) == Some(&fingerprint) {
                 skipped += 1;
@@ -822,6 +1175,7 @@ pub(super) fn run(
             };
             let rect = painter.rect();
             let mut selected = (old_a, old_b);
+            let mut last_raster_trial = None;
             let before_group = best_score;
             let single = [old_b];
             let b_choices = if a == b { &single[..] } else { &pools[b][..] };
@@ -835,41 +1189,127 @@ pub(super) fn run(
                     trial_count.min(finalists)
                 };
             let mut trials = pair_trials(a, b, old_a, old_b, &pools);
-            let patch =
-                (finalists != 0).then(|| Patch::new(&source, &output, a, b, grid_w, grid_h));
-            for batch in trials.chunks_mut(ranking_batch_size()) {
-                if cancelled(abort) {
-                    return Err(());
+            let key_started = RenderInstant::now();
+            let cache_key = (finalists != 0)
+                .then(|| {
+                    rank_cache::key(
+                        &source,
+                        &output,
+                        painter,
+                        &masks,
+                        &pools,
+                        (old_a, old_b),
+                        grid_h,
+                        finalists,
+                        workers,
+                    )
+                })
+                .flatten();
+            let cached = cache_key.as_ref().and_then(rank_cache::get);
+            key_ms += key_started.elapsed().as_secs_f64() * 1000.0;
+            if let Some(cached) = cached {
+                trials = cached;
+                status.pair_work_done += trial_count;
+            } else if batch_size > 0 && finalists != 0 {
+                let ready = prepared[group_index % batch_size].take();
+                if let Some(mut ready) = ready {
+                    if ready
+                        .versions
+                        .iter()
+                        .all(|&(cell, version)| versions[cell] == version)
+                    {
+                        trials = ready.trials;
+                        prepared_reused += 1;
+                    } else {
+                        prepared_stale += 1;
+                        let context = RankContext {
+                            source: &source,
+                            output: &output,
+                            data,
+                            glyphs,
+                            pools: &pools,
+                            grid_w,
+                            grid_h,
+                            gw,
+                            gh,
+                            finalists,
+                            abort,
+                        };
+                        trials = context.refresh(
+                            a,
+                            b,
+                            states,
+                            &versions,
+                            &mut ready,
+                            &mut local_workers[0],
+                        )?;
+                    }
                 }
-                if let Some(patch) = &patch {
-                    let local_painter = PairPainter {
-                        width: patch.width,
-                        cell_x: patch.cell_x,
-                        cell_y: patch.cell_y,
-                        ..painter
-                    };
-                    score_trials(
-                        batch,
-                        &patch.reference,
-                        &patch.output,
-                        &patch.features,
-                        &local_painter,
-                        &mut local_workers,
-                        abort,
-                    )?;
-                }
-                combinations += batch.len();
+                combinations += trial_count;
                 status.combinations = combinations;
-                status.pair_work_done += batch.len();
-                publish_if_due(&mut status, &started, &mut last_status);
+                status.pair_work_done += trial_count;
+                if let Some(key) = cache_key {
+                    rank_cache::insert(key, &trials);
+                }
+            } else {
+                let patch_started = RenderInstant::now();
+                let patch = (finalists != 0)
+                    .then(|| Patch::new(&source, &output, a, b, grid_w, grid_h, incremental_rank));
+                patch_ms += patch_started.elapsed().as_secs_f64() * 1000.0;
+                let dispatch_started = RenderInstant::now();
+                for batch in trials.chunks_mut(ranking_batch_size()) {
+                    if cancelled(abort) {
+                        return Err(());
+                    }
+                    if let Some(patch) = &patch {
+                        let local_painter = PairPainter {
+                            width: patch.width,
+                            cell_x: patch.cell_x,
+                            cell_y: patch.cell_y,
+                            ..painter
+                        };
+                        score_trials(
+                            batch,
+                            &patch.reference,
+                            &patch.output,
+                            &patch.features,
+                            patch.geometry.as_ref(),
+                            &local_painter,
+                            &mut local_workers,
+                            abort,
+                            profiling,
+                        )?;
+                    }
+                    combinations += batch.len();
+                    status.combinations = combinations;
+                    status.pair_work_done += batch.len();
+                    publish_if_due(&mut status, &started, &mut last_status);
+                }
+                dispatch_ms += dispatch_started.elapsed().as_secs_f64() * 1000.0;
+                if incremental_rank {
+                    if let Some(patch) = &patch {
+                        let painter = PairPainter {
+                            width: patch.width,
+                            cell_x: patch.cell_x,
+                            cell_y: patch.cell_y,
+                            ..painter
+                        };
+                        settle_local_order(&mut trials, patch, painter, &mut local_workers[0]);
+                    }
+                }
+                trials.retain(|trial| trial.local.is_finite());
+                if finalists != 0 {
+                    trials.sort_unstable_by(|a, b| {
+                        a.local
+                            .total_cmp(&b.local)
+                            .then_with(|| (a.a, a.b).cmp(&(b.a, b.b)))
+                    });
+                }
+                if let Some(key) = cache_key {
+                    rank_cache::insert(key, &trials);
+                }
             }
-            trials.retain(|trial| trial.local.is_finite());
             if finalists != 0 {
-                trials.sort_unstable_by(|a, b| {
-                    a.local
-                        .total_cmp(&b.local)
-                        .then_with(|| (a.a, a.b).cmp(&(b.a, b.b)))
-                });
                 trials.truncate(finalists);
             }
             ranking_ms += ranking_started.elapsed().as_secs_f64() * 1000.0;
@@ -947,11 +1387,30 @@ pub(super) fn run(
                     } else {
                         painter.paint(&mut output, trial.a, trial.b);
                         features.update(&output, rect);
+                        let mut changed = rect;
+                        if let Some(pending) = pending_geometry.take() {
+                            let union = [
+                                pending[0].min(rect[0]),
+                                pending[1].min(rect[1]),
+                                pending[2].max(rect[2]),
+                                pending[3].max(rect[3]),
+                            ];
+                            let area = |r: [usize; 4]| (r[2] - r[0]) * (r[3] - r[1]);
+                            if area(union) <= area(pending) + 2 * area(rect) {
+                                changed = union;
+                            } else {
+                                geometry
+                                    .as_mut()
+                                    .unwrap()
+                                    .update(&reference, &features, pending);
+                            }
+                        }
                         let score = reference.score_incremental_estimate(
                             &features,
                             geometry.as_mut().expect("serial scoring cache"),
-                            rect,
+                            changed,
                         );
+                        last_raster_trial = Some((trial.a, trial.b));
                         full_checks += 1;
                         score_cache.insert(key, score);
                         score
@@ -1023,14 +1482,35 @@ pub(super) fn run(
             }
             // The last scored trial may differ from the chosen pair, including
             // when all scores came from the memo table. Restore its features too.
-            features.update(&output, rect);
-            if let Some(geometry) = &mut geometry {
-                geometry.update(&reference, &features, rect);
+            if last_raster_trial.is_some() || selected != (old_a, old_b) {
+                features.update(&output, rect);
+            }
+            if geometry.is_some() {
+                if let Some(last) = last_raster_trial {
+                    pending_geometry = (last != selected).then_some(rect);
+                } else if selected != (old_a, old_b) {
+                    pending_geometry = Some(if let Some(p) = pending_geometry {
+                        [
+                            p[0].min(rect[0]),
+                            p[1].min(rect[1]),
+                            p[2].max(rect[2]),
+                            p[3].max(rect[3]),
+                        ]
+                    } else {
+                        rect
+                    });
+                }
             }
             checking_ms += checking_started.elapsed().as_secs_f64() * 1000.0;
             states[a] = selected.0;
             if a != b {
                 states[b] = selected.1;
+            }
+            if selected.0 != old_a {
+                versions[a] += 1;
+            }
+            if a != b && selected.1 != old_b {
+                versions[b] += 1;
             }
             if selected != (old_a, old_b) {
                 commits.push(CommittedPair { a, b });
@@ -1097,18 +1577,195 @@ pub(super) fn run(
     if rolled_back {
         states.copy_from_slice(&initial_states);
     }
+    if let Some(key) = temporal_key {
+        temporal::remember(key, &source, data, states);
+    }
     log::info!("Glyph search finished: {} combinations, {} full checks, {} full scores reused, {} unchanged pairs skipped, {} moves ({} joint), perceptual {:.6} -> {:.6}, rollback={}, {:.1} ms", combinations, full_checks, score_cache_hits, skipped, moves, joint_moves, initial_score, if rolled_back { initial_score } else { verified }, rolled_back, started.elapsed().as_secs_f64() * 1000.0);
     log::info!(
         "Glyph search timing: local ranking {:.1} ms, full-image checks/restoration {:.1} ms",
         ranking_ms,
         checking_ms
     );
+    if profiling {
+        log::info!("Local ranking wall time: cache keys {:.1}ms, sequential patch setup {:.1}ms, sequential scoring/dispatch {:.1}ms, batched preparation/ranking {:.1}ms", key_ms, patch_ms, dispatch_ms, batch_ms);
+        log::info!("Local ranking summed worker time (includes batched jobs and precision checks): patch setup {:.1}ms, copying {:.1}ms, painting/features {:.1}ms, perceptual score {:.1}ms", batch_worker_ms[0] + local_workers.iter().map(|w| w.patch_ms).sum::<f64>(), batch_worker_ms[1] + local_workers.iter().map(|w| w.copy_ms).sum::<f64>(), batch_worker_ms[2] + local_workers.iter().map(|w| w.features_ms).sum::<f64>(), batch_worker_ms[3] + local_workers.iter().map(|w| w.scoring_ms).sum::<f64>());
+    }
     log::info!(
         "Repair Edges: {} raster-order precision checks for borderline score decisions",
         precision_checks
+    );
+    log::info!(
+        "Parallel pair rankings: {} reused unchanged, {} recalculated after neighbouring commits",
+        prepared_reused,
+        prepared_stale
     );
     status.stage = GlyphSearchStage::Finished;
     status.score = if rolled_back { initial_score } else { verified };
     status.publish(&started);
     Ok(initial_defects)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn batched_rankings_match_original_scores_and_refresh_after_neighbour_changes() {
+        let args = crate::args_to_render_args(&crate::args::Args::parse_from(["test"]));
+        let store = crate::font::glyph_store(
+            &["half".into()],
+            &[],
+            &[],
+            &[],
+            None,
+            &[],
+            16.0,
+            false,
+            None,
+        );
+        let glyphs = prepare_glyphs(&store, &args);
+        assert!(glyphs.len() > 1);
+        let (gw, gh) = store.metrics;
+        let (grid_w, grid_h) = (7, 6);
+        let source: Vec<_> = (0..grid_w * CW * grid_h * CH)
+            .map(|p| {
+                [
+                    ((p * 17) % 256) as u8,
+                    ((p * 11) % 256) as u8,
+                    ((p / 5 * 23) % 256) as u8,
+                ]
+            })
+            .collect();
+        let data: Vec<_> = (0..grid_w * grid_h)
+            .map(|cell| BlockData {
+                fg: [220, 30 + cell as u8, 50],
+                bg: [20, 30, 180],
+                fg_col: None,
+                bg_col: None,
+                alt_fg_col: None,
+                alt_bg_col: None,
+            })
+            .collect();
+        let mut states = vec![(0, false); data.len()];
+        let mut output = vec![[0; 3]; source.len()];
+        let painter = PairPainter {
+            a: 0,
+            b: 0,
+            grid_w,
+            width: grid_w * CW,
+            cell_x: 0,
+            cell_y: 0,
+            data: &data,
+            glyphs: &glyphs,
+            gw,
+            gh,
+        };
+        for (cell, &state) in states.iter().enumerate() {
+            painter.paint_cell(&mut output, cell, state);
+        }
+        let choices: Vec<_> = (0..glyphs.len().min(3))
+            .flat_map(|g| [(g, false), (g, true)])
+            .collect();
+        let pools = vec![choices; states.len()];
+        let groups = [
+            (0, 1),
+            (3 * grid_w + 3, 3 * grid_w + 4),
+            (states.len() - 2, states.len() - 1),
+        ];
+        let mut versions = vec![0; states.len()];
+        let context = RankContext {
+            source: &source,
+            output: &output,
+            data: &data,
+            glyphs: &glyphs,
+            pools: &pools,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            finalists: 3,
+            abort: None,
+        };
+        let mut ready = context.prepare(&groups, &states, &versions, None).unwrap();
+        for (&(a, b), ready) in groups.iter().zip(&ready) {
+            let ready = ready.as_ref().unwrap();
+            let patch = &ready.patch;
+            let painter = PairPainter {
+                a,
+                b,
+                width: patch.width,
+                cell_x: patch.cell_x,
+                cell_y: patch.cell_y,
+                ..painter
+            };
+            let mut original = pair_trials(a, b, states[a], states[b], &pools);
+            score_trials(
+                &mut original,
+                &patch.reference,
+                &patch.output,
+                &patch.features,
+                None,
+                &painter,
+                &mut workspaces(1),
+                None,
+                false,
+            )
+            .unwrap();
+            original.sort_unstable_by(|a, b| {
+                a.local
+                    .total_cmp(&b.local)
+                    .then_with(|| (a.a, a.b).cmp(&(b.a, b.b)))
+            });
+            assert_eq!(
+                ready.trials.iter().map(|t| (t.a, t.b)).collect::<Vec<_>>(),
+                original.iter().map(|t| (t.a, t.b)).collect::<Vec<_>>()
+            );
+            for (fast, exact) in ready.trials.iter().zip(original) {
+                assert!((fast.local - exact.local).abs() < 1e-9);
+            }
+        }
+        let cell = 3 * grid_w + 2;
+        states[cell] = (1, true);
+        versions[cell] += 1;
+        painter.paint_cell(&mut output, cell, states[cell]);
+        let cell = groups[1].0;
+        states[cell] = (1, false);
+        versions[cell] += 1;
+        painter.paint_cell(&mut output, cell, states[cell]);
+        let context = RankContext {
+            source: &source,
+            output: &output,
+            data: &data,
+            glyphs: &glyphs,
+            pools: &pools,
+            grid_w,
+            grid_h,
+            gw,
+            gh,
+            finalists: 3,
+            abort: None,
+        };
+        let (a, b) = groups[1];
+        let refreshed = context
+            .refresh(
+                a,
+                b,
+                &states,
+                &versions,
+                ready[1].as_mut().unwrap(),
+                &mut TrialWorkspace::default(),
+            )
+            .unwrap();
+        let (fresh, _) = context
+            .rank(a, b, &states, &mut TrialWorkspace::default())
+            .unwrap();
+        assert_eq!(
+            refreshed.iter().map(|t| (t.a, t.b)).collect::<Vec<_>>(),
+            fresh.iter().map(|t| (t.a, t.b)).collect::<Vec<_>>()
+        );
+        for (a, b) in refreshed.iter().zip(fresh) {
+            assert!((a.local - b.local).abs() < 1e-9);
+        }
+    }
 }

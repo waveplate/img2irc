@@ -32,6 +32,7 @@ paths and HTTP(S) URLs work as input. `ansi` is the default colour mode. `img2ir
 - [fonts and configuration](docs/configuration.md) — custom fonts, glyph sets, and layouts
 - [Python](docs/python.md) — API and wheel builds
 - [web and JavaScript](docs/web.md) — browser editor, deployment, and WASM API
+- [terminal video](examples/README.md) — shared TUI editor, encoder, player and TCP/SSH server (`img2irc video …`)
 
 > if you like this project, i would appreciate a vote on the [AUR](https://aur.archlinux.org/packages/img2irc-bin)!
 

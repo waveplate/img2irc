@@ -36,14 +36,22 @@ export type Img2IrcPipelineEffect =
     | "crop" | "rotate" | "scale" | "flip-horizontal" | "flip-vertical"
     | "gaussian-blur" | "median-blur" | "line-thickness" | "box-blur"
     | "pixelize" | "dither" | "invert" | "grayscale" | "replace" | "quantize"
-    | "luma-blur" | "oil" | "halftone" | "sepia" | "solarize" | "normalize"
-    | "noise" | "sharpen" | "edge-detection" | "emboss" | "frosted-glass"
-    | "laplace" | "identity" | "cali" | "dramatic" | "firenze" | "golden"
-    | "lix" | "lofi" | "neue" | "obsidian" | "pastel-pink" | "ryo";
+    | "normalize" | "sharpen" | "cali" | "lofi";
+export type Img2IrcImageEffect =
+    | "FlipH" | "FlipV" | "BoxBlur" | "Invert" | "Grayscale" | "Normalize" | "Sharpen" | "Lofi" | "Cali"
+    | { Brightness: number } | { Contrast: number } | { LumaContrast: number }
+    | { Saturation: number } | { Gamma: number } | { Hue: number } | { Rotate: number }
+    | { ScaleX: number } | { ScaleY: number } | { GaussBlur: number } | { MedianBlur: number }
+    | { DarkLines: number } | { Pixelize: number } | { Dither: number }
+    | { Crop: { top: number; right: number; bottom: number; left: number } }
+    | { ReplaceColour: { from: [number, number, number]; to: [number, number, number]; tolerance: number } }
+    | { QuantizePalette: { colours: number; threshold: number; palette: [number, number, number][]; source: boolean } };
 
 export interface Img2IrcRenderOptions {
+    /** Ordered effects with independent parameters; repeated effects are allowed. */
+    pipeline?: Img2IrcImageEffect[];
     pipelineOrder?: Img2IrcPipelineEffect[];
-    extraEffects?: (string | { LumaBlur: number } | { Oil: [number, number] })[];
+    extraEffects?: ("Normalize" | "Sharpen" | "Lofi" | "Cali")[];
     cropTop?: number;
     cropRight?: number;
     cropBottom?: number;
@@ -303,6 +311,7 @@ impl From<WebColourSpace> for ColourSpace {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct WebOptions {
+    pipeline: Option<Vec<crate::pipeline::ImageEffect>>,
     pipeline_order: Option<Vec<String>>,
     extra_effects: Vec<crate::pipeline::ImageEffect>,
     crop_top: u32,
@@ -321,6 +330,7 @@ struct WebOptions {
     exclude: String,
     exclude_ranges: Vec<String>,
     filter: WebSamplingFilter,
+    blend_colours: bool,
     scale_x: f32,
     scale_y: f32,
     rotate: f32,
@@ -480,6 +490,7 @@ impl WebTextOverlay {
 impl Default for WebOptions {
     fn default() -> Self {
         Self {
+            pipeline: None,
             pipeline_order: None,
             extra_effects: Vec::new(),
             crop_top: 0,
@@ -498,6 +509,7 @@ impl Default for WebOptions {
             exclude: String::new(),
             exclude_ranges: Vec::new(),
             filter: WebSamplingFilter::Nearest,
+            blend_colours: false,
             scale_x: 1.0,
             scale_y: 1.0,
             rotate: 0.0,
@@ -554,22 +566,42 @@ const WEB_PIPELINE_IDS: &[&str] = &[
     "brightness", "contrast", "luma-contrast", "saturation", "gamma", "hue", "crop",
     "rotate", "scale", "flip-horizontal", "flip-vertical", "gaussian-blur", "median-blur",
     "line-thickness", "box-blur", "pixelize", "dither", "invert", "grayscale", "replace", "quantize",
-    "luma-blur", "oil", "halftone", "sepia", "solarize", "normalize", "noise", "sharpen",
-    "edge-detection", "emboss", "frosted-glass", "laplace", "identity", "cali", "dramatic",
-    "firenze", "golden", "lix", "lofi", "neue", "obsidian", "pastel-pink", "ryo",
+    "normalize", "sharpen", "cali", "lofi",
+    "darken-outlines",
 ];
 
 fn extra_effect_id(effect: &crate::pipeline::ImageEffect) -> Option<&'static str> {
     use crate::pipeline::ImageEffect::*;
     Some(match effect {
-        LumaBlur(_) => "luma-blur", Oil(_, _) => "oil", Halftone => "halftone",
-        Sepia => "sepia", Solarize => "solarize", Normalize => "normalize",
-        Noise => "noise", Sharpen => "sharpen", EdgeDetect => "edge-detection",
-        Emboss => "emboss", FrostGlass => "frosted-glass", Laplace => "laplace",
-        Identity => "identity", Cali => "cali", Dramatic => "dramatic", Firenze => "firenze",
-        Golden => "golden", Lix => "lix", Lofi => "lofi", Neue => "neue", Obsidian => "obsidian",
-        PastelPink => "pastel-pink", Ryo => "ryo", _ => return None,
+        Normalize => "normalize", Sharpen => "sharpen", Cali => "cali", Lofi => "lofi",
+        DarkenOutlines(_) => "darken-outlines",
+        _ => return None,
     })
+}
+
+fn valid_web_effect(effect: &crate::pipeline::ImageEffect) -> bool {
+    use crate::pipeline::ImageEffect::*;
+    let in_range = |v: f32, min, max| v.is_finite() && (min..=max).contains(&v);
+    match effect {
+        Brightness(v) | Contrast(v) | LumaContrast(v) | Saturation(v) | Gamma(v) => in_range(*v, -255.0, 255.0),
+        Hue(v) => in_range(*v, 0.0, 360.0),
+        Rotate(v) => in_range(*v, -180.0, 180.0),
+        DarkLines(v) => in_range(*v, -10.0, 10.0),
+        DarkenOutlines(options) => in_range(options.strength, 0.0, 100.0)
+            && (1..=64).contains(&options.radius)
+            && in_range(options.threshold, 0.0, 100.0)
+            && in_range(options.contrast, 0.0, 100.0),
+        ScaleX(v) | ScaleY(v) => (50..=200).contains(v),
+        GaussBlur(v) => (0..=20).contains(v),
+        MedianBlur(v) => (0..=10).contains(v),
+        Pixelize(v) => (0..=64).contains(v),
+        Dither(v) => *v <= 8,
+        Crop { top, right, bottom, left } => [top, right, bottom, left].iter().all(|&&v| v <= 100_000),
+        ReplaceColour { tolerance, .. } => in_range(*tolerance, 0.0, 100.0),
+        QuantizePalette { colours, threshold, palette, .. } => *colours <= 256 && in_range(*threshold, 0.0, 100.0) && palette.len() <= 256,
+        FlipH | FlipV | BoxBlur | Invert | Grayscale | Normalize | Sharpen | Cali | Lofi => true,
+        _ => false,
+    }
 }
 
 impl WebOptions {
@@ -612,6 +644,12 @@ impl WebOptions {
     }
 
     fn validate(&self) -> Result<(), JsValue> {
+        if let Some(pipeline) = &self.pipeline {
+            // Scale has two native operations, so 64 UI entries can expand to 128.
+            if pipeline.len() > 128 || pipeline.iter().any(|effect| !valid_web_effect(effect)) {
+                return Err(js_error("pipeline contains an unsupported effect, invalid parameter, or too many entries"));
+            }
+        }
         if self.extra_effects.len() > 64 || self.extra_effects.iter().any(|effect| {
             extra_effect_id(effect).is_none() || effect.parameters().iter().any(|p| !p.value.is_finite() || p.value < p.min || p.value > p.max)
         }) {
@@ -684,6 +722,11 @@ impl WebOptions {
 
     fn canvas_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
+        self.pipeline.is_some().hash(&mut hasher);
+        if let Some(pipeline) = &self.pipeline {
+            let source: Vec<_> = pipeline.iter().filter(|effect| !effect.is_output_colour()).collect();
+            format!("{source:?}").hash(&mut hasher);
+        }
         self.pipeline_order.is_some().hash(&mut hasher);
         if let Some(order) = &self.pipeline_order {
             // Output-colour edits still reuse expensive matching/search results.
@@ -696,6 +739,7 @@ impl WebOptions {
         self.width.hash(&mut hasher);
         self.height.hash(&mut hasher);
         (self.filter as u8).hash(&mut hasher);
+        self.blend_colours.hash(&mut hasher);
         self.scale_x.to_bits().hash(&mut hasher);
         self.scale_y.to_bits().hash(&mut hasher);
         self.rotate.to_bits().hash(&mut hasher);
@@ -1361,6 +1405,7 @@ impl WebRenderer {
         cli.exclude = options.exclude.chars().collect();
         cli.exclude_range = options.exclude_ranges.clone();
         cli.filter = options.filter.into();
+        cli.blend_colours = options.blend_colours;
         cli.scale = Some((options.scale_x, options.scale_y));
         cli.rotate = Param::Fixed(options.rotate);
         cli.fliph = options.flip_horizontal;
@@ -1419,8 +1464,12 @@ impl WebRenderer {
                 source: options.quantize_source,
             });
         }
-        if let Some(order) = &options.pipeline_order {
+        if let Some(pipeline) = &options.pipeline {
+            args.pipeline = pipeline.clone();
+        } else if let Some(order) = &options.pipeline_order {
             args.pipeline = order.iter().flat_map(|id| options.pipeline_effect(id).unwrap_or_default()).collect();
+        }
+        if options.pipeline.is_some() || options.pipeline_order.is_some() {
             // Clear legacy effect fields so an explicit empty pipeline cannot
             // fall back to effects omitted from the supplied order.
             args.brightness = 0.0;

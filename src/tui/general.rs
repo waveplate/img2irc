@@ -33,13 +33,14 @@ pub(crate) fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: 
         pane_height,
     );
     app.options_pane_area = pane_area;
+    app.register_pane(Pane::Options, pane_area);
     app.options_areas.clear();
     f.render_widget(Clear, pane_area);
 
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" {} Options ", ctrl.label))
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(Style::new().fg(if app.pane_focus == Pane::Options { ACCENT } else { BORDER }));
     f.render_widget(&block, pane_area);
 
     let inner = block.inner(pane_area);
@@ -75,10 +76,11 @@ pub(crate) fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: 
 }
 
 pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    app.register_pane(Pane::Controls, area);
     // Panel border
     let panel = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(BORDER))
+        .border_style(Style::new().fg(if app.pane_focus == Pane::Controls { ACCENT } else { BORDER }))
         .border_set(symbols::border::ROUNDED)
         .style(Style::new().bg(SURFACE));
     let panel_inner = panel.inner(area);
@@ -100,7 +102,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
     // Keep the viewport stationary while the selection remains visible. The
     // previous offset was derived directly from the selected row, which pinned
     // the selection to the bottom edge whenever the list had been scrolled.
-    let selected_ctrl = if app.current_tab == 0 {
+    let selected_ctrl = if app.current_tab == 0 && app.pane_focus == Pane::Controls {
         app.selected_control
     } else {
         usize::MAX

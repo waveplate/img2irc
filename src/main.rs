@@ -15,6 +15,12 @@ fn glyph_bitmap_font_size(requested: f32) -> f32 {
 
 #[tokio::main]
 async fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("video")) {
+        let arguments: Vec<_> = std::env::args_os().skip(1).collect();
+        // The video editor runs its own runtime; leave this runtime thread free.
+        let result = tokio::task::spawn_blocking(move || img2irc_rs::video::run(arguments)).await.unwrap();
+        std::process::exit(if result == std::process::ExitCode::SUCCESS { 0 } else { 1 });
+    }
     let no_arguments = std::env::args_os().len() == 1;
     let mut args = args::parse_args();
 

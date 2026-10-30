@@ -1,4 +1,5 @@
 import { quantizeRgb } from "./output-palettes.js";
+import { effectControl } from "./effect-catalog.js";
 
 export class ColourReplacementPicker {
   #root;
@@ -14,7 +15,7 @@ export class ColourReplacementPicker {
     this.#changed = changed;
   }
 
-  #element(id) { return this.#root.querySelector(`#${id}`); }
+  #element(id) { return effectControl(this.#root, id); }
 
   close() {
     this.#element("replace-picker").hidden = true;
@@ -31,7 +32,10 @@ export class ColourReplacementPicker {
       }
     };
     this.#element("replace-enabled").addEventListener("change", syncValidation);
-    this.#element("reset-adjustments").addEventListener("click", syncValidation);
+    this.#root.addEventListener("effectreset", () => {
+      this.close();
+      syncValidation();
+    });
     syncValidation();
     this.#element("replace-cancel").addEventListener("click", () => this.close());
     this.#element("replace-pick").addEventListener("click", () => { void this.#open("from"); });
@@ -42,10 +46,6 @@ export class ColourReplacementPicker {
         this.#changed();
       });
     }
-    this.#element("render").addEventListener("change", () => {
-      this.#normalizeControl("replace-from");
-      this.#normalizeControl("replace-to");
-    });
     this.#element("replace-canvas").addEventListener("click", (event) => {
       const canvas = event.currentTarget;
       const rect = canvas.getBoundingClientRect();
@@ -63,6 +63,11 @@ export class ColourReplacementPicker {
       this.close();
       this.#changed();
     });
+  }
+
+  normalize() {
+    this.#normalizeControl("replace-from");
+    this.#normalizeControl("replace-to");
   }
 
   #normalizeControl(id) {

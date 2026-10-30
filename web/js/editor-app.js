@@ -16,6 +16,7 @@ import { initializeSliderToggles } from "./slider-toggle.js";
 import { initializePaletteControls } from "./palette-controls.js";
 import { initializePipelineControls } from "./pipeline-controls.js";
 import { initializeCropControls } from "./crop-controls.js";
+import { collectPipelineEffects, effectControl, isOutputColourEffect } from "./effect-catalog.js";
 import { initializeWorkspaceControls } from "./workspace-controls.js";
 import { isImageFile, rasterizeSvg } from "./image-input.js";
 import { saveFile } from "./file-export.js";
@@ -57,12 +58,7 @@ export class EditorApp {
     () => this.#markOverlayDirty(),
     this.#preview,
   );
-  #colourPicker = new ColourReplacementPicker(
-    this.#form,
-    () => this.#state.result,
-    () => this.#element("render").value,
-    () => this.#markRenderDirty(),
-  );
+  #colourPickers = new Map();
   #rendererFontKey;
   #rendererSourceKey;
   #fontLoadRevision = 0;
@@ -103,7 +99,7 @@ export class EditorApp {
     restoreControls(this.#form, saved?.controls);
     this.#pipelineControls = initializePipelineControls(this.#form);
     restoreControls(this.#form, saved?.controls);
-    if (saved?.pipeline) this.#pipelineControls.restore(saved.pipeline);
+    const removedEffects = saved?.pipeline ? this.#pipelineControls.restore(saved.pipeline) : false;
     this.#workspaceControls = initializeWorkspaceControls(this.#form);
     initializeControlHelp(this.#form);
     initializeNumberScrubbers(this.#form);
@@ -127,18 +123,7 @@ export class EditorApp {
     this.#textControls.start();
     this.#bindEvents();
     this.#syncOcrAutoWidthControls();
-    this.#colourPicker.start();
-    initializePaletteControls(this.#form, () => this.#state.result, () => this.#markRenderDirty());
-    initializeCropControls(this.#form, async () => {
-      if (!this.#state.hasImage) throw new Error("Open an image first");
-      if (this.#renderRequestInFlight || this.#fontScanInFlight) this.#stopRender();
-      await this.#ensureRenderer();
-      await this.#ensureRendererSource(this.#state.sourceBlob, `original:${this.#state.sourceRevision}`);
-      const options = collectRenderOptions(this.#form, this.#glyphs, []);
-      const index = options.pipelineOrder.indexOf("crop");
-      return this.#renderer.getTransformedImage({ ...options,
-        pipelineOrder: index < 0 ? [] : options.pipelineOrder.slice(0, index), sourceResolution: true });
-    });
+    for (const node of this.#pipelineControls.nodes()) this.#initializePipelineEntry(node);
     this.#selectControlTab(saved?.activeTab ?? "general");
     this.#element("view-controls").checked = saved?.controls?.["view-controls"] ?? true;
     this.#form.dataset.controlsVisible = String(this.#element("view-controls").checked);
@@ -162,8 +147,7 @@ export class EditorApp {
       this.#sourceLabel = source.label;
       await this.#ensureRendererSource(source.blob, `original:${source.revision}`);
       this.#showSourceLink();
-      this.#element("replace-pick").disabled = false;
-      this.#element("replace-pick-to").disabled = false;
+      this.#syncColourPickers();
     }
     this.#documentRevision = saved?.revision ?? 0;
     this.#state.manualOverlays = saved?.manualOverlays ?? [];
@@ -171,11 +155,11 @@ export class EditorApp {
     this.#state.ocrOverlaysDirty = Boolean(saved?.ocrOverlaysDirty);
     this.#state.ocrOverlaysEnabled = this.#element("ocr-enabled").checked;
     const output = restored.result;
-    const matchesSource = output && output.sourceRevision === this.#state.sourceRevision && this.#state.hasImage;
+    const matchesSource = output && !removedEffects && output.sourceRevision === this.#state.sourceRevision && this.#state.hasImage;
     if (matchesSource) {
       this.#lockedOcr = output.lockedOcr;
       this.#lockedOcrGrid = output.lockedOcrGrid;
-      if (output.revision === this.#documentRevision) this.#overlayRenderOptions = output.options;
+      if (output.revision === this.#documentRevision && output.options?.pipeline) this.#overlayRenderOptions = output.options;
       this.#commitRenderResult(output.result, output.result.workerRenderMs ?? 0, performance.now());
     }
     this.#textControls.restoreSelection(saved?.overlaySelection);
@@ -196,6 +180,37 @@ export class EditorApp {
     } else if (this.#state.hasImage && (saved?.pendingRender
       || (this.#element("auto-render").checked && (!matchesSource || output.revision !== this.#documentRevision)))) {
       void this.render();
+    }
+  }
+
+  #initializePipelineEntry(node) {
+    initializeNumberScrubbers(node);
+    initializeSliderToggles(node);
+    if (node.dataset.pipelineEffect === "replace") {
+      const picker = new ColourReplacementPicker(node, () => this.#state.result,
+        () => this.#element("render").value, () => this.#markRenderDirty());
+      this.#colourPickers.set(node, picker);
+      picker.start();
+      this.#syncColourPickers();
+    } else if (node.dataset.pipelineEffect === "quantize") {
+      initializePaletteControls(node, () => this.#state.result, () => this.#markRenderDirty());
+    } else if (node.dataset.pipelineEffect === "crop") {
+      initializeCropControls(node, async () => {
+        if (!this.#state.hasImage) throw new Error("Open an image first");
+        if (this.#renderRequestInFlight || this.#fontScanInFlight) this.#stopRender();
+        await this.#ensureRenderer();
+        await this.#ensureRendererSource(this.#state.sourceBlob, `original:${this.#state.sourceRevision}`);
+        const options = collectRenderOptions(this.#form, this.#glyphs, []);
+        return this.#renderer.getTransformedImage({ ...options,
+          pipeline: collectPipelineEffects(this.#form, node), sourceResolution: true });
+      });
+    }
+  }
+
+  #syncColourPickers() {
+    for (const node of this.#colourPickers.keys()) {
+      effectControl(node, "replace-pick").disabled = !this.#state.hasImage;
+      effectControl(node, "replace-pick-to").disabled = !this.#state.hasImage;
     }
   }
 
@@ -479,7 +494,11 @@ export class EditorApp {
     const refining = this.#element("smooth").checked || this.#element("glyph-pair-search").checked;
     let dismissed = this.#smoothHintSeen;
     try { dismissed ||= Boolean(localStorage.getItem("img2irc.smooth-hint-dismissed")); } catch {}
-    this.#element("smooth-glyph-hint").hidden = !refining || smooth || dismissed || this.#element("braille").checked;
+    const hint = this.#element("smooth-glyph-hint");
+    hint.hidden = !refining || smooth || dismissed || this.#element("braille").checked;
+    const button = this.#element("glyph-preset-smooth");
+    if (hint.hidden) button.removeAttribute("aria-describedby");
+    else button.setAttribute("aria-describedby", "smooth-glyph-hint-text");
   }
 
   async #optimizeFontSize() {
@@ -659,11 +678,12 @@ export class EditorApp {
     return {
       ...options,
       // Only finished-art colour edits remain after source effects and OCR.
+      pipeline: options.pipeline?.filter(isOutputColourEffect),
       pipelineOrder: options.pipelineOrder?.filter((id) => id === "replace"
         || (id === "quantize" && !options.quantizeSource)),
       extraEffects: [], cropTop: 0, cropRight: 0, cropBottom: 0, cropLeft: 0,
       quantizeEnabled: options.quantizeSource ? false : options.quantizeEnabled,
-      quantizeColours: options.quantizeSource ? 0 : options.quantizeColours,
+      quantizeColours: options.quantizeSource ? 0 : (options.quantizeColours ?? 0),
       rotate: 0,
       flipHorizontal: false,
       flipVertical: false,
@@ -728,9 +748,8 @@ export class EditorApp {
     });
     this.#element("download-output").disabled = true;
     this.#element("download-png").disabled = true;
-    this.#element("replace-pick").disabled = false;
-    this.#element("replace-pick-to").disabled = false;
-    this.#colourPicker.close();
+    this.#syncColourPickers();
+    for (const picker of this.#colourPickers.values()) picker.close();
     this.#rendererSourceKey = `original:${this.#state.sourceRevision}`;
     this.#ocrOverlayKey = undefined;
     this.#lockedOcr = undefined;
@@ -976,6 +995,10 @@ export class EditorApp {
       void this.render();
     });
     this.#form.addEventListener("pipelinechange", () => this.#markRenderDirty());
+    this.#form.addEventListener("pipelineentry", (event) => this.#initializePipelineEntry(event.detail.node));
+    this.#element("render").addEventListener("change", () => {
+      for (const picker of this.#colourPickers.values()) picker.normalize();
+    });
     this.#form.addEventListener("input", (event) => {
       if (event.target.matches('input[type="range"]')) updateRangeOutput(event.target);
       if (event.target.id === "output-font-size") {
@@ -1138,9 +1161,11 @@ export class EditorApp {
     });
     this.#element("optimize-font-size").addEventListener("click", () => void this.#optimizeFontSize());
     this.#element("hint-use-smooth").addEventListener("click", () => {
-      this.#selectGlyphPreset("smooth"); this.#element("smooth-glyph-hint").hidden = true;
+      this.#element("glyph-preset-smooth").focus();
+      this.#selectGlyphPreset("smooth");
     });
     this.#element("hint-dismiss").addEventListener("click", () => {
+      this.#element("glyph-preset-smooth").focus();
       this.#smoothHintSeen = true;
       try { localStorage.setItem("img2irc.smooth-hint-dismissed", "true"); } catch {}
       this.#syncSmoothHint();

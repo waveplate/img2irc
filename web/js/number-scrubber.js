@@ -10,8 +10,12 @@ function numericAttribute(input, name) {
   return Number.isFinite(value) ? value : undefined;
 }
 
+const initialized = new WeakSet();
+
 export function initializeNumberScrubbers(root) {
   for (const input of root.querySelectorAll('input[type="number"]')) {
+    if (initialized.has(input)) continue;
+    initialized.add(input);
     input.classList.add("scrubbable-number");
     input.title ||= "Type a value, or drag horizontally to adjust it";
 

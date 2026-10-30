@@ -1,7 +1,9 @@
+import { effectControl } from "./effect-catalog.js";
+
 export function initializeCropControls(root, getImage) {
-  const fields = ["left", "top", "right", "bottom"].map((side) => root.querySelector(`#crop-${side}`));
+  const fields = ["left", "top", "right", "bottom"].map((side) => effectControl(root, `crop-${side}`));
   const notify = () => fields[0].dispatchEvent(new Event("input", { bubbles: true }));
-  root.querySelector("#crop-reset").addEventListener("click", () => {
+  effectControl(root, "crop-reset").addEventListener("click", () => {
     fields.forEach((input) => { input.value = "0"; });
     notify();
   });
@@ -71,7 +73,7 @@ export function initializeCropControls(root, getImage) {
   });
   dialog.querySelector("[data-crop-cancel]").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", () => { ++loading; bitmap?.close(); bitmap = undefined; drag = undefined; });
-  root.querySelector("#crop-select").addEventListener("click", async () => {
+  effectControl(root, "crop-select").addEventListener("click", async () => {
     const revision = ++loading;
     dialog.showModal(); status.textContent = "Loading crop preview…";
     dialog.querySelector("[data-crop-apply]").disabled = true;
