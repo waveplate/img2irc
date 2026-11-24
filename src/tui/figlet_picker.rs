@@ -12,6 +12,7 @@ pub(crate) struct FigletPicker {
     original: crate::args::TextOverlay,
     choices: Vec<FontChoice>,
     search: String,
+    cursor: TextCursor,
     list: ListState,
     area: Rect,
 }
@@ -54,6 +55,7 @@ pub(crate) fn open_figlet_picker(app: &mut App, index: usize) {
         original,
         choices,
         search: String::new(),
+        cursor: TextCursor::default(),
         list: ListState::default().with_selected(Some(selected)),
         area: Rect::default(),
     });
@@ -123,21 +125,11 @@ pub(crate) fn handle_figlet_picker(app: &mut App, event: Event) {
             KeyCode::Down => picker.move_selection(1),
             KeyCode::PageUp => picker.move_selection(-(picker.area.height as i32).max(1)),
             KeyCode::PageDown => picker.move_selection((picker.area.height as i32).max(1)),
-            KeyCode::Home => picker.move_selection(i32::MIN / 2),
-            KeyCode::End => picker.move_selection(i32::MAX / 2),
-            KeyCode::Backspace => {
-                picker.search.pop();
-                picker.list.select(Some(0));
+            _ => {
+                if picker.cursor.key(&mut picker.search, key, false) == Some(true) {
+                    picker.list.select(Some(0));
+                }
             }
-            KeyCode::Char(c)
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-            {
-                picker.search.push(c);
-                picker.list.select(Some(0));
-            }
-            _ => {}
         },
         Event::Mouse(mouse) => match mouse.kind {
             MouseEventKind::ScrollUp => picker.move_selection(-1),
@@ -189,7 +181,7 @@ pub(crate) fn render_figlet_picker(f: &mut ratatui::Frame, picker: &mut FigletPi
     f.render_widget(
         Paragraph::new(format!(
             " Search: {}\n {:<name_width$} Rows",
-            picker.search, "Font"
+            picker.cursor.marked(&picker.search), "Font"
         )),
         parts[0],
     );
@@ -267,6 +259,7 @@ mod tests {
             overlay_index: 0,
             original: original.clone(),
             search: String::new(),
+            cursor: TextCursor::default(),
             list: ListState::default().with_selected(Some(0)),
             area: Rect::default(),
             choices: ["original", "new-font"]

@@ -404,6 +404,14 @@ pub(crate) struct PreparedReference {
 impl PreparedReference {
     pub(crate) fn geometry_pixels(&self) -> usize { self.width * self.height }
 
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.fine_allowance.capacity() * std::mem::size_of::<f32>()
+            + self.source_edges.capacity() * std::mem::size_of::<Edge>()
+            + self.source_dispersion.capacity() * std::mem::size_of::<f32>()
+            + self.source_coarse.capacity() * std::mem::size_of::<V3>()
+    }
+
     pub(crate) fn new(
         reference: &[[u8; 3]],
         width: usize,
@@ -803,6 +811,48 @@ mod tests {
         (0..64 * 64)
             .map(|i| [if f(i % 64, i / 64) { 240 } else { 16 }; 3])
             .collect()
+    }
+
+    #[test]
+    fn sparse_feature_edits_and_noops_match_fresh_scores_bit_for_bit() {
+        for (width, height) in [(3, 3), (3, 7), (65, 63)] {
+            for flat in [false, true] {
+                let source: Vec<_> = (0..width * height).map(|p| {
+                    if flat { [0; 3] } else {
+                        [(p * 17 % 256) as u8, (p * 31 % 256) as u8, 90]
+                    }
+                }).collect();
+                let reference = PreparedReference::new(&source, width, height, 8).unwrap();
+                let mut output = source.clone();
+                let mut features = reference.prepare_output(&output);
+                let mut geometry = reference.prepare_geometry(&features);
+                let all = [0, 0, width, height];
+                assert_eq!(features.update(&output, all), [0; 4]);
+                // Broad pair rectangles contain unchanged cells. Touch their
+                // opposite corners, a one-pixel edge, then restore each edit.
+                for p in [0, width * height - 1, width + 1, width - 1] {
+                    for rgb in [[255, 32, 0], source[p]] {
+                        output[p] = rgb;
+                        let changed = features.update(&output, all);
+                        assert_eq!(changed, [p % width, p / width, p % width + 1, p / width + 1]);
+                        let fresh = reference.prepare_output(&output);
+                        let components = |s: PerceptualScore| [s.total, s.roughness,
+                            s.texture, s.missing, s.extra, s.colour, s.thin_defects].map(f64::to_bits);
+                        assert_eq!(
+                            components(reference.score_prepared(&features, &mut ScoreWorkspace::default())),
+                            components(reference.score_prepared(&fresh, &mut ScoreWorkspace::default())),
+                        );
+                        let estimate = reference.score_incremental_estimate(&features, &mut geometry, changed);
+                        let exact = reference.score(&output).total;
+                        assert!(estimate.lower <= exact && exact <= estimate.upper);
+                        let noop = features.update(&output, all);
+                        assert_eq!(noop, [0; 4]);
+                        let repeated = reference.score_incremental_estimate(&features, &mut geometry, noop);
+                        assert_eq!(estimate.value.to_bits(), repeated.value.to_bits());
+                    }
+                }
+            }
+        }
     }
 
     #[test]

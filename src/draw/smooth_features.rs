@@ -35,15 +35,20 @@ const FEATURE_SCALE: f64 = 8.0 / (W * H * 17 * 17) as f64;
 type Response = [i16; N];
 
 fn response(mask: u128) -> Response {
+    coverage_response(|x, y| i16::from(mask & (1 << (y * W + x)) != 0))
+}
+
+fn coverage_response(coverage: impl Fn(usize, usize) -> i16) -> Response {
     let mut result = [0; N];
     for y in 0..H {
         for x in 0..W {
-            if mask & (1 << (y * W + x)) == 0 {
+            let ink = coverage(x, y);
+            if ink == 0 {
                 continue;
             }
             for (ky, row) in KERNEL.iter().enumerate() {
                 for (kx, &weight) in row.iter().enumerate() {
-                    result[(y + ky) * FW + x + kx] += weight;
+                    result[(y + ky) * FW + x + kx] += weight * ink;
                 }
             }
         }
@@ -153,6 +158,93 @@ pub(super) fn run(
             feature_ids.push(id);
         }
     }
+    run_features(
+        args,
+        grid_state,
+        grid_data,
+        costs,
+        target_scores,
+        grid_w,
+        grid_h,
+        gw * gh,
+        &features,
+        &feature_ids,
+        &response(u128::MAX),
+        FEATURE_SCALE,
+        abort_flag,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_coverage(
+    args: &RenderArgs,
+    grid_state: &mut [(usize, bool)],
+    grid_data: &[BlockData],
+    coverage: &[&[u8]],
+    levels: u8,
+    costs: &[Vec<u64>],
+    targets: &[f32],
+    grid_w: usize,
+    grid_h: usize,
+    side: usize,
+    abort_flag: Option<&AtomicBool>,
+) -> Result<(), ()> {
+    let mut classes = HashMap::new();
+    let mut features = Vec::new();
+    let mut feature_ids = Vec::with_capacity(coverage.len() * 2);
+    for &glyph in coverage {
+        if abort_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(());
+        }
+        for inverted in [false, true] {
+            let mask: Vec<_> = glyph
+                .iter()
+                .map(|&a| if inverted { levels - a } else { a })
+                .collect();
+            let id = *classes.entry(mask.clone()).or_insert_with(|| {
+                let id = features.len();
+                features.push(coverage_response(|x, y| {
+                    i16::from(mask[y * side / H * side + x * side / W])
+                }));
+                id
+            });
+            feature_ids.push(id);
+        }
+    }
+    run_features(
+        args,
+        grid_state,
+        grid_data,
+        costs,
+        targets,
+        grid_w,
+        grid_h,
+        side * side,
+        &features,
+        &feature_ids,
+        &coverage_response(|_, _| i16::from(levels)),
+        FEATURE_SCALE / f64::from(levels).powi(2),
+        abort_flag,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_features(
+    args: &RenderArgs,
+    grid_state: &mut [(usize, bool)],
+    grid_data: &[BlockData],
+    costs: &[Vec<u64>],
+    target_scores: &[f32],
+    grid_w: usize,
+    grid_h: usize,
+    pixel_count: usize,
+    features: &[Response],
+    feature_ids: &[usize],
+    solid: &Response,
+    feature_scale: f64,
+    abort_flag: Option<&AtomicBool>,
+) -> Result<(), ()> {
+    let cancelled = || abort_flag.is_some_and(|flag| flag.load(Ordering::Relaxed));
     let candidate = |choice: (usize, bool), cost| Candidate {
         choice,
         feature: feature_ids[choice.0 * 2 + choice.1 as usize],
@@ -174,7 +266,7 @@ pub(super) fn run(
     let mut lists = vec![Vec::new(); grid_state.len()];
     let mut targets = Vec::new();
     let mut seen = vec![false; features.len()];
-    let pixel_count = (gw * gh) as f64;
+    let pixel_count = pixel_count as f64;
     for idx in 0..grid_state.len() {
         if cancelled() {
             return Err(());
@@ -220,7 +312,6 @@ pub(super) fn run(
         return Ok(());
     }
 
-    let solid = response(u128::MAX);
     let mut initial_field = vec![[0i32; 3]; grid_w * W * grid_h * H];
     let mut points = Vec::with_capacity(N);
     for idx in 0..grid_state.len() {
@@ -240,7 +331,7 @@ pub(super) fn run(
         .iter()
         .map(|b| b.cost as f64 / pixel_count)
         .sum::<f64>()
-        + FEATURE_SCALE
+        + feature_scale
             * initial_field
                 .iter()
                 .flatten()
@@ -309,7 +400,7 @@ pub(super) fn run(
                             continue;
                         }
                         let change = (next.cost as f64 - current.cost as f64) / pixel_count
-                            + FEATURE_SCALE * feature_delta as f64;
+                            + feature_scale * feature_delta as f64;
                         if change < best_delta - 1e-9 {
                             best = next;
                             best_delta = change;

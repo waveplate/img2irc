@@ -7,6 +7,7 @@ pub(super) struct ResizeNotice {
     width: u16,
     top: u16,
     lines: Vec<String>,
+    foreground_only: bool,
 }
 
 impl ResizeNotice {
@@ -16,9 +17,13 @@ impl ResizeNotice {
             let column = 1 + (usize::from(self.width) - line.len()) / 2;
             // Use absolute positioning without a newline at the terminal's
             // bottom edge, where a line feed would scroll/cut off the video.
+            packet.write_all(b"\x1b[0m")?;
+            if !self.foreground_only {
+                packet.write_all(b"\x1b[40m")?;
+            }
             write!(
                 packet,
-                "\x1b[0m\x1b[40m\x1b[{row};1H\x1b[2K\x1b[{row};{column}H\x1b[1;33m{line}"
+                "\x1b[{row};1H\x1b[2K\x1b[{row};{column}H\x1b[1;33m{line}"
             )?;
         }
         Ok(())
@@ -69,6 +74,7 @@ pub(super) fn layout(header: &Header, viewport: Option<(u16, u16)>, fit: bool) -
             width,
             top: height - lines.len() as u16,
             lines,
+            foreground_only: header.foreground_only,
         }
     });
     let available_height = notice.as_ref().map_or(height, |notice| notice.top);
@@ -186,6 +192,7 @@ mod tests {
             width: 40,
             height: 3,
             fps: 24.0,
+            foreground_only: false,
         };
         let frame = format!(
             "\x1b[?2026h\x1b[H{}\x1b[0m\x1b[?2026l",

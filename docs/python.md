@@ -14,6 +14,22 @@ in place of hyphens: `--ocr-min-confidence` becomes `ocr_min_confidence`,
 overrides use the same names. CLI aliases such as `boxblur` also work; existing
 Python names such as `box_blur` remain available.
 
+Choose the rendering method with `render_mode` and the output palette with
+`palette`. The default rendering method is `glyph`. Existing `mode=` and
+`render=` palette arguments and `braille=True` are still supported.
+
+```python
+from img2irc import Palette, RenderMode, Simple
+
+output = Simple(width=80, palette=Palette.IRC99, render_mode=RenderMode.DITHER).generate("photo.png")
+output.write("art.irc")
+```
+
+Dither also supports `Palette.ANSI256`.
+Choose additional glyphs with `glyphs=["dither", "half"]`. Use
+`dither_detail` or `dither_palette_candidates` to tune matching and
+`smooth=True, smooth_shapes=True` to run both smoothing passes.
+
 `median_blur=2` applies a median filter before glyph matching. It accepts an
 integer radius of 0–10 source pixels, with 0 disabled. The same setting is
 `--median-blur 2` in the CLI. For an explicit ordered pipeline, use
@@ -175,5 +191,8 @@ python3.12 -m pip install dist/<generated-wheel>.whl
 the script requires Docker and x86_64 Linux, and produces a manylinux 2.28 wheel. OCR, ONNX Runtime, and OpenSSL are included; the first build compiles native dependencies and later builds reuse caches under `target/`. `--no-ocr` omits OCR, `--out DIR` changes the wheel directory, and `IMG2IRC_BUILD_JOBS` limits parallelism. install with the Python version selected for the build. Python 3.10 or later is required.
 
 a small testing front end is also available as `img2irc-tui photo.png`.
+In **General**, choose **IRC99** or **ANSI256** under **Palette**, then
+**Dither** under **Render Mode**. To start with these choices already set,
+run `img2irc-tui photo.png --palette irc99 --render-mode dither`.
 Its OCR tab keeps detector thresholds, model/performance options and detailed
 FIGlet controls under **Advanced OCR**. Collapsing it preserves their values.

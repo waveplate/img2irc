@@ -1,5 +1,6 @@
 //! Target suspected defects, exhaust neighbouring glyph-pair shortlists, then
-//! retain full-image perceptual improvements. Colours remain fixed throughout.
+//! retain full-image perceptual improvements. Trials keep colours fixed; final
+//! source-colour fitting is included in verification and the finished score.
 
 use super::search_status::{
     GlyphDefectMap, GlyphSearchPreview, GlyphSearchProgress, GlyphSearchStage,
@@ -17,6 +18,10 @@ use std::sync::Arc;
 type Choice = (usize, bool);
 pub(super) mod rank_cache;
 pub(super) mod temporal;
+#[cfg(test)]
+mod seam_costs;
+mod source_cache;
+mod connections;
 
 fn cancelled(abort: Option<&AtomicBool>) -> bool {
     abort.is_some_and(|flag| flag.load(Ordering::Relaxed))
@@ -129,8 +134,10 @@ fn search_preview(
     states: &[Choice],
     glyphs: &[FastGlyph],
     score: f64,
+    foreground_only: bool,
 ) -> Arc<GlyphSearchPreview> {
     let mut result = RenderResult::from("");
+    result.foreground_only = foreground_only;
     result.grid = states
         .chunks(map.columns)
         .enumerate()
@@ -153,6 +160,7 @@ fn search_preview(
     })
 }
 
+#[cfg(test)]
 fn seam_error(
     cell: usize,
     mask: u128,
@@ -237,8 +245,11 @@ fn candidates(
     gw: usize,
     gh: usize,
     limit: usize,
+    attempted: Option<&[HashSet<u128>]>,
+    foreground_only: bool,
     abort: Option<&AtomicBool>,
 ) -> Result<Vec<Vec<Choice>>, ()> {
+    let connections = connections::Connections::cached(masks);
     data.par_iter()
         .enumerate()
         .map(|(cell, data)| {
@@ -259,6 +270,9 @@ fn candidates(
                 diff.push(squared_error(rgb, data.fg) - bg);
             }
             let total: i64 = diff.iter().sum();
+            let seams = connections.costs(
+                cell, data, preview_source, preview_output, grid_w, grid_h,
+            );
             let mut ranked = Vec::with_capacity(glyphs.len() * 2);
             for (gi, glyph) in glyphs.iter().enumerate() {
                 if gi & 63 == 0 && cancelled(abort) {
@@ -266,17 +280,11 @@ fn candidates(
                 }
                 let dot: i64 = glyph.ones.iter().map(|&i| diff[i]).sum();
                 for (inverted, cost) in [(false, base + dot), (true, base + total - dot)] {
-                    let mask = masks[gi] ^ if inverted { u128::MAX } else { 0 };
+                    if foreground_only && inverted {
+                        continue;
+                    }
                     let context_cost = cost as f64
-                        + seam_error(
-                            cell,
-                            mask,
-                            data,
-                            preview_source,
-                            preview_output,
-                            grid_w,
-                            grid_h,
-                        ) * (gw * gh) as f64;
+                        + connections.error(&seams, (gi, inverted)) * (gw * gh) as f64;
                     ranked.push((cost, (gi, inverted), context_cost));
                 }
             }
@@ -285,10 +293,18 @@ fn candidates(
             seen.insert(masks[current.0] ^ if current.1 { u128::MAX } else { 0 });
             let mut choices = vec![current];
             let source_limit = limit.div_ceil(2);
+            let mut source_seen = seen.clone();
+            let mut best_source = true;
             for &(_, choice, _) in &ranked {
                 let mask = masks[choice.0] ^ if choice.1 { u128::MAX } else { 0 };
-                if seen.insert(mask) {
-                    choices.push(choice);
+                if source_seen.insert(mask) {
+                    // Keep the strongest source fit. After a stalled pass,
+                    // rotate the remaining source slots to other shapes.
+                    if best_source || attempted.is_none_or(|history| !history[cell].contains(&mask)) {
+                        seen.insert(mask);
+                        choices.push(choice);
+                    }
+                    best_source = false;
                 }
                 if choices.len() > source_limit {
                     break;
@@ -313,7 +329,7 @@ fn candidates(
 }
 
 struct Patch {
-    reference: PreparedReference,
+    reference: Arc<PreparedReference>,
     output: Vec<[u8; 3]>,
     features: OutputCache,
     geometry: Option<GeometryCache>,
@@ -333,13 +349,13 @@ impl Patch {
     }
 
     fn new(
-        source: &[[u8; 3]],
         output: &[[u8; 3]],
         a: usize,
         b: usize,
         grid_w: usize,
         grid_h: usize,
         incremental: bool,
+        references: &source_cache::SourceReferences<'_>,
     ) -> Self {
         // Context reduces clipping bias in the ranking. The full-image check
         // remains authoritative, including all untouched neighbouring cells.
@@ -354,8 +370,7 @@ impl Patch {
             }
             pixels
         };
-        let reference = PreparedReference::new(&extract(source), width, height, CW)
-            .expect("valid glyph search patch");
+        let reference = references.get([x0, y0, x1, y1]);
         let output = extract(output);
         let features = reference.prepare_output(&output);
         let geometry = incremental.then(|| reference.prepare_geometry(&features));
@@ -413,7 +428,7 @@ struct PairPainter<'a> {
     cell_x: usize,
     cell_y: usize,
     data: &'a [BlockData],
-    glyphs: &'a [FastGlyph],
+    masks: &'a [u128],
     gw: usize,
     gh: usize,
 }
@@ -431,17 +446,19 @@ impl PairPainter<'_> {
     }
 
     fn paint_cell(&self, output: &mut [[u8; 3]], cell: usize, choice: Choice) {
-        paint_preview_glyph_at(
-            output,
-            self.width,
-            (cell % self.grid_w - self.cell_x) * CW,
-            (cell / self.grid_w - self.cell_y) * CH,
-            &self.data[cell],
-            &self.glyphs[choice.0],
-            choice.1,
-            self.gw,
-            self.gh,
-        );
+        // Normalized glyph geometry is invariant across all pair trials.
+        // Reuse its mask instead of resampling the font bitmap per pixel.
+        let mask = self.masks[choice.0] ^ if choice.1 { u128::MAX } else { 0 };
+        let x0 = (cell % self.grid_w - self.cell_x) * CW;
+        let y0 = (cell / self.grid_w - self.cell_y) * CH;
+        let data = &self.data[cell];
+        for y in 0..CH {
+            let bits = (mask >> (y * CW)) as u8;
+            let start = (y0 + y) * self.width + x0;
+            for (x, pixel) in output[start..start + CW].iter_mut().enumerate() {
+                *pixel = if bits & (1 << x) != 0 { data.fg } else { data.bg };
+            }
+        }
     }
 
     fn paint(&self, output: &mut [[u8; 3]], a: Choice, b: Choice) {
@@ -553,8 +570,8 @@ impl FullTrialWorkspace {
             };
             restore.paint(&mut self.output, states[pair.a], states[pair.b]);
             let rect = restore.rect();
-            self.features.update(&self.output, rect);
-            self.geometry.update(reference, &self.features, rect);
+            let changed = self.features.update(&self.output, rect);
+            self.geometry.update(reference, &self.features, changed);
         }
         self.commit_cursor = commits.len();
     }
@@ -637,7 +654,7 @@ fn score_trials(
             }
             let features_started = profiling.then(RenderInstant::now);
             painter.paint(&mut work.output, trial.a, trial.b);
-            work.features.update(&work.output, rect);
+            let changed = work.features.update(&work.output, rect);
             if let Some(started) = features_started {
                 work.features_ms += started.elapsed().as_secs_f64() * 1000.0;
             }
@@ -646,7 +663,7 @@ fn score_trials(
                 reference.score_incremental_estimate(
                     &work.features,
                     work.geometry.as_mut().unwrap(),
-                    rect,
+                    changed,
                 )
             } else {
                 ScoreEstimate::exact(
@@ -691,6 +708,9 @@ fn settle_local_order(
             exact[b] = true;
         }
     }
+    if !exact.iter().any(|&needed| needed) {
+        return;
+    }
     let rect = painter.rect();
     let copying = detailed_profiling().then(RenderInstant::now);
     work.reset(&patch.output, &patch.features, None);
@@ -717,14 +737,14 @@ fn settle_local_order(
 struct PreparedGroup {
     trials: Vec<Trial>,
     versions: Vec<(usize, u64)>,
-    patch: Patch,
+    // A cache hit needs no raster/features/geometry preparation at all.
+    patch: Option<Patch>,
 }
 
 struct RankContext<'a> {
-    source: &'a [[u8; 3]],
     output: &'a [[u8; 3]],
     data: &'a [BlockData],
-    glyphs: &'a [FastGlyph],
+    masks: &'a [u128],
     pools: &'a [Vec<Choice>],
     grid_w: usize,
     grid_h: usize,
@@ -732,6 +752,7 @@ struct RankContext<'a> {
     gh: usize,
     finalists: usize,
     abort: Option<&'a AtomicBool>,
+    references: &'a source_cache::SourceReferences<'a>,
 }
 
 impl RankContext<'_> {
@@ -747,16 +768,16 @@ impl RankContext<'_> {
         }
         let setup = detailed_profiling().then(RenderInstant::now);
         let patch = Patch::new(
-            self.source,
             self.output,
             a,
             b,
             self.grid_w,
             self.grid_h,
             true,
+            self.references,
         );
         if let Some(start) = setup { work.patch_ms += start.elapsed().as_secs_f64() * 1000.0; }
-        let trials = self.rank_patch(a, b, states, work, &patch)?;
+        let trials = self.rank_patch(a, b, states, std::slice::from_mut(work), &patch)?;
         Ok((trials, patch))
     }
 
@@ -765,7 +786,7 @@ impl RankContext<'_> {
         a: usize,
         b: usize,
         states: &[Choice],
-        work: &mut TrialWorkspace,
+        workers: &mut [TrialWorkspace],
         patch: &Patch,
     ) -> Result<Vec<Trial>, ()> {
         debug_assert!(self.finalists > 0);
@@ -777,7 +798,7 @@ impl RankContext<'_> {
             cell_x: patch.cell_x,
             cell_y: patch.cell_y,
             data: self.data,
-            glyphs: self.glyphs,
+            masks: self.masks,
             gw: self.gw,
             gh: self.gh,
         };
@@ -789,11 +810,11 @@ impl RankContext<'_> {
             &patch.features,
             patch.geometry.as_ref(),
             &painter,
-            std::slice::from_mut(work),
+            workers,
             self.abort,
             detailed_profiling(),
         )?;
-        settle_local_order(&mut trials, &patch, painter, work);
+        settle_local_order(&mut trials, &patch, painter, &mut workers[0]);
         trials.retain(|trial| trial.local.is_finite());
         trials.sort_unstable_by(|a, b| {
             a.local
@@ -810,10 +831,12 @@ impl RankContext<'_> {
         states: &[Choice],
         versions: &[u64],
         ready: &mut PreparedGroup,
-        work: &mut TrialWorkspace,
+        workers: &mut [TrialWorkspace],
     ) -> Result<Vec<Trial>, ()> {
         let setup = detailed_profiling().then(RenderInstant::now);
-        let patch = &mut ready.patch;
+        let patch = ready.patch.get_or_insert_with(|| Patch::new(
+            self.output, a, b, self.grid_w, self.grid_h, true, self.references,
+        ));
         let painter = PairPainter {
             a,
             b,
@@ -822,7 +845,7 @@ impl RankContext<'_> {
             cell_x: patch.cell_x,
             cell_y: patch.cell_y,
             data: self.data,
-            glyphs: self.glyphs,
+            masks: self.masks,
             gw: self.gw,
             gh: self.gh,
         };
@@ -844,15 +867,19 @@ impl RankContext<'_> {
             ];
         }
         if dirty[0] < dirty[2] {
-            patch.features.update(&patch.output, dirty);
+            let changed = patch.features.update(&patch.output, dirty);
             patch
                 .geometry
                 .as_mut()
                 .unwrap()
-                .update(&patch.reference, &patch.features, dirty);
+                .update(&patch.reference, &patch.features, changed);
         }
-        if let Some(start) = setup { work.patch_ms += start.elapsed().as_secs_f64() * 1000.0; }
-        self.rank_patch(a, b, states, work, patch)
+        if let Some(start) = setup { workers[0].patch_ms += start.elapsed().as_secs_f64() * 1000.0; }
+        // Initial batches already parallelize pairs. A stale pair is refreshed
+        // after those jobs finish, so parallelize its independent trials here.
+        let trials = self.pools[a].len() * if a == b { 1 } else { self.pools[b].len() };
+        let count = workers.len().min(4).min((trials / 12).max(1));
+        self.rank_patch(a, b, states, &mut workers[..count], patch)
     }
 
     fn prepare(
@@ -860,17 +887,41 @@ impl RankContext<'_> {
         groups: &[(usize, usize)],
         states: &[Choice],
         versions: &[u64],
-        timings: Option<&mut [f64; 4]>,
+        workers: &mut [TrialWorkspace],
     ) -> Result<Vec<Option<PreparedGroup>>, ()> {
-        let chunk = groups.len().div_ceil(cpu_workers()).max(1);
-        let chunks: Result<Vec<(Vec<_>, [f64; 4])>, ()> = groups
-            .par_chunks(chunk)
-            .map(|groups| {
-                let mut work = TrialWorkspace::default();
-                let prepared = groups
-                    .iter()
-                    .map(|&(a, b)| {
-                        let (trials, patch) = self.rank(a, b, states, &mut work)?;
+        // Look up scores on the calling render thread, before dispatching any
+        // speculative scoring. Worker threads must not consult thread-local
+        // caches belonging to unrelated render sessions.
+        let mut jobs: Vec<_> = groups.iter().map(|&(a, b)| {
+            let painter = PairPainter {
+                a, b, grid_w: self.grid_w, width: self.grid_w * CW,
+                cell_x: 0, cell_y: 0, data: self.data, masks: self.masks,
+                gw: self.gw, gh: self.gh,
+            };
+            let key = rank_cache::key(self.references.source(), self.output, painter,
+                self.masks, self.pools, (states[a], states[b]), self.grid_h,
+                self.finalists, workers.len());
+            let cached = key.as_ref().and_then(rank_cache::get);
+            (a, b, if cached.is_some() { None } else { key }, cached)
+        }).collect();
+        let chunk = jobs.len().div_ceil(workers.len()).max(1);
+        let chunks: Result<Vec<Vec<_>>, ()> = jobs
+            .par_chunks_mut(chunk)
+            .zip(workers.par_iter_mut())
+            .map(|(jobs, work)| {
+                // Keep allocations across batches, including small batches
+                // chosen to avoid speculative work invalidated by commits.
+                jobs
+                    .iter_mut()
+                    .map(|(a, b, _, cached)| {
+                        let (a, b) = (*a, *b);
+                        if cancelled(self.abort) { return Err(()); }
+                        let (trials, patch) = if let Some(trials) = cached.take() {
+                            (trials, None)
+                        } else {
+                            let (trials, patch) = self.rank(a, b, states, work)?;
+                            (trials, Some(patch))
+                        };
                         let [x0, y0, x1, y1] = Patch::bounds(a, b, self.grid_w, self.grid_h);
                         let versions = (y0..y1)
                             .flat_map(|y| {
@@ -886,15 +937,16 @@ impl RankContext<'_> {
                             patch,
                         }))
                     })
-                    .collect::<Result<Vec<_>, ()>>()?;
-                Ok((prepared, [work.patch_ms, work.copy_ms, work.features_ms, work.scoring_ms]))
+                    .collect::<Result<Vec<_>, ()>>()
             })
             .collect();
-        let chunks = chunks?;
-        if let Some(timings) = timings {
-            for (_, times) in &chunks { for i in 0..4 { timings[i] += times[i]; } }
+        let prepared: Vec<_> = chunks?.into_iter().flatten().collect();
+        for (job, ready) in jobs.into_iter().zip(&prepared) {
+            if let (Some(key), Some(ready)) = (job.2, ready) {
+                rank_cache::insert(key, &ready.trials);
+            }
         }
-        Ok(chunks.into_iter().flat_map(|(groups, _)| groups).collect())
+        Ok(prepared)
     }
 }
 
@@ -927,8 +979,29 @@ fn verify_pair_score(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     args: &RenderArgs,
+    image: &AnsiImage,
+    render: Render,
     source: &[[u8; 3]],
-    data: &[BlockData],
+    data: &mut [BlockData],
+    states: &mut [Choice],
+    glyphs: &[FastGlyph],
+    grid_w: usize,
+    grid_h: usize,
+    gw: usize,
+    gh: usize,
+    abort: Option<&AtomicBool>,
+) -> Result<Option<Arc<GlyphDefectMap>>, ()> {
+    rank_cache::with_default_cache(|| run_search(args, image, render, source, data,
+        states, glyphs, grid_w, grid_h, gw, gh, abort))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_search(
+    args: &RenderArgs,
+    image: &AnsiImage,
+    render: Render,
+    source: &[[u8; 3]],
+    data: &mut [BlockData],
     states: &mut [Choice],
     glyphs: &[FastGlyph],
     grid_w: usize,
@@ -941,6 +1014,7 @@ pub(super) fn run(
         return Ok(None);
     }
     let started = RenderInstant::now();
+    let initial_cache_stats = rank_cache::stats();
     let passes = args.glyph_search_passes.clamp(1, 20);
     let mut status = GlyphSearchProgress::new(passes);
     status.publish(&started);
@@ -960,10 +1034,13 @@ pub(super) fn run(
     }
     let initial_score = best_score;
     let initial_states = states.to_vec();
+    let initial_colours = (!args.blend_colours && !args.foreground_only).then(|| data.to_vec());
     let temporal_key = temporal::key(args, glyphs, grid_w, grid_h, gw, gh);
     let mut temporal_targets = temporal_key
         .as_deref()
-        .and_then(|key| temporal::reuse(key, &source, data, states, grid_w, grid_h));
+        .and_then(|key| {
+            temporal::reuse(key, &source, data, states, grid_w, grid_h, !args.foreground_only)
+        });
     if let Some(targets) = &temporal_targets {
         let warm = build_rendered_raster(data, states, glyphs, grid_w, grid_h, gw, gh);
         let (warm, _, _) =
@@ -999,6 +1076,10 @@ pub(super) fn run(
         .iter()
         .map(|glyph| smooth_preview_glyph(glyph, gw, gh).mask)
         .collect();
+    let unique_shapes = masks.iter().copied().flat_map(|mask| {
+        [Some(mask), (!args.foreground_only).then_some(!mask)].into_iter().flatten()
+    }).collect::<HashSet<_>>().len();
+    let mut attempted: Option<Vec<HashSet<u128>>> = None;
     let mut combinations = 0usize;
     let mut full_checks = 0usize;
     let mut moves = 0usize;
@@ -1008,7 +1089,6 @@ pub(super) fn run(
     let mut patch_ms = 0.0;
     let mut dispatch_ms = 0.0;
     let mut batch_ms = 0.0;
-    let mut batch_worker_ms = [0.0; 4];
     let profiling = std::env::var_os("IMG2IRC_REPAIR_PROFILE").is_some();
     let incremental_rank = std::env::var_os("IMG2IRC_REPAIR_INCREMENTAL_RANK").is_some();
     let mut checking_ms = 0.0;
@@ -1019,12 +1099,20 @@ pub(super) fn run(
     let mut versions = vec![0_u64; states.len()];
     let mut prepared_reused = 0usize;
     let mut prepared_stale = 0usize;
-    let batch_size = std::env::var("IMG2IRC_REPAIR_BATCH_SIZE")
+    let fixed_batch_size = std::env::var("IMG2IRC_REPAIR_BATCH_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(if cfg!(target_arch = "wasm32") { 0 } else { 64 })
-        .min(256);
+        .map(|size| size.min(256));
+    // Very small batches spend too much time dispatching workers. Preserve
+    // enough independent pairs to amortize that cost even after a busy region
+    // causes the speculative batch size to shrink.
+    let minimum_batch = workers.clamp(8, 16);
+    let mut batch_size = fixed_batch_size.unwrap_or(if cfg!(target_arch = "wasm32") { 0 } else { minimum_batch * 2 });
+    let adaptive_batches = fixed_batch_size.is_none() && batch_size > 0;
+    let mut smallest_batch = usize::MAX;
+    let mut largest_batch = 0;
     let mut prepared: Vec<Option<PreparedGroup>> = Vec::new();
+    let references = source_cache::SourceReferences::new(&source, width);
     log::info!(
         "Glyph search: starting perceptual={:.6}, {} alternatives/cell, {} passes, {}, CPU workers={} local / {} full-image, guarded incremental full-image scoring with cached block totals",
         initial_score,
@@ -1068,6 +1156,7 @@ pub(super) fn run(
                 states,
                 glyphs,
                 best_score,
+                args.foreground_only,
             ));
         }
         let (priorities, targets, active) = (&map.priorities, &map.targets, &map.active);
@@ -1089,6 +1178,8 @@ pub(super) fn run(
             gw,
             gh,
             alternatives,
+            attempted.as_deref(),
+            args.foreground_only,
             abort,
         )?;
         let mut groups = HashSet::new();
@@ -1117,18 +1208,39 @@ pub(super) fn run(
         let before_pass = best_score;
         let moves_before = moves;
         let skipped_before = skipped;
+        let mut batch_start = 0;
+        let mut batch_end = 0;
+        let mut batch_reused = prepared_reused;
+        let mut batch_stale = prepared_stale;
         let mut progress = RenderInstant::now();
         for (group_index, &(a, b)) in groups.iter().enumerate() {
             if cancelled(abort) {
                 return Err(());
             }
-            if batch_size > 0 && finalists != 0 && group_index % batch_size == 0 {
+            if batch_size > 0 && finalists != 0 && group_index == batch_end {
+                if adaptive_batches && batch_end > 0 {
+                    let reused = prepared_reused - batch_reused;
+                    let stale = prepared_stale - batch_stale;
+                    // Accepted edits can invalidate speculative rankings.
+                    // Spend less work ahead when that is happening; quiet
+                    // regions can amortize dispatch with larger batches.
+                    if stale * 8 > reused + stale {
+                        batch_size = (batch_size / 2).max(minimum_batch);
+                    } else if stale == 0 && reused >= batch_size / 2 {
+                        batch_size = (batch_size * 2).min(64);
+                    }
+                }
+                batch_reused = prepared_reused;
+                batch_stale = prepared_stale;
+                batch_start = group_index;
+                batch_end = (group_index + batch_size).min(groups.len());
+                smallest_batch = smallest_batch.min(batch_size);
+                largest_batch = largest_batch.max(batch_size);
                 let started = RenderInstant::now();
                 let context = RankContext {
-                    source: &source,
                     output: &output,
                     data,
-                    glyphs,
+                    masks: &masks,
                     pools: &pools,
                     grid_w,
                     grid_h,
@@ -1136,12 +1248,13 @@ pub(super) fn run(
                     gh,
                     finalists,
                     abort,
+                    references: &references,
                 };
                 prepared = context.prepare(
-                    &groups[group_index..(group_index + batch_size).min(groups.len())],
+                    &groups[batch_start..batch_end],
                     states,
                     &versions,
-                    Some(&mut batch_worker_ms),
+                    &mut local_workers,
                 )?;
                 let elapsed = started.elapsed().as_secs_f64() * 1000.0;
                 ranking_ms += elapsed;
@@ -1169,7 +1282,7 @@ pub(super) fn run(
                 cell_x: 0,
                 cell_y: 0,
                 data,
-                glyphs,
+                masks: &masks,
                 gw,
                 gh,
             };
@@ -1189,8 +1302,20 @@ pub(super) fn run(
                     trial_count.min(finalists)
                 };
             let mut trials = pair_trials(a, b, old_a, old_b, &pools);
+            let ready = if batch_size > 0 && finalists != 0 {
+                prepared[group_index - batch_start].take()
+            } else {
+                None
+            };
+            let ready_valid = ready.as_ref().is_some_and(|ready| ready
+                .versions.iter().all(|&(cell, version)| versions[cell] == version));
+            if ready.is_some() {
+                if ready_valid { prepared_reused += 1; } else { prepared_stale += 1; }
+            }
             let key_started = RenderInstant::now();
-            let cache_key = (finalists != 0)
+            // Valid prepared rankings were already looked up before dispatch.
+            // Only a changed neighbourhood needs another key and lookup.
+            let cache_key = (finalists != 0 && !ready_valid)
                 .then(|| {
                     rank_cache::key(
                         &source,
@@ -1209,41 +1334,34 @@ pub(super) fn run(
             key_ms += key_started.elapsed().as_secs_f64() * 1000.0;
             if let Some(cached) = cached {
                 trials = cached;
+                combinations += trial_count;
+                status.combinations = combinations;
                 status.pair_work_done += trial_count;
-            } else if batch_size > 0 && finalists != 0 {
-                let ready = prepared[group_index % batch_size].take();
-                if let Some(mut ready) = ready {
-                    if ready
-                        .versions
-                        .iter()
-                        .all(|&(cell, version)| versions[cell] == version)
-                    {
-                        trials = ready.trials;
-                        prepared_reused += 1;
-                    } else {
-                        prepared_stale += 1;
-                        let context = RankContext {
-                            source: &source,
-                            output: &output,
-                            data,
-                            glyphs,
-                            pools: &pools,
-                            grid_w,
-                            grid_h,
-                            gw,
-                            gh,
-                            finalists,
-                            abort,
-                        };
-                        trials = context.refresh(
-                            a,
-                            b,
-                            states,
-                            &versions,
-                            &mut ready,
-                            &mut local_workers[0],
-                        )?;
-                    }
+            } else if let Some(mut ready) = ready {
+                if ready_valid {
+                    trials = ready.trials;
+                } else {
+                    let context = RankContext {
+                        output: &output,
+                        data,
+                        masks: &masks,
+                        pools: &pools,
+                        grid_w,
+                        grid_h,
+                        gw,
+                        gh,
+                        finalists,
+                        abort,
+                        references: &references,
+                    };
+                    trials = context.refresh(
+                        a,
+                        b,
+                        states,
+                        &versions,
+                        &mut ready,
+                        &mut local_workers,
+                    )?;
                 }
                 combinations += trial_count;
                 status.combinations = combinations;
@@ -1254,7 +1372,7 @@ pub(super) fn run(
             } else {
                 let patch_started = RenderInstant::now();
                 let patch = (finalists != 0)
-                    .then(|| Patch::new(&source, &output, a, b, grid_w, grid_h, incremental_rank));
+                    .then(|| Patch::new(&output, a, b, grid_w, grid_h, incremental_rank, &references));
                 patch_ms += patch_started.elapsed().as_secs_f64() * 1000.0;
                 let dispatch_started = RenderInstant::now();
                 for batch in trials.chunks_mut(ranking_batch_size()) {
@@ -1355,11 +1473,11 @@ pub(super) fn run(
                                         return Err(());
                                     }
                                     painter.paint(&mut work.output, trial.a, trial.b);
-                                    work.features.update(&work.output, rect);
+                                    let changed = work.features.update(&work.output, rect);
                                     *score = reference.score_incremental_estimate(
                                         &work.features,
                                         &mut work.geometry,
-                                        rect,
+                                        changed,
                                     );
                                     work.previous_trial = Some(CommittedPair { a, b });
                                 }
@@ -1540,6 +1658,7 @@ pub(super) fn run(
                         states,
                         glyphs,
                         best_score,
+                        args.foreground_only,
                     ));
                     status.publish(&started);
                     last_status = RenderInstant::now();
@@ -1559,7 +1678,22 @@ pub(super) fn run(
         );
         status.publish(&started);
         if moves == moves_before {
-            break;
+            let step = alternatives.div_ceil(2).saturating_sub(1);
+            if pass + 1 >= passes || step == 0 {
+                break;
+            }
+            let history = attempted.get_or_insert_with(|| vec![HashSet::new(); states.len()]);
+            let mut unexplored = false;
+            for (cell, pool) in pools.iter().enumerate() {
+                history[cell].extend(pool.iter().map(|&(gi, inverted)| masks[gi] ^ if inverted { u128::MAX } else { 0 }));
+                unexplored |= active[cell] && data[cell].fg != data[cell].bg && history[cell].len() < unique_shapes;
+            }
+            if !unexplored { break; }
+            log::info!("Glyph search stalled: use the remaining pass budget to try untested source-fit alternatives");
+        } else {
+            // Successful changes provide new neighbourhoods. Previously tried
+            // glyphs may be useful again in that context.
+            attempted = None;
         }
     }
     if cancelled(abort) {
@@ -1567,6 +1701,10 @@ pub(super) fn run(
     }
     status.stage = GlyphSearchStage::Verifying;
     status.publish(&started);
+    // Without blending, colours must come from the final glyph's source masks.
+    // Verify those actual output colours before reporting completion: fitting
+    // them later would change both the published score and the rollback check.
+    let colours_changed = source_colours::refit(image, args, render, data, states, glyphs, grid_w);
     // Rebuild through the actual renderer before handing the result back. Keep
     // the starting state if normalization or painting ever disagrees with it.
     let native = build_rendered_raster(data, states, glyphs, grid_w, grid_h, gw, gh);
@@ -1576,6 +1714,12 @@ pub(super) fn run(
     let rolled_back = !verified.is_finite() || verified > initial_score;
     if rolled_back {
         states.copy_from_slice(&initial_states);
+        if let Some(initial_colours) = initial_colours {
+            data.clone_from_slice(&initial_colours);
+        }
+    }
+    if colours_changed && args.show_glyph_defects {
+        initial_defects = inspect(args, native_source, data, states, glyphs, grid_w, grid_h, gw, gh);
     }
     if let Some(key) = temporal_key {
         temporal::remember(key, &source, data, states);
@@ -1587,8 +1731,8 @@ pub(super) fn run(
         checking_ms
     );
     if profiling {
-        log::info!("Local ranking wall time: cache keys {:.1}ms, sequential patch setup {:.1}ms, sequential scoring/dispatch {:.1}ms, batched preparation/ranking {:.1}ms", key_ms, patch_ms, dispatch_ms, batch_ms);
-        log::info!("Local ranking summed worker time (includes batched jobs and precision checks): patch setup {:.1}ms, copying {:.1}ms, painting/features {:.1}ms, perceptual score {:.1}ms", batch_worker_ms[0] + local_workers.iter().map(|w| w.patch_ms).sum::<f64>(), batch_worker_ms[1] + local_workers.iter().map(|w| w.copy_ms).sum::<f64>(), batch_worker_ms[2] + local_workers.iter().map(|w| w.features_ms).sum::<f64>(), batch_worker_ms[3] + local_workers.iter().map(|w| w.scoring_ms).sum::<f64>());
+        log::info!("Local ranking wall time: cache keys outside batches {:.1}ms, sequential patch setup {:.1}ms, sequential scoring/dispatch {:.1}ms, batched lookup/preparation/ranking {:.1}ms", key_ms, patch_ms, dispatch_ms, batch_ms);
+        log::info!("Local ranking summed worker time (includes batched jobs and precision checks): patch setup {:.1}ms, copying {:.1}ms, painting/features {:.1}ms, perceptual score {:.1}ms", local_workers.iter().map(|w| w.patch_ms).sum::<f64>(), local_workers.iter().map(|w| w.copy_ms).sum::<f64>(), local_workers.iter().map(|w| w.features_ms).sum::<f64>(), local_workers.iter().map(|w| w.scoring_ms).sum::<f64>());
     }
     log::info!(
         "Repair Edges: {} raster-order precision checks for borderline score decisions",
@@ -1599,8 +1743,21 @@ pub(super) fn run(
         prepared_reused,
         prepared_stale
     );
+    if adaptive_batches && largest_batch > 0 {
+        log::info!("Adaptive ranking batches: {}..{} pairs based on observed invalidation", smallest_batch, largest_batch);
+    }
+    references.report();
+    let cache_stats = rank_cache::stats();
+    log::info!("Local ranking cache: {} hits, {} misses during this search",
+        cache_stats.0 - initial_cache_stats.0, cache_stats.1 - initial_cache_stats.1);
     status.stage = GlyphSearchStage::Finished;
     status.score = if rolled_back { initial_score } else { verified };
+    if super::search_status::wants_preview() {
+        if let Some(map) = &initial_defects {
+            status.preview = Some(search_preview(map.clone(), data, states, glyphs,
+                status.score, args.foreground_only));
+        }
+    }
     status.publish(&started);
     Ok(initial_defects)
 }
@@ -1611,7 +1768,105 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn cached_glyph_masks_paint_identical_pixels_at_different_font_metrics() {
+        let args = crate::generator::default_options();
+        for (gw, gh) in [(3, 7), (8, 16), (11, 29)] {
+            let store = GlyphStore {
+                glyphs: vec![('X', (0..gh).map(|y| (0..gw)
+                    .map(|x| ((x * 3 + y) % 7 < 3) as u8).collect()).collect(), "test".into())],
+                groups: HashMap::new(), selected: HashSet::from(['X']),
+                metrics: (gw, gh), float_metrics: (gw as f32, gh as f32),
+            };
+            let glyphs = prepare_glyphs(&store, &args);
+            let masks = [smooth_preview_glyph(&glyphs[0], gw, gh).mask];
+            let data: Vec<_> = (0..4).map(|i| BlockData {
+                fg: [220, 30 + i, 50], bg: [20, 30, 180], fg_col: None,
+                bg_col: None, alt_fg_col: None, alt_bg_col: None,
+            }).collect();
+            let painter = PairPainter { a: 0, b: 1, grid_w: 2, width: 2 * CW,
+                cell_x: 0, cell_y: 0, data: &data, masks: &masks, gw, gh };
+            for cell in 0..4 {
+                for inverted in [false, true] {
+                    let mut cached = vec![[100; 3]; 4 * CW * CH];
+                    let mut original = cached.clone();
+                    painter.paint_cell(&mut cached, cell, (0, inverted));
+                    paint_preview_glyph_at(&mut original, 2 * CW, cell % 2 * CW,
+                        cell / 2 * CH, &data[cell], &glyphs[0], inverted, gw, gh);
+                    assert_eq!(cached, original);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn foreground_only_search_excludes_inverted_candidates() {
+        let args = crate::args_to_render_args(&crate::args::Args::parse_from(["test"]));
+        let store = crate::font::glyph_store(
+            &["half".into()], &[], &[], &[], None, &[], 16.0, false, None,
+        );
+        let glyphs = prepare_glyphs(&store, &args);
+        let (gw, gh) = store.metrics;
+        let source: Vec<_> = glyphs[0].bitmap.iter()
+            .map(|&bit| if bit == 0 { [255; 3] } else { [0; 3] }).collect();
+        let data = [BlockData {
+            fg: [255; 3], bg: [0; 3], fg_col: None, bg_col: None,
+            alt_fg_col: None, alt_bg_col: None,
+        }];
+        let states = [(0, false)];
+        let native = build_rendered_raster(&data, &states, &glyphs, 1, 1, gw, gh);
+        let (preview_source, _, _) = crate::contour_score::normalize_preview_raster(&source, 1, 1, gw, gh);
+        let (preview_output, _, _) = crate::contour_score::normalize_preview_raster(&native, 1, 1, gw, gh);
+        let masks: Vec<_> = glyphs.iter().map(|g| smooth_preview_glyph(g, gw, gh).mask).collect();
+        for foreground_only in [false, true] {
+            let pools = candidates(
+                &source, &data, &states, &glyphs, &masks, &preview_source, &preview_output,
+                &[true], 1, 1, gw, gh, 64, None, foreground_only, None,
+            ).unwrap();
+            assert!(pools[0].len() > 1);
+            assert_eq!(pools[0].iter().any(|&(_, inverted)| inverted), !foreground_only);
+        }
+    }
+
+    #[test]
+    fn stalled_source_slots_rotate_while_preserving_the_incumbent_and_best_fit() {
+        let args = crate::generator::default_options();
+        let store = crate::font::glyph_store(
+            &["large".into(), "space".into()], &[], &[], &[], None, &[], 16.0, false, None,
+        );
+        let glyphs = prepare_glyphs(&store, &args);
+        let (gw, gh) = store.metrics;
+        let source: Vec<_> = glyphs[0].bitmap.iter().map(|&bit| if bit == 0 { [0; 3] } else { [255; 3] }).collect();
+        let data = [BlockData { fg: [255; 3], bg: [0; 3], fg_col: None, bg_col: None,
+            alt_fg_col: None, alt_bg_col: None }];
+        let states = [(0, false)];
+        let (preview, _, _) = crate::contour_score::normalize_preview_raster(&source, 1, 1, gw, gh);
+        let masks: Vec<_> = glyphs.iter().map(|g| smooth_preview_glyph(g, gw, gh).mask).collect();
+        for foreground_only in [false, true] {
+            let first = candidates(
+                &source, &data, &states, &glyphs, &masks, &preview, &preview,
+                &[true], 1, 1, gw, gh, 6, None, foreground_only, None,
+            ).unwrap().remove(0);
+            let attempted = vec![first.iter().map(|&(gi, inverted)| masks[gi] ^ if inverted { u128::MAX } else { 0 }).collect()];
+            let second = candidates(
+                &source, &data, &states, &glyphs, &masks, &preview, &preview,
+                &[true], 1, 1, gw, gh, 6, Some(&attempted), foreground_only, None,
+            ).unwrap().remove(0);
+            let pools = [first, second];
+            assert_eq!(&pools[0][..2], &pools[1][..2]);
+            assert_ne!(pools[0][2], pools[1][2]);
+            assert!(!attempted[0].contains(&(masks[pools[1][2].0] ^ if pools[1][2].1 { u128::MAX } else { 0 })));
+            assert_eq!(pools[0].len(), pools[1].len());
+            if foreground_only { assert!(pools.iter().flatten().all(|c| !c.1)); }
+        }
+    }
+
+    #[test]
     fn batched_rankings_match_original_scores_and_refresh_after_neighbour_changes() {
+        let mut session = rank_cache::Session::new(8 * 1024 * 1024);
+        session.run(check_cached_rankings);
+    }
+
+    fn check_cached_rankings() {
         let args = crate::args_to_render_args(&crate::args::Args::parse_from(["test"]));
         let store = crate::font::glyph_store(
             &["half".into()],
@@ -1649,6 +1904,7 @@ mod tests {
             .collect();
         let mut states = vec![(0, false); data.len()];
         let mut output = vec![[0; 3]; source.len()];
+        let masks: Vec<_> = glyphs.iter().map(|g| smooth_preview_glyph(g, gw, gh).mask).collect();
         let painter = PairPainter {
             a: 0,
             b: 0,
@@ -1657,7 +1913,7 @@ mod tests {
             cell_x: 0,
             cell_y: 0,
             data: &data,
-            glyphs: &glyphs,
+            masks: &masks,
             gw,
             gh,
         };
@@ -1674,11 +1930,11 @@ mod tests {
             (states.len() - 2, states.len() - 1),
         ];
         let mut versions = vec![0; states.len()];
+        let references = source_cache::SourceReferences::new(&source, grid_w * CW);
         let context = RankContext {
-            source: &source,
             output: &output,
             data: &data,
-            glyphs: &glyphs,
+            masks: &masks,
             pools: &pools,
             grid_w,
             grid_h,
@@ -1686,11 +1942,23 @@ mod tests {
             gh,
             finalists: 3,
             abort: None,
+            references: &references,
         };
-        let mut ready = context.prepare(&groups, &states, &versions, None).unwrap();
+        let mut workers = workspaces(4);
+        let mut ready = context.prepare(&groups, &states, &versions, &mut workers).unwrap();
+        let mut cache_workers = workspaces(4);
+        let mut repeated = context.prepare(&groups, &states, &versions, &mut cache_workers).unwrap();
+        assert!(cache_workers.iter().all(|worker| worker.output.is_empty()),
+            "cache hits must skip scoring and workspace preparation");
+        assert!(repeated.iter().all(|ready| ready.as_ref().unwrap().patch.is_none()));
+        for (first, second) in ready.iter().zip(&repeated) {
+            let trials = |group: &Option<PreparedGroup>| group.as_ref().unwrap().trials.iter()
+                .map(|t| (t.a, t.b, t.local.to_bits())).collect::<Vec<_>>();
+            assert_eq!(trials(first), trials(second));
+        }
         for (&(a, b), ready) in groups.iter().zip(&ready) {
             let ready = ready.as_ref().unwrap();
-            let patch = &ready.patch;
+            let patch = ready.patch.as_ref().unwrap();
             let painter = PairPainter {
                 a,
                 b,
@@ -1734,10 +2002,9 @@ mod tests {
         versions[cell] += 1;
         painter.paint_cell(&mut output, cell, states[cell]);
         let context = RankContext {
-            source: &source,
             output: &output,
             data: &data,
-            glyphs: &glyphs,
+            masks: &masks,
             pools: &pools,
             grid_w,
             grid_h,
@@ -1745,6 +2012,7 @@ mod tests {
             gh,
             finalists: 3,
             abort: None,
+            references: &references,
         };
         let (a, b) = groups[1];
         let refreshed = context
@@ -1754,7 +2022,7 @@ mod tests {
                 &states,
                 &versions,
                 ready[1].as_mut().unwrap(),
-                &mut TrialWorkspace::default(),
+                &mut workspaces(4),
             )
             .unwrap();
         let (fresh, _) = context
@@ -1767,5 +2035,27 @@ mod tests {
         for (a, b) in refreshed.iter().zip(fresh) {
             assert!((a.local - b.local).abs() < 1e-9);
         }
+        let cached_refresh = context.refresh(a, b, &states, &versions,
+            repeated[1].as_mut().unwrap(), &mut cache_workers).unwrap();
+        for (a, b) in cached_refresh.iter().zip(&refreshed) {
+            assert_eq!((a.a, a.b), (b.a, b.b));
+            assert!((a.local - b.local).abs() < 1e-9);
+        }
+        // A changed neighbourhood must miss instead of reusing the original
+        // cached scores. The untouched corner still uses its cached ranking.
+        let changed = context.prepare(&groups, &states, &versions, &mut workers).unwrap();
+        assert!(changed[0].as_ref().unwrap().patch.is_none());
+        assert!(changed[1].as_ref().unwrap().patch.is_some());
+        let mut different_source = source.clone();
+        different_source[0][0] ^= 1;
+        let different_references = source_cache::SourceReferences::new(&different_source, grid_w * CW);
+        let different_context = RankContext { references: &different_references, ..context };
+        let changed = different_context.prepare(&groups[..1], &states, &versions, &mut workers).unwrap();
+        assert!(changed[0].as_ref().unwrap().patch.is_some());
+        let mut different_pools = pools.clone();
+        different_pools[0].pop();
+        let different_context = RankContext { pools: &different_pools, ..context };
+        let changed = different_context.prepare(&groups[..1], &states, &versions, &mut workers).unwrap();
+        assert!(changed[0].as_ref().unwrap().patch.is_some());
     }
 }

@@ -28,12 +28,49 @@ function validateRanges(ranges) {
   if (invalid) throw new Error(`Invalid Unicode range "${invalid}"; use hexadecimal START-END`);
 }
 
+function wholeNumber(root, id, minimum, label) {
+  const input = value(root, id).trim();
+  const result = Number(input);
+  if (!input || !Number.isInteger(result) || result < minimum || result > 0xffffffff) {
+    throw new Error(`${label} must be a whole number of at least ${minimum}`);
+  }
+  return result;
+}
+
+export function syncRenderModeControls(root) {
+  const mode = value(root, "render-mode");
+  const dither = mode === "dither";
+  const glyph = mode === "glyph";
+  const braille = mode === "braille";
+  root.querySelector('#render option[value="ansi24"]').disabled = dither;
+  root.querySelector('#render-mode option[value="dither"]').disabled =
+    value(root, "render") === "ansi24" || checked(root, "foreground-only");
+  root.querySelector("#foreground-only").disabled = dither;
+  for (const label of root.querySelectorAll("[data-dither-control]")) {
+    label.hidden = !dither;
+    label.querySelector("input").disabled = !dither;
+  }
+  for (const control of root.querySelectorAll("#glyph-controls input, #glyph-controls textarea, #glyph-controls button")) {
+    control.disabled = braille;
+  }
+  root.querySelector("#smooth").disabled = braille;
+  root.querySelector("#glyph-pair-search").disabled = !glyph;
+  root.querySelector("#perceptual-score").disabled = !glyph;
+}
+
 export function collectRenderOptions(root, glyphCatalog, overlays = []) {
   const includeRanges = lines(root, "include-ranges");
   const excludeRanges = lines(root, "exclude-ranges");
   validateRanges([...includeRanges, ...excludeRanges]);
 
-  const braille = checked(root, "braille");
+  const renderMode = value(root, "render-mode");
+  const render = value(root, "render");
+  const foregroundOnly = checked(root, "foreground-only");
+  const braille = renderMode === "braille";
+  const dither = renderMode === "dither";
+  if (dither && (render === "ansi24" || foregroundOnly)) {
+    throw new Error("Dither needs IRC99 or ANSI 256 and both foreground and background colours");
+  }
   const groups = [...root.querySelectorAll("#glyph-groups input:checked")]
     .map((input) => input.value);
   const include = value(root, "include");
@@ -45,8 +82,13 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     width: optionalPositiveInteger(root, "width"),
     height: optionalPositiveInteger(root, "height"),
     fontSize: number(root, "font-size"),
-    render: value(root, "render"),
-    braille,
+    render,
+    renderMode,
+    foregroundOnly,
+    ...(dither ? {
+      ditherDetail: wholeNumber(root, "dither-detail", 1, "Dither Detail"),
+      ditherPaletteCandidates: wholeNumber(root, "dither-palette-candidates", 0, "Dither Palette Choices"),
+    } : {}),
     glyphs: glyphCatalog.characters(braille ? ["braille"] : groups),
     pipeline: collectPipelineEffects(root),
     include: include || undefined,
@@ -57,9 +99,9 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     blendColours: checked(root, "blend-colours"),
     grayscaleTolerance: number(root, "grayscale-tolerance"),
     colourSpace: value(root, "colour-space"),
-    smooth: checked(root, "smooth"),
-    perceptualScore: checked(root, "perceptual-score"),
-    glyphSearch: checked(root, "glyph-pair-search"),
+    smooth: !braille && checked(root, "smooth"),
+    perceptualScore: renderMode === "glyph" && checked(root, "perceptual-score"),
+    glyphSearch: renderMode === "glyph" && checked(root, "glyph-pair-search"),
     discontinuityThreshold: number(root, "discontinuity-threshold"),
     glyphSearchCandidates: number(root, "glyph-search-candidates"),
     glyphSearchPasses: number(root, "glyph-search-passes"),
@@ -68,9 +110,9 @@ export function collectRenderOptions(root, glyphCatalog, overlays = []) {
     smoothOrders: number(root, "smooth-orders"),
     smoothShapes: checked(root, "smooth-shapes"),
     smoothNeighbors: checked(root, "smooth-neighbors"),
-    // Both previews consume styled cells. Native mode builds fixed DOM cells;
-    // bitmap mode lets the browser rasterize the same font with antialiasing.
     includeCells: true,
+    // Dither colours are matched against the renderer's coverage masks.
+    includePreview: dither,
     livePreview: true,
     overlays,
   };

@@ -374,6 +374,78 @@ class ApiTests(unittest.TestCase):
         first["width"] = 999
         self.assertNotEqual(img2irc.defaults()["width"], 999)
 
+    def test_dither_matches_blended_colours_and_shaded_edges(self):
+        def chunk(kind, data):
+            return (
+                struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data))
+            )
+
+        def gray(value):
+            return bytes([value, value, value, 255])
+
+        rows = []
+        diagonal_shades = [188, 188, 188, 137, 0, 0, 0]
+        for y in range(4):
+            shade = 188 if y < 2 else 0
+            inverse_shade = 188 if y < 2 else 255
+            diagonal = b"".join(gray(diagonal_shades[x + y]) for x in range(4))
+            rows.append(b"\x00" + gray(137) * 4 + gray(shade) * 4 + gray(inverse_shade) * 4 + diagonal)
+        image = (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 4, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+            + chunk(b"IEND", b"")
+        )
+        for palette, colours, prefix in (
+            (img2irc.Palette.IRC99, img2irc.IRC99, "\x03"),
+            (img2irc.Palette.ANSI256, img2irc.ANSI256, "\x1b["),
+        ):
+            with self.subTest(palette=palette):
+                output = img2irc.Simple(
+                    width=4, height=1, palette=palette,
+                    render_mode=img2irc.RenderMode.DITHER, include_cells=True,
+                ).generate(image)
+                self.assertEqual(output.columns, 4)
+                self.assertTrue(output.content.startswith(prefix))
+                flat, edge, inverse, triangle = output.cells[0]
+                self.assertIn(flat.character, "░▒▓🮐")
+                self.assertEqual(edge.character, "🮎")
+                self.assertEqual(inverse.character, "🮒")
+                self.assertEqual(triangle.character, "🮜")
+                for cell in output.cells[0]:
+                    self.assertIn(cell.foreground, colours)
+                    self.assertIn(cell.background, colours)
+                    self.assertNotEqual(cell.foreground, cell.background)
+                self.assertTrue(output.preview_png.startswith(b"\x89PNG"))
+
+        output = img2irc.generate(
+            image, width=4, height=1, palette="irc99", render_mode="dither",
+            glyphs=[], include="A", dither_detail=12, dither_palette_candidates=16,
+            smooth=True, smooth_shapes=True, discontinuity_threshold=0, smooth_orders=1,
+            include_cells=True,
+        )
+        self.assertEqual((output.columns, output.rows), (4, 1))
+        self.assertEqual("".join(cell.character for cell in output.cells[0]), "AAAA")
+        self.assertGreater(output.timings.smoothing_search_ms, 0.0)
+        self.assertGreater(output.timings.shape_refine_ms, 0.0)
+
+    def test_render_mode_defaults_compatibility_and_validation(self):
+        self.assertEqual(img2irc.defaults()["render_mode"], "Glyph")
+        settings = dict(width=2, mode=img2irc.RenderMode.ANSI24)
+        legacy = img2irc.generate(self.PNG, **settings, braille=True)
+        modern = img2irc.generate(self.PNG, **settings, render_mode=img2irc.RenderMode.BRAILLE)
+        self.assertEqual(legacy.content, modern.content)
+        with self.assertRaisesRegex(ValueError, "IRC99 or ANSI256"):
+            img2irc.Advanced(palette="ansi24", render_mode="dither").validate()
+        with self.assertRaisesRegex(ValueError, "foreground and background"):
+            img2irc.Advanced(palette="irc99", render_mode="dither", foreground_only=True).validate()
+        with self.assertRaisesRegex(ValueError, "dither_detail"):
+            img2irc.Advanced(dither_detail=0).validate()
+        with self.assertRaisesRegex(RuntimeError, "raster budget"):
+            img2irc.generate(self.PNG, width=2, height=2, palette="irc99", render_mode="dither",
+                             dither_detail=5000)
+
     def test_no_ocr_wheel_reports_unavailable_feature(self):
         if not img2irc.OCR_ENABLED:
             with self.assertRaisesRegex(RuntimeError, "not compiled"):

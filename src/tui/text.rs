@@ -49,13 +49,14 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         Constraint::Length(1),  // FG/BG targets and clear actions
         Constraint::Length(5),  // Text editor
         Constraint::Length(1),  // Wrap / fit / formatting / delete
+        Constraint::Length(1),  // Back / lower / raise / front
         Constraint::Min(6),     // Overlay list
         Constraint::Length(5),  // Instructions / status
     ])
     .split(inner);
     app.register_pane(Pane::TextPalette, Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, chunks[0].height + chunks[1].height));
     app.register_pane(Pane::TextInput, Rect::new(chunks[2].x, chunks[2].y, chunks[2].width, chunks[2].height + chunks[3].height));
-    app.register_pane(Pane::TextList, chunks[4]);
+    app.register_pane(Pane::TextList, Rect::new(chunks[4].x, chunks[4].y, chunks[4].width, chunks[4].height + chunks[5].height));
 
     // Color Picker always visible
     let cp_rect = chunks[0];
@@ -63,15 +64,15 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         .text_selected
         .is_some_and(|s| s > 0 && s <= app.render_args.overlays.len());
     app.text_btn_areas.clear();
+    app.text_order_areas.clear();
     app.text_field_areas.clear();
     app.text_field_areas.push(chunks[2]);
 
     // Ensure CP is instantiated with correct mode
-    let mode = match app.render_mode_idx {
-        0 => crate::colorpicker::PaletteMode::Irc,
-        1 => crate::colorpicker::PaletteMode::Ansi,
-        2 => crate::colorpicker::PaletteMode::Ansi24,
-        _ => crate::colorpicker::PaletteMode::Irc,
+    let mode = match app.render_args.render {
+        Render::Irc => crate::colorpicker::PaletteMode::Irc,
+        Render::Ansi => crate::colorpicker::PaletteMode::Ansi,
+        Render::Ansi24 => crate::colorpicker::PaletteMode::Ansi24,
     };
     if app.color_picker_state.is_none() {
         app.color_picker_state = Some(crate::colorpicker::ColorPickerState::new(mode, true));
@@ -236,13 +237,11 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         let ov = &app.render_args.overlays[app.text_selected.unwrap() - 1];
         let editing = app.input_mode == InputMode::TextEdit;
         let mut visible_text = if editing {
-            app.value_edit_buffer.clone()
+            app.edit_cursor.marked(&app.value_edit_buffer)
         } else {
             ov.editable_text().to_string()
         };
-        if editing {
-            visible_text.push('▌');
-        } else if visible_text.is_empty() {
+        if !editing && visible_text.is_empty() {
             visible_text.push_str("Click here to type…");
         }
         let title = if editing {
@@ -250,7 +249,13 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         } else {
             " Text · click to edit "
         };
+        let scroll = if editing {
+            let prefix = &app.value_edit_buffer[..app.edit_cursor.position(&app.value_edit_buffer)];
+            let lines = crate::draw::layout_overlay_text(prefix, Some(chunks[2].width.saturating_sub(2).max(1) as usize));
+            lines.len().saturating_sub(chunks[2].height.saturating_sub(2).max(1) as usize) as u16
+        } else { 0 };
         let editor = Paragraph::new(visible_text)
+            .scroll((scroll, 0))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -415,6 +420,23 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
     app.text_btn_areas.extend(color_btn_areas);
     app.text_btn_areas.push(figlet_font_area);
 
+    let order_areas = Layout::horizontal([Constraint::Length(7), Constraint::Length(7), Constraint::Length(7), Constraint::Length(7), Constraint::Min(0)]).split(chunks[4]);
+    for (i, (label, action, focus)) in [
+        ("Back", OverlayOrder::Back, TextFieldFocus::BackButton),
+        ("Lower", OverlayOrder::Lower, TextFieldFocus::LowerButton),
+        ("Raise", OverlayOrder::Raise, TextFieldFocus::RaiseButton),
+        ("Front", OverlayOrder::Front, TextFieldFocus::FrontButton),
+    ].into_iter().enumerate() {
+        let can_move = app.text_selected.is_some_and(|selected| selected > 0 && match action {
+            OverlayOrder::Back | OverlayOrder::Lower => selected > 1,
+            OverlayOrder::Raise | OverlayOrder::Front => selected < app.render_args.overlays.len(),
+        });
+        f.render_widget(Paragraph::new(label).alignment(Alignment::Center).style(Style::default()
+            .fg(if can_move { TEXT } else { TEXT_DIM })
+            .bg(if app.text_field_focus == focus { ACCENT_DIM } else { SURFACE })), order_areas[i]);
+        if can_move { app.text_order_areas.push((order_areas[i], action)); }
+    }
+
     // Mini-list of overlays
     let mut items: Vec<ListItem> = Vec::new();
     let add_style = if app.text_selected == Some(0) {
@@ -466,15 +488,30 @@ pub(crate) fn render_text_tab(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 BORDER
             },
         ))
-        .title(" Overlays ");
+        .title(" Overlays · back → front ");
     let list = List::new(items).block(list_block);
-    f.render_stateful_widget(list, chunks[4], &mut app.text_list_state);
+    if app.text_list_last_selected != app.text_selected {
+        app.text_list_manual_scroll = false;
+    }
+    app.text_list_last_selected = app.text_selected;
+    if app.text_list_state.selected() != app.text_selected {
+        app.text_list_state.select(app.text_selected);
+    }
+    if app.text_list_manual_scroll {
+        // Ratatui normally scrolls back to the selected item. Wheel browsing
+        // uses an unselected render state so selection can stay offscreen.
+        let mut browsing = ListState::default().with_offset(app.text_list_state.offset());
+        f.render_stateful_widget(list, chunks[5], &mut browsing);
+        *app.text_list_state.offset_mut() = browsing.offset();
+    } else {
+        f.render_stateful_widget(list, chunks[5], &mut app.text_list_state);
+    }
 
     let mut status_text = String::from(
-        "Click canvas + type = fit box · double-click + drag = fixed box\n\
-Hover = outline · either lower-right edge = 🢆 resize · inside = move\n\
-Palette: left = selected · middle = FG · right = BG\n\
-Tab changes pane · Arrows move focus · Enter/Space activates · Esc finishes",
+        "Shift+↑/↓: reorder · Shift+Home/End: back/front\n\
+Wheel over list: scroll · Shift+wheel: page\n\
+Outside edge/corner: resize · inside: move\n\
+Tab: pane · Enter/Space: activate · Esc: finish",
     );
 
     if !cfg!(feature = "ocr") {
@@ -501,9 +538,9 @@ Tab changes pane · Arrows move focus · Enter/Space activates · Esc finishes",
     }
 
     let inst_p = Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray));
-    f.render_widget(inst_p, chunks[5]);
+    f.render_widget(inst_p, chunks[6]);
 
     // Store rects for mouse events later
     app.color_picker_area = cp_rect;
-    app.text_list_area = chunks[4];
+    app.text_list_area = chunks[5];
 }

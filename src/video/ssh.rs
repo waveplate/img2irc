@@ -11,7 +11,7 @@ use tokio::{
     sync::watch,
 };
 
-const ENTER: &[u8] = b"\x1b[?1049h\x1b[?6l\x1b[r\x1b[?25l\x1b[?7l\x1b[0m\x1b[40m\x1b[2J";
+const ENTER: &[u8] = b"\x1b[?1049h\x1b[?6l\x1b[r\x1b[?25l\x1b[?7l";
 const LEAVE: &[u8] = b"\x1b[?2026l\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l";
 
 pub(super) fn bind_address(value: &str) -> std::result::Result<SocketAddr, String> {
@@ -482,6 +482,7 @@ async fn play_frames(
         open_video(&fallback).map_err(|error| io::Error::other(error.to_string()))
     })
     .await??;
+    send(output, clear_screen(header.foreground_only)).await?;
     let (sender, mut receiver) = tokio::sync::mpsc::channel(4);
     tokio::task::spawn_blocking(move || loop {
         let frame = read_frame(&mut reader);

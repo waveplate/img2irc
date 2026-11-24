@@ -18,6 +18,31 @@ fn settings(extra: &[&str]) -> Settings {
 }
 
 #[test]
+fn foreground_only_video_keeps_backgrounds_unset_through_colour_edits_and_playback() {
+    let options = settings(&["--foreground-only", "--quantize-colours", "2"]);
+    let mut renderer = render::Renderer::new(&options, 2.0).unwrap();
+    let mut header = renderer.header(24.0);
+    assert!(header.foreground_only);
+    let rgba: Vec<_> = (0..renderer.frame_bytes() / 4)
+        .flat_map(|i| if i % 3 == 0 { [255, 60, 60, 255] } else { [0, 0, 0, 255] })
+        .collect();
+    let (result, _) = renderer.render(&rgba, &mut render::FrameCache::default(), None).unwrap();
+    assert!(result.foreground_only);
+    assert!(result.grid.iter().flatten().all(|cell| cell.bg.is_none() && !cell.inverted));
+    header.height = result.grid.len() as u16;
+    header.width = result.grid[0].len() as u16;
+    let mut presenter = present::Presenter::default();
+    for viewport in [None, Some((2, 1)), Some((10, 10))] {
+        let packet = presenter.prepare(result.content.as_bytes(), &header, viewport, true, true).unwrap();
+        let text = std::str::from_utf8(&packet).unwrap();
+        assert!(!text.contains("48;") && !text.contains("[40m"), "{text:?}");
+    }
+    let mut legacy = serde_json::to_value(&header).unwrap();
+    legacy.as_object_mut().unwrap().remove("foreground_only");
+    assert!(!serde_json::from_value::<Header>(legacy).unwrap().foreground_only);
+}
+
+#[test]
 fn quantization_reuses_glyphs_and_matches_a_fresh_render() {
     let mut options = settings(&["--smooth"]);
     let mut renderer = render::Renderer::new(&options, 2.0).unwrap();

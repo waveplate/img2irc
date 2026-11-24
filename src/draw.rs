@@ -13,8 +13,12 @@ use std::path::{Path, PathBuf};
 
 mod region_guidance;
 mod source_colours;
+mod foreground_only;
 mod glyph_search;
 mod flow_cache;
+pub(crate) mod dither;
+
+pub(crate) use glyph_search::rank_cache::Session as GlyphSearchCache;
 
 /// Configure exact local Repair Edges memoization on the calling render thread.
 /// Zero disables reuse. Full-image acceptance is always recalculated.
@@ -324,10 +328,10 @@ fn srgb_to_linear(c: f32) -> f32 {
 }
 
 pub fn rgb_to_oklab(rgb: [u8; 3]) -> Oklab {
-    let r = srgb_to_linear(rgb[0] as f32 / 255.0);
-    let g = srgb_to_linear(rgb[1] as f32 / 255.0);
-    let b = srgb_to_linear(rgb[2] as f32 / 255.0);
+    linear_rgb_to_oklab(rgb.map(|channel| srgb_to_linear(channel as f32 / 255.0)))
+}
 
+fn linear_rgb_to_oklab([r, g, b]: [f32; 3]) -> Oklab {
     let l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
     let m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969617 * b;
     let s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
@@ -1148,13 +1152,25 @@ pub fn emit_colourized(
                         };
                         write!(out, "\x03{},{}", fg_idx, bg_idx).unwrap();
                     } else {
-                        write!(out, "\x03{}", fg_idx).unwrap();
+                        write!(out, "\x03{:02}", fg_idx).unwrap();
+                        // A following comma and digits must remain literal text,
+                        // rather than becoming an IRC background colour argument.
+                        if glyph == ',' {
+                            out.push_str("\x02\x02");
+                        }
                     }
                 } else if need_fg {
                     // If only FG changed, and BG is the same as before,
                     // we only emit FG. (Note: Some clients might reset BG,
                     // but the user explicitly requested this optimization).
-                    write!(out, "\x03{}", fg_idx).unwrap();
+                    if bg.is_none() {
+                        write!(out, "\x03{:02}", fg_idx).unwrap();
+                        if glyph == ',' {
+                            out.push_str("\x02\x02");
+                        }
+                    } else {
+                        write!(out, "\x03{}", fg_idx).unwrap();
+                    }
                 }
 
                 *last_fg = Some(effective_fg.clone());
@@ -1357,6 +1373,8 @@ impl RenderProfile {
 #[derive(Clone)]
 pub struct RenderResult {
     pub content: String,
+    /// Keep backgrounds unset when applying overlays or output colour effects.
+    pub foreground_only: bool,
     pub save_content: Option<String>,
     pub error_count: u64,
     pub total_pixels: u64,
@@ -1375,6 +1393,7 @@ impl From<&str> for RenderResult {
     fn from(s: &str) -> Self {
         RenderResult {
             content: s.to_string(),
+            foreground_only: false,
             save_content: None,
             error_count: 0,
             total_pixels: 0,
@@ -1419,7 +1438,7 @@ pub(crate) fn encode_output_colours(
     )
 }
 
-fn encode_grid_with_overlays(
+pub(crate) fn encode_grid_with_overlays(
     base: &RenderResult,
     overlays: &[crate::args::TextOverlay],
     render: Render,
@@ -1456,84 +1475,16 @@ fn encode_grid_with_overlays(
             let cx = x as i32;
             let cy = y as i32;
 
-            // Check if any overlay covers this cell
-            let mut ov_char: Option<char> = None;
-            let mut ov_fg: Option<[u8; 3]> = None;
-            let mut ov_bg: Option<[u8; 3]> = None;
-            let mut ov_bold = false;
-            let mut ov_italic = false;
-            let mut ov_underline = false;
-
-            for prepared in &prepared_overlays {
-                let ov = prepared.overlay;
-                if let Some(opt_c) = prepared.at(cx, cy) {
-                    let ch = opt_c.unwrap_or(' ');
-                    ov_char = Some(ch);
-                    ov_bold = ov.bold;
-                    ov_italic = ov.italic;
-                    ov_underline = ov.underline;
-                    ov_fg = ov.fg.as_ref().map(|spec| match spec {
-                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
-                        crate::args::ColorSpec::Index(i) => {
-                            let palette = match render {
-                                Render::Irc => &IRC99[..],
-                                _ => &ANSI256[..],
-                            };
-                            let hex = if (*i as usize) < palette.len() {
-                                palette[*i as usize]
-                            } else {
-                                0xFFFFFF
-                            };
-                            [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
-                        }
-                    });
-                    ov_bg = ov.bg.as_ref().map(|spec| match spec {
-                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
-                        crate::args::ColorSpec::Index(i) => {
-                            let palette = match render {
-                                Render::Irc => &IRC99[..],
-                                _ => &ANSI256[..],
-                            };
-                            let hex = if (*i as usize) < palette.len() {
-                                palette[*i as usize]
-                            } else {
-                                0x000000
-                            };
-                            [(hex >> 16) as u8, (hex >> 8) as u8, hex as u8]
-                        }
-                    });
-                    break;
-                }
-            }
-
-            let overlay_applied = ov_char.is_some();
-            let (draw_fg_raw, draw_bg_raw, draw_char, draw_bold, draw_italic, draw_underline) =
-                if let Some(ch) = ov_char {
-                    let fg_raw = ov_fg.unwrap_or(cell.fg);
-                    let bg_raw = ov_bg.or(Some(cell.bg.unwrap_or([0, 0, 0])));
-                    (fg_raw, bg_raw, ch, ov_bold, ov_italic, ov_underline)
-                } else {
-                    (
-                        cell.fg,
-                        cell.bg,
-                        cell.char,
-                        cell.bold,
-                        cell.italic,
-                        cell.underline,
-                    )
-                };
-
-            if overlay_applied {
-                grid[y][x] = RenderedCell {
-                    char: draw_char,
-                    fg: draw_fg_raw,
-                    bg: draw_bg_raw,
-                    inverted: false,
-                    bold: draw_bold,
-                    italic: draw_italic,
-                    underline: draw_underline,
-                };
-            }
+            let composited = composite_text_overlays(cell, &prepared_overlays, cx, cy, render);
+            let painted = composited.as_ref().unwrap_or(cell);
+            let (draw_fg_raw, draw_bg_raw, draw_char, draw_bold, draw_italic, draw_underline) = (
+                painted.fg, if base.foreground_only { None } else { painted.bg }, painted.char,
+                painted.bold, painted.italic, painted.underline,
+            );
+            if let Some(mut painted) = composited {
+                if base.foreground_only { painted.bg = None; }
+                grid[y][x] = painted;
+            } else if base.foreground_only { grid[y][x].bg = None; }
 
             let encode_render = if exact_palette && as_preview && render == Render::Irc {
                 Render::Ansi24
@@ -1634,6 +1585,7 @@ fn encode_grid_with_overlays(
 
     RenderResult {
         content,
+        foreground_only: base.foreground_only,
         save_content,
         grid,
         error_count: base.error_count,
@@ -3092,7 +3044,9 @@ struct PreparedTextOverlay<'a> {
 
 impl<'a> PreparedTextOverlay<'a> {
     fn new(overlay: &'a crate::args::TextOverlay) -> Self {
-        let wrap_width = (overlay.wrap && overlay.w > 0).then_some(overlay.w as usize);
+        // FIGlet wraps its source words before rendering. Reflowing the finished
+        // glyph rows would discard indentation and break the banner shapes.
+        let wrap_width = (overlay.wrap && !overlay.figlet_enabled() && overlay.w > 0).then_some(overlay.w as usize);
         let lines = layout_overlay_text(&overlay.text, wrap_width);
         let width = if overlay.w > 0 { overlay.w as usize }
             else { lines.iter().map(Vec::len).max().unwrap_or(0).max(1) };
@@ -3119,14 +3073,52 @@ impl<'a> PreparedTextOverlay<'a> {
         let character = self.lines.get(dy).and_then(|line| line.get(dx)).copied();
         // An explicit background makes the entire bounding box opaque. Only
         // overlays without a background may leave banner whitespace untouched.
-        if ov.bg.is_none() && (character.is_none()
-            || ((ov.transparent_spaces || ov.figlet_enabled())
-                && character.is_some_and(char::is_whitespace)))
+        if ov.bg.is_none() && (character.is_none() || character.is_some_and(char::is_whitespace))
         {
             return None;
         }
         Some(character)
     }
+}
+
+/// Overlay order is back to front. Unset colours inherit the composited cell,
+/// and unpainted cells leave the entire lower layer intact.
+fn composite_text_overlays(
+    base: &RenderedCell,
+    overlays: &[PreparedTextOverlay<'_>],
+    x: i32,
+    y: i32,
+    render: Render,
+) -> Option<RenderedCell> {
+    if overlays.is_empty() { return None; }
+    let mut cell = base.clone();
+    let mut painted = false;
+    let rgb = |spec: &crate::args::ColorSpec| match spec {
+        crate::args::ColorSpec::Rgb(rgb) => *rgb,
+        crate::args::ColorSpec::Index(index) => colour_to_rgb(&Colour::Index(*index), render),
+    };
+    for prepared in overlays {
+        let Some(character) = prepared.at(x, y) else { continue; };
+        if cell.inverted {
+            let foreground = cell.fg;
+            cell.fg = cell.bg.unwrap_or([0; 3]);
+            cell.bg = Some(foreground);
+        }
+        let overlay = prepared.overlay;
+        // A solid foreground block is also a flat colour behind later text.
+        let background = if cell.char == '█' { Some(cell.fg) } else { cell.bg };
+        cell = RenderedCell {
+            char: character.unwrap_or(' '),
+            fg: overlay.fg.as_ref().map(rgb).unwrap_or(cell.fg),
+            bg: overlay.bg.as_ref().map(rgb).or(background),
+            inverted: false,
+            bold: overlay.bold,
+            italic: overlay.italic,
+            underline: overlay.underline,
+        };
+        painted = true;
+    }
+    painted.then_some(cell)
 }
 
 struct SmoothPrefixStats {
@@ -4251,16 +4243,83 @@ struct GeometryRenderedStateCatalog {
     uniform: Vec<bool>,
 }
 
+#[derive(Clone, Copy)]
+enum GeometryGlyphs<'a> {
+    Binary(&'a [FastGlyph]),
+    Coverage(&'a [&'a [u8]], u8),
+}
+
+impl<'a> GeometryGlyphs<'a> {
+    fn levels(self) -> u8 {
+        match self {
+            Self::Binary(_) => 1,
+            Self::Coverage(_, levels) => levels,
+        }
+    }
+
+    fn len(self) -> usize {
+        match self {
+            Self::Binary(glyphs) => glyphs.len(),
+            Self::Coverage(glyphs, _) => glyphs.len(),
+        }
+    }
+
+    fn bitmap(self, glyph: usize) -> &'a [u8] {
+        match self {
+            Self::Binary(glyphs) => &glyphs[glyph].bitmap,
+            Self::Coverage(glyphs, _) => glyphs[glyph],
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn paint(
+        self,
+        output: &mut [[u8; 3]],
+        stride: usize,
+        origin: (usize, usize),
+        size: (usize, usize),
+        data: &BlockData,
+        choice: (usize, bool),
+        gw: usize,
+        gh: usize,
+    ) {
+        if let Self::Binary(glyphs) = self {
+            let glyph = &glyphs[choice.0];
+            if size == (gw, gh) {
+                paint_cell_pixels(output, stride, origin.0, origin.1, data, glyph, choice.1, gw, gh);
+            } else {
+                paint_preview_glyph_at(output, stride, origin.0, origin.1, data, glyph, choice.1, gw, gh);
+            }
+            return;
+        }
+        let bitmap = self.bitmap(choice.0);
+        let levels = u16::from(self.levels());
+        for y in 0..size.1 {
+            for x in 0..size.0 {
+                let value = u16::from(bitmap[y * gh / size.1 * gw + x * gw / size.0]);
+                let coverage = if choice.1 { levels - value } else { value };
+                output[(origin.1 + y) * stride + origin.0 + x] = std::array::from_fn(|c| {
+                    ((u16::from(data.fg[c]) * coverage
+                        + u16::from(data.bg[c]) * (levels - coverage) + levels / 2) / levels) as u8
+                });
+            }
+        }
+    }
+}
+
 fn geometry_rendered_state_catalog(glyphs: &[FastGlyph]) -> GeometryRenderedStateCatalog {
+    geometry_state_catalog(GeometryGlyphs::Binary(glyphs))
+}
+
+fn geometry_state_catalog(glyphs: GeometryGlyphs<'_>) -> GeometryRenderedStateCatalog {
     let mut classes = std::collections::HashMap::<Vec<u8>, usize>::new();
     let mut class_ids = Vec::with_capacity(glyphs.len() * 2);
     let mut uniform = Vec::with_capacity(glyphs.len() * 2);
-    for glyph in glyphs {
+    for glyph in 0..glyphs.len() {
         for inverted in [false, true] {
-            let rendered = glyph
-                .bitmap
+            let rendered = glyphs.bitmap(glyph)
                 .iter()
-                .map(|&pixel| pixel ^ inverted as u8)
+                .map(|&pixel| if inverted { glyphs.levels() - pixel } else { pixel })
                 .collect::<Vec<_>>();
             let is_uniform = rendered
                 .first()
@@ -4312,7 +4371,7 @@ fn paint_geometry_candidate_in_patch(
     patch_center_idx: usize,
     changed_idx: usize,
     grid_data: &[BlockData],
-    glyphs: &[FastGlyph],
+    glyphs: GeometryGlyphs<'_>,
     candidate: (usize, bool),
     grid_w: usize,
     grid_h: usize,
@@ -4335,14 +4394,13 @@ fn paint_geometry_candidate_in_patch(
                 .saturating_sub(NEIGHBORHOOD_RADIUS)
                 .min(grid_w - 1);
             if source_x == changed_x && source_y == changed_y {
-                paint_preview_glyph_at(
+                glyphs.paint(
                     &mut patch.pixels,
                     patch.width,
-                    patch_x * crate::contour_score::PREVIEW_CELL_WIDTH,
-                    patch_y * crate::contour_score::PREVIEW_CELL_HEIGHT,
+                    (patch_x * crate::contour_score::PREVIEW_CELL_WIDTH, patch_y * crate::contour_score::PREVIEW_CELL_HEIGHT),
+                    (crate::contour_score::PREVIEW_CELL_WIDTH, crate::contour_score::PREVIEW_CELL_HEIGHT),
                     &grid_data[changed_idx],
-                    &glyphs[candidate.0],
-                    candidate.1,
+                    candidate,
                     gw,
                     gh,
                 );
@@ -4357,7 +4415,7 @@ fn run_geometry_smooth(
     raster: &mut Vec<[u8; 3]>,
     grid_state: &mut Vec<(usize, bool)>,
     grid_data: &[BlockData],
-    glyphs: &[FastGlyph],
+    glyphs: GeometryGlyphs<'_>,
     block_glyph_costs: &[Vec<u64>],
     target_scores: Vec<f32>,
     source_raster: &[[u8; 3]],
@@ -4365,7 +4423,7 @@ fn run_geometry_smooth(
     grid_h: usize,
     gw: usize,
     gh: usize,
-    abort_flag: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    abort_flag: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<GeometrySmoothStats, ()> {
     let weights = geometry_smooth_weights(args);
     let flow_weight = args.contour_bending_weight.max(0.0) as f64
@@ -4404,7 +4462,10 @@ fn run_geometry_smooth(
     // rollback choice if neighboring edits later make it useful again.
     let candidate_limit = args.smooth_candidates.max(1) as usize;
     let baseline_state = grid_state.clone();
-    let state_catalog = geometry_rendered_state_catalog(glyphs);
+    let state_catalog = geometry_state_catalog(glyphs);
+    let same_shape = |a: (usize, bool), b: (usize, bool)| {
+        state_catalog.class_ids[a.0 * 2 + a.1 as usize] == state_catalog.class_ids[b.0 * 2 + b.1 as usize]
+    };
     let candidate_lists = (0..cell_count)
         .into_par_iter()
         .map(|cell_idx| {
@@ -4589,12 +4650,7 @@ fn run_geometry_smooth(
             .collect::<Vec<_>>();
 
         let evaluate_candidate = |&candidate: &(usize, bool)| {
-                if glyph_states_render_identically(
-                    &glyphs[candidate.0],
-                    candidate.1,
-                    &glyphs[current_choice.0],
-                    current_choice.1,
-                ) {
+            if same_shape(candidate, current_choice) {
                     return None;
                 }
                 let mut affected_scores = Vec::with_capacity(affected.len());
@@ -4690,14 +4746,7 @@ fn run_geometry_smooth(
         let candidates = &candidate_lists[curr_idx];
         candidate_evaluations += candidates
             .iter()
-            .filter(|&&candidate| {
-                !glyph_states_render_identically(
-                    &glyphs[candidate.0],
-                    candidate.1,
-                    &glyphs[current_choice.0],
-                    current_choice.1,
-                )
-            })
+            .filter(|&&candidate| !same_shape(candidate, current_choice))
             .count();
         let evaluations = if candidates.len() >= 8 {
             candidates
@@ -4726,24 +4775,25 @@ fn run_geometry_smooth(
 
         global_score += best.energy_sum - current_energy_sum;
         grid_state[curr_idx] = best.choice;
-        apply_choice_to_raster(
+        let (x, y) = (curr_idx % grid_w, curr_idx / grid_w);
+        glyphs.paint(
             raster,
-            grid_data,
-            glyphs,
-            grid_w,
+            grid_w * gw,
+            (x * gw, y * gh),
+            (gw, gh),
+            &grid_data[curr_idx],
+            best.choice,
             gw,
             gh,
-            curr_idx,
-            best.choice,
         );
-        paint_global_preview_cell(
+        let (pw, ph) = (crate::contour_score::PREVIEW_CELL_WIDTH, crate::contour_score::PREVIEW_CELL_HEIGHT);
+        glyphs.paint(
             &mut output_preview,
             preview_width,
-            curr_idx,
-            grid_w,
+            (x * pw, y * ph),
+            (pw, ph),
             &grid_data[curr_idx],
-            &glyphs[best.choice.0],
-            best.choice.1,
+            best.choice,
             gw,
             gh,
         );
@@ -5646,6 +5696,19 @@ pub fn render_blocks_smooth(
     glyphs: &[FastGlyph],
     abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> RenderResult {
+    if args.foreground_only {
+        return foreground_only::render(image, args, render, glyphs, abort_flag);
+    }
+    render_blocks_smooth_inner(image, args, render, glyphs, abort_flag)
+}
+
+fn render_blocks_smooth_inner(
+    image: &AnsiImage,
+    args: &RenderArgs,
+    render: Render,
+    glyphs: &[FastGlyph],
+    abort_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> RenderResult {
     let process_start_time = RenderInstant::now();
     let contour_cache_start = crate::contour_score::cache_stats();
 
@@ -5710,6 +5773,17 @@ pub fn render_blocks_smooth(
                         }
                     }
 
+                    if args.foreground_only {
+                        let Some((data, state)) = foreground_only::match_block(
+                            &original_pixels, glyphs, args, render, abort_flag.as_deref(),
+                        ) else {
+                            return (Vec::new(), Vec::new());
+                        };
+                        row_data.push(data);
+                        row_state.push(state);
+                        continue;
+                    }
+
                     let mut best_overall_glyph = 0;
                     let mut best_overall_inv = false;
                     let mut best_overall_fg = [0u8; 3];
@@ -5731,11 +5805,9 @@ pub fn render_blocks_smooth(
                         }
                         let pixels = &working_pixels_buffer;
 
-                        let is_ansi = if args.as_preview {
-                            false
-                        } else {
-                            matches!(render, Render::Ansi | Render::Ansi24)
-                        };
+                        // Preview changes the text encoding, not the palette
+                        // used to match glyphs and choose their colours.
+                        let is_ansi = matches!(render, Render::Ansi | Render::Ansi24);
                         let palette: &[u32] = if is_ansi { &ANSI256 } else { &IRC99 };
                         let mut base_cnt = [0u16; 256];
                         indices.clear();
@@ -5988,7 +6060,7 @@ pub fn render_blocks_smooth(
                                 None,
                                 None,
                             )
-                        } else if args.as_preview {
+                        } else if args.as_preview && render == Render::Irc {
                             let col_hi = make_rgb_u32(&best_fg_rgb);
                             let col_lo = make_rgb_u32(&best_bg_rgb);
 
@@ -6216,9 +6288,15 @@ pub fn render_blocks_smooth(
                         source_diff[i] = c_fg as i64 - c_bg as i64;
                     }
                     let bg_wins = if c_bg <= c_fg { 0i64 } else { 1i64 };
-                    base_cost += bg_wins as u64;
                     let fg_wins = if c_fg <= c_bg { 0i64 } else { 1i64 };
-                    diff[i] = fg_wins - bg_wins;
+                    if args.foreground_only {
+                        // The wrapper supplies opacity here, not source RGB.
+                        base_cost += c_bg;
+                        diff[i] = c_fg as i64 - c_bg as i64;
+                    } else {
+                        base_cost += bg_wins as u64;
+                        diff[i] = fg_wins - bg_wins;
+                    }
                 }
 
                 let total_diff: i64 = diff.iter().sum();
@@ -6247,6 +6325,9 @@ pub fn render_blocks_smooth(
                     let c_total_t = (base_cost as i64 + total_diff - dot).max(0) as u64;
 
                     let allowed = |inverted: bool| {
+                        if args.foreground_only && inverted {
+                            return false;
+                        }
                         let Some(guide) = guide else { return true; };
                         let mask = region_guidance.as_ref().unwrap().masks[gi]
                             ^ if inverted { u128::MAX } else { 0 };
@@ -6321,7 +6402,7 @@ pub fn render_blocks_smooth(
             raster,
             &mut grid_state,
             &grid_data,
-            glyphs,
+            GeometryGlyphs::Binary(glyphs),
             &block_glyph_costs,
             target_scores,
             &source_raster,
@@ -6329,7 +6410,7 @@ pub fn render_blocks_smooth(
             grid_h,
             gw,
             gh,
-            abort_flag.as_ref(),
+            abort_flag.as_deref(),
         ) {
             Ok(stats) => stats,
             Err(()) => return "Cancelled".into(),
@@ -6704,7 +6785,7 @@ pub fn render_blocks_smooth(
     if args.glyph_search {
         let started = RenderInstant::now();
         match glyph_search::run(
-            args, &source_raster, &grid_data, &mut grid_state, glyphs,
+            args, image, render, &source_raster, &mut grid_data, &mut grid_state, glyphs,
             grid_w, grid_h, gw, gh, abort_flag.as_deref(),
         ) {
             Ok(map) => glyph_defects = map,
@@ -6719,18 +6800,6 @@ pub fn render_blocks_smooth(
             args, &source_raster, &grid_data, &grid_state, glyphs,
             grid_w, grid_h, gw, gh,
         );
-    }
-
-    if args.glyph_search
-        && source_colours::refit(image, args, render, &mut grid_data, &grid_state, glyphs, grid_w) {
-        rendered_raster = Some(build_rendered_raster(
-            &grid_data, &grid_state, glyphs, grid_w, grid_h, gw, gh));
-        // Search diagnostics describe its scored colours. Recompute them if
-        // enforcing the final local masks changed those colours.
-        if args.show_glyph_defects {
-            glyph_defects = glyph_search::inspect(args, &source_raster, &grid_data,
-                &grid_state, glyphs, grid_w, grid_h, gw, gh);
-        }
     }
 
     let disc_threshold = args.discontinuity_threshold.max(0.0);
@@ -6910,17 +6979,6 @@ pub fn render_blocks_smooth(
             let glyph = &glyphs[gi];
             let ch = glyph.ch;
 
-            let mut text_overlay: Option<&crate::args::TextOverlay> = None;
-            let mut overlay_char = None;
-            for prepared in &prepared_overlays {
-                let ov = prepared.overlay;
-                if let Some(opt_c) = prepared.at(x as i32, y as i32) {
-                    text_overlay = Some(ov);
-                    overlay_char = opt_c;
-                    break;
-                }
-            }
-
             // Check for discontinuity overlay on this cell
             let overlay = if !disc_overlay.is_empty() {
                 disc_overlay[idx]
@@ -7006,8 +7064,11 @@ pub fn render_blocks_smooth(
                 draw_bg
             };
 
+            let base_cell = RenderedCell { char: ch, fg: draw_fg_raw, bg: draw_bg_raw, inverted: false, bold: false, italic: false, underline: false };
+            let composited = composite_text_overlays(&base_cell, &prepared_overlays, x as i32, y as i32, render);
+            let text_overlay = composited.as_ref();
             let mut final_char = ch;
-            if overlay.is_none() && text_overlay.is_none() {
+            if !args.foreground_only && overlay.is_none() && text_overlay.is_none() {
                 if let Some(uniform_ch) = cheapest_uniform_glyph {
                     if let Some(bg_c) = &draw_bg {
                         if &draw_fg == bg_c {
@@ -7022,50 +7083,18 @@ pub fn render_blocks_smooth(
             let mut final_draw_fg_raw = draw_fg_raw;
             let mut final_draw_bg_raw = draw_bg_raw;
 
-            if let Some(ov) = text_overlay {
-                if let Some(fg_param) = &ov.fg {
-                    final_draw_fg = match fg_param {
-                        crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                        crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                    };
-                    final_draw_fg_raw = match fg_param {
-                        crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc || args.as_preview;
-                            let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
-                            if is_irc {
-                                unpack_rgb(IRC99[idx])
-                            } else {
-                                unpack_rgb(ANSI256[idx])
-                            }
-                        }
-                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
-                    };
-                }
-                if let Some(bg_param) = &ov.bg {
-                    final_draw_bg = Some(match bg_param {
-                        crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                        crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                    });
-                    final_draw_bg_raw = Some(match bg_param {
-                        crate::args::ColorSpec::Index(i) => {
-                            let is_irc = args.render == crate::args::Render::Irc || args.as_preview;
-                            let idx = (*i as usize).min(if is_irc { 98 } else { 255 });
-                            if is_irc {
-                                unpack_rgb(IRC99[idx])
-                            } else {
-                                unpack_rgb(ANSI256[idx])
-                            }
-                        }
-                        crate::args::ColorSpec::Rgb(rgb) => *rgb,
-                    });
-                }
-                if let Some(c) = overlay_char {
-                    final_char = c;
-                } else if ov.bg.is_some() {
-                    final_char = ' ';
-                }
+            if let Some(cell) = text_overlay {
+                final_draw_fg = Colour::RGB(cell.fg);
+                final_draw_bg = cell.bg.map(Colour::RGB);
+                final_draw_fg_raw = cell.fg;
+                final_draw_bg_raw = cell.bg;
+                final_char = cell.char;
             }
 
+            if args.foreground_only {
+                final_draw_bg = None;
+                final_draw_bg_raw = None;
+            }
             row_vec.push(RenderedCell {
                 char: final_char,
                 fg: final_draw_fg_raw,
@@ -7133,7 +7162,7 @@ pub fn render_blocks_smooth(
                 // Compute uniform-glyph replacement for the IRC alt output
                 // using the IRC99 colors, not the ANSI256-based final_char.
                 let mut alt_final_char = ch;
-                if overlay.is_none() && text_overlay.is_none() {
+                if !args.foreground_only && overlay.is_none() && text_overlay.is_none() {
                     if let Some(uniform_ch) = cheapest_uniform_glyph {
                         if let Some(bg_c) = &alt_bg {
                             if &alt_fg == bg_c {
@@ -7145,26 +7174,15 @@ pub fn render_blocks_smooth(
 
                 let mut final_alt_fg = alt_fg;
                 let mut final_alt_bg = alt_bg;
-                if let Some(ov) = text_overlay {
-                    if let Some(fg_param) = &ov.fg {
-                        final_alt_fg = match fg_param {
-                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                        };
-                    }
-                    if let Some(bg_param) = &ov.bg {
-                        final_alt_bg = Some(match bg_param {
-                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                        });
-                    }
-                    if let Some(c) = overlay_char {
-                        alt_final_char = c;
-                    } else if ov.bg.is_some() {
-                        alt_final_char = ' ';
-                    }
+                if let Some(cell) = text_overlay {
+                    final_alt_fg = irc_colour_from_rgb(cell.fg);
+                    final_alt_bg = cell.bg.map(irc_colour_from_rgb);
+                    alt_final_char = cell.char;
                 }
 
+                if args.foreground_only {
+                    final_alt_bg = None;
+                }
                 alt_row_cells.push((
                     final_alt_fg,
                     final_alt_bg,
@@ -7274,6 +7292,7 @@ pub fn render_blocks_smooth(
 
     RenderResult {
         content: out.trim_end_matches('\n').into(),
+        foreground_only: args.foreground_only,
         save_content: if args.as_preview && render == Render::Irc {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
@@ -7308,6 +7327,16 @@ pub fn render_braille(
     args: &RenderArgs,
     render: Render,
 ) -> RenderResult {
+    let coverage;
+    let image_luma = if args.foreground_only {
+        if image_chroma.bitmap.is_empty() || image_chroma.bitmap[0].is_empty() {
+            return "".into();
+        }
+        coverage = foreground_only::coverage_canvas(image_chroma, args);
+        &coverage
+    } else {
+        image_luma
+    };
     let h = image_luma.bitmap.len();
     let w = image_luma.bitmap[0].len();
     let mut err = vec![vec![0.0; w]; h];
@@ -7406,33 +7435,20 @@ pub fn render_braille(
             let mut final_italic = false;
             let mut final_underline = false;
 
-            for prepared in &prepared_overlays {
-                let ov = prepared.overlay;
-                if let Some(opt_c) = prepared.at((x / 2) as i32, (y / 4) as i32) {
-                    if let Some(fg_param) = &ov.fg {
-                        final_fg = match fg_param {
-                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                        };
-                    }
-                    if let Some(bg_param) = &ov.bg {
-                        final_bg = Some(match bg_param {
-                            crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                            crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                        });
-                    }
-                    if let Some(c) = opt_c {
-                        final_ch = c;
-                    } else {
-                        final_ch = ' ';
-                    }
-                    final_bold = ov.bold;
-                    final_italic = ov.italic;
-                    final_underline = ov.underline;
-                    break;
-                }
+            let base_cell = RenderedCell { char: final_ch, fg: colour_to_rgb(&final_fg, render), bg: None, inverted: false, bold: false, italic: false, underline: false };
+            let composited = composite_text_overlays(&base_cell, &prepared_overlays, (x / 2) as i32, (y / 4) as i32, render);
+            if let Some(cell) = &composited {
+                final_fg = Colour::RGB(cell.fg);
+                final_bg = cell.bg.map(Colour::RGB);
+                final_ch = cell.char;
+                final_bold = cell.bold;
+                final_italic = cell.italic;
+                final_underline = cell.underline;
             }
 
+            if args.foreground_only {
+                final_bg = None;
+            }
             row_vec.push(RenderedCell {
                 char: final_ch,
                 fg: colour_to_rgb(&final_fg, render),
@@ -7477,33 +7493,18 @@ pub fn render_braille(
                 let mut alt_italic = false;
                 let mut alt_underline = false;
 
-                for prepared in &prepared_overlays {
-                    let ov = prepared.overlay;
-                    if let Some(opt_c) = prepared.at((x / 2) as i32, (y / 4) as i32) {
-                        if let Some(fg_param) = &ov.fg {
-                            alt_fg = match fg_param {
-                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                            };
-                        }
-                        if let Some(bg_param) = &ov.bg {
-                            alt_bg = Some(match bg_param {
-                                crate::args::ColorSpec::Index(i) => Colour::Index(*i),
-                                crate::args::ColorSpec::Rgb(rgb) => Colour::RGB(*rgb),
-                            });
-                        }
-                        if let Some(c) = opt_c {
-                            alt_ch = c;
-                        } else {
-                            alt_ch = ' ';
-                        }
-                        alt_bold = ov.bold;
-                        alt_italic = ov.italic;
-                        alt_underline = ov.underline;
-                        break;
-                    }
+                if let Some(cell) = &composited {
+                    alt_fg = Colour::RGB(cell.fg);
+                    alt_bg = cell.bg.map(Colour::RGB);
+                    alt_ch = cell.char;
+                    alt_bold = cell.bold;
+                    alt_italic = cell.italic;
+                    alt_underline = cell.underline;
                 }
 
+                if args.foreground_only {
+                    alt_bg = None;
+                }
                 emit_colourized(
                     &mut alt_out,
                     Render::Irc,
@@ -7543,6 +7544,7 @@ pub fn render_braille(
 
     RenderResult {
         content: out.trim_end_matches('\n').to_string(),
+        foreground_only: args.foreground_only,
         save_content: if args.as_preview && render == Render::Irc {
             Some(alt_out.trim_end_matches('\n').into())
         } else {
@@ -7600,14 +7602,18 @@ pub fn save_as_png(
     let Some(image) = render_result_image(result, glyphs) else {
         return Ok(());
     };
-    let rgb = image.to_rgb8();
-    let (width, height) = rgb.dimensions();
+    let (width, height) = (image.width(), image.height());
+    let (colour_type, pixels) = if result.foreground_only {
+        (png::ColorType::Rgba, image.to_rgba8().into_raw())
+    } else {
+        (png::ColorType::Rgb, image.to_rgb8().into_raw())
+    };
 
     // Write PNG with metadata using the png crate
     let file = std::fs::File::create(path)?;
     let w = std::io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(w, width, height);
-    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_color(colour_type);
     encoder.set_depth(png::BitDepth::Eight);
 
     // Add settings metadata as a tEXt chunk
@@ -7619,7 +7625,7 @@ pub fn save_as_png(
 
     let mut writer = encoder.write_header().map_err(std::io::Error::other)?;
     writer
-        .write_image_data(rgb.as_raw())
+        .write_image_data(&pixels)
         .map_err(std::io::Error::other)?;
     Ok(())
 }
@@ -7718,8 +7724,8 @@ fn render_result_pixels_indexed<const CHANNELS: usize>(
     let cols = first_row.len();
     let width = cols.checked_mul(gw)?;
     let height = rows.checked_mul(gh)?;
-    // Initialize every pixel as opaque. RGB callers overwrite the first three
-    // channels, while RGBA callers retain 255 in the alpha channel.
+    // RGBA foreground-only output leaves unpainted glyph pixels transparent.
+    // RGB consumers still receive a black fallback for those missing pixels.
     let mut pixels = vec![255; width.checked_mul(height)?.checked_mul(CHANNELS)?];
     for (row_idx, row) in result.grid.iter().enumerate() {
         for (col_idx, cell) in row.iter().take(cols).enumerate() {
@@ -7748,16 +7754,23 @@ fn render_result_pixels_indexed<const CHANNELS: usize>(
                 let output_row = &mut pixels[output_start..output_end];
                 if let Some(bitmap_row) = bitmap.and_then(|bitmap| bitmap.get(y)) {
                     for (x, pixel) in output_row.chunks_exact_mut(CHANNELS).enumerate() {
-                        let color = if bitmap_row.get(x).is_some_and(|bit| *bit != 0) {
+                        let ink = bitmap_row.get(x).is_some_and(|bit| *bit != 0);
+                        let color = if ink {
                             cell.fg
                         } else {
                             background
                         };
                         pixel[..3].copy_from_slice(&color);
+                        if CHANNELS >= 4 && result.foreground_only && !ink && cell.bg.is_none() {
+                            pixel[3] = 0;
+                        }
                     }
                 } else {
                     for pixel in output_row.chunks_exact_mut(CHANNELS) {
                         pixel[..3].copy_from_slice(&background);
+                        if CHANNELS >= 4 && result.foreground_only && cell.bg.is_none() {
+                            pixel[3] = 0;
+                        }
                     }
                 }
             }
@@ -7798,6 +7811,10 @@ pub fn render_result_rgba_indexed(
 /// graphics previews share one source of truth without an encode/decode round
 /// trip through a temporary PNG.
 pub fn render_result_image(result: &RenderResult, glyphs: &GlyphStore) -> Option<DynamicImage> {
+    if result.foreground_only {
+        let (width, height, pixels) = render_result_rgba(result, glyphs)?;
+        return image::RgbaImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgba8);
+    }
     let (width, height, pixels) = render_result_pixels::<3>(result, glyphs)?;
     RgbImage::from_raw(width, height, pixels).map(DynamicImage::ImageRgb8)
 }
@@ -7880,6 +7897,18 @@ mod tests {
     }
 
     #[test]
+    fn figlet_word_wrapping_does_not_reflow_or_strip_the_generated_art_rows() {
+        let overlay = crate::args::TextOverlay {
+            text: "  /\\\n /__\\\n\n  ||".into(), source_text: Some("  A\n\nI".into()),
+            figlet_font: Some("test".into()), x: 0, y: 0, w: 5, h: 4,
+            fg: None, bg: None, wrap: true, auto_grow: false, transparent_spaces: true,
+            bold: false, italic: false, underline: false,
+        };
+        let prepared = PreparedTextOverlay::new(&overlay);
+        assert_eq!(prepared.lines.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>(), vec!["  /\\", " /__\\", "", "  ||"]);
+    }
+
+    #[test]
     fn overlay_wrap_hard_breaks_only_overlong_words() {
         assert_eq!(
             laid_out_strings("supercalifragilistic", Some(6)),
@@ -7917,6 +7946,7 @@ mod tests {
         };
         let base = RenderResult {
             content: ".".to_string(),
+            foreground_only: false,
             save_content: None,
             error_count: 0,
             total_pixels: 1,
@@ -7957,6 +7987,82 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_overlays_inherit_lower_backgrounds_and_respect_stack_order() {
+        let mut base = RenderResult::from(".....");
+        base.grid = vec![vec![RenderedCell { char: '.', fg: [10, 20, 30], bg: Some([255; 3]), inverted: false, bold: false, italic: false, underline: false }; 5]; 2];
+        let make = |text: &str, fg, bg, w, h| crate::args::TextOverlay {
+            text: text.into(), source_text: None, figlet_font: None, x: 0, y: 0, w, h, fg, bg,
+            wrap: false, auto_grow: false, transparent_spaces: false, bold: false, italic: false, underline: false,
+        };
+        let rectangle = make("", None, Some(crate::args::ColorSpec::Rgb([180, 20, 30])), 4, 2);
+        let lower = make("AB\nCD", Some(crate::args::ColorSpec::Rgb([0, 200, 0])), None, 2, 2);
+        let upper = make("X X", Some(crate::args::ColorSpec::Rgb([255; 3])), None, 3, 1);
+        for render in [Render::Ansi24, Render::Ansi, Render::Irc] {
+            let result = apply_overlays_to_result(&base, &[rectangle.clone(), lower.clone(), upper.clone()], render, true, 5);
+            assert_eq!(result.grid[0].iter().map(|cell| cell.char).collect::<String>(), "XBX .");
+            assert_eq!(result.grid[0][0].fg, [255; 3]);
+            assert_eq!(result.grid[0][1].fg, [0, 200, 0]);
+            for row in &result.grid { for cell in &row[..4] { assert_eq!(cell.bg, Some([180, 20, 30])); } }
+            assert_eq!(result.grid[0][4].bg, Some([255; 3]));
+            let front = apply_overlays_to_result(&base, &[lower.clone(), upper.clone(), rectangle.clone()], render, true, 5);
+            assert_eq!(front.grid[0].iter().map(|cell| cell.char).collect::<String>(), "    .");
+        }
+        base.foreground_only = true;
+        let result = apply_overlays_to_result(&base, &[rectangle, lower, upper], Render::Ansi24, false, 5);
+        assert!(result.grid.iter().flatten().all(|cell| cell.bg.is_none()));
+    }
+
+    #[test]
+    fn transparent_text_preserves_unset_backgrounds_and_uses_visible_solid_colours() {
+        let mut base = RenderResult::from("X");
+        base.grid = vec![vec![RenderedCell { char: ' ', fg: [0; 3], bg: None, inverted: false, bold: false, italic: false, underline: false }]];
+        let text = crate::args::TextOverlay { text: "X".into(), source_text: None, figlet_font: None,
+            x: 0, y: 0, w: 1, h: 1, fg: Some(crate::args::ColorSpec::Rgb([255; 3])), bg: None,
+            wrap: false, auto_grow: false, transparent_spaces: false, bold: false, italic: false, underline: false };
+        assert_eq!(apply_overlays_to_result(&base, &[text.clone()], Render::Ansi24, false, 5).grid[0][0].bg, None);
+        base.grid[0][0].char = '█';
+        base.grid[0][0].fg = [0, 180, 40];
+        base.grid[0][0].bg = Some([255; 3]);
+        assert_eq!(apply_overlays_to_result(&base, &[text.clone()], Render::Ansi24, false, 5).grid[0][0].bg, Some([0, 180, 40]));
+        base.grid[0][0].char = ' ';
+        base.grid[0][0].inverted = true;
+        assert_eq!(apply_overlays_to_result(&base, &[text], Render::Ansi24, false, 5).grid[0][0].bg, Some([0, 180, 40]));
+    }
+
+    #[test]
+    fn direct_glyph_and_braille_overlay_compositing_match_cached_results() {
+        let bitmap = vec![vec![1, 0]; 4];
+        let store = GlyphStore { glyphs: vec![('a', bitmap, "test".into())],
+            groups: HashMap::new(), selected: std::collections::HashSet::from(['a']), metrics: (2, 4), float_metrics: (2.0, 4.0) };
+        let image = PhotonImage::new([80, 90, 100, 255].repeat(4 * 8), 4, 8);
+        let canvas = AnsiImage::new(image, store, 32, false);
+        let fast = vec![make_test_glyph('a', &[1, 0, 1, 0, 1, 0, 1, 0], 2, 4)];
+        let mut args = crate::generator::default_options();
+        args.smooth = false;
+        args.glyph_search = false;
+        let rectangle = crate::args::TextOverlay { text: "".into(), source_text: None, figlet_font: None,
+            x: 0, y: 0, w: 2, h: 2, fg: None, bg: Some(crate::args::ColorSpec::Rgb([180, 20, 30])),
+            wrap: false, auto_grow: false, transparent_spaces: false, bold: false, italic: false, underline: false };
+        let mut text = rectangle.clone();
+        text.text = "X".into(); text.fg = Some(crate::args::ColorSpec::Rgb([255; 3])); text.bg = None;
+        let overlays = vec![rectangle, text];
+        for braille in [false, true] {
+            args.overlays.clear();
+            let base = if braille { render_braille(&canvas, &canvas, &args, Render::Ansi24) }
+                else { render_blocks_smooth(&canvas, &args, Render::Ansi24, &fast, None) };
+            args.overlays = overlays.clone();
+            let direct = if braille { render_braille(&canvas, &canvas, &args, Render::Ansi24) }
+                else { render_blocks_smooth(&canvas, &args, Render::Ansi24, &fast, None) };
+            let cached = apply_overlays_to_result(&base, &overlays, Render::Ansi24, args.as_preview, args.grayscale_tolerance);
+            assert_eq!(direct.grid[0][0].char, 'X');
+            assert_eq!(direct.grid[0][0].bg, Some([180, 20, 30]));
+            for (direct, cached) in direct.grid.iter().flatten().zip(cached.grid.iter().flatten()) {
+                assert_eq!((direct.char, direct.fg, direct.bg), (cached.char, cached.fg, cached.bg));
+            }
+        }
+    }
+
+    #[test]
     fn transparent_overlay_without_background_preserves_the_complete_base_cell() {
         let cells = ['a', 'b', 'c']
             .into_iter()
@@ -7973,6 +8079,7 @@ mod tests {
             .collect::<Vec<_>>();
         let base = RenderResult {
             content: "abc".to_string(),
+            foreground_only: false,
             save_content: None,
             error_count: 0,
             total_pixels: 3,
@@ -8032,6 +8139,7 @@ mod tests {
         };
         let result = RenderResult {
             content: "X".to_string(),
+            foreground_only: false,
             save_content: None,
             error_count: 0,
             total_pixels: 4,

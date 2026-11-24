@@ -1,6 +1,4 @@
-#[cfg(not(feature = "ocr"))]
-use clap::CommandFactory;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -33,10 +31,52 @@ pub enum Encoding {
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Render {
+    #[value(alias = "irc99")]
+    #[serde(alias = "Irc99", alias = "irc", alias = "irc99", alias = "IRC99")]
     Irc,
+    #[value(alias = "ansi256")]
+    #[serde(alias = "Ansi256", alias = "ansi", alias = "ansi256", alias = "ANSI256")]
     Ansi,
+    #[serde(alias = "ansi24", alias = "ANSI24")]
     Ansi24,
 }
+
+#[derive(Clone, Copy, Debug, Default, clap::ValueEnum, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RenderMode {
+    #[default]
+    #[serde(alias = "glyph", alias = "GLYPH")]
+    Glyph,
+    #[serde(alias = "braille", alias = "BRAILLE")]
+    Braille,
+    #[serde(alias = "dither", alias = "DITHER")]
+    Dither,
+}
+
+impl RenderMode {
+    pub(crate) fn with_legacy_braille(self, braille: bool) -> Self {
+        if self == Self::Glyph && braille {
+            Self::Braille
+        } else {
+            self
+        }
+    }
+
+    pub(crate) fn validate(self, palette: Render, foreground_only: bool) -> Result<(), &'static str> {
+        if self == Self::Dither {
+            if palette == Render::Ansi24 {
+                return Err("dither render mode requires the IRC99 or ANSI256 palette");
+            }
+            if foreground_only {
+                return Err("dither render mode requires both foreground and background colours");
+            }
+        }
+        Ok(())
+    }
+
+}
+
+pub(crate) const fn default_dither_detail() -> u32 { 4 }
+pub(crate) const fn default_dither_palette_candidates() -> u32 { 4 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OcrModelTier {
@@ -344,9 +384,9 @@ pub struct TextOverlay {
     pub wrap: bool,
     #[serde(default)]
     pub auto_grow: bool,
-    /// Leave whitespace cells untouched when no background is specified.
-    /// FIGlet overlays enable this to composite only banner strokes. An
-    /// explicit background fills the entire overlay bounding box instead.
+    /// Retained for compatibility: an unset background leaves whitespace and
+    /// padding transparent for every overlay. An explicit background fills
+    /// the entire overlay box. Overlays are ordered from back to front.
     #[serde(default)]
     pub transparent_spaces: bool,
     #[serde(default)]
@@ -385,12 +425,22 @@ pub struct RenderArgs {
     pub trim: Option<(u32, u32, u32, u32)>,
     pub filter: SamplingFilter,
     /// Allow interpolated source colours instead of exact local samples.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub blend_colours: bool,
     pub rotate: f32,
     pub fliph: bool,
     pub flipv: bool,
+    #[serde(alias = "palette")]
     pub render: Render,
+    #[serde(default)]
+    pub render_mode: RenderMode,
+    #[serde(default = "default_dither_detail")]
+    pub dither_detail: u32,
+    #[serde(default = "default_dither_palette_candidates")]
+    pub dither_palette_candidates: u32,
+    /// Draw only foreground ink, leaving the terminal background unset.
+    #[serde(default)]
+    pub foreground_only: bool,
     pub braille: bool,
     #[serde(rename = "glyphs", alias = "blocks")]
     pub blocks: Vec<String>,
@@ -566,6 +616,34 @@ pub struct RenderArgs {
 }
 
 impl RenderArgs {
+    pub fn effective_render_mode(&self) -> RenderMode {
+        self.render_mode.with_legacy_braille(self.braille)
+    }
+
+    pub(crate) fn cell_pixels(&self, glyph_metrics: (usize, usize)) -> (usize, usize) {
+        match self.effective_render_mode() {
+            RenderMode::Glyph => glyph_metrics,
+            RenderMode::Braille => (2, 4),
+            RenderMode::Dither => {
+                let side = self.dither_detail.max(1).saturating_mul(2) as usize;
+                (side, side)
+            }
+        }
+    }
+
+    pub fn glyph_blocks(&self) -> &[String] {
+        static DITHER: once_cell::sync::Lazy<[String; 1]> =
+            once_cell::sync::Lazy::new(|| ["dither".to_owned()]);
+        if self.effective_render_mode() == RenderMode::Dither
+            && (self.blocks == ["default"]
+                || (self.blocks.is_empty() && self.include.is_none() && self.include_range.is_empty()))
+        {
+            &*DITHER
+        } else {
+            &self.blocks
+        }
+    }
+
     pub fn uses_perceptual_score(&self) -> bool {
         self.perceptual_score || self.glyph_search
     }
@@ -608,7 +686,7 @@ pub struct Args {
     pub tui: bool,
 
     /// Number of auto-optimize permutations processed at once
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 1)]
     pub auto_optimize_batch_size: u32,
 
     /// append auto-optimize settings, trial scores and timing as JSON Lines
@@ -663,8 +741,8 @@ pub struct Args {
     #[arg(long, value_enum, default_value_t = SamplingFilter::Nearest)]
     pub filter: SamplingFilter,
 
-    /// Allow blended colours during resizing and SVG rasterization; off by default.
-    #[arg(long = "blend-colours", visible_alias = "blend-colors", default_value_t = false, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    /// Allow blended colours during resizing and SVG rasterization; on by default.
+    #[arg(long = "blend-colours", visible_alias = "blend-colors", default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     pub blend_colours: bool,
 
     /// rotate degrees
@@ -679,12 +757,28 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub flipv: bool,
 
-    /// colour mode to use
-    #[arg(long, value_enum, default_value_t = Render::Ansi)]
+    /// Output palette (irc/irc99, ansi/ansi256, or ansi24)
+    #[arg(long, visible_alias = "palette", value_enum, ignore_case = true, default_value_t = Render::Ansi)]
     pub render: Render,
 
-    /// use braille pixels
-    #[arg(long, default_value_t = false, conflicts_with = "blocks")]
+    /// Rendering method. Dither uses shaded blocks with an indexed palette.
+    #[arg(long, value_enum, ignore_case = true, default_value_t = RenderMode::Glyph)]
+    pub render_mode: RenderMode,
+
+    /// Coverage samples per side of a Dither cell
+    #[arg(long, default_value_t = default_dither_detail(), value_parser = clap::value_parser!(u32).range(1..))]
+    pub dither_detail: u32,
+
+    /// Palette colours considered for each endpoint in a Dither cell (0 tries all)
+    #[arg(long, default_value_t = default_dither_palette_candidates())]
+    pub dither_palette_candidates: u32,
+
+    /// Use only foreground colours; leave the background unset and disable inverted glyphs.
+    #[arg(long, default_value_t = false)]
+    pub foreground_only: bool,
+
+    /// Use braille pixels (shorthand for --render-mode braille)
+    #[arg(long, default_value_t = false, conflicts_with_all = ["blocks", "render_mode"])]
     pub braille: bool,
 
     /// choose glyph sets
@@ -760,8 +854,7 @@ pub struct Args {
         short = 'B',
         long,
         default_value = "0.0",
-        allow_hyphen_values = true,
-        requires = "braille"
+        allow_hyphen_values = true
     )]
     pub luma_brightness: Param,
 
@@ -770,8 +863,7 @@ pub struct Args {
         short = 'C',
         long,
         default_value = "0.0",
-        allow_hyphen_values = true,
-        requires = "braille"
+        allow_hyphen_values = true
     )]
     pub luma_contrast: Param,
 
@@ -780,8 +872,7 @@ pub struct Args {
         short = 'G',
         long,
         default_value = "0.0",
-        allow_hyphen_values = true,
-        requires = "braille"
+        allow_hyphen_values = true
     )]
     pub luma_gamma: Param,
 
@@ -790,13 +881,12 @@ pub struct Args {
         short = 'S',
         long,
         default_value = "0.0",
-        allow_hyphen_values = true,
-        requires = "braille"
+        allow_hyphen_values = true
     )]
     pub luma_saturation: Param,
 
     /// luminance is inverted
-    #[arg(short = 'I', long, default_value_t = false, requires = "braille")]
+    #[arg(short = 'I', long, default_value_t = false)]
     pub luma_invert: bool,
 
     /// colour space
@@ -1261,13 +1351,13 @@ pub struct Args {
     #[arg(long = "ocr-figlet-fill", default_value_t = false)]
     pub ocr_figlet_fill: bool,
 
-    /// minimum detected text-box height in output rows before FIGlet may be used
-    #[arg(long = "ocr-figlet-min-height", default_value_t = 2.0)]
+    /// legacy setting; FIGlet is now used whenever its rendered text fits
+    #[arg(long = "ocr-figlet-min-height", default_value_t = 2.0, hide = true)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_min_height: f32,
 
-    /// minimum text height relative to the median OCR line before FIGlet may be used; 0 disables
-    #[arg(long = "ocr-figlet-min-height-ratio", default_value_t = 1.25)]
+    /// legacy setting; FIGlet is now used whenever its rendered text fits
+    #[arg(long = "ocr-figlet-min-height-ratio", default_value_t = 1.25, hide = true)]
     #[cfg_attr(not(feature = "ocr"), arg(hide = true))]
     pub ocr_figlet_min_height_ratio: f32,
 
@@ -1385,7 +1475,24 @@ where
         normalized.push(arg);
     }
 
-    Args::parse_from(normalized)
+    let matches = Args::command().get_matches_from(normalized);
+    let parsed = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let mode = parsed.render_mode.with_legacy_braille(parsed.braille);
+    if let Err(message) = mode.validate(parsed.render, parsed.foreground_only) {
+        Args::command().error(clap::error::ErrorKind::ArgumentConflict, message).exit();
+    }
+    if mode != RenderMode::Braille {
+        for luma in ["luma_brightness", "luma_contrast", "luma_gamma", "luma_saturation", "luma_invert"] {
+            if matches.value_source(luma) == Some(clap::parser::ValueSource::CommandLine) {
+                let flag = luma.replace('_', "-");
+                Args::command().error(
+                    clap::error::ErrorKind::MissingRequiredArgument,
+                    format!("--{flag} requires --render-mode braille or --braille"),
+                ).exit();
+            }
+        }
+    }
+    parsed
 }
 
 pub fn parse_args() -> Args {

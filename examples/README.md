@@ -79,6 +79,12 @@ Use `--quantize-colours 0 --quantize-merge 3.5` to merge without a colour cap.
 Specifying a threshold alone enables a 16-colour limit; omitting both disables
 quantization. This runs after glyph matching.
 
+Pass `--foreground-only` to draw without setting background colours or using
+inverted glyph states. Transparent areas are inferred from the source image;
+matching and refinement compare glyph coverage without a terminal colour. The
+same option is available in the shared editor's General pane and is preserved
+when encoding and playing the video.
+
 ## Tune a live preview
 
 ```sh
@@ -100,13 +106,13 @@ Edges and its advanced settings. The Pipeline pane includes Flat Fill with all
 region and video-stability controls, line thickness, quantization with its merge threshold,
 and img2svg vectorization with tracing, palette and recolouring parameters.
 
-**Blend colours** in General is off by default. This keeps resizing and SVG
-rasterization from introducing blended shades, and selects foreground and
-background colours separately from actual source pixels under each glyph mask,
-including after refinement. `--blend-colours` restores the previous filtering and
-colour selection for both preview and encode. FFmpeg also uses RGBA nearest
-resizing when this option is off. For exact RGB use `--palette ansi24`; the
-256-colour mode still maps those source samples to its fixed palette.
+**Blend colours** in General is on by default for preview and encode. Use
+`--blend-colours false` to prevent resizing and SVG rasterization from
+introducing blended shades, and select foreground and background colours from
+actual source pixels under each glyph mask, including after refinement. FFmpeg
+uses RGBA nearest resizing when this option is off. For exact RGB use
+`--palette ansi24`; the 256-colour mode still maps source samples to its fixed
+palette.
 
 Use **Pipeline → Effects → Darken Outlines** to turn detected dark lines black.
 Both preview and encode accept `--darken-outlines`, with `--outline-strength`

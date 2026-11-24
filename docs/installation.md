@@ -26,4 +26,8 @@ this builds ONNX Runtime from source and links it into the OCR-enabled binary. t
 
 the first build is long; later builds reuse `target/onnxruntime-musl`. `IMG2IRC_BUILD_JOBS` limits parallelism. `IMG2IRC_ORT_SOURCE_DIR` and `IMG2IRC_ORT_BUILD_DIR` override cache locations.
 
+to build the x86-64 release archive and its SHA-256 checksum, run `./scripts/package-musl.sh`. the script uses the static OCR build and writes both files to `target/packages/` by default. pass a directory as its first argument to choose another destination.
+
+extract the archive and run `./img2irc --version` from the extracted directory.
+
 see [Python](python.md) for wheels and [web](web.md) for browser builds.

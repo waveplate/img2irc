@@ -199,7 +199,7 @@ fn quantize(rgb: [u8; 3], args: &RenderArgs) -> ([u8; 3], Colour) {
     if args.render == Render::Ansi24 {
         return (rgb, Colour::RGB(rgb));
     }
-    let palette: &[u32] = if args.as_preview || args.render == Render::Irc {
+    let palette: &[u32] = if args.render == Render::Irc {
         &IRC99
     } else {
         &ANSI256
@@ -411,11 +411,11 @@ pub(super) fn run(
             let mut observed: Vec<_> = votes.into_iter().filter(|(_, count)| *count >= 4).collect();
             observed.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             let mut colours = vec![data.fg];
-            if data.bg != data.fg {
+            if data.bg != data.fg && !args.foreground_only {
                 colours.push(data.bg);
             }
             for (colour, _) in observed.into_iter().take(3) {
-                if !colours.contains(&colour) {
+                if !args.foreground_only && !colours.contains(&colour) {
                     colours.push(colour);
                 }
             }
@@ -433,7 +433,14 @@ pub(super) fn run(
                 ones_statistics.push(population);
             }
             for (fg_index, &fg) in colours.iter().enumerate() {
-                for &bg in &colours[fg_index..] {
+                // Foreground-only input is opacity. Keep zero coverage clear;
+                // these endpoints are never inferred terminal RGB colours.
+                let backgrounds = if args.foreground_only {
+                    &[[0; 3]][..]
+                } else {
+                    &colours[fg_index..]
+                };
+                for &bg in backgrounds {
                     let mut candidate_guide =
                         guide_for_colours(&cell_targets, fg, bg, source_limit);
                     candidate_guide.boundary_limit = boundary_limit;
@@ -449,6 +456,9 @@ pub(super) fn run(
                             (false, base_bg + ones_fg - ones_bg),
                             (true, base_fg + ones_bg - ones_fg),
                         ] {
+                            if args.foreground_only && inverted {
+                                continue;
+                            }
                             let mask = masks[gi] ^ if inverted { u128::MAX } else { 0 };
                             if !candidate_guide.allows(mask, error) {
                                 continue;
@@ -473,9 +483,9 @@ pub(super) fn run(
                 data.fg = fg;
                 data.bg = bg;
                 data.fg_col = Some(fg_col.clone());
-                data.bg_col = Some(bg_col.clone());
+                data.bg_col = (!args.foreground_only).then_some(bg_col.clone());
                 data.alt_fg_col = args.as_preview.then_some(fg_col);
-                data.alt_bg_col = args.as_preview.then_some(bg_col);
+                data.alt_bg_col = (args.as_preview && !args.foreground_only).then_some(bg_col);
             }
             guide.boundary_limit =
                 guide.boundary_error(masks[state.0] ^ if state.1 { u128::MAX } else { 0 });

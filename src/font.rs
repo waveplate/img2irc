@@ -1218,13 +1218,80 @@ fn procedural_legacy_diagonal_bitmap(ch: char, w: usize, h: usize) -> Option<Gly
     Some(cell)
 }
 
-/// Generate terminal block geometry procedurally. Font outlines for these
-/// characters can use a fallback font with metrics unrelated to the main
-/// terminal cell, causing clipping and size-dependent shape changes.
+#[derive(Clone, Copy)]
+enum Region {
+    Left,
+    Right,
+    Upper,
+    Lower,
+    UpperLeft,
+    UpperRight,
+    LowerRight,
+    LowerLeft,
+}
+
+// Each region covers half a cell. Inverse shades exchange foreground and
+// background and put solid ink in the complementary region.
+const PARTIAL_SHADES: [(Region, char, Option<char>); 8] = [
+    (Region::Left, '🮌', Some('🮔')),
+    (Region::Right, '🮍', None),
+    (Region::Upper, '🮎', Some('🮒')),
+    (Region::Lower, '🮏', Some('🮑')),
+    (Region::UpperLeft, '🮜', None),
+    (Region::UpperRight, '🮝', None),
+    (Region::LowerRight, '🮞', None),
+    (Region::LowerLeft, '🮟', None),
+];
+
+impl Region {
+    fn contains(self, x: f32, y: f32) -> bool {
+        let side = match self {
+            Self::Left => 0.5 - x,
+            Self::Right => x - 0.5,
+            Self::Upper => 0.5 - y,
+            Self::Lower => y - 0.5,
+            Self::UpperLeft => 1.0 - (x + y),
+            Self::UpperRight => x - y,
+            Self::LowerRight => x + y - 1.0,
+            Self::LowerLeft => y - x,
+        };
+        side >= 0.0
+    }
+}
+
+fn shaded_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
+    if ch == '🮐' {
+        return Some(
+            (0..h)
+                .map(|y| (0..w).map(|x| ((x + y) % 2) as u8).collect())
+                .collect(),
+        );
+    }
+    let &(region, _, inverse) = PARTIAL_SHADES
+        .iter()
+        .find(|&&(_, normal, inverse)| ch == normal || Some(ch) == inverse)?;
+    let inverse = Some(ch) == inverse;
+    Some(
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| {
+                        let shaded = region
+                            .contains((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+                        let ink = shaded && (x + y) % 2 == 0;
+                        (ink != inverse) as u8
+                    })
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// Generate terminal block geometry at the requested raster size.
 pub fn procedural_block_bitmap(ch: char, w: usize, h: usize) -> Option<GlyphBitmap> {
     let code = ch as u32;
     if code < 0x2580 || code > 0x259F {
-        return None;
+        return shaded_block_bitmap(ch, w, h);
     }
 
     let mut cell = vec![vec![0u8; w]; h];
@@ -1613,6 +1680,10 @@ fn block_hash_context(
     sorted_chars.sort_unstable();
     sorted_chars.dedup();
     for ch in sorted_chars {
+        // These glyphs previously used font outlines or were absent.
+        if matches!(ch as u32, 0x1FB8C..=0x1FB94 | 0x1FB9C..=0x1FB9F) {
+            "procedural shade".hash(&mut hasher);
+        }
         (ch as u32).hash(&mut hasher);
     }
     format!("{:x}", hasher.finish())

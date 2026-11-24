@@ -12,9 +12,12 @@
 
 [general]
 order = [
-    "mode",
+    "palette",
+    "render-mode",
     "width",
     "font-size",
+    "dither-detail",
+    "dither-palette-candidates",
     "graphics-preview",
     "ocr",
     "ocr-auto-width",
@@ -54,6 +57,7 @@ order = [
     "contour-peak-weight",
     "font",
     "sampling-filter",
+    "blend-colours",
     "grayscale-tolerance",
     "colorspace",
     "encoding",
@@ -75,6 +79,8 @@ order = [
     "luma-contrast",
     "replace-colour",
     "quantize-colours",
+    "flat-fill",
+    "img2svg",
     "saturation",
     "gamma",
     "hue",
@@ -89,6 +95,7 @@ order = [
     "gaussian-blur",
     "median-blur",
     "line-thickness",
+    "darken-outlines",
     "box-blur",
     "pixelize",
     "dither",

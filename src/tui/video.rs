@@ -10,6 +10,7 @@ pub(super) struct State {
     pub(super) focused: bool,
     selected: usize,
     editing: Option<String>,
+    edit_cursor: TextCursor,
     status: Arc<Mutex<String>>,
     output: String,
     areas: Vec<(Rect, usize)>,
@@ -58,6 +59,7 @@ impl State {
             focused: false,
             selected: 0,
             editing: None,
+            edit_cursor: TextCursor::default(),
             status: Arc::new(Mutex::new(String::new())),
             output,
             areas: Vec::new(),
@@ -283,6 +285,7 @@ pub(super) fn handle_event(app: &mut App, event: &Event) -> bool {
                     app.mark_args_dirty();
                 } else {
                     video.editing = Some(video.value(field));
+                    video.edit_cursor.reset();
                 }
                 return true;
             }
@@ -330,12 +333,7 @@ pub(super) fn handle_event(app: &mut App, event: &Event) -> bool {
                     Err(error) => *video.status.lock().unwrap() = error,
                 }
             }
-            KeyCode::Backspace => {
-                text.pop();
-            }
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
-            _ => {}
+            _ => { video.edit_cursor.key(text, *key, false); }
         }
         return true;
     }
@@ -399,6 +397,7 @@ pub(super) fn handle_event(app: &mut App, event: &Event) -> bool {
                 app.mark_args_dirty();
             } else {
                 video.editing = Some(video.value(video.selected));
+                video.edit_cursor.reset();
             }
         }
         KeyCode::Left | KeyCode::Right => {
@@ -532,7 +531,7 @@ pub(super) fn render(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             video
                 .editing
                 .as_ref()
-                .cloned()
+                .map(|text| video.edit_cursor.marked(text))
                 .unwrap_or_else(|| video.value(field))
         } else {
             video.value(field)
@@ -561,11 +560,8 @@ pub(super) fn render(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
             }
         }
         let editing = selected && video.editing.is_some();
-        if editing {
-            text.push('▏');
-        }
         let scroll = if editing {
-            text.chars().count().saturating_sub(area.width as usize) as u16
+            text.split('▏').next().unwrap_or("").chars().count().saturating_add(1).saturating_sub(area.width as usize) as u16
         } else {
             0
         };

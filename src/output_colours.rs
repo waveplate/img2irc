@@ -186,7 +186,7 @@ pub fn apply(
                 for cell in result.grid.iter_mut().flatten() {
                     cell.fg = replace(cell.fg);
                     let bg = replace(cell.bg.unwrap_or([0; 3]));
-                    if cell.bg.is_some() || bg != [0; 3] {
+                    if !base.foreground_only && (cell.bg.is_some() || bg != [0; 3]) {
                         cell.bg = Some(bg);
                     }
                 }
@@ -218,11 +218,14 @@ pub fn apply(
                         .entry(cell.char)
                         .or_insert_with(|| draw::glyph_ink_pixels(glyphs, cell.char));
                     samples.extend([cell.fg, cell.bg.unwrap_or([0; 3])]);
-                    weights.extend([ink.min(area), area.saturating_sub(ink)]);
+                    weights.extend([
+                        ink.min(area),
+                        if base.foreground_only { 0 } else { area.saturating_sub(ink) },
+                    ]);
                     if ink > 0 {
                         *counts.entry(cell.fg).or_default() += ink;
                     }
-                    if ink < area {
+                    if ink < area && !base.foreground_only {
                         *counts.entry(cell.bg.unwrap_or([0; 3])).or_default() += area - ink;
                     }
                 }
@@ -245,7 +248,9 @@ pub fn apply(
                     .zip(colours.chunks_exact(2))
                 {
                     cell.fg = colours[0];
-                    cell.bg = Some(colours[1]);
+                    if !base.foreground_only {
+                        cell.bg = Some(colours[1]);
+                    }
                 }
             }
             _ => {}

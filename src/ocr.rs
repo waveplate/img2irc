@@ -335,11 +335,7 @@ pub fn choose_text_render_geometry(
     if text_boxes.is_empty() {
         return;
     }
-    let gw = if args.braille {
-        2
-    } else {
-        glyphs.metrics.0.max(1)
-    } as u32;
+    let gw = args.cell_pixels(glyphs.metrics).0.max(1) as u32;
     let mut automatic_args = args.clone();
     automatic_args.width = None;
     automatic_args.height = None;
@@ -750,13 +746,25 @@ pub fn refresh_figlet_overlay(
             fonts
                 .iter()
                 .find(|font| font.name.eq_ignore_ascii_case(name))
-                .and_then(|font| render_figlet_text(font, &source))
-                .filter(|art| art.width() <= max_width && art.height() <= max_height)
+                .and_then(|font| render_figlet_text_wrapped(font, &source, overlay.wrap.then_some(max_width)))
+                .filter(|art| (overlay.auto_grow || art.height() <= max_height) && (overlay.auto_grow || art.width() <= max_width))
         } else {
-            choose_text_art_from_fonts(&source, max_width, max_height, max_width, max_height, font_lists, fonts)
+            let limit_width = if overlay.auto_grow { 16_384 } else { max_width };
+            let limit_height = if overlay.auto_grow { 16_384 } else { max_height };
+            if overlay.wrap {
+                fonts.iter().filter_map(|font| render_figlet_text_wrapped(font, &source, Some(max_width)))
+                    .filter(|art| art.height() <= limit_height)
+                    .min_by_key(|art| (std::cmp::Reverse(art.height()), art.priority))
+            } else {
+                choose_text_art_from_fonts(&source, max_width, max_height, limit_width, limit_height, font_lists, fonts)
+            }
         }
     });
     if let Some(art) = art {
+        if overlay.auto_grow {
+            if !overlay.wrap { overlay.w = art.width().max(1) as i32; }
+            overlay.h = art.height().max(1) as i32;
+        }
         overlay.text = art
             .lines
             .iter()
@@ -817,6 +825,16 @@ fn normalize_text_art_with_metadata(
     priority: usize,
     rows: Vec<String>,
 ) -> Option<TextArt> {
+    normalize_text_art_layout(source, configured_height, priority, rows, false)
+}
+
+fn normalize_text_art_layout(
+    source: impl Into<String>,
+    configured_height: u32,
+    priority: usize,
+    rows: Vec<String>,
+    preserve_left: bool,
+) -> Option<TextArt> {
     let rows = rows
         .into_iter()
         .map(|row| row.chars().collect::<Vec<_>>())
@@ -851,6 +869,7 @@ fn normalize_text_art_with_metadata(
     if min_x == usize::MAX || min_y == usize::MAX {
         return None;
     }
+    if preserve_left { min_x = 0; }
 
     let lines = rows[min_y..=max_y]
         .iter()
@@ -869,12 +888,17 @@ fn normalize_text_art_with_metadata(
 }
 
 fn render_figlet_text(font: &OcrFigletFont, text: &str) -> Option<TextArt> {
-    let rendered = crate::figlet_text::render(&font.font, text)?;
-    normalize_text_art_with_metadata(
+    render_figlet_text_wrapped(font, text, None)
+}
+
+fn render_figlet_text_wrapped(font: &OcrFigletFont, text: &str, width: Option<usize>) -> Option<TextArt> {
+    let rendered = crate::figlet_text::render_wrapped(&font.font, text, width)?;
+    normalize_text_art_layout(
         font.name.clone(),
         font.configured_height,
         font.priority,
         rendered.lines().map(str::to_string).collect(),
+        true,
     )
 }
 
@@ -945,103 +969,22 @@ fn choose_text_art_from_fonts(
     base_height: usize,
     max_w_allowed: usize,
     max_h_allowed: usize,
-    font_lists: &[OcrFigletFontList],
+    _font_lists: &[OcrFigletFontList],
     fonts: &[OcrFigletFont],
 ) -> Option<TextArt> {
-    let text = text.trim();
-    if text.is_empty() || base_width == 0 || base_height == 0 || max_w_allowed == 0 || max_h_allowed == 0 {
-        return None;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Step 1 (Strict 0% Expansion Priority):
-    // Check if ANY configured FIGlet font fits in the UNMODIFIED bounding box.
-    // Heights are checked descending (largest font that fits in the original box first).
-    // ─────────────────────────────────────────────────────────────────────────
-    let mut candidate_heights = fonts
-        .iter()
-        .map(|f| f.configured_height)
-        .chain(font_lists.iter().map(|l| l.height))
-        .filter(|&h| h > 0 && h as usize <= base_height)
+    let text = text.trim_end();
+    if text.is_empty() || base_width == 0 || base_height == 0 || max_w_allowed == 0 || max_h_allowed == 0 { return None; }
+    let mut candidates = fonts.iter().filter_map(|font| render_figlet_text(font, text))
+        .filter(|art| art.width() <= max_w_allowed && art.height() <= max_h_allowed)
         .collect::<Vec<_>>();
-    candidate_heights.sort_unstable_by(|a, b| b.cmp(a));
-    candidate_heights.dedup();
-
-    for height in candidate_heights {
-        if height == 1
-            && font_lists.iter().any(|l| {
-                l.height == 1 && l.fonts.iter().any(|n| n.eq_ignore_ascii_case("plain"))
-            })
-        {
-            if let Some(plain) = plain_text_art(text, base_width).filter(|art| art.height() <= base_height) {
-                return Some(plain);
-            }
-        }
-
-        let mut list_fonts: Vec<&OcrFigletFont> = fonts
-            .iter()
-            .filter(|f| f.configured_height == height)
-            .collect();
-        list_fonts.sort_by_key(|f| f.priority);
-
-        for font in list_fonts {
-            if let Some(rendered) = render_figlet_text(font, text) {
-                if rendered.width() > 0
-                    && rendered.height() > 0
-                    && rendered.width() <= base_width
-                    && rendered.height() <= base_height
-                {
-                    return Some(rendered);
-                }
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Step 2 (Enlargement ONLY if Step 1 found no fitting font):
-    // Only if no font fit within the original bounding box, check if enlarging
-    // the bounding box (up to max_w_allowed and max_h_allowed) allows a font to fit.
-    // Pick the font that requires the SMALLEST enlargement.
-    // ─────────────────────────────────────────────────────────────────────────
-    if max_w_allowed > base_width || max_h_allowed > base_height {
-        let mut candidates = Vec::new();
-        for font in fonts {
-            if font.configured_height == 0 || font.configured_height as usize > max_h_allowed {
-                continue;
-            }
-            if let Some(rendered) = render_figlet_text(font, text) {
-                let art_w = rendered.width();
-                let art_h = rendered.height();
-                if art_w > 0 && art_h > 0 && art_w <= max_w_allowed && art_h <= max_h_allowed {
-                    let expand_w = art_w.saturating_sub(base_width);
-                    let expand_h = art_h.saturating_sub(base_height);
-                    candidates.push((
-                        rendered,
-                        expand_w,
-                        expand_h,
-                        font.configured_height,
-                        font.priority,
-                    ));
-                }
-            }
-        }
-
-        if !candidates.is_empty() {
-            candidates.sort_by(|a, b| {
-                (a.1 + a.2)
-                    .cmp(&(b.1 + b.2))
-                    .then_with(|| b.3.cmp(&a.3))
-                    .then_with(|| a.4.cmp(&b.4))
-            });
-            return Some(candidates.into_iter().next().unwrap().0);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Step 3 (Fallback):
-    // Fall back to plain single-line text within max_w_allowed.
-    // ─────────────────────────────────────────────────────────────────────────
-    plain_text_art(text, max_w_allowed).filter(|art| art.height() <= max_h_allowed)
+    // Actual ink dimensions decide whether a font fits; font headers may include
+    // unused rows. Prefer the original box, then the smallest permitted growth.
+    candidates.sort_by_key(|art| (
+        art.width() > base_width || art.height() > base_height,
+        art.width().saturating_sub(base_width) + art.height().saturating_sub(base_height),
+        std::cmp::Reverse(art.height()), art.priority,
+    ));
+    candidates.into_iter().next().or_else(|| plain_text_art(text, max_w_allowed).filter(|art| art.height() <= max_h_allowed))
 }
 
 fn plain_text_art(text: &str, max_width: usize) -> Option<TextArt> {
@@ -1171,22 +1114,6 @@ fn snap_box_alignments(boxes: &mut [ScaledTextBox], snap_threshold: f64) {
     }
 }
 
-fn figlet_allowed(
-    args: &RenderArgs,
-    text_box: ScaledTextBox,
-    detection_height: f32,
-    median_detection_height: f32,
-) -> bool {
-    if !args.ocr_figlet || text_box.height() < args.ocr_figlet_min_height.max(0.0) as f64 {
-        return false;
-    }
-
-    let min_ratio = args.ocr_figlet_min_height_ratio.max(0.0);
-    min_ratio <= 0.0
-        || median_detection_height <= 0.0
-        || detection_height >= median_detection_height * min_ratio
-}
-
 fn scale_image_box_to_grid(
     (x0, y0, x1, y1): (u32, u32, u32, u32),
     image_w: u32,
@@ -1220,11 +1147,7 @@ pub fn detections_to_overlays(
         source.get_width() as f32,
         source.get_height() as f32,
     );
-    let (gw, gh) = if args.braille {
-        (2, 4)
-    } else {
-        glyphs.metrics
-    };
+    let (gw, gh) = args.cell_pixels(glyphs.metrics);
     let grid_w = (dim_w / gw.max(1) as u32).max(1) as i32;
     let grid_h = (dim_h / gh.max(1) as u32).max(1) as i32;
     let raw = source.get_raw_pixels();
@@ -1269,17 +1192,6 @@ pub fn detections_to_overlays(
     for (i, (_, _, b, _)) in renderable.iter_mut().enumerate() {
         *b = text_boxes[i];
     }
-
-    let mut detection_heights = renderable
-        .iter()
-        .flat_map(|(_, _, _, lines)| lines.iter().map(|b| ((b[1] - b[0]) * source.get_height() as f64 / grid_h as f64) as f32))
-        .filter(|height| *height > 0.0)
-        .collect::<Vec<_>>();
-    let median_detection_height = if detection_heights.len() >= 3 {
-        median_f32(&mut detection_heights).unwrap_or(0.0)
-    } else {
-        0.0
-    };
 
     let mut occupied = vec![vec![false; grid_w as usize]; grid_h as usize];
 
@@ -1326,15 +1238,7 @@ pub fn detections_to_overlays(
         max_w_allowed = max_w_allowed.max(1);
         max_h_allowed = max_h_allowed.max(1);
 
-        let line_height = line_bounds.iter().map(|b| b[1] - b[0]).fold(f64::INFINITY, f64::min);
-        let detection_height = (line_height * source.get_height() as f64 / grid_h as f64) as f32;
-        let line_box = ScaledTextBox { bottom: text_box.top + line_height, ..*text_box };
-        let allow_figlet = figlet_allowed(
-            args,
-            line_box,
-            detection_height,
-            median_detection_height,
-        ) && line_height >= args.ocr_figlet_min_height as f64;
+        let allow_figlet = args.ocr_figlet;
 
         let plain = || if line_bounds.len() > 1 {
             spaced_block_art(&det.text, line_bounds, None, max_w_allowed)
@@ -2613,42 +2517,22 @@ mod tests {
     }
 
     #[test]
-    fn figlet_gate_honors_enabled_and_minimum_grid_height() {
-        let text_box = ScaledTextBox {
-            left: 0.0,
-            top: 0.0,
-            right: 20.0,
-            bottom: 3.0,
-        };
+    fn ocr_tries_fitting_figlet_even_when_legacy_size_thresholds_would_reject_it() {
         let mut args = default_render_args();
-
-        args.ocr_figlet = false;
-        assert!(!figlet_allowed(&args, text_box, 30.0, 10.0));
-
-        args.ocr_figlet = true;
-        args.ocr_figlet_min_height = 4.0;
-        assert!(!figlet_allowed(&args, text_box, 30.0, 10.0));
-
-        args.ocr_figlet_min_height = 3.0;
-        assert!(figlet_allowed(&args, text_box, 30.0, 10.0));
-    }
-
-    #[test]
-    fn figlet_gate_can_require_text_larger_than_the_typical_ocr_line() {
-        let text_box = ScaledTextBox {
-            left: 0.0,
-            top: 0.0,
-            right: 20.0,
-            bottom: 3.0,
-        };
-        let mut args = default_render_args();
-        args.ocr_figlet_min_height_ratio = 1.5;
-
-        assert!(!figlet_allowed(&args, text_box, 14.0, 10.0));
-        assert!(figlet_allowed(&args, text_box, 15.0, 10.0));
-
-        args.ocr_figlet_min_height_ratio = 0.0;
-        assert!(figlet_allowed(&args, text_box, 10.0, 10.0));
+        args.ocr_auto_width = false;
+        args.width = Some(100);
+        args.height = Some(40);
+        args.ocr_figlet_min_height = 100.0;
+        args.ocr_figlet_min_height_ratio = 100.0;
+        let image = PhotonImage::new(vec![255; 200 * 200 * 4], 200, 200);
+        let detections = vec![detection("ONE", (10, 10, 150, 30)), detection("TWO", (10, 60, 150, 80)), detection("THREE", (10, 110, 150, 130))];
+        for enabled in [true, false] {
+            args.ocr_figlet = enabled;
+            let overlays = detections_to_overlays(&image, &image, &args, &test_glyphs(), &detections);
+            assert!(!overlays.is_empty());
+            assert!(overlays.iter().all(|overlay| overlay.figlet_enabled() == enabled));
+            if enabled { assert!(overlays.iter().all(|overlay| overlay.figlet_font.as_deref() != Some("plain"))); }
+        }
     }
 
     #[test]
@@ -2741,9 +2625,9 @@ mod tests {
         let large = render_figlet_text(&fonts[1], "HELLO").unwrap();
         assert!(large.height() > small.height());
         let width = small.width().max(large.width());
-        let original = choose_text_art_from_fonts("HELLO", width, 5, width, 6, &[], &fonts).unwrap();
+        let original = choose_text_art_from_fonts("HELLO", width, small.height(), width, large.height(), &[], &fonts).unwrap();
         assert_eq!(original.source, "small");
-        let filled = choose_largest_text_art("HELLO", width, 6, &fonts).unwrap();
+        let filled = choose_largest_text_art("HELLO", width, large.height(), &fonts).unwrap();
         assert_eq!(filled.source, "standard");
         assert_eq!(choose_largest_text_art("HELLO", width, small.height(), &fonts).unwrap().source, "small");
         assert_eq!(choose_largest_text_art("HELLO", 5, 1, &fonts).unwrap().source, "plain");
@@ -2845,6 +2729,63 @@ mod tests {
         assert!(refreshed);
         assert_eq!(overlay.figlet_font.as_deref(), Some("phm-minecraft"));
         assert!(overlay.text.contains('\n')); // Multi-line FIGlet rendered text
+    }
+
+    #[test]
+    fn multiline_figlet_fits_without_an_implicit_blank_row_and_fit_tracks_art_size() {
+        let font_lists = crate::args::default_ocr_figlet_font_lists();
+        let mut overlay = text_art_overlay("ONE\nTWO", &art("phm-minecraft", &["X"]), true, 0, 0, [255; 3]);
+        overlay.w = 512;
+        overlay.h = 512;
+        assert!(refresh_figlet_overlay(&mut overlay, &font_lists));
+        let first = overlay.text.clone();
+        let width = first.lines().map(|line| line.chars().count()).max().unwrap() as i32;
+        let height = first.lines().count() as i32;
+        assert!(!first.lines().any(|line| line.trim().is_empty()));
+        overlay.w = width;
+        overlay.h = height;
+        assert!(refresh_figlet_overlay(&mut overlay, &font_lists));
+        assert_eq!(overlay.text, first);
+        overlay.source_text = Some("ONE\n\nTWO".into());
+        assert!(!refresh_figlet_overlay(&mut overlay, &font_lists));
+        overlay.auto_grow = true;
+        overlay.w = 1;
+        overlay.h = 1;
+        assert!(refresh_figlet_overlay(&mut overlay, &font_lists));
+        assert_eq!((overlay.w, overlay.h), (width, height + 1));
+        overlay.source_text = Some("I".into());
+        assert!(refresh_figlet_overlay(&mut overlay, &font_lists));
+        assert!(overlay.w < width);
+        assert!(overlay.h < height);
+    }
+
+    #[test]
+    fn manual_figlet_wrap_preserves_indentation_and_fit_keeps_the_width_limit() {
+        let lists = crate::args::default_ocr_figlet_font_lists();
+        let mut overlay = text_art_overlay("ONE", &art("phm-minecraft", &["X"]), true, 0, 0, [255; 3]);
+        overlay.auto_grow = true;
+        assert!(refresh_figlet_overlay(&mut overlay, &lists));
+        let word = overlay.text.clone();
+        let width = overlay.w;
+        let height = overlay.h;
+        overlay.source_text = Some("ONE ONE".into());
+        overlay.wrap = true;
+        assert!(refresh_figlet_overlay(&mut overlay, &lists));
+        assert_eq!((overlay.w, overlay.h), (width, height * 2));
+        assert_eq!(overlay.text, format!("{word}\n{word}"));
+        overlay.source_text = Some("  ONE".into());
+        overlay.wrap = false;
+        assert!(refresh_figlet_overlay(&mut overlay, &lists));
+        assert!(overlay.w > width);
+        assert!(overlay.text.lines().all(|line| line.starts_with("  ")));
+    }
+
+    #[test]
+    fn actual_figlet_ink_fits_even_when_the_font_header_declares_more_rows() {
+        let fonts = vec![OcrFigletFont { name: "small".into(), configured_height: 99, priority: 0, font: FIGlet::small().unwrap() }];
+        let art = render_figlet_text(&fonts[0], "HELLO").unwrap();
+        let chosen = choose_text_art_from_fonts("HELLO", art.width(), art.height(), art.width(), art.height(), &[], &fonts).unwrap();
+        assert_eq!(chosen.source, "small");
     }
 
     #[test]

@@ -1,23 +1,31 @@
 import { parsePalette } from "./render-options.js";
 import { effectControl } from "./effect-catalog.js";
+import { colourHex as hex, visiblePalette } from "./artwork-colours.js";
+import { ArtworkColourPicker } from "./artwork-colour-picker.js";
 
-const hex = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
-
-export function visiblePalette(result) {
-  const counts = new Map();
-  const pixels = result?.previewRgba ?? [];
-  for (let i = 0; i < pixels.length; i += 4) {
-    if (!pixels[i + 3]) continue;
-    const key = hex([pixels[i], pixels[i + 1], pixels[i + 2]]);
-    counts.set(key, (counts.get(key) ?? 0) + pixels[i + 3]);
-  }
-  return [...counts].sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b)).slice(0, 256).map(([colour]) => colour);
-}
+export { visiblePalette };
 
 export function initializePaletteControls(root, result, changed) {
   const element = (id) => effectControl(root, id);
   const input = element("quantize-palette");
   const swatches = element("quantize-swatches");
+  const addColour = (colour) => {
+    try {
+      const colours = parsePalette(input.value).map(hex);
+      if (!colours.includes(colour)) colours.push(colour);
+      parsePalette(colours.join(" "));
+      input.value = colours.join(" ");
+    } catch (error) {
+      input.setCustomValidity(error.message);
+      input.reportValidity();
+      return false;
+    }
+    element("quantize-colour").value = colour;
+    element("quantize-enabled").checked = true;
+    refresh();
+    changed();
+  };
+  const picker = new ArtworkColourPicker(root, "quantize", result, addColour);
   const refresh = () => {
     let colours;
     try {
@@ -46,14 +54,26 @@ export function initializePaletteControls(root, result, changed) {
   };
   input.addEventListener("input", refresh);
   element("quantize-enabled").addEventListener("change", refresh);
+  picker.start();
+  element("quantize-add").addEventListener("click", () => addColour(element("quantize-colour").value));
+  element("quantize-pick").addEventListener("click", () => {
+    picker.open("Choose a current art colour below, or click the artwork to add it to the explicit palette");
+  });
   element("quantize-current").addEventListener("click", () => {
-    input.value = visiblePalette(result()).join(" ");
+    const colours = visiblePalette(result());
+    if (!colours.length) {
+      picker.open("Choose a current art colour below, or click the artwork to add it to the explicit palette");
+      return;
+    }
+    input.value = colours.join(" ");
     element("quantize-enabled").checked = true;
+    picker.close();
     refresh();
     changed();
   });
   element("quantize-auto").addEventListener("click", () => {
     input.value = "";
+    picker.close();
     refresh();
     changed();
   });

@@ -198,7 +198,9 @@ pub fn highlight_glyph_defects(base: &RenderResult, map: &GlyphDefectMap) -> Ren
             continue;
         };
         cell.fg = mix(cell.fg, tint);
-        cell.bg = Some(mix(cell.bg.unwrap_or([0; 3]), tint));
+        if !base.foreground_only {
+            cell.bg = Some(mix(cell.bg.unwrap_or([0; 3]), tint));
+        }
     }
     super::encode_output_colours(&result, crate::args::Render::Ansi24, true, 0)
 }

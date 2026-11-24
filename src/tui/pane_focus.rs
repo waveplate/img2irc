@@ -122,6 +122,7 @@ impl App {
         self.text_area = Rect::default();
         self.text_list_area = Rect::default();
         self.text_btn_areas.clear();
+        self.text_order_areas.clear();
         self.text_field_areas.clear();
         self.splitter_areas.clear();
     }

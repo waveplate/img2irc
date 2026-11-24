@@ -34,7 +34,8 @@ struct GeometryKey {
     exclude_range: Vec<String>,
     include: Option<String>,
     include_range: Vec<String>,
-    braille: bool,
+    render_mode: args::RenderMode,
+    dither_detail: u32,
 }
 
 fn hash_image(img: &PhotonImage) -> u64 {
@@ -52,26 +53,49 @@ fn hash_image(img: &PhotonImage) -> u64 {
 static RESIZED_CACHE: Lazy<Mutex<Option<(GeometryKey, PhotonImage)>>> =
     Lazy::new(|| Mutex::new(None));
 
+const MAX_TOTAL_PIXELS: u64 = 100_000_000;
+pub(crate) const MAX_DITHER_DETAIL: u32 = (MAX_TOTAL_PIXELS.isqrt() / 2) as u32;
+
+pub(crate) fn check_dither_dimensions(args: &args::RenderArgs, width: u32, height: u32) -> Result<(), &'static str> {
+    if args.dither_detail == 0 {
+        return Err("Dither Detail must be at least 1");
+    }
+    if args.dither_detail <= MAX_DITHER_DETAIL {
+        let cell = u64::from(args.dither_detail) * 2;
+        let columns = u64::from(width).div_ceil(cell);
+        let rows = u64::from(height).div_ceil(cell);
+        if columns.saturating_mul(rows).saturating_mul(cell * cell) <= MAX_TOTAL_PIXELS {
+            return Ok(());
+        }
+    }
+    Err("Dither sampling exceeds the 100-million-pixel raster budget. Reduce Dither Detail or the output dimensions.")
+}
+
 pub fn calculate_dimensions(
     args: &args::RenderArgs,
     glyphs: &GlyphStore,
     width: f32,
     height: f32,
 ) -> (u32, u32) {
+    output_dimensions(args, glyphs, width, height, false).expect("unchecked dimensions")
+}
+
+fn output_dimensions(
+    args: &args::RenderArgs,
+    glyphs: &GlyphStore,
+    width: f32,
+    height: f32,
+    check_dither_budget: bool,
+) -> Result<(u32, u32), &'static str> {
     let orig_w = width;
     let orig_h = height;
 
-    let (factor_x, factor_y) = if args.braille {
-        (2.0, 4.0)
-    } else {
-        let (gw, gh) = glyphs.metrics;
-        (gw as f32, gh as f32)
-    };
-
-    let (float_x, float_y) = if args.braille {
-        (2.0, 4.0)
-    } else {
-        glyphs.float_metrics
+    let mode = args.effective_render_mode();
+    let (gw, gh) = args.cell_pixels(glyphs.metrics);
+    let (factor_x, factor_y) = (gw as f32, gh as f32);
+    let (float_x, float_y) = match mode {
+        args::RenderMode::Braille => (factor_x, factor_y),
+        _ => glyphs.float_metrics,
     };
     // The integer bitmap dimensions necessarily jump at different font sizes
     // (width is rounded while line height is ceiled). Terminals still lay out
@@ -110,7 +134,8 @@ pub fn calculate_dimensions(
         }
 
         (None, None) => {
-            let cols = (orig_w / factor_x).round().max(1.0);
+            let source_pixels_per_cell = if mode == args::RenderMode::Dither { 4.0 } else { factor_x };
+            let cols = (orig_w / source_pixels_per_cell).round().max(1.0);
             let ch = cols * cell_aspect / image_aspect;
             let pw = cols * factor_x;
             let ph = (ch.round() * factor_y).max(factor_y);
@@ -131,8 +156,10 @@ pub fn calculate_dimensions(
     let mut out_w = pw.round().max(1.0) as u32;
     let mut out_h = ph.round().max(1.0) as u32;
 
-    // Safety cap: prevent absurd allocations (e.g. 46TB VRAM) from stale glyph metrics
-    const MAX_TOTAL_PIXELS: u64 = 100_000_000; // 100M pixels
+    if check_dither_budget && mode == args::RenderMode::Dither {
+        check_dither_dimensions(args, out_w, out_h)?;
+    }
+    // Safety cap for the legacy glyph and braille sizing paths.
     let total = out_w as u64 * out_h as u64;
     if total > MAX_TOTAL_PIXELS {
         let scale = (MAX_TOTAL_PIXELS as f64 / total as f64).sqrt();
@@ -148,7 +175,7 @@ pub fn calculate_dimensions(
         );
     }
 
-    (out_w, out_h)
+    Ok((out_w, out_h))
 }
 
 fn fast_crop_and_nearest_resize(
@@ -182,13 +209,13 @@ fn fast_crop_and_nearest_resize(
 
     for y in 0..dest_h {
         let mapped_y = if flipv { dest_h - 1 - y } else { y };
-        let src_y = top + (mapped_y * src_h) / dest_h;
+        let src_y = top + (u64::from(mapped_y) * u64::from(src_h) / u64::from(dest_h)) as u32;
         let src_row_offset = (src_y * raw_w * 4) as usize;
         let dest_row_offset = (y * dest_w * 4) as usize;
 
         for x in 0..dest_w {
             let mapped_x = if fliph { dest_w - 1 - x } else { x };
-            let src_x = left + (mapped_x * src_w) / dest_w;
+            let src_x = left + (u64::from(mapped_x) * u64::from(src_w) / u64::from(dest_w)) as u32;
             let src_idx = src_row_offset + (src_x * 4) as usize;
             let dest_idx = dest_row_offset + (x * 4) as usize;
 
@@ -203,7 +230,7 @@ fn resize_for_output(
     args: &args::RenderArgs,
     glyphs: &GlyphStore,
     mut photon_image: PhotonImage,
-) -> PhotonImage {
+) -> Result<PhotonImage, &'static str> {
     // Interpolating filters invent shades at boundaries. Exact-colour mode
     // samples the processed source without mixing neighbouring pixels.
     let mut geometry_args = args.clone();
@@ -234,7 +261,8 @@ fn resize_for_output(
         exclude_range: args.exclude_range.clone(),
         include: args.include.clone(),
         include_range: args.include_range.clone(),
-        braille: args.braille,
+        render_mode: args.effective_render_mode(),
+        dither_detail: args.dither_detail,
     };
 
     let mut cache = RESIZED_CACHE.lock().unwrap();
@@ -250,7 +278,7 @@ fn resize_for_output(
 
     if base_image.is_none() {
         let mut resized = if args.filter == args::SamplingFilter::Nearest {
-            let (width, height) = calculate_dimensions(
+            let (width, height) = output_dimensions(
                 args,
                 glyphs,
                 if let Some((top, right, bottom, left)) = args.trim {
@@ -275,7 +303,8 @@ fn resize_for_output(
                 } else {
                     photon_image.get_height() as f32
                 },
-            );
+                true,
+            )?;
 
             fast_crop_and_nearest_resize(
                 &photon_image,
@@ -294,12 +323,13 @@ fn resize_for_output(
                 }
             }
 
-            let (width, height) = calculate_dimensions(
+            let (width, height) = output_dimensions(
                 args,
                 glyphs,
                 photon_image.get_width() as f32,
                 photon_image.get_height() as f32,
-            );
+                true,
+            )?;
 
             if args.fliph {
                 fliph(&mut photon_image);
@@ -341,7 +371,7 @@ fn resize_for_output(
         base_image = Some(resized);
     }
 
-    base_image.unwrap()
+    Ok(base_image.unwrap())
 }
 
 pub fn default_pipeline(args: &args::RenderArgs) -> Vec<crate::pipeline::ImageEffect> {
@@ -466,6 +496,17 @@ pub fn apply_effects(
     glyphs: &GlyphStore,
     photon_image: PhotonImage,
 ) -> PhotonImage {
+    try_apply_effects(args, glyphs, photon_image).unwrap_or_else(|error| {
+        log::warn!("{error}");
+        PhotonImage::new(Vec::new(), 0, 0)
+    })
+}
+
+pub(crate) fn try_apply_effects(
+    args: &args::RenderArgs,
+    glyphs: &GlyphStore,
+    photon_image: PhotonImage,
+) -> Result<PhotonImage, &'static str> {
     // These effects act on the matched art and overlays, not on the image
     // that feeds glyph matching (or OCR).
     let pipeline = default_pipeline(args)

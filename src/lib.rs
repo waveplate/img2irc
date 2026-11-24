@@ -122,7 +122,7 @@ mod web;
 #[cfg(all(feature = "python", not(target_arch = "wasm32")))]
 mod python;
 
-use crate::args::{Args, Param, RenderArgs};
+use crate::args::{Args, Param, RenderArgs, RenderMode};
 use photon_rs::PhotonImage;
 use std::io::Write;
 
@@ -186,6 +186,10 @@ pub fn args_to_render_args(args: &Args) -> RenderArgs {
         fliph: args.fliph,
         flipv: args.flipv,
         render: args.render,
+        render_mode: args.render_mode,
+        dither_detail: args.dither_detail,
+        dither_palette_candidates: args.dither_palette_candidates,
+        foreground_only: args.foreground_only,
         braille: args.braille,
         blocks: args.blocks.clone(),
         include_range: args.include_range.clone(),
@@ -371,6 +375,23 @@ pub fn prepare_canvas(
     image: PhotonImage,
 ) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = effects::apply_effects(args, glyphs, image);
+    canvas_from_processed_image(args, glyphs, image)
+}
+
+pub(crate) fn try_prepare_canvas(
+    args: &RenderArgs,
+    glyphs: &font::GlyphStore,
+    image: PhotonImage,
+) -> Result<(draw::AnsiImage, Option<draw::AnsiImage>), &'static str> {
+    let image = effects::try_apply_effects(args, glyphs, image)?;
+    Ok(canvas_from_processed_image(args, glyphs, image))
+}
+
+fn canvas_from_processed_image(
+    args: &RenderArgs,
+    glyphs: &font::GlyphStore,
+    image: PhotonImage,
+) -> (draw::AnsiImage, Option<draw::AnsiImage>) {
     let image = apply_superpixel_warp(args, glyphs, image);
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -378,15 +399,12 @@ pub fn prepare_canvas(
         let _ = photon_rs::native::save_image(image.clone(), path);
     }
 
-    let canvas = draw::AnsiImage::new(
-        image.clone(),
-        glyphs.clone(),
-        args.grayscale_tolerance,
-        args.nograyscale,
-    );
+    if args.effective_render_mode() == RenderMode::Dither {
+        return (draw::dither::canvas(image, glyphs), None);
+    }
 
-    let luma_canvas = if args.braille {
-        let image_luma = effects::apply_luma_effects(args, glyphs, image);
+    let luma_canvas = if args.effective_render_mode() == RenderMode::Braille {
+        let image_luma = effects::apply_luma_effects(args, glyphs, image.clone());
         let canvas_luma = draw::AnsiImage::new(
             image_luma,
             glyphs.clone(),
@@ -397,17 +415,23 @@ pub fn prepare_canvas(
     } else {
         None
     };
+    let canvas = draw::AnsiImage::new(
+        image,
+        glyphs.clone(),
+        args.grayscale_tolerance,
+        args.nograyscale,
+    );
     (canvas, luma_canvas)
 }
 
 /// Apply the sextant-lattice deformation after source geometry is resolved.
-/// Braille uses a different lattice and deliberately skips this pass.
+/// Only glyph rendering uses the sextant lattice.
 pub fn apply_superpixel_warp(
     args: &RenderArgs,
     glyphs: &font::GlyphStore,
     image: PhotonImage,
 ) -> PhotonImage {
-    if args.braille || args.superpixel_warp == 0 {
+    if args.effective_render_mode() != RenderMode::Glyph || args.superpixel_warp == 0 {
         return image;
     }
     let warped = superpixels::warp_with_blending(image, glyphs.metrics, args.superpixel_warp, args.blend_colours);
@@ -436,37 +460,18 @@ pub fn render_from_canvas(
         }
     }
 
-    if args.braille {
-        if let Some(lc) = luma_canvas {
-            match args.render {
-                crate::args::Render::Irc => {
-                    draw::render_braille(lc, canvas, args, crate::args::Render::Irc)
-                }
-                crate::args::Render::Ansi => {
-                    draw::render_braille(lc, canvas, args, crate::args::Render::Ansi)
-                }
-                crate::args::Render::Ansi24 => {
-                    draw::render_braille(lc, canvas, args, crate::args::Render::Ansi24)
-                }
-            }
-        } else {
-            draw::RenderResult::from("Error: Braille mode without luma canvas")
-        }
-    } else {
-        match args.render {
-            crate::args::Render::Irc => {
-                draw::render_blocks(canvas, args, crate::args::Render::Irc, glyphs, abort_flag)
-            }
-            crate::args::Render::Ansi => {
-                draw::render_blocks(canvas, args, crate::args::Render::Ansi, glyphs, abort_flag)
-            }
-            crate::args::Render::Ansi24 => draw::render_blocks(
-                canvas,
-                args,
-                crate::args::Render::Ansi24,
-                glyphs,
-                abort_flag,
-            ),
+    let mode = args.effective_render_mode();
+    if let Err(message) = mode.validate(args.render, args.foreground_only) {
+        return draw::RenderResult::from(message);
+    }
+    match mode {
+        RenderMode::Glyph => draw::render_blocks(canvas, args, args.render, glyphs, abort_flag),
+        RenderMode::Braille => match luma_canvas {
+            Some(luma) => draw::render_braille(luma, canvas, args, args.render),
+            None => draw::RenderResult::from("Error: Braille mode without luma canvas"),
+        },
+        RenderMode::Dither => {
+            draw::dither::render(canvas, args, abort_flag.as_deref())
         }
     }
 }
@@ -534,7 +539,10 @@ pub(crate) fn render_base_output(
     // However, for simplicity in this pass, we'll use the provided ones if they match.
     // In TUI, this will be handled by the refresh loop.
     let prepare_started = draw::RenderInstant::now();
-    let (canvas, luma_canvas) = prepare_canvas(&args, glyph_store, image);
+    let (canvas, luma_canvas) = match try_prepare_canvas(&args, glyph_store, image) {
+        Ok(canvas) => canvas,
+        Err(error) => return draw::RenderResult::from(error),
+    };
     let prepare_time = prepare_started.elapsed();
     let mut result = render_from_canvas(&args, &canvas, luma_canvas.as_ref(), glyphs, abort_flag);
     result.profile.prepare_canvas = prepare_time;

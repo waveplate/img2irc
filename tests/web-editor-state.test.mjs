@@ -31,3 +31,41 @@ test("OCR overlay edits remain dirty until replacement or clearing", () => {
   assert.equal(state.ocrOverlaysDirty, false);
   assert.deepEqual(state.ocrOverlays, []);
 });
+
+test("overlay stacking spans OCR and manual layers, preserves identity, and survives session serialization", () => {
+  const state = new EditorState();
+  const ocr = { kind: "ocr", text: "OCR" };
+  const rectangle = { kind: "manual", text: "rectangle" };
+  const text = { kind: "manual", text: "text" };
+  state.replaceOcrOverlays([ocr]);
+  state.addManualOverlay(rectangle);
+  state.addManualOverlay(text);
+  assert.deepEqual(state.overlays, [ocr, rectangle, text]);
+  assert.equal(state.reorderOverlay(rectangle, "back"), true);
+  assert.deepEqual(state.overlays, [rectangle, ocr, text]);
+  assert.equal(state.ocrOverlaysDirty, true);
+  assert.equal(state.reorderOverlay(text, "lower"), true);
+  assert.deepEqual(state.overlays, [rectangle, text, ocr]);
+  assert.equal(state.reorderOverlay(rectangle, "front"), true);
+  assert.deepEqual(state.overlays, [text, ocr, rectangle]);
+  assert.equal(state.reorderOverlay(rectangle, "raise"), false);
+  const restored = new EditorState();
+  restored.manualOverlays = JSON.parse(JSON.stringify(state.manualOverlays));
+  restored.ocrOverlays = JSON.parse(JSON.stringify(state.ocrOverlays));
+  assert.deepEqual(restored.overlays.map((overlay) => overlay.text), ["text", "OCR", "rectangle"]);
+});
+
+test("hidden OCR keeps its stack position and new overlays are added at the front", () => {
+  const state = new EditorState();
+  const ocr = { kind: "ocr", text: "OCR" };
+  const first = { kind: "manual", text: "first" };
+  const next = { kind: "manual", text: "next" };
+  state.replaceOcrOverlays([ocr]);
+  state.addManualOverlay(first);
+  state.reorderOverlay(first, "back");
+  state.setOcrOverlaysEnabled(false);
+  state.addManualOverlay(next);
+  assert.deepEqual(state.overlays, [first, next]);
+  state.setOcrOverlaysEnabled(true);
+  assert.deepEqual(state.overlays, [first, ocr, next]);
+});

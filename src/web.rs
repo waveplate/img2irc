@@ -1,4 +1,7 @@
-use crate::args::{Args, ColorSpec, ColourSpace, Param, Render, SamplingFilter, TextOverlay};
+use crate::args::{
+    default_dither_detail, default_dither_palette_candidates, Args, ColorSpec, ColourSpace, Param,
+    Render, RenderMode, SamplingFilter, TextOverlay,
+};
 use crate::{args_to_render_args, draw, font};
 use clap::Parser;
 use figlet_rs::FIGlet;
@@ -24,6 +27,7 @@ const MAX_FIGLET_REQUESTS: usize = 1024;
 #[wasm_bindgen(typescript_custom_section)]
 const TYPESCRIPT_TYPES: &str = r#"
 export type Img2IrcColorMode = "irc" | "ansi" | "ansi24";
+export type Img2IrcRenderMode = "glyph" | "braille" | "dither";
 export type Img2IrcSamplingFilter =
     | "nearest"
     | "triangle"
@@ -61,6 +65,13 @@ export interface Img2IrcRenderOptions {
     height?: number;
     fontSize?: number;
     render?: Img2IrcColorMode;
+    renderMode?: Img2IrcRenderMode;
+    /** Coverage samples per side of a Dither cell. */
+    ditherDetail?: number;
+    /** Palette colours considered per endpoint. 0 tries all. */
+    ditherPaletteCandidates?: number;
+    foregroundOnly?: boolean;
+    /** Legacy alias for renderMode: "braille". */
     braille?: boolean;
     glyphs?: string;
     include?: string;
@@ -68,6 +79,8 @@ export interface Img2IrcRenderOptions {
     exclude?: string;
     excludeRanges?: string[];
     filter?: Img2IrcSamplingFilter;
+    /** Allow interpolated colours; defaults to true. */
+    blendColours?: boolean;
     scaleX?: number;
     scaleY?: number;
     rotate?: number;
@@ -150,6 +163,7 @@ export interface Img2IrcFigletRequest {
     maxHeight: number;
     useFiglet?: boolean;
     fontName?: string;
+    wrap?: boolean;
 }
 
 export interface Img2IrcFigletArt {
@@ -188,6 +202,8 @@ export interface Img2IrcRenderResult {
     longestLineBytes: number;
     timings: Img2IrcRenderTimings;
     previewRgba?: Uint8Array;
+    /** Row-major indices of Dither preview cells drawn as browser text overlays. */
+    previewTextCells?: number[];
 }
 
 export interface Img2IrcRenderTimings {
@@ -323,6 +339,10 @@ struct WebOptions {
     height: Option<u32>,
     font_size: f32,
     render: WebRender,
+    render_mode: Option<RenderMode>,
+    dither_detail: Option<u32>,
+    dither_palette_candidates: Option<u32>,
+    foreground_only: bool,
     braille: bool,
     glyphs: Option<String>,
     include: Option<String>,
@@ -427,6 +447,7 @@ struct WebFigletRequest {
     max_height: usize,
     use_figlet: bool,
     font_name: Option<String>,
+    wrap: bool,
 }
 
 impl Default for WebFigletRequest {
@@ -441,6 +462,7 @@ impl Default for WebFigletRequest {
             max_height: 1,
             use_figlet: false,
             font_name: None,
+            wrap: false,
         }
     }
 }
@@ -502,6 +524,10 @@ impl Default for WebOptions {
             height: None,
             font_size: DEFAULT_FONT_SIZE,
             render: WebRender::Irc,
+            render_mode: None,
+            dither_detail: None,
+            dither_palette_candidates: None,
+            foreground_only: false,
             braille: false,
             glyphs: None,
             include: None,
@@ -509,7 +535,7 @@ impl Default for WebOptions {
             exclude: String::new(),
             exclude_ranges: Vec::new(),
             filter: WebSamplingFilter::Nearest,
-            blend_colours: false,
+            blend_colours: true,
             scale_x: 1.0,
             scale_y: 1.0,
             rotate: 0.0,
@@ -644,6 +670,12 @@ impl WebOptions {
     }
 
     fn validate(&self) -> Result<(), JsValue> {
+        self.effective_render_mode()
+            .validate(self.render.into(), self.foreground_only)
+            .map_err(js_error)?;
+        if self.dither_detail == Some(0) {
+            return Err(js_error("Dither Detail must be at least 1"));
+        }
         if let Some(pipeline) = &self.pipeline {
             // Scale has two native operations, so 64 UI entries can expand to 128.
             if pipeline.len() > 128 || pipeline.iter().any(|effect| !valid_web_effect(effect)) {
@@ -688,7 +720,7 @@ impl WebOptions {
         let has_explicit_glyphs = self.glyphs.as_ref().is_some_and(|value| !value.is_empty())
             || self.include.as_ref().is_some_and(|value| !value.is_empty())
             || !self.include_ranges.is_empty();
-        if !has_explicit_glyphs {
+        if !has_explicit_glyphs && self.effective_render_mode() != RenderMode::Braille {
             return Err(js_error(
                 "glyphs must be supplied from a runtime catalog or explicit includes",
             ));
@@ -711,7 +743,7 @@ impl WebOptions {
     fn glyph_cache_key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         self.font_size.to_bits().hash(&mut hasher);
-        self.braille.hash(&mut hasher);
+        self.effective_render_mode().hash(&mut hasher);
         self.glyphs.hash(&mut hasher);
         self.include.hash(&mut hasher);
         self.include_ranges.hash(&mut hasher);
@@ -736,10 +768,12 @@ impl WebOptions {
             source_order.hash(&mut hasher);
         }
         self.glyph_cache_key().hash(&mut hasher);
+        self.dither_detail().hash(&mut hasher);
         self.width.hash(&mut hasher);
         self.height.hash(&mut hasher);
         (self.filter as u8).hash(&mut hasher);
         self.blend_colours.hash(&mut hasher);
+        self.foreground_only.hash(&mut hasher);
         self.scale_x.to_bits().hash(&mut hasher);
         self.scale_y.to_bits().hash(&mut hasher);
         self.rotate.to_bits().hash(&mut hasher);
@@ -777,6 +811,13 @@ impl WebOptions {
         hasher.finish()
     }
 
+    fn effective_render_mode(&self) -> RenderMode {
+        self.render_mode.unwrap_or_default().with_legacy_braille(self.braille)
+    }
+
+    fn dither_detail(&self) -> u32 {
+        self.dither_detail.unwrap_or_else(default_dither_detail)
+    }
 }
 
 #[derive(Serialize)]
@@ -831,6 +872,8 @@ struct WebRenderResult {
     perceptual_score: Option<crate::perceptual_score::PerceptualScore>,
     preview_width: u32,
     preview_height: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    preview_text_cells: Vec<usize>,
     font_size: f32,
     cell_width: usize,
     cell_height: usize,
@@ -909,7 +952,7 @@ impl ResultCache {
     }
 }
 
-fn normalize_figlet_art(source: String, rendered: &str) -> Option<WebFigletArt> {
+fn normalize_figlet_art(source: String, rendered: &str, preserve_left: bool) -> Option<WebFigletArt> {
     let rows = rendered
         .lines()
         .map(|line| line.chars().collect::<Vec<_>>())
@@ -941,6 +984,7 @@ fn normalize_figlet_art(source: String, rendered: &str) -> Option<WebFigletArt> 
     if min_x == usize::MAX || min_y == usize::MAX {
         return None;
     }
+    if preserve_left { min_x = 0; }
 
     let lines = rows[min_y..=max_y]
         .iter()
@@ -973,9 +1017,9 @@ fn plain_figlet_art(text: &str, max_width: usize, max_height: usize) -> Option<W
     })
 }
 
-fn render_figlet_font(font: &WebFigletFont, text: &str) -> Option<WebFigletArt> {
-    let rendered = crate::figlet_text::render(&font.font, text)?;
-    normalize_figlet_art(font.name.clone(), &rendered)
+fn render_figlet_font(font: &WebFigletFont, text: &str, width: Option<usize>) -> Option<WebFigletArt> {
+    let rendered = crate::figlet_text::render_wrapped(&font.font, text, width)?;
+    normalize_figlet_art(font.name.clone(), &rendered, true)
 }
 
 fn decode_figlet_font(data: &[u8]) -> Result<String, String> {
@@ -1004,7 +1048,7 @@ fn decode_figlet_font(data: &[u8]) -> Result<String, String> {
 }
 
 fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Option<WebFigletArt> {
-    let text = request.text.trim();
+    let text = request.text.trim_end();
     if text.is_empty() || request.max_width == 0 || request.max_height == 0 {
         return None;
     }
@@ -1014,13 +1058,13 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
     if line_bounds.len() > 1 {
         let compose = |font: Option<&WebFigletFont>| -> Option<WebFigletArt> {
             let parts = text.lines().filter(|line| !line.trim().is_empty()).map(|line| match font {
-                Some(font) => render_figlet_font(font, line),
+                Some(font) => render_figlet_font(font, line, request.wrap.then_some(request.max_width)),
                 None => plain_figlet_art(line, request.max_width, request.max_height),
             }).collect::<Option<Vec<_>>>()?;
             let source = parts.first()?.source.clone();
             let rows = parts.iter().map(|part| part.text.lines().map(|line| line.chars().collect::<Vec<_>>()).collect::<Vec<_>>()).collect::<Vec<_>>();
             let rows = crate::ocr_layout::space_line_art(&rows, line_bounds)?;
-            let art = normalize_figlet_art(source, &rows.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>().join("\n"))?;
+            let art = normalize_figlet_art(source, &rows.iter().map(|row| row.iter().collect::<String>()).collect::<Vec<_>>().join("\n"), true)?;
             (art.width <= request.max_width && art.height <= request.max_height).then_some(art)
         };
         let mut candidates = if request.use_figlet {
@@ -1029,7 +1073,7 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
         } else { Vec::new() };
         candidates.sort_by_key(|(art, font)| (
             if request.fill_available { 0 } else { art.width.saturating_sub(request.base_width) },
-            std::cmp::Reverse(font.height), font.priority,
+            std::cmp::Reverse(art.height), font.priority,
         ));
         return candidates.into_iter().next().map(|(art, _)| art).or_else(|| compose(None));
     }
@@ -1044,7 +1088,7 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
             return fonts
                 .iter()
                 .find(|font| font.name.eq_ignore_ascii_case(font_name))
-                .and_then(|font| render_figlet_font(font, text))
+                .and_then(|font| render_figlet_font(font, text, request.wrap.then_some(request.max_width)))
                 .filter(|art| {
                     art.width <= request.max_width && art.height <= request.max_height
                 })
@@ -1053,7 +1097,7 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
 
         if request.fill_available {
             return fonts.iter().filter_map(|font| {
-                render_figlet_font(font, text)
+                render_figlet_font(font, text, request.wrap.then_some(request.max_width))
                     .filter(|art| art.width <= request.max_width && art.height <= request.max_height)
                     .map(|art| (art, font.priority))
             }).max_by_key(|(art, priority)| (art.height, art.width, std::cmp::Reverse(*priority)))
@@ -1061,52 +1105,17 @@ fn select_figlet_art(fonts: &[WebFigletFont], request: &WebFigletRequest) -> Opt
                 .or_else(|| plain_figlet_art(text, request.max_width, request.max_height));
         }
 
-        // Step 1: Check if any FIGlet font fits in original base box without enlargement
-        let mut original_heights = fonts
-            .iter()
-            .map(|font| font.height)
-            .filter(|height| *height > 0 && *height as usize <= base_h)
-            .collect::<Vec<_>>();
-        original_heights.sort_unstable_by(|left, right| right.cmp(left));
-        original_heights.dedup();
-
-        for height in original_heights {
-            let mut list_fonts = fonts.iter().filter(|f| f.height == height).collect::<Vec<_>>();
-            list_fonts.sort_by_key(|f| f.priority);
-            for font in list_fonts {
-                if let Some(rendered) = render_figlet_font(font, text) {
-                    if rendered.width <= base_w && rendered.height <= base_h {
-                        return Some(rendered);
-                    }
-                }
-            }
-        }
-
-        // Step 2: Only if no font fit in original box, check candidate fonts up to max_width x max_height
-        if request.max_width > base_w || request.max_height > base_h {
-            let mut candidates = Vec::new();
-            for font in fonts {
-                if font.height == 0 || font.height as usize > request.max_height {
-                    continue;
-                }
-                if let Some(rendered) = render_figlet_font(font, text) {
-                    if rendered.width <= request.max_width && rendered.height <= request.max_height {
-                        let expand_w = rendered.width.saturating_sub(base_w);
-                        let expand_h = rendered.height.saturating_sub(base_h);
-                        candidates.push((rendered, expand_w, expand_h, font.height, font.priority));
-                    }
-                }
-            }
-            if !candidates.is_empty() {
-                candidates.sort_by(|a, b| {
-                    (a.1 + a.2)
-                        .cmp(&(b.1 + b.2))
-                        .then_with(|| b.3.cmp(&a.3))
-                        .then_with(|| a.4.cmp(&b.4))
-                });
-                return Some(candidates.into_iter().next().unwrap().0);
-            }
-        }
+        let mut candidates = fonts.iter().filter_map(|font| {
+            render_figlet_font(font, text, request.wrap.then_some(request.max_width))
+                .filter(|art| art.width <= request.max_width && art.height <= request.max_height)
+                .map(|art| (art, font))
+        }).collect::<Vec<_>>();
+        candidates.sort_by_key(|(art, font)| (
+            art.width > base_w || art.height > base_h,
+            art.width.saturating_sub(base_w) + art.height.saturating_sub(base_h),
+            std::cmp::Reverse(font.height), font.priority,
+        ));
+        if let Some((art, _)) = candidates.into_iter().next() { return Some(art); }
     }
     plain_figlet_art(text, request.max_width, request.max_height)
 }
@@ -1121,6 +1130,7 @@ pub struct WebRenderer {
     glyph_caches: Vec<GlyphCache>,
     canvas_cache: Option<CanvasCache>,
     result_cache: VecDeque<ResultCache>,
+    glyph_score_cache: draw::GlyphSearchCache,
     figlet_fonts: Vec<WebFigletFont>,
     source_image: Option<PhotonImage>,
     cli: Args,
@@ -1142,6 +1152,7 @@ impl WebRenderer {
             glyph_caches: Vec::with_capacity(GLYPH_CACHE_CAPACITY),
             canvas_cache: None,
             result_cache: VecDeque::with_capacity(RESULT_CACHE_CAPACITY),
+            glyph_score_cache: draw::GlyphSearchCache::default(),
             figlet_fonts: Vec::new(),
             source_image: None,
             // Parsing Clap defaults is relatively expensive in WASM. Do it
@@ -1309,7 +1320,7 @@ impl WebRenderer {
             let pipeline: Vec<_> = args.pipeline.iter().filter(|effect| !effect.is_output_colour()).cloned().collect();
             crate::effects::apply_pipeline(&args, source, &pipeline)
         } else {
-            crate::effects::apply_effects(&args, &store, source)
+            crate::effects::try_apply_effects(&args, &store, source).map_err(js_error)?
         };
         let width = transformed.get_width();
         let height = transformed.get_height();
@@ -1348,6 +1359,7 @@ impl WebRenderer {
         self.canvas_cache = None;
         self.result_cache.clear();
         crate::contour_score::clear_cache();
+        self.glyph_score_cache = draw::GlyphSearchCache::default();
     }
 
     /// Compare the plain glyph match at every size, preserving the caller's
@@ -1392,6 +1404,10 @@ impl WebRenderer {
         cli.height = options.height.map(|value| Param::Fixed(value as f32));
         cli.font_size = Param::Fixed(options.font_size);
         cli.render = options.render.into();
+        cli.render_mode = options.render_mode.unwrap_or_default();
+        cli.dither_detail = options.dither_detail();
+        cli.dither_palette_candidates = options.dither_palette_candidates
+            .unwrap_or_else(default_dither_palette_candidates);
         cli.braille = options.braille;
         // Browser glyph membership comes from the external JSON catalog and
         // is passed as an explicit character string.
@@ -1406,6 +1422,7 @@ impl WebRenderer {
         cli.exclude_range = options.exclude_ranges.clone();
         cli.filter = options.filter.into();
         cli.blend_colours = options.blend_colours;
+        cli.foreground_only = options.foreground_only;
         cli.scale = Some((options.scale_x, options.scale_y));
         cli.rotate = Param::Fixed(options.rotate);
         cli.fliph = options.flip_horizontal;
@@ -1538,12 +1555,15 @@ impl WebRenderer {
                 false,
             )
             .map_err(js_error)?;
-            let fast_glyphs = draw::prepare_glyphs(&store, &args);
-            if fast_glyphs.is_empty() && !args.braille {
-                return Err(js_error(
-                    "the selected characters produced no usable glyphs",
-                ));
-            }
+            let fast_glyphs = if args.effective_render_mode() == RenderMode::Glyph {
+                let glyphs = draw::prepare_glyphs(&store, &args);
+                if glyphs.is_empty() {
+                    return Err(js_error("the selected characters produced no usable glyphs"));
+                }
+                glyphs
+            } else {
+                Vec::new()
+            };
             if self.glyph_caches.len() == GLYPH_CACHE_CAPACITY {
                 self.glyph_caches.remove(0);
             }
@@ -1573,7 +1593,8 @@ impl WebRenderer {
             if !canvas_cache_hit {
                 let cache = self.glyph_caches.last().expect("glyph cache initialized");
                 let image = self.source_image.as_ref().expect("source checked").clone();
-                let (canvas, luma_canvas) = crate::prepare_canvas(&args, &cache.store, image);
+                let (canvas, luma_canvas) = crate::try_prepare_canvas(&args, &cache.store, image)
+                    .map_err(js_error)?;
                 self.canvas_cache = Some(CanvasCache {
                     key: canvas_key,
                     canvas,
@@ -1592,7 +1613,7 @@ impl WebRenderer {
                 &cache.fast_glyphs,
                 None,
             );
-            let mut rendered = if let Some(callback) = on_progress {
+            let mut rendered = self.glyph_score_cache.run(|| if let Some(callback) = on_progress {
                 let include_preview = options.live_preview && options.include_cells;
                 let preview_args = args.clone();
                 let preview_store = include_preview.then(|| cache.store.clone());
@@ -1623,7 +1644,7 @@ impl WebRenderer {
                         let _ = callback.call1(&JsValue::NULL, &value);
                     }
                 }, include_preview, render)
-            } else { render() };
+            } else { render() });
             rendered.profile.prepare_canvas = prepare_canvas_time;
             let bytes = ResultCache::size(&rendered);
             if !rendered.grid.is_empty() && rendered.content != "Cancelled" && bytes <= MAX_RESULT_CACHE_BYTES {
@@ -1645,13 +1666,31 @@ impl WebRenderer {
         }
         let cache = self.glyph_caches.last().expect("glyph cache initialized");
         let overlay_started = draw::RenderInstant::now();
-        let result = draw::apply_overlays_to_result(
-            &base_result,
-            &args.overlays,
-            args.render,
-            false,
-            args.grayscale_tolerance,
-        );
+        let mut preview_text_cells = Vec::new();
+        let result = if args.effective_render_mode() == RenderMode::Dither {
+            if base_result.grid.is_empty() {
+                return Err(js_error(base_result.content));
+            }
+            if args.overlays.is_empty() {
+                base_result
+            } else {
+                let overlaid = draw::encode_grid_with_overlays(&base_result, &args.overlays, args.render, false,
+                    args.grayscale_tolerance, true);
+                if options.include_preview && options.include_cells {
+                    // Browser fonts still draw text overlays, including characters outside the glyph store.
+                    let cells = base_result.grid.iter().flatten().zip(overlaid.grid.iter().flatten());
+                    preview_text_cells.extend(cells.enumerate().filter_map(|(i, (base, cell))| {
+                        (cell.underline || (cell.char != ' ' && (base.char != cell.char || cell.bold || cell.italic)))
+                            .then_some(i)
+                    }));
+                }
+                overlaid
+            }
+        } else {
+            draw::apply_overlays_to_result(
+                &base_result, &args.overlays, args.render, false, args.grayscale_tolerance,
+            )
+        };
         let result = crate::output_colours::apply(
             &result, &cache.store, &args.pipeline,
             args.render, false, args.grayscale_tolerance,
@@ -1702,6 +1741,7 @@ impl WebRenderer {
             perceptual_score: result.perceptual_score,
             preview_width,
             preview_height,
+            preview_text_cells,
             font_size: options.font_size,
             cell_width: cache.store.metrics.0,
             cell_height: cache.store.metrics.1,

@@ -1,4 +1,4 @@
-//! Reuse local rankings across frames. Exact by default; an opt-in per-channel
+//! Reuse local rankings across renders. Exact by default; an opt-in per-channel
 //! tolerance accepts compression noise. Global scores are never stored here.
 use super::*;
 use std::{
@@ -17,6 +17,7 @@ struct Cache {
     hits: u64,
     misses: u64,
     tolerance: u8,
+    configured: bool,
 }
 struct Entry {
     key: Vec<u8>,
@@ -31,10 +32,54 @@ impl Entry {
 }
 thread_local! { static CACHE: RefCell<Cache> = RefCell::new(Cache::default()); }
 
+/// Own reuse across render calls, even when an async renderer moves threads.
+/// The thread-local cache is installed only for the synchronous render scope.
+pub(crate) struct Session {
+    cache: Cache,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self::new(if cfg!(target_arch = "wasm32") { 8 } else { 256 } * 1024 * 1024)
+    }
+}
+
+impl Session {
+    pub(crate) fn new(bytes: usize) -> Self {
+        Self { cache: Cache { budget: bytes, configured: true, ..Cache::default() } }
+    }
+
+    pub(crate) fn run<T>(&mut self, render: impl FnOnce() -> T) -> T {
+        struct Restore<'a> {
+            owner: &'a mut Cache,
+            previous: Option<Cache>,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                let previous = self.previous.take().unwrap();
+                *self.owner = CACHE.with(|slot| slot.replace(previous));
+            }
+        }
+        let active = std::mem::take(&mut self.cache);
+        let previous = CACHE.with(|slot| slot.replace(active));
+        let _restore = Restore { owner: &mut self.cache, previous: Some(previous) };
+        render()
+    }
+}
+
+pub(super) fn with_default_cache<T>(render: impl FnOnce() -> T) -> T {
+    if CACHE.with_borrow(|cache| cache.configured) {
+        render()
+    } else {
+        Session::default().run(render)
+    }
+}
+
 pub(crate) fn configure(bytes: usize, tolerance: u8) {
     CACHE.with_borrow_mut(|cache| {
         cache.budget = bytes;
         cache.tolerance = tolerance;
+        cache.configured = true;
         cache.evict(0);
     });
 }
@@ -197,6 +242,12 @@ pub(super) fn key(
             painter.data[cell].bg,
         )
     });
+    // Equal foreground/background colours can collapse distinct choices to
+    // the same rendered mask. Skip those ambiguous mappings: reconstructing
+    // their original tie order from masks alone would lose alternatives.
+    if choices.iter().any(|choices| choices.windows(2).any(|pair| pair[0].0 == pair[1].0)) {
+        return None;
+    }
     for (i, old) in [old.0, old.1].into_iter().enumerate() {
         let mask = choices[i].iter().find(|c| c.1 == old)?.0;
         bytes.extend_from_slice(&mask.to_le_bytes());
@@ -352,6 +403,30 @@ pub(super) fn insert(key: Key, trials: &[Trial]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_survives_thread_migration_and_restores_the_previous_cache_on_unwind() {
+        let mut outside = Session::new(0);
+        outside.run(|| {
+            let mut session = Session::new(1024);
+            session.run(|| CACHE.with_borrow_mut(|cache| cache.insert(7, Entry {
+                key: vec![1, 2, 3], trials: Vec::new(), layout_len: 0, layout_hash: 7,
+            })));
+            assert_eq!(CACHE.with_borrow(|cache| cache.budget), 0);
+            let mut session = std::thread::spawn(move || {
+                session.run(|| assert!(CACHE.with_borrow_mut(|cache| cache.get(7, &[1, 2, 3])).is_some()));
+                session
+            }).join().unwrap();
+            let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                session.run(|| panic!("render failed"));
+            }));
+            assert!(failed.is_err());
+            assert_eq!(CACHE.with_borrow(|cache| cache.budget), 0);
+            session.run(|| assert!(CACHE.with_borrow_mut(|cache| cache.get(7, &[1, 2, 3])).is_some()));
+            with_default_cache(|| assert_eq!(CACHE.with_borrow(|cache| cache.budget), 0));
+        });
+    }
+
     #[test]
     fn collisions_never_reuse_a_different_patch_and_budget_is_enforced() {
         let mut c = Cache {

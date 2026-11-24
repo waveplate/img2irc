@@ -2,12 +2,19 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target}"
 ORT_VERSION="1.20.0"
 ORT_SOURCE_DIR="${IMG2IRC_ORT_SOURCE_DIR:-${ROOT_DIR}/target/onnxruntime-${ORT_VERSION}}"
 ORT_BUILD_ROOT="${IMG2IRC_ORT_BUILD_DIR:-${ROOT_DIR}/target/onnxruntime-musl}"
 ORT_LIB_DIR="${ORT_BUILD_ROOT}/Release"
 ORT_BUILD_STAMP="${ORT_BUILD_ROOT}/.img2irc-complete-${ORT_VERSION}"
 BUILD_JOBS="${IMG2IRC_BUILD_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}"
+
+if [[ "${1:-}" == "--ort-source-dir" ]]; then
+    printf '%s\n' "${ORT_SOURCE_DIR}"
+    exit 0
+fi
 
 for tool in cargo git python3 cmake ninja x86_64-unknown-linux-musl-gcc x86_64-unknown-linux-musl-g++; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
@@ -77,9 +84,11 @@ cargo build \
     --bin img2irc \
     --all-features
 
-BINARY="${ROOT_DIR}/target/x86_64-unknown-linux-musl/release/img2irc"
+BINARY="${CARGO_TARGET_DIR}/x86_64-unknown-linux-musl/release/img2irc"
 file "${BINARY}"
-if readelf -l "${BINARY}" | grep -q INTERP || readelf -d "${BINARY}" | grep -q NEEDED; then
+PROGRAM_HEADERS="$(readelf -l "${BINARY}")"
+DYNAMIC_SECTION="$(readelf -d "${BINARY}")"
+if [[ "${PROGRAM_HEADERS}" == *INTERP* || "${DYNAMIC_SECTION}" == *'(NEEDED)'* ]]; then
     echo "error: the binary is not fully static" >&2
     exit 1
 fi

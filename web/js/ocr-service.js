@@ -549,8 +549,6 @@ export async function ocrItemsToOverlays(
 
   const maxWRatio = figletSettings.maxWidthRatio ?? 0.5;
   const maxHRatio = figletSettings.maxHeightRatio ?? 0.5;
-  const lineHeights = ordered.flatMap((item) => (item.layoutLines ?? [item]).map((line) => line.layoutHeight ?? line.bounds.height));
-  const medianHeight = lineHeights.length >= 3 ? median(lineHeights) : 0;
 
   const requests = ordered.map((item, i) => {
     const ownWidth = Math.max(1, Math.floor(item.right - item.left + 1e-9));
@@ -588,9 +586,6 @@ export async function ocrItemsToOverlays(
       }
     }
 
-    const lineHeight = Math.min(...(item.layoutLines ?? [item]).map((line) => line.layoutHeight ?? line.bounds.height));
-    const meetsAbsoluteHeight = lineHeight * rows / imageHeight >= (figletSettings.minHeight ?? 2);
-    const meetsRelativeHeight = medianHeight === 0 || lineHeight >= medianHeight * (figletSettings.minHeightRatio ?? 1.25);
     return {
       text: item.text,
       lineBounds: item.layoutLines?.map((line) => [line.bounds.y0 * rows / imageHeight, line.bounds.y1 * rows / imageHeight]) ?? [],
@@ -599,7 +594,7 @@ export async function ocrItemsToOverlays(
       baseHeight: ownHeight,
       maxWidth: maxAllowedW,
       maxHeight: maxAllowedH,
-      useFiglet: figletSettings.enabled && meetsAbsoluteHeight && meetsRelativeHeight,
+      useFiglet: Boolean(figletSettings.enabled),
     };
   });
   const figlet = await renderFiglet(requests);

@@ -213,6 +213,9 @@ impl GeometryCache {
         output: &OutputCache,
         rect: [usize; 4],
     ) {
+        if rect[0] == rect[2] || rect[1] == rect[3] {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let mut span = super::stage_profile::Span::new();
         #[cfg(not(target_arch = "wasm32"))]

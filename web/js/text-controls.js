@@ -1,3 +1,5 @@
+import { resizeEdges, resizeBox } from "./overlay-geometry.js";
+
 function rgbToHex(rgb, fallback) {
   if (!Array.isArray(rgb) || rgb.length !== 3) return fallback;
   return `#${rgb.map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
@@ -81,13 +83,29 @@ export class TextControls {
   start() {
     this.#element("overlay-add").addEventListener("click", () => {
       const overlay = defaultOverlay();
-      this.#state.manualOverlays.push(overlay);
+      this.#state.addManualOverlay(overlay);
       this.#selected = overlay;
       this.#render();
       this.#focusText();
       this.#changed();
     });
     this.#element("overlay-delete").addEventListener("click", () => this.#deleteSelected());
+    for (const action of ["back", "lower", "raise", "front"]) {
+      this.#element(`overlay-${action}`).addEventListener("click", () => this.#reorderSelected(action));
+    }
+    this.#root.addEventListener("keydown", (event) => {
+      if (!this.#interactive) return;
+      let action;
+      if ((event.ctrlKey || event.metaKey) && ["PageUp", "PageDown"].includes(event.key)) {
+        action = event.key === "PageUp" ? (event.shiftKey ? "front" : "raise") : (event.shiftKey ? "back" : "lower");
+      } else if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+        && !event.target.closest("input, textarea, [contenteditable='true']")) {
+        action = { ArrowUp: "lower", ArrowDown: "raise", Home: "back", End: "front" }[event.key];
+      }
+      if (!action) return;
+      event.preventDefault();
+      this.#reorderSelected(action);
+    });
     this.#element("overlay-list").addEventListener("change", (event) => {
       this.#selected = this.#overlayForKey(event.target.value);
       this.#renderEditor();
@@ -194,12 +212,10 @@ export class TextControls {
   }
 
   #entries() {
-    return [
-      ...(this.#state.ocrOverlaysEnabled
-        ? this.#state.ocrOverlays.map((overlay, index) => ({ overlay, key: `ocr:${index}` }))
-        : []),
-      ...this.#state.manualOverlays.map((overlay, index) => ({ overlay, key: `manual:${index}` })),
-    ];
+    return this.#state.overlays.map((overlay) => {
+      const ocr = this.#state.ocrOverlays.indexOf(overlay);
+      return { overlay, key: ocr >= 0 ? `ocr:${ocr}` : `manual:${this.#state.manualOverlays.indexOf(overlay)}` };
+    });
   }
 
   #overlayForKey(key) {
@@ -227,6 +243,12 @@ export class TextControls {
     this.#selected = undefined;
     this.#render();
     this.#notifyOverlayChanged(deleted);
+  }
+
+  #reorderSelected(action) {
+    if (!this.#state.reorderOverlay(this.#selected, action)) return;
+    this.#render();
+    this.#changed();
   }
 
   #entryLabel(overlay, index) {
@@ -258,6 +280,11 @@ export class TextControls {
     editor.hidden = !this.#selected;
     this.#element("overlay-empty").hidden = Boolean(this.#selected);
     this.#element("overlay-delete").disabled = !this.#selected;
+    const index = this.#state.overlays.indexOf(this.#selected);
+    for (const action of ["back", "lower", "raise", "front"]) {
+      this.#element(`overlay-${action}`).disabled = index < 0 || ((action === "back" || action === "lower")
+        ? index === 0 : index === this.#state.overlays.length - 1);
+    }
     if (!this.#selected) return;
     const overlay = this.#selected;
     this.#element("overlay-text").value = overlay.text;
@@ -288,8 +315,12 @@ export class TextControls {
     figletStatus.textContent = overlay.figlet
       ? overlay.figletFont && overlay.figletFont !== "plain"
         ? `Rendered with ${overlay.figletFont}.`
-        : overlay.figletFontChoice
-          ? `${overlay.figletFontChoice} does not currently fit this box; plain text is used.`
+        : !overlay.figletFont
+          ? "Render to apply the selected FIGlet font."
+          : overlay.figletFontChoice
+          ? overlay.autoGrow
+            ? `${overlay.figletFontChoice} could not render this text; plain text is used.`
+            : `${overlay.figletFontChoice} does not currently fit this box; enable Fit to text or resize the box. Plain text is used.`
           : "No hosted FIGlet font currently fits this box; plain text is used."
       : "";
     this.#syncDisabledFields();
@@ -297,10 +328,8 @@ export class TextControls {
 
   #syncDisabledFields() {
     const figlet = this.#element("overlay-figlet").checked;
-    this.#element("overlay-auto-grow").disabled = figlet;
-    this.#element("overlay-width").disabled = !figlet && this.#element("overlay-auto-grow").checked;
-    this.#element("overlay-height").disabled = !figlet && this.#element("overlay-auto-grow").checked;
-    this.#element("overlay-wrap").disabled = figlet;
+    this.#element("overlay-width").disabled = this.#element("overlay-auto-grow").checked && !(figlet && this.#element("overlay-wrap").checked);
+    this.#element("overlay-height").disabled = this.#element("overlay-auto-grow").checked;
     this.#element("overlay-figlet-font").disabled = !figlet || this.#figletFonts.length === 0;
     this.#element("overlay-foreground").disabled = !this.#element("overlay-foreground-enabled").checked;
     this.#element("overlay-background").disabled = !this.#element("overlay-background-enabled").checked;
@@ -316,7 +345,7 @@ export class TextControls {
     const overlay = this.#selected;
     const previousArtKey = JSON.stringify([
       overlay.text, overlay.width, overlay.height, Boolean(overlay.figlet),
-      overlay.figletFontChoice,
+      overlay.figletFontChoice, overlay.autoGrow, overlay.wrap,
     ]);
     const wasFiglet = Boolean(overlay.figlet);
     overlay.text = this.#element("overlay-text").value;
@@ -333,7 +362,6 @@ export class TextControls {
         || (this.#figletFonts.some((f) => f.name === overlay.figletFont) ? overlay.figletFont : this.#figletFonts[0]?.name);
     }
     if (overlay.figlet && !wasFiglet) {
-      overlay.autoGrow = false;
       const availableWidth = Math.max(1, this.#columns - Math.max(0, overlay.x));
       const availableHeight = Math.max(1, this.#rows - Math.max(0, overlay.y));
       overlay.width = Math.max(overlay.width, Math.min(24, availableWidth));
@@ -350,7 +378,7 @@ export class TextControls {
       : undefined;
     const nextArtKey = JSON.stringify([
       overlay.text, overlay.width, overlay.height, Boolean(overlay.figlet),
-      overlay.figletFontChoice,
+      overlay.figletFontChoice, overlay.autoGrow, overlay.wrap,
     ]);
     if (previousArtKey !== nextArtKey) this.#invalidateArt(overlay);
     this.#render();
@@ -358,7 +386,10 @@ export class TextControls {
   }
 
   #overlayDimensions(overlay) {
-    if (!overlay.figlet && overlay.autoGrow) return textDimensions(overlay.text);
+    if (overlay.autoGrow) {
+      const dimensions = textDimensions(overlay.figlet ? overlay.renderedText ?? overlay.text : overlay.text);
+      return overlay.figlet && overlay.wrap ? { ...dimensions, width: Math.max(1, Number(overlay.width) || 1) } : dimensions;
+    }
     return {
       width: Math.max(1, Number(overlay.width) || 1),
       height: Math.max(1, Number(overlay.height) || 1),
@@ -374,6 +405,8 @@ export class TextControls {
   }
 
   #renderLayer(draft) {
+    const focused = this.#layer.contains(document.activeElement)
+      ? document.activeElement.closest(".overlay-box")?.dataset.overlayKey : undefined;
     const entries = this.#entries();
     this.#layer.hidden = !this.#interactive || this.#columns < 1 || this.#rows < 1;
     if (this.#layer.hidden) {
@@ -390,10 +423,13 @@ export class TextControls {
       box.setAttribute("aria-label", `${this.#entryLabel(overlay, index)}; drag to move`);
       box.setAttribute("aria-selected", String(overlay === this.#selected));
       this.#positionBox(box, overlay);
-      const handle = document.createElement("span");
-      handle.className = "overlay-resize-handle";
-      handle.setAttribute("aria-hidden", "true");
-      box.append(handle);
+      for (const edge of ["n", "ne", "e", "se", "s", "sw", "w", "nw"]) {
+        const handle = document.createElement("span");
+        handle.className = "overlay-resize-handle";
+        handle.dataset.edge = edge;
+        handle.setAttribute("aria-hidden", "true");
+        box.append(handle);
+      }
       return box;
     });
     if (draft) {
@@ -403,25 +439,31 @@ export class TextControls {
       boxes.push(box);
     }
     this.#layer.replaceChildren(...boxes);
+    if (focused) this.#layer.querySelector(`[data-overlay-key="${focused}"]`)?.focus({ preventScroll: true });
   }
 
   #beginPointerGesture(event) {
     if (!this.#interactive || event.button !== 0) return;
-    const cell = this.#preview.clientPointToCell(
-      event.clientX,
-      event.clientY,
-      this.#columns,
-      this.#rows,
-    );
+    const cell = this.#pointerCell(event);
     if (!cell) return;
     event.preventDefault();
-    const box = event.target.closest(".overlay-box");
+    const boxes = [...this.#layer.querySelectorAll(".overlay-box")].reverse();
+    const selectedKey = this.#keyForOverlay(this.#selected);
+    const selectedBox = boxes.find((box) => box.dataset.overlayKey === selectedKey);
+    const selectedEdges = selectedBox && resizeEdges(selectedBox.getBoundingClientRect(), event.clientX, event.clientY);
+    const inside = boxes.find((box) => {
+      const rect = box.getBoundingClientRect();
+      return event.clientX >= rect.left && event.clientX < rect.right && event.clientY >= rect.top && event.clientY < rect.bottom;
+    });
+    const box = selectedEdges ? selectedBox : inside ?? boxes.find((box) => resizeEdges(box.getBoundingClientRect(), event.clientX, event.clientY));
+    const edges = selectedEdges ?? (box && !inside ? resizeEdges(box.getBoundingClientRect(), event.clientX, event.clientY) : undefined);
     const overlay = box ? this.#overlayForKey(box.dataset.overlayKey) : undefined;
     if (overlay) {
       this.#selected = overlay;
       const dimensions = this.#overlayDimensions(overlay);
       this.#gesture = {
-        mode: event.target.closest(".overlay-resize-handle") ? "resize" : "move",
+        mode: edges ? "resize" : "move",
+        edges,
         pointerId: event.pointerId,
         start: cell,
         overlay,
@@ -435,6 +477,7 @@ export class TextControls {
         candidate.setAttribute("aria-selected", String(candidate === box));
       });
     } else {
+      if (cell.x < 0 || cell.y < 0 || cell.x >= this.#columns || cell.y >= this.#rows) return;
       const draft = document.createElement("div");
       draft.className = "overlay-draft";
       this.#positionBox(draft, { x: cell.x, y: cell.y, width: 1, height: 1 });
@@ -454,12 +497,7 @@ export class TextControls {
   #continuePointerGesture(event) {
     const gesture = this.#gesture;
     if (!gesture || event.pointerId !== gesture.pointerId) return;
-    const cell = this.#preview.clientPointToCell(
-      event.clientX,
-      event.clientY,
-      this.#columns,
-      this.#rows,
-    );
+    const cell = this.#pointerCell(event);
     if (!cell) return;
     event.preventDefault();
     if (gesture.mode === "create") {
@@ -488,18 +526,18 @@ export class TextControls {
       ));
     } else {
       gesture.overlay.autoGrow = false;
-      gesture.overlay.width = Math.max(1, Math.min(
-        this.#columns - gesture.overlay.x,
-        gesture.original.width + deltaX,
-      ));
-      gesture.overlay.height = Math.max(1, Math.min(
-        this.#rows - gesture.overlay.y,
-        gesture.original.height + deltaY,
-      ));
+      Object.assign(gesture.overlay, resizeBox(gesture.original, gesture.edges, deltaX, deltaY));
       this.#invalidateArt(gesture.overlay);
     }
     gesture.changed = true;
     this.#positionBox(gesture.element, gesture.overlay);
+  }
+
+  #pointerCell(event) {
+    const rect = this.#layer.getBoundingClientRect();
+    if (!rect.width || !rect.height || !this.#columns || !this.#rows) return undefined;
+    return { x: Math.floor((event.clientX - rect.left) * this.#columns / rect.width),
+      y: Math.floor((event.clientY - rect.top) * this.#rows / rect.height) };
   }
 
   #finishPointerGesture(event) {
@@ -519,7 +557,7 @@ export class TextControls {
         height: Math.abs(current.y - gesture.start.y) + 1,
         autoGrow: false,
       });
-      this.#state.manualOverlays.push(overlay);
+      this.#state.addManualOverlay(overlay);
       this.#selected = overlay;
       this.#render();
       this.#focusText();
@@ -535,6 +573,7 @@ export class TextControls {
     const overlay = box ? this.#overlayForKey(box.dataset.overlayKey) : undefined;
     if (!overlay) return;
     this.#selected = overlay;
+    if (event.shiftKey && ["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       this.#deleteSelected();

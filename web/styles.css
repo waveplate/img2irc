@@ -253,6 +253,26 @@ label:hover .info-button, label:focus-within .info-button { color: var(--accent)
 .canvas-viewport { position: relative; display: flex; align-items: start; justify-content: start; min-height: 0; min-width: 0; overflow: auto; padding: .6em; background: #16161e; }
 .preview-stage { position: relative; flex: none; min-width: 0; min-height: 0; }
 #output-canvas { display: block; background: #000; image-rendering: auto; }
+.output-dither-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+.output-text.output-text-over-raster,
+.output-text-over-raster .output-text-run {
+  background-color: transparent !important;
+  color: transparent !important;
+  text-shadow: none;
+  text-decoration: none !important;
+}
+.output-text-over-raster .irc2html-glyph::selection {
+  background: rgb(120 174 255 / 45%);
+  color: transparent;
+}
+.output-text.output-text-bitmap-mode { display: none; }
 .output-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: max-content; max-width: 90%; color: var(--muted); text-align: center; line-height: 1.65; }
 .output-empty strong { color: #c8c8dc; font-weight: normal; }
 .output-empty p { margin: .7em 0 1em; }
@@ -292,15 +312,22 @@ label:hover .info-button, label:focus-within .info-button { color: var(--accent)
   box-shadow: 0 0 0 1px rgb(18 24 33 / 80%);
 }
 .overlay-resize-handle {
-  background: #d4e4ff;
-  border: 1px solid #172033;
-  bottom: -4px;
-  cursor: nwse-resize;
-  height: 8px;
   position: absolute;
-  right: -4px;
-  width: 8px;
 }
+.overlay-box[aria-selected="true"] .overlay-resize-handle { z-index: 1; }
+.overlay-resize-handle[data-edge="n"], .overlay-resize-handle[data-edge="s"] { left: 0; right: 0; height: 14px; cursor: ns-resize; }
+.overlay-resize-handle[data-edge="e"], .overlay-resize-handle[data-edge="w"] { top: 0; bottom: 0; width: 14px; cursor: ew-resize; }
+.overlay-resize-handle[data-edge="n"] { top: -14px; }
+.overlay-resize-handle[data-edge="s"] { bottom: -14px; }
+.overlay-resize-handle[data-edge="e"] { right: -14px; }
+.overlay-resize-handle[data-edge="w"] { left: -14px; }
+.overlay-resize-handle[data-edge="nw"], .overlay-resize-handle[data-edge="ne"], .overlay-resize-handle[data-edge="sw"], .overlay-resize-handle[data-edge="se"] { width: 14px; height: 14px; }
+.overlay-resize-handle[data-edge="nw"], .overlay-resize-handle[data-edge="ne"] { top: -14px; }
+.overlay-resize-handle[data-edge="sw"], .overlay-resize-handle[data-edge="se"] { bottom: -14px; }
+.overlay-resize-handle[data-edge="nw"], .overlay-resize-handle[data-edge="sw"] { left: -14px; }
+.overlay-resize-handle[data-edge="ne"], .overlay-resize-handle[data-edge="se"] { right: -14px; }
+.overlay-resize-handle[data-edge="nw"], .overlay-resize-handle[data-edge="se"] { cursor: nwse-resize; }
+.overlay-resize-handle[data-edge="ne"], .overlay-resize-handle[data-edge="sw"] { cursor: nesw-resize; }
 .overlay-draft {
   background: rgb(141 183 255 / 16%);
   border: 1px dashed #b9d3ff;
@@ -329,9 +356,11 @@ label:hover .info-button, label:focus-within .info-button { color: var(--accent)
 .shortcut-bar > span { white-space: nowrap; }
 .shortcut-bar kbd { background: var(--accent); color: #1e1e2a; padding: .1em .5ch; }
 .shortcut-note { margin-left: auto; color: var(--muted); }
-[data-effect-control="replace-picker"] { margin: .5em .5ch; padding: .5em .5ch; border: 1px solid var(--accent); background: var(--panel); }
-[data-effect-control="replace-canvas"] { display: block; max-width: 100%; max-height: 40vh; width: auto; height: auto; cursor: crosshair; image-rendering: pixelated; }
-[data-effect-control="quantize-swatches"] button { border-left-width: 1.25em; font-size: .9em; }
+[data-effect-control="replace-picker"], [data-effect-control="quantize-picker"] { margin: .5em .5ch; padding: .5em .5ch; border: 1px solid var(--accent); background: var(--panel); }
+[data-effect-control="replace-canvas"], [data-effect-control="quantize-canvas"] { display: block; max-width: 100%; max-height: 40vh; width: auto; height: auto; cursor: crosshair; image-rendering: pixelated; }
+[data-effect-control="quantize-swatches"] button, .colour-swatches button { border-left-width: 1.25em; font-size: .9em; }
+.colour-swatches { max-height: 12em; overflow-y: auto; margin-bottom: .5em; }
+.control-panel input[data-effect-control="quantize-colour"][type="color"] { flex: none; width: 3em; min-width: 3em; height: 2em; padding: .15em; cursor: pointer; }
 
 @media (prefers-reduced-motion: reduce) {
   #status[data-busy="true"]::before { animation: none; }

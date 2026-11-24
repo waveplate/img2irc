@@ -53,7 +53,9 @@ pub(crate) fn render_options_panel(f: &mut ratatui::Frame, app: &mut App, area: 
 
     for (i, opt) in options.iter().enumerate().skip(start).take(end - start) {
         let is_selected = i == current;
-        let style = if is_selected {
+        let style = if !app.enum_choice_available(id, i) {
+            Style::new().fg(TEXT_DIM).add_modifier(Modifier::DIM)
+        } else if is_selected {
             Style::new()
                 .bg(ACCENT)
                 .fg(Color::White)
@@ -153,7 +155,9 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
         );
         buf.set_style(group_area, Style::new().bg(control_bg));
 
-        if ctrl.id == ControlId::FontSize && ctrl_area.width >= 20 {
+        if ctrl.id == ControlId::FontSize && ctrl_area.width >= 20
+            && (app.font_scan_running || app.render_args.effective_render_mode() == RenderMode::Glyph)
+        {
             let button_area = Rect::new(ctrl_area.right() - 8, ctrl_area.y, 8, 1);
             ctrl_area.width -= 8;
             app.font_scan_area = button_area;
@@ -173,7 +177,7 @@ pub(crate) fn render_controls(f: &mut ratatui::Frame, app: &mut App, area: Rect)
                 let value = app.get_control_value(0, v_idx);
                 if selected && app.input_mode == InputMode::ValueEdit {
                     // Show edit buffer with cursor
-                    let edit_text = format!("{}: {}▏", label_text, app.value_edit_buffer);
+                    let edit_text = format!("{}: {}", label_text, app.edit_cursor.marked(&app.value_edit_buffer));
                     let style = Style::new()
                         .fg(Color::Yellow)
                         .bg(SELECTED_BG)

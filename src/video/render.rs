@@ -166,6 +166,7 @@ impl Renderer {
         };
         args.contrast = options.contrast;
         args.blend_colours = options.blend_colours;
+        args.foreground_only = options.foreground_only;
         args.smooth = options.smooth || options.smooth_shapes;
         args.smooth_shapes = options.smooth_shapes;
         args.glyph_search = options.glyph_search;
@@ -206,14 +207,18 @@ impl Renderer {
         if args.font_size <= 0.0 {
             args.font_size = 16.0;
         }
-        let (catalog, _) = font::load_blocks_config();
-        for name in &args.blocks {
-            if !catalog.contains_key(name) {
-                return Err(format!("unknown glyph set: {name}").into());
+        let mode = args.effective_render_mode();
+        mode.validate(args.render, args.foreground_only)?;
+        if mode == args::RenderMode::Glyph {
+            let (catalog, _) = font::load_blocks_config();
+            for name in &args.blocks {
+                if !catalog.contains_key(name) {
+                    return Err(format!("unknown glyph set: {name}").into());
+                }
             }
         }
         let store = font::glyph_store(
-            &args.blocks,
+            args.glyph_blocks(),
             &args.exclude_range,
             &args.exclude,
             &args.include_range,
@@ -223,18 +228,31 @@ impl Renderer {
             false,
             None,
         );
-        let glyphs = draw::prepare_glyphs(&store, &args);
-        if glyphs.is_empty() {
-            return Err("no usable glyphs in the selected sets".into());
-        }
+        let glyphs = if mode == args::RenderMode::Glyph {
+            let glyphs = draw::prepare_glyphs(&store, &args);
+            if glyphs.is_empty() {
+                return Err("no usable glyphs in the selected sets".into());
+            }
+            glyphs
+        } else {
+            Vec::new()
+        };
         // Font advances describe terminal-cell proportions; integer bitmap
         // dimensions only describe the raster used to match each glyph.
-        let cell_aspect = f64::from(store.float_metrics.0 / store.float_metrics.1);
+        let cell_aspect = if mode == args::RenderMode::Braille {
+            0.5
+        } else {
+            f64::from(store.float_metrics.0 / store.float_metrics.1)
+        };
         let (columns, rows) = fit_size(aspect / cell_aspect, (options.width, options.height));
         args.width = Some(u32::from(columns));
         args.height = Some(u32::from(rows));
-        let width = u32::from(columns) * store.metrics.0 as u32;
-        let height = u32::from(rows) * store.metrics.1 as u32;
+        let (cell_width, cell_height) = args.cell_pixels(store.metrics);
+        let width = u32::from(columns).saturating_mul(cell_width as u32);
+        let height = u32::from(rows).saturating_mul(cell_height as u32);
+        if mode == args::RenderMode::Dither {
+            crate::effects::check_dither_dimensions(&args, width, height)?;
+        }
         if u64::from(width) * u64::from(height) > 100_000_000 {
             return Err("canvas is too large; reduce --width or --height".into());
         }
@@ -287,6 +305,7 @@ impl Renderer {
             width: self.columns,
             height: self.rows,
             fps,
+            foreground_only: self.args.foreground_only,
         }
     }
 

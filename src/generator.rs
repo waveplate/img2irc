@@ -3,7 +3,7 @@
 //! This module owns the orchestration which embedding APIs need around the
 //! lower-level glyph, OCR, effects, and drawing modules.
 
-use crate::args::{Args, RenderArgs};
+use crate::args::{Args, RenderArgs, RenderMode};
 use crate::{draw, effects, font};
 use clap::{CommandFactory, Parser};
 use photon_rs::PhotonImage;
@@ -74,6 +74,12 @@ pub fn options_from_json(options_json: &str) -> Result<RenderArgs, String> {
     let patch_object = patch
         .as_object_mut()
         .ok_or_else(|| "generation options must be a JSON object".to_string())?;
+    if let Some(palette) = patch_object.remove("palette") {
+        if patch_object.contains_key("render") {
+            return Err("specify either palette or render".into());
+        }
+        patch_object.insert("render".into(), palette);
+    }
     if let Some(blocks) = patch_object.remove("blocks") {
         if patch_object.contains_key("glyphs") {
             return Err("specify glyphs or its deprecated blocks alias, not both".into());
@@ -118,6 +124,10 @@ fn merge_json(base: &mut serde_json::Value, patch: serde_json::Value) {
 }
 
 fn validate_options(options: &RenderArgs) -> Result<(), String> {
+    options.effective_render_mode().validate(options.render, options.foreground_only)?;
+    if options.dither_detail == 0 {
+        return Err("dither_detail must be at least 1".into());
+    }
     if options.width == Some(0) || options.height == Some(0) {
         return Err("width and height must be greater than zero when supplied".to_string());
     }
@@ -176,7 +186,7 @@ fn glyph_store(
     if let Some(font_data) = font_data {
         font::glyph_store_from_font_bytes(
             font_data,
-            &options.blocks,
+            options.glyph_blocks(),
             &options.exclude_range,
             &options.exclude,
             &options.include_range,
@@ -186,7 +196,7 @@ fn glyph_store(
         )
     } else {
         Ok(font::glyph_store(
-            &options.blocks,
+            options.glyph_blocks(),
             &options.exclude_range,
             &options.exclude,
             &options.include_range,
@@ -307,36 +317,46 @@ fn generate_image_with_detector(
         options.overlays.extend(overlays);
     }
 
-    let render_image = effects::apply_effects(&options, &glyph_store, base_image);
-    let fast_glyphs = draw::prepare_glyphs(&glyph_store, &options);
-    if fast_glyphs.is_empty() && !options.braille {
-        return Err("the selected characters produced no usable glyphs".to_string());
-    }
+    let mode = options.effective_render_mode();
+    let fast_glyphs = if mode == RenderMode::Glyph {
+        let glyphs = draw::prepare_glyphs(&glyph_store, &options);
+        if glyphs.is_empty() {
+            return Err("the selected characters produced no usable glyphs".to_string());
+        }
+        glyphs
+    } else {
+        Vec::new()
+    };
 
-    // The source effects have already been applied. Clear the legacy fields
-    // which the CLI and TUI clear before passing the transformed image to the
-    // terminal renderer.
-    let mut output_options = options.clone();
-    output_options
-        .pipeline
-        .retain(crate::pipeline::ImageEffect::is_output_colour);
-    output_options.rotate = 0.0;
-    output_options.fliph = false;
-    output_options.flipv = false;
-    output_options.scale = None;
-    output_options.brightness = 0.0;
-    output_options.contrast = 0.0;
-    output_options.gamma = 0.0;
-    output_options.saturation = 0.0;
-    output_options.hue = 0.0;
-    output_options.invert = false;
-    output_options.dither = 0;
-    output_options.grayscale = false;
-    output_options.nograyscale = false;
-    output_options.pixelize = 0;
-    output_options.box_blur = false;
-    output_options.gaussian_blur = 0;
-    output_options.median_blur = 0;
+    let (output_options, render_image) = if mode == RenderMode::Dither {
+        (options.clone(), base_image)
+    } else {
+        let render_image = effects::apply_effects(&options, &glyph_store, base_image);
+
+        // Clear the legacy fields after preprocessing the source.
+        let mut output_options = options.clone();
+        output_options
+            .pipeline
+            .retain(crate::pipeline::ImageEffect::is_output_colour);
+        output_options.rotate = 0.0;
+        output_options.fliph = false;
+        output_options.flipv = false;
+        output_options.scale = None;
+        output_options.brightness = 0.0;
+        output_options.contrast = 0.0;
+        output_options.gamma = 0.0;
+        output_options.saturation = 0.0;
+        output_options.hue = 0.0;
+        output_options.invert = false;
+        output_options.dither = 0;
+        output_options.grayscale = false;
+        output_options.nograyscale = false;
+        output_options.pixelize = 0;
+        output_options.box_blur = false;
+        output_options.gaussian_blur = 0;
+        output_options.median_blur = 0;
+        (output_options, render_image)
+    };
 
     let result = crate::render_output(
         output_options,
@@ -345,6 +365,9 @@ fn generate_image_with_detector(
         &fast_glyphs,
         None,
     );
+    if mode == RenderMode::Dither && result.grid.is_empty() {
+        return Err(result.content);
+    }
     Ok(GeneratedOutput {
         result,
         glyph_store,

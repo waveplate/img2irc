@@ -48,19 +48,34 @@ impl OutputCache {
 
     /// Exclusive rectangle in normalized preview pixels. The one-pixel halo
     /// covers both sides of variation terms and every fragility neighbour.
-    pub(crate) fn update(&mut self, output: &[[u8; 3]], rect: [usize; 4]) {
+    /// Return the bounds of actual feature changes, so downstream filters need
+    /// not revisit an unchanged cell in a pair's larger bounding rectangle.
+    pub(crate) fn update(&mut self, output: &[[u8; 3]], rect: [usize; 4]) -> [usize; 4] {
         assert_eq!(output.len(), self.fine.len());
         let [x0, y0, x1, y1] = rect;
         assert!(x0 <= x1 && x1 <= self.width && y0 <= y1 && y1 <= self.height);
         if x0 == x1 || y0 == y1 {
-            return;
+            return [0; 4];
         }
+        let mut changed = [self.width, self.height, 0, 0];
         for y in y0..y1 {
             for x in x0..x1 {
                 let p = y * self.width + x;
-                self.fine[p] = color(output[p]);
+                let value = color(output[p]);
+                if self.fine[p].map(f32::to_bits) == value.map(f32::to_bits) {
+                    continue;
+                }
+                self.fine[p] = value;
+                changed[0] = changed[0].min(x);
+                changed[1] = changed[1].min(y);
+                changed[2] = changed[2].max(x + 1);
+                changed[3] = changed[3].max(y + 1);
             }
         }
+        if changed[0] >= changed[2] {
+            return [0; 4];
+        }
+        let [x0, y0, x1, y1] = changed;
         for y in y0.saturating_sub(1)..(y1 + 1).min(self.height) {
             for x in x0.saturating_sub(1)..(x1 + 1).min(self.width) {
                 let p = y * self.width + x;
@@ -112,6 +127,7 @@ impl OutputCache {
                 };
             }
         }
+        changed
     }
 
     pub(super) fn reduce_fine_block(&self, allowance: &[f32], block: usize, sums: &mut [f64; 2]) {

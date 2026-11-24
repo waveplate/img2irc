@@ -4,7 +4,7 @@ import { EditorState } from "./editor-state.js";
 import { FontService } from "./font-service.js";
 import { GlyphCatalog } from "./glyph-catalog.js";
 import { chooseGlyphPreset, filterGlyphGroups, populateGlyphGroups } from "./glyph-controls.js";
-import { collectRenderOptions, resetAdjustments, updateRangeOutput } from "./render-options.js";
+import { collectRenderOptions, resetAdjustments, syncRenderModeControls, updateRangeOutput } from "./render-options.js";
 import { RendererClient } from "./renderer-client.js";
 import { RenderStatus } from "./render-status.js";
 import { OutputPreview } from "./output-preview.js";
@@ -21,6 +21,7 @@ import { initializeWorkspaceControls } from "./workspace-controls.js";
 import { isImageFile, rasterizeSvg } from "./image-input.js";
 import { saveFile } from "./file-export.js";
 import { EditorPersistence, captureControls, restoreControls } from "./editor-persistence.js";
+import { sampleRenderedArtwork } from "./artwork-colours.js";
 
 const CASCADIA_URL = new URL("../assets/fonts/CascadiaCode-Regular.ttf", import.meta.url);
 const IOSEVKA_FIXED_URL = new URL("../assets/fonts/IosevkaFixed-Regular.ttf", import.meta.url);
@@ -84,6 +85,8 @@ export class EditorApp {
   #scrollPositions = {};
   #pipelineControls;
   #workspaceControls;
+  #renderMode;
+  #alternateGlyphGroups;
   #restoring = true;
   #saveErrorShown = false;
   #persistence = new EditorPersistence((error) => {
@@ -99,6 +102,9 @@ export class EditorApp {
     restoreControls(this.#form, saved?.controls);
     this.#pipelineControls = initializePipelineControls(this.#form);
     restoreControls(this.#form, saved?.controls);
+    if (!saved?.controls?.["render-mode"] && saved?.controls?.braille) {
+      this.#element("render-mode").value = "braille";
+    }
     const removedEffects = saved?.pipeline ? this.#pipelineControls.restore(saved.pipeline) : false;
     this.#workspaceControls = initializeWorkspaceControls(this.#form);
     initializeControlHelp(this.#form);
@@ -115,11 +121,16 @@ export class EditorApp {
     const documentReady = saved ? this.#persistence.loadDocument() : Promise.resolve({});
     const glyphGroups = await this.#glyphs.load();
     populateGlyphGroups(this.#element("glyph-groups"), glyphGroups);
+    this.#renderMode = this.#element("render-mode").value;
+    this.#alternateGlyphGroups = saved?.alternateGlyphGroups;
     if (saved?.glyphGroups) {
       this.#element("glyph-groups").querySelectorAll("input").forEach((input) => {
         input.checked = saved.glyphGroups.includes(input.value);
       });
+    } else if (this.#renderMode === "dither") {
+      chooseGlyphPreset(this.#element("glyph-groups"), "dither");
     }
+    this.#syncRenderMode();
     this.#textControls.start();
     this.#bindEvents();
     this.#syncOcrAutoWidthControls();
@@ -156,10 +167,14 @@ export class EditorApp {
     this.#state.ocrOverlaysEnabled = this.#element("ocr-enabled").checked;
     const output = restored.result;
     const matchesSource = output && !removedEffects && output.sourceRevision === this.#state.sourceRevision && this.#state.hasImage;
+    const needsDitherPreview = matchesSource && output.revision === this.#documentRevision
+      && output.options?.renderMode === "dither" && !output.result.previewRgba?.length;
     if (matchesSource) {
       this.#lockedOcr = output.lockedOcr;
       this.#lockedOcrGrid = output.lockedOcrGrid;
-      if (output.revision === this.#documentRevision && output.options?.pipeline) this.#overlayRenderOptions = output.options;
+      if (output.revision === this.#documentRevision && output.options?.pipeline) {
+        this.#overlayRenderOptions = { ...output.options, includePreview: output.options.renderMode === "dither" };
+      }
       this.#commitRenderResult(output.result, output.result.workerRenderMs ?? 0, performance.now());
     }
     this.#textControls.restoreSelection(saved?.overlaySelection);
@@ -177,7 +192,7 @@ export class EditorApp {
     this.#setStatus(this.#state.hasImage ? "Restored saved session" : "Ready — open, paste, or drop an image");
     if (this.#state.hasImage && saved?.pendingFontScan) {
       void this.#optimizeFontSize();
-    } else if (this.#state.hasImage && (saved?.pendingRender
+    } else if (this.#state.hasImage && (saved?.pendingRender || needsDitherPreview
       || (this.#element("auto-render").checked && (!matchesSource || output.revision !== this.#documentRevision)))) {
       void this.render();
     }
@@ -187,13 +202,13 @@ export class EditorApp {
     initializeNumberScrubbers(node);
     initializeSliderToggles(node);
     if (node.dataset.pipelineEffect === "replace") {
-      const picker = new ColourReplacementPicker(node, () => this.#state.result,
+      const picker = new ColourReplacementPicker(node, () => this.#sampleArtwork(),
         () => this.#element("render").value, () => this.#markRenderDirty());
       this.#colourPickers.set(node, picker);
       picker.start();
       this.#syncColourPickers();
     } else if (node.dataset.pipelineEffect === "quantize") {
-      initializePaletteControls(node, () => this.#state.result, () => this.#markRenderDirty());
+      initializePaletteControls(node, () => this.#sampleArtwork(), () => this.#markRenderDirty());
     } else if (node.dataset.pipelineEffect === "crop") {
       initializeCropControls(node, async () => {
         if (!this.#state.hasImage) throw new Error("Open an image first");
@@ -212,6 +227,11 @@ export class EditorApp {
       effectControl(node, "replace-pick").disabled = !this.#state.hasImage;
       effectControl(node, "replace-pick-to").disabled = !this.#state.hasImage;
     }
+  }
+
+  #sampleArtwork() {
+    return sampleRenderedArtwork(this.#state.result, this.#preview,
+      this.#preview.canvas, this.#element("render").value);
   }
 
   #showSourceLink() {
@@ -233,6 +253,7 @@ export class EditorApp {
     this.#persistence.saveMetadata({
       controls: captureControls(this.#form),
       glyphGroups: [...this.#element("glyph-groups").querySelectorAll("input:checked")].map((input) => input.value),
+      alternateGlyphGroups: this.#alternateGlyphGroups,
       pipeline: this.#pipelineControls.snapshot(), dockWidths: this.#workspaceControls.snapshot(),
       activeTab: this.#form.dataset.activeTab,
       sections: Object.fromEntries([...this.#form.querySelectorAll('details[id]:not([data-app-menu])')].map((section) => [section.id, section.open])),
@@ -429,15 +450,10 @@ export class EditorApp {
     if (candidates.length === 0) return undefined;
     const requests = candidates.map((overlay) => ({
       text: overlay.text,
-      maxWidth: Math.max(1, Math.min(
-        Number(overlay.width) || 1,
-        columns - Math.max(0, Number(overlay.x) || 0),
-      )),
-      maxHeight: Math.max(1, Math.min(
-        Number(overlay.height) || 1,
-        rows - Math.max(0, Number(overlay.y) || 0),
-      )),
+      maxWidth: overlay.autoGrow && !overlay.wrap ? 16_384 : Math.max(1, Number(overlay.width) || 1),
+      maxHeight: overlay.autoGrow ? 16_384 : Math.max(1, Number(overlay.height) || 1),
       useFiglet: true,
+      wrap: Boolean(overlay.wrap),
       fontName: overlay.figletFontChoice || undefined,
     }));
     const rendered = await this.#figlet.render(requests, (message) => {
@@ -447,6 +463,10 @@ export class EditorApp {
       const art = rendered.arts[index];
       overlay.renderedText = art?.text ?? overlay.text;
       overlay.figletFont = art?.source ?? "plain";
+      if (overlay.autoGrow && art) {
+        if (!overlay.wrap) overlay.width = art.width;
+        overlay.height = art.height;
+      }
     });
     this.#textControls.refresh();
     return rendered;
@@ -472,18 +492,39 @@ export class EditorApp {
   }
 
   #selectGlyphPreset(preset) {
-    this.#element("braille").checked = false;
-    this.#element("glyph-controls").querySelectorAll("input, textarea, button").forEach((control) => { control.disabled = false; });
+    if (this.#renderMode === "braille") {
+      this.#element("render-mode").value = "glyph";
+      this.#syncRenderMode();
+    }
     chooseGlyphPreset(this.#element("glyph-groups"), preset);
     this.#syncGlyphPresetButtons();
     this.#markRenderDirty();
+  }
+
+  #syncRenderMode() {
+    const mode = this.#element("render-mode").value;
+    if ((mode === "dither") !== (this.#renderMode === "dither")) {
+      const container = this.#element("glyph-groups");
+      const previous = [...container.querySelectorAll("input:checked")].map((input) => input.value);
+      if (this.#alternateGlyphGroups) {
+        for (const input of container.querySelectorAll("input")) {
+          input.checked = this.#alternateGlyphGroups.includes(input.value);
+        }
+      } else {
+        chooseGlyphPreset(container, mode === "dither" ? "dither" : "default");
+      }
+      this.#alternateGlyphGroups = previous;
+    }
+    this.#renderMode = mode;
+    syncRenderModeControls(this.#form);
+    this.#element("optimize-font-size").disabled = mode !== "glyph" || this.#fontScanInFlight;
   }
 
   #syncGlyphPresetButtons() {
     const selected = [...this.#element("glyph-groups").querySelectorAll("input:checked")].map((input) => input.value);
     const custom = this.#element("include").value || this.#element("include-ranges").value;
     for (const button of this.#form.querySelectorAll("[data-glyph-preset]")) {
-      button.setAttribute("aria-pressed", String(!this.#element("braille").checked && !custom
+      button.setAttribute("aria-pressed", String(this.#renderMode !== "braille" && !custom
         && selected.length === 1 && selected[0] === button.dataset.glyphPreset));
     }
   }
@@ -495,14 +536,14 @@ export class EditorApp {
     let dismissed = this.#smoothHintSeen;
     try { dismissed ||= Boolean(localStorage.getItem("img2irc.smooth-hint-dismissed")); } catch {}
     const hint = this.#element("smooth-glyph-hint");
-    hint.hidden = !refining || smooth || dismissed || this.#element("braille").checked;
+    hint.hidden = !refining || smooth || dismissed || this.#renderMode !== "glyph";
     const button = this.#element("glyph-preset-smooth");
     if (hint.hidden) button.removeAttribute("aria-describedby");
     else button.setAttribute("aria-describedby", "smooth-glyph-hint-text");
   }
 
   async #optimizeFontSize() {
-    if (!this.#state.hasImage || this.#fontScanInFlight) return;
+    if (!this.#state.hasImage || this.#fontScanInFlight || this.#renderMode !== "glyph") return;
     if (this.#renderInFlight) { this.#fontScanQueued = true; return; }
     clearTimeout(this.#renderTimer);
     const revision = this.#documentRevision;
@@ -536,7 +577,7 @@ export class EditorApp {
       if (revision === this.#documentRevision && error.name !== "AbortError") this.#setStatus(`Font scan failed: ${error}`, true);
     }
     finally {
-      this.#fontScanInFlight = false; button.disabled = false;
+      this.#fontScanInFlight = false; button.disabled = this.#renderMode !== "glyph";
       this.#saveSession();
       this.#element("render-progress").hidden = true;
       if (this.#renderQueued) { this.#renderQueued = false; queueMicrotask(() => void this.render()); }
@@ -565,9 +606,6 @@ export class EditorApp {
     this.#element("download-png").disabled = false;
     this.#preview.draw(result);
     this.#textControls.setGrid(result.columns, result.rows);
-    // The canvas owns the painted pixels now; keep the document result small
-    // instead of retaining a multi-megabyte RGBA transfer until next render.
-    delete result.previewRgba;
     result.workerRenderMs = renderMs;
     if (!this.#restoring) {
       void this.#persistence.store("result", {
@@ -1029,7 +1067,8 @@ export class EditorApp {
         }
       }
       if (event.target.id === "ocr-auto-width") this.#syncOcrAutoWidthControls();
-      if (event.target.closest("#glyph-groups") || ["braille", "include", "include-ranges"].includes(event.target.id)) this.#syncGlyphPresetButtons();
+      if (["render", "render-mode", "foreground-only"].includes(event.target.id)) this.#syncRenderMode();
+      if (event.target.closest("#glyph-groups") || ["render-mode", "include", "include-ranges"].includes(event.target.id)) this.#syncGlyphPresetButtons();
       if (["font", "image", "glyph-search", "pipeline-filter"].includes(event.target.id)) return;
       this.#markRenderDirty();
     });
@@ -1141,12 +1180,6 @@ export class EditorApp {
         if (ocrLock) ocrLock.checked = false;
       }
       this.#textControls.refresh();
-    });
-    this.#element("braille").addEventListener("change", () => {
-      const disabled = this.#element("braille").checked;
-      this.#element("glyph-controls").querySelectorAll("input, textarea, button").forEach((element) => {
-        element.disabled = disabled;
-      });
     });
     this.#element("glyph-search").addEventListener("input", (event) => {
       filterGlyphGroups(this.#element("glyph-groups"), event.target.value);

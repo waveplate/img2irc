@@ -23,12 +23,74 @@ See [video usage](../examples/README.md) for encoding, playback and servers.
 | `ansi` | 256-colour ANSI; default |
 | `ansi24` | 24-bit RGB ANSI |
 
-Colour blending is off by default. For 24-bit output, each cell's foreground
+`--palette` is an alias for `--render`. The full names `irc99` and `ansi256`
+also work. Choose the rendering method independently with `--render-mode`.
+It defaults to `glyph`. Use `braille` or the existing `--braille` shorthand
+for dot-matrix output.
+
+```bash
+img2irc photo.png --width 80 --palette irc99 --render-mode dither
+img2irc photo.png --width 80 --palette ansi256 --render-mode dither
+```
+
+In the terminal editor, open **General**, choose **IRC99** or **ANSI256**
+under **Palette**, and select **Dither** under **Render Mode**. You can also
+start there with `img2irc --tui photo.png --palette irc99 --render-mode dither`.
+
+Dither measures foreground coverage from each glyph bitmap and matches
+linear-light colour mixtures to the corresponding parts of the source cell.
+The `dither` glyph set supplies the standard and legacy shades by default.
+Use `--glyphs dither,half` to add ordinary half blocks, or choose sets in the
+TUI's **Glyphs** tab. For IRC99, the default full-cell shades model about
+10,000 colours. Appearance depends on the glyphs drawn by your terminal or
+IRC client. Dither requires an indexed palette and both colour channels.
+The existing `--dither` image effect is separate.
+
+- `--dither-detail 4` compares a 4×4 grid of coverage samples per character.
+  Each sample averages four source pixels from the resampled image. Detail 1
+  compares just the average colour of the cell. Larger values take more work
+  and are limited by the renderer's 100-million-pixel raster budget across
+  the whole output. Lower detail if the requested grid exceeds that budget.
+- `--dither-palette-candidates 4` sets the number of palette colours the
+  spatial matcher tries for each foreground and background endpoint. Use 0
+  to try all distinct colours. Uniform shades use a cached nearest-colour lookup.
+
+Both settings are in **General** in the terminal and web editors while Dither
+is selected. The existing
+`--smooth`, `--smooth-neighbors`, and `--smooth-shapes` settings also work
+with Dither. They score the mixed colours after averaging glyph coverage.
+
+In glyph and braille modes, `--foreground-only` draws only foreground ink,
+leaving the terminal background colour unset.
+
+```sh
+img2irc image.png --render irc --glyphs smooth --foreground-only
+```
+
+This mode infers transparent areas from common source colours, giving extra
+weight to colours around the image perimeter. It matches glyph coverage to
+that mask, without assuming a terminal background colour, and fits source ink
+colours after refinement. Scoring, smoothing and Repair Edges use coverage;
+RGBA previews and PNG exports preserve transparency. Only normal glyph states
+are considered. The terminal's background remains visible through the glyphs;
+text overlays and output colour effects cannot set backgrounds.
+The terminal and browser editors expose a **Foreground only** toggle in their
+general controls. Saved settings default to the normal mode when this option
+is absent. Video encoding and previews also accept `--foreground-only`.
+
+Colour blending is on by default. Disable **Blend colours** in General or pass
+`--blend-colours false` (also `--blend-colors false`) for exact local samples.
+With blending off, each 24-bit output cell's foreground
 and background are selected independently as the most common exact source RGB
 under that part of the chosen glyph. This is repeated after glyph refinement,
 so a colour cannot be carried over from a different mask. Ties are deterministic;
 no channel averages or first-pixel palette-bucket samples are used. An empty
 mask reuses the other side's colour because that side is invisible.
+
+ANSI and IRC output still use their selected palettes. Switching blending can
+change the palette entries chosen: it changes upstream sampling and, with
+blending disabled, selects exact RGB modes before palette mapping. Preview
+encoding does not change the matching or output palette.
 
 With blending off, resize/scale/rotate and the optional lattice warp use nearest
 sampling. Native SVG loading and the img2svg effect rasterize with hard path
@@ -36,10 +98,10 @@ coverage, avoiding the extra intermediate shades created by SVG antialiasing.
 The video decoder converts to RGBA before nearest resizing too. Existing
 antialiased pixels already present in a raster input remain source pixels.
 
-Enable **Blend colours** in General or pass `--blend-colours` (also
-`--blend-colors`) to restore interpolating filters, SVG antialiasing and legacy
-colour selection. Both the image and video CLIs accept `--blend-colours false`
-to disable it explicitly; the setting is saved with the editor configuration.
+With **Blend colours** enabled, interpolating filters, SVG antialiasing and
+blended colour selection are allowed. Both the image and video CLIs accept
+`--blend-colours false` to disable it explicitly; the setting is saved with the
+editor configuration.
 `--filter` selects the resize filter when blending is enabled.
 
 The source for colour selection is the image after explicitly enabled effects:
@@ -217,7 +279,8 @@ By default, combinations are ranked by Perceptual score in a window with two
 cells of surrounding context. The best three are checked against the **full
 image**. A pair is committed only when that full score improves. The starting
 pair is always available, and the final output is rechecked through the actual
-renderer. Colours are not averaged or refitted by this search.
+renderer. Candidate trials keep their starting colours; with blending disabled,
+verification refits source colours to the final masks before scoring the result.
 
 `--disc-threshold` reuses the discontinuity threshold for search targeting
 (default 0.5). Lower values include weaker defects; higher values concentrate on
@@ -243,16 +306,27 @@ each finalist. Repeated proposals reuse a score and its precision bounds until t
 move; any accepted move invalidates that memo table. These optimizations apply
 automatically.
 
-The TUI retains up to four completed base outputs in a 32 MiB session cache.
+Refine Edges also caches local rankings using exact source pixels, surrounding
+output, colours, rendered glyph masks and candidate pools. Hits are checked
+before scoring work is dispatched. The TUI retains these scores between renders
+with a 256 MiB budget; changed neighbourhoods are rescored. Full-image acceptance
+still uses the current image. This score cache is separate from the completed
+output cache below.
+
+The TUI retains completed base outputs in an unlimited session cache, with no
+entry-count or byte-budget eviction.
 Returning to the same source image, font/glyphs and render settings reuses a
 stored output, including its smoothing and glyph search. Cancelled renders are
 not stored. Changing text overlays or finished-art colours reapplies those
-edits to the cached base without rerunning glyph search. Older entries can be
-evicted when the cache fills; closing the TUI clears it.
+edits to the cached base without rerunning glyph search. Closing the TUI clears
+the cache.
 
 `--glyph-search-candidates N` sets alternatives per cell (1–64, default 6).
 `--glyph-search-passes N` sets sweeps (1–20, default 2); search stops after a
-sweep makes no improvement. `--glyph-search-finalists N` sets full-image checks
+sweep makes no improvement if no unused source-fit alternatives remain. When
+passes remain, a stalled search keeps the current glyph and strongest source
+fit, then rotates other source-fit slots to different glyphs. This stays within
+the requested pass and candidate budgets. `--glyph-search-finalists N` sets full-image checks
 per pair (default 3). Set finalists to **0** to score every combination in the
 candidate pools against the full image. For a broader diagnostic search, also
 disable defect targeting:
@@ -278,6 +352,11 @@ when combined. It always uses and
 reports Perceptual scoring, including when the scoring toggle is off. Braille
 uses a separate renderer. The option defaults to off.
 
+With blending disabled, the final source-colour fit is included in edge repair's
+verification. The finished progress score and preview use those final colours,
+and rollback restores both the glyphs and their colours if the result is worse
+than the starting image.
+
 `img2irc.log` records target/active cell counts, pairs skipped, progress,
 combinations tried, computed/reused full-image scores, CPU worker counts,
 accepted moves, how many changed both glyphs, initial/final scores, and separate
@@ -293,6 +372,23 @@ caches; extra cache memory is bounded to 256 MiB. Accepted changes are applied
 in the original pair and candidate order, so parallel work does not change the
 search. Very large images use fewer workers to stay within that budget.
 
+When an accepted move invalidates a prepared pair, its candidate trials can
+also run in parallel. The native search adjusts how far it prepares work ahead:
+frequent invalidations shrink the batch, while quiet regions allow larger
+batches. This changes scheduling without changing which candidates are tested.
+Source-reference filters are shared across jobs and passes
+in a bounded per-search cache (32 MiB native, 8 MiB WASM). See
+[parallelism and GPU feasibility](refine-edges-parallelism.md) for the remaining
+dependencies and a reproducible CUDA stage benchmark.
+
+Glyphs with identical pixels along an edge share cached connection profiles.
+The cache follows the actual rendered masks, including inversion, and is reused
+between renders with the same glyph set. Connection costs still account for the
+source gradient and current colours, so an intentional line ending or gap can
+be selected. Identical source windows at different locations also share their
+prepared filters, retaining more useful windows within the existing memory
+budget. Hash lookups are checked against the actual pixels before reuse.
+
 `IMG2IRC_REPAIR_CHECK_THREADS=1` selects the previous serial full-image checking
 path; the normal limit is four workers and respects the available CPU threads
 and cache memory budget. These execution choices do not alter search settings.
@@ -307,9 +403,31 @@ including the currently selected proposal. The score formulas, candidate pools,
 pair order and improvement threshold remain the same. The final output score
 is still calculated by the original scorer.
 
-`IMG2IRC_REPAIR_PROFILE=1` adds per-cache timings for smoothing, gradients,
-curvature, boundary matching, coarse colour and both score reductions to
-`img2irc.log`, together with the number of precise borderline checks.
+The search reuses each glyph's normalized bitmap when painting pair trials.
+For candidate selection it precomputes seam costs against the current source
+and neighbouring cells, then evaluates glyph boundary masks using those costs.
+This preserves the original seam score, including corners and inverted states.
+Feature caches propagate only the bounds of actual pixel changes, including
+the required halos. Candidate pools, score formulas and acceptance order stay
+the same; these caches do not reject glyph combinations by a fixed connection
+table. A pair's final quality still depends on colours, source edges and wider
+context.
+
+`IMG2IRC_REPAIR_PROFILE=1` writes two kinds of timing to `img2irc.log`:
+
+- **Wall time:** elapsed local ranking and full-image checking/restoration.
+- **Summed worker time:** patch setup, copying, painting/feature updates and
+  perceptual evaluation across local-ranking workers. These intervals overlap
+  across workers, so their sum is not elapsed render time. The perceptual timer
+  excludes feature preparation and cache copying, which are reported separately.
+
+`IMG2IRC_REPAIR_SCORE_PROFILE=1` additionally times internal score-cache stages:
+smoothing, gradients, curvature, boundary matching, coarse colour and reductions.
+These nested timers and per-cache logs add substantial overhead. Use ordinary
+`--profile` runs to compare elapsed speed, keeping image, dimensions, glyphs,
+search settings and thread count identical. All reported percentages need an
+explicit denominator; a local evaluation percentage is not a whole-render
+percentage. Precise borderline score checks are counted separately.
 
 In the native TUI, **Show Search Defects** previews the actual search map. Red
 cells are defect targets; amber cells are the neighbouring cells prepared for
@@ -343,7 +461,7 @@ obsolete work immediately and wait for a 200 ms pause before starting the latest
 render. Other renders keep the usual 50 ms delay. Copy/save use the completed
 result while the progress indicator marks the live preview as still searching.
 
-The native TUI caches up to four completed base renders within a 32 MiB budget.
+The native TUI keeps an unlimited session history of completed base renders.
 Repeating the same source pixels, glyph bitmaps and render settings reuses the
 result, skipping smoothing and glyph search; source or search-setting changes
 recompute it. Text overlays, output colour edits and defect preview toggles reuse
@@ -536,6 +654,10 @@ uses the same rendering path as the live preview. Leave **Shortest Longest
 Line** unchecked to minimize the quality score; checking it minimizes encoded
 line length instead.
 
+Searches default to one permutation per batch with **Randomize** checked.
+`--auto-optimize-batch-size` changes the initial batch size; the dialog remembers
+the batch size and Randomize setting for subsequent searches in that session.
+
 To record the search for plotting or analysis, start the editor with:
 
 ```bash
@@ -575,6 +697,32 @@ while editing overlay text, Enter inserts a newline and `Ctrl+Enter` finishes. s
 
 manual overlays work in both editors and through the APIs. positions and boxes are measured in output cells; foreground/background colours, wrapping, and bold/italic/underline styles are editable. A selected background colour fills the entire overlay bounding box, including padding, blank rows and spaces in FIGlet banners. Without a background, FIGlet whitespace leaves the image beneath visible.
 
+Overlays stack from back to front in list order. An unset background inherits
+the colour beneath the text; spaces and padding preserve the lower layer.
+Use **Back** / **Front** to send an overlay to either end, or **Lower** / **Raise**
+to move it one layer. The selected overlay stays selected. In the TUI,
+Ctrl+PageUp/PageDown raises/lowers it; adding Shift sends it to the front/back.
+Shift+Up/Down moves the selected overlay one row in the list; hold either key
+to keep moving. Shift+Home/End sends it straight to the back/front. These
+shortcuts apply outside text editing. The mouse wheel scrolls the overlay list
+without changing selection; Shift+wheel scrolls a page at a time. Selecting or
+reordering a layer brings it back into view.
+Reordering across OCR layers locks the detections so subsequent image renders
+preserve that arrangement. The saved overlay order is also used for exports.
+
+For FIGlet text, one newline stacks the rendered lines directly. Each additional
+newline adds one blank row between them. Leading spaces preserve indentation.
+**Wrap** lays out words using their rendered FIGlet width, splitting long words
+only when necessary. With Wrap and **Fit** enabled, the width stays fixed while
+the height follows the wrapped artwork. Without Wrap, Fit follows both rendered
+dimensions. Drag inside a box to move it; drag in the two-cell outside margin
+along any edge or corner to resize it, keeping the opposite edges anchored.
+The selected box's resize area takes priority over overlapping overlays beneath
+it. Select a covered box in the list to resize it without moving another layer.
+Terminal text fields support
+Left/Right, Home/End, insertion, Backspace and Delete at the cursor; multiline
+overlay text also supports Up/Down between lines.
+
 ### OCR
 
 ```bash
@@ -601,7 +749,12 @@ lock OCR to preserve detections, edits, and fitted grid while adjusting the imag
 
 ### FIGlet
 
-larger text can use FIGlet; `--ocr-figlet false` keeps plain text. `--ocr-figlet-min-height` requires 2 output rows by default, and `--ocr-figlet-min-height-ratio` requires 1.25 times the median line height. `--ocr-figlet-fill` chooses the largest art fitting the allowed space. neighbour and canvas limits still apply.
+With FIGlet styling enabled, every recognized label tries the configured fonts
+and uses FIGlet whenever the rendered artwork fits. `--ocr-figlet false` keeps
+plain text. The legacy `--ocr-figlet-min-height` and
+`--ocr-figlet-min-height-ratio` settings are accepted for compatibility and no
+longer exclude labels. `--ocr-figlet-fill` chooses the largest art fitting the
+allowed space. Neighbour and canvas limits still apply.
 
 shipped FIGlet fonts are bundled. `--figlet-dir` supplies additional fonts. font preferences are grouped by declared height in `figlet.toml`, or in `config.toml` as:
 

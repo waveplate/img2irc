@@ -179,11 +179,11 @@
       <div class="control-grid">
        <label class="control-row">
         <span>
-         Output
+         Palette
         </span>
         <select id="render">
          <option selected="" value="irc">
-          IRC
+          IRC99
          </option>
          <option value="ansi">
           ANSI 256
@@ -192,6 +192,22 @@
           ANSI 24-bit
          </option>
         </select>
+       </label>
+       <label class="control-row">
+        Render mode
+        <select id="render-mode">
+         <option value="glyph">Glyph</option>
+         <option value="braille">Braille</option>
+         <option value="dither">Dither</option>
+        </select>
+       </label>
+       <label data-dither-control hidden>
+        Dither Detail
+        <input id="dither-detail" type="number" min="1" step="1" value="4"/>
+       </label>
+       <label data-dither-control hidden>
+        Dither Palette Choices
+        <input id="dither-palette-candidates" type="number" min="0" step="1" value="4"/>
        </label>
        <label>
         Width
@@ -270,7 +286,7 @@
         </label>
         <label class="inline-control">
          <input checked="" id="ocr-figlet" type="checkbox"/>
-         Style large text (FIGlet)
+         Style text with FIGlet
         </label>
         <div class="wide-control ocr-action-row">
          <button id="ocr-refresh" type="button">
@@ -305,12 +321,12 @@
            <input id="ocr-figlet-fill" type="checkbox"/>
            Fit largest FIGlet font in available space
           </label>
-          <label>
-           FIGlet minimum rows
+          <label hidden="">
+           FIGlet minimum rows (legacy)
            <input id="ocr-figlet-min-height" max="12" min="1" step="1" type="number" value="2"/>
           </label>
-          <label>
-           FIGlet minimum height ratio
+          <label hidden="">
+           FIGlet minimum height ratio (legacy)
            <input id="ocr-figlet-min-height-ratio" max="5" min="0" step="0.05" type="number" value="1.25"/>
           </label>
           <label>
@@ -442,8 +458,12 @@
          </select>
         </label>
         <label>
-         <input id="blend-colours" type="checkbox"/>
+         <input checked="" id="blend-colours" type="checkbox"/>
          Blend colours
+        </label>
+        <label>
+         <input id="foreground-only" type="checkbox"/>
+         Foreground only
         </label>
         <label>
          Grayscale tolerance
@@ -738,6 +758,8 @@
            <p id="replace-picker-title">
             Click a colour in the rendered art
            </p>
+           <div aria-label="Current art palette" class="button-row colour-swatches" id="replace-picker-swatches">
+           </div>
            <canvas aria-label="Visible output colour eyedropper" id="replace-canvas">
            </canvas>
            <button id="replace-cancel" type="button">
@@ -783,6 +805,18 @@
           <div aria-label="Chosen palette" class="button-row" id="quantize-swatches">
           </div>
           <div class="button-row">
+           <label class="inline-control">
+            Colour
+            <input aria-label="Colour to add to the explicit palette" id="quantize-colour" type="color" value="#ffffff"/>
+           </label>
+           <button id="quantize-add" type="button">
+            Add colour
+           </button>
+           <button id="quantize-pick" type="button">
+            Pick from art…
+           </button>
+          </div>
+          <div class="button-row">
            <button id="quantize-current" type="button">
             Use current art palette
            </button>
@@ -791,8 +825,20 @@
            </button>
           </div>
           <small id="quantize-help">
-           Merge nearby shades first, then keep the most-used merged colours. Zero colours only merges shades. An explicit palette overrides both sliders. Uncheck source cleanup to edit only the finished art.
+           Merge nearby shades first, then keep the most-used merged colours. Zero colours only merges shades. Add explicit colours with the colour picker or pick from the current art palette or artwork. Click a chosen swatch to remove it. An explicit palette overrides both sliders. Uncheck source cleanup to edit only the finished art.
           </small>
+          <div hidden="" id="quantize-picker">
+           <p id="quantize-picker-title">
+            Choose a colour from the current art
+           </p>
+           <div aria-label="Current art palette" class="button-row colour-swatches" id="quantize-picker-swatches">
+           </div>
+           <canvas aria-label="Artwork palette colour eyedropper" id="quantize-canvas">
+           </canvas>
+           <button id="quantize-cancel" type="button">
+            Cancel picking
+           </button>
+          </div>
          </fieldset>
         </div>
        </div>
@@ -816,10 +862,6 @@
       <h1 class="panel-heading">
        Glyphs
       </h1>
-      <label class="inline-control">
-       <input id="braille" type="checkbox"/>
-       Use Braille output instead of glyph groups
-      </label>
       <div id="glyph-controls">
        <div class="button-row">
         <button id="glyph-default" type="button">
@@ -883,13 +925,19 @@
        </button>
       </div>
       <p class="overlay-instructions">
-       Drag across empty output cells to create a text box. Drag a box to move it, or its corner handle to resize it.
+       Drag across empty output cells to create a text box. Drag inside a box to move it. Drag just outside any edge or corner to resize it.
       </p>
       <label>
-       Overlays
-       <select class="overlay-list" id="overlay-list" size="5">
+       Overlays (back → front)
+       <select aria-label="Overlays from back to front" class="overlay-list" id="overlay-list" size="5">
        </select>
       </label>
+      <div aria-label="Overlay stacking order" class="button-row">
+       <button disabled="" id="overlay-back" type="button">Back</button>
+       <button disabled="" id="overlay-lower" type="button">Lower</button>
+       <button disabled="" id="overlay-raise" type="button">Raise</button>
+       <button disabled="" id="overlay-front" type="button">Front</button>
+      </div>
       <p class="empty-note" id="overlay-empty">
        Add an overlay or enable OCR to populate this list.
       </p>

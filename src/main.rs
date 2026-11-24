@@ -59,7 +59,7 @@ async fn main() {
                 args.font = vec![f];
             }
         }
-        if args.blocks.is_empty() {
+        if args.blocks.is_empty() && args.render_mode != args::RenderMode::Dither {
             if let Some(b) = config.blocks {
                 args.blocks = b;
             }
@@ -85,7 +85,7 @@ async fn main() {
     }
 
     if args.tui {
-        if !blocks_from_cli {
+        if !blocks_from_cli && args.render_mode != args::RenderMode::Dither {
             if let Some(persisted) = img2irc_rs::font::load_enabled_glyph_sets() {
                 let (catalog, _) = img2irc_rs::font::load_blocks_config_unfiltered();
                 let known: std::collections::HashSet<&str> =
@@ -128,7 +128,7 @@ async fn main() {
         let mut render_args = img2irc_rs::args_to_render_args(&args);
         render_args.font_size = glyph_bitmap_font_size(render_args.font_size);
         let glyphs = font::glyph_store(
-            &render_args.blocks,
+            render_args.glyph_blocks(),
             &render_args.exclude_range,
             &render_args.exclude,
             &render_args.include_range,
@@ -159,7 +159,7 @@ async fn main() {
 
     // 1. Initial glyph store for loading image (e.g. SVG dimension calculation)
     let initial_glyph_store = font::glyph_store(
-        &render_args.blocks,
+        render_args.glyph_blocks(),
         &render_args.exclude_range,
         &render_args.exclude,
         &render_args.include_range,
@@ -216,7 +216,7 @@ async fn main() {
 
             // 3. Final glyph store with resolved font size
             let glyph_store = font::glyph_store(
-                &render_args.blocks,
+                render_args.glyph_blocks(),
                 &render_args.exclude_range,
                 &render_args.exclude,
                 &render_args.include_range,
@@ -242,8 +242,6 @@ async fn main() {
                 render_args.overlays.extend(overlays);
             }
 
-            let render_image = img2irc_rs::effects::apply_effects(&render_args, &glyph_store, base_image);
-
             log::info!("Loaded {} glyphs", glyph_store.glyphs.len());
             log::info!(
                 "Cell size: {}x{}",
@@ -252,30 +250,41 @@ async fn main() {
             );
 
             // Pre-calculate FastGlyphs once
-            let glyphs = draw::prepare_glyphs(&glyph_store, &render_args);
+            let mode = render_args.effective_render_mode();
+            let glyphs = if mode == args::RenderMode::Glyph {
+                draw::prepare_glyphs(&glyph_store, &render_args)
+            } else {
+                Vec::new()
+            };
             log::info!("Prepared {} optimized glyphs", glyphs.len());
 
-            let mut output_args = render_args.clone();
-            output_args.pipeline.retain(img2irc_rs::pipeline::ImageEffect::is_output_colour);
-            output_args.rotate = 0.0;
-            output_args.fliph = false;
-            output_args.flipv = false;
-            output_args.scale = None;
-            output_args.brightness = 0.0;
-            output_args.contrast = 0.0;
-            output_args.gamma = 0.0;
-            output_args.saturation = 0.0;
-            output_args.hue = 0.0;
-            output_args.invert = false;
-            output_args.dither = 0;
-            output_args.grayscale = false;
-            output_args.nograyscale = false;
-            output_args.pixelize = 0;
-            output_args.box_blur = false;
-            output_args.gaussian_blur = 0;
-            output_args.median_blur = 0;
+            let mut output_args = render_args;
+            let render_image = if mode == args::RenderMode::Dither {
+                base_image
+            } else {
+                let render_image = img2irc_rs::effects::apply_effects(&output_args, &glyph_store, base_image);
+                output_args.pipeline.retain(img2irc_rs::pipeline::ImageEffect::is_output_colour);
+                output_args.rotate = 0.0;
+                output_args.fliph = false;
+                output_args.flipv = false;
+                output_args.scale = None;
+                output_args.brightness = 0.0;
+                output_args.contrast = 0.0;
+                output_args.gamma = 0.0;
+                output_args.saturation = 0.0;
+                output_args.hue = 0.0;
+                output_args.invert = false;
+                output_args.dither = 0;
+                output_args.grayscale = false;
+                output_args.nograyscale = false;
+                output_args.pixelize = 0;
+                output_args.box_blur = false;
+                output_args.gaussian_blur = 0;
+                output_args.median_blur = 0;
+                render_image
+            };
 
-            let show_progress = output_args.glyph_search && std::io::stderr().is_terminal();
+            let show_progress = mode == args::RenderMode::Glyph && output_args.glyph_search && std::io::stderr().is_terminal();
             let render = || img2irc_rs::render_output(output_args, &glyph_store, render_image, &glyphs, None);
             let result = if show_progress {
                 draw::search_status::observe_glyph_search(
@@ -287,6 +296,10 @@ async fn main() {
                 )
             } else { render() };
             if show_progress { eprintln!(); }
+            if mode == args::RenderMode::Dither && result.grid.is_empty() {
+                eprintln!("{}", result.content);
+                exit(1);
+            }
 
             if args.profile {
                 eprintln!("img2irc profile: {}", result.profile.summary());

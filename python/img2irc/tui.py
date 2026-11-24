@@ -7,7 +7,7 @@ import curses
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Sequence
 from urllib.parse import urlparse
@@ -22,7 +22,7 @@ class Control:
     kind: str = "bool"
     step: float = 1
     minimum: float = 0
-    maximum: float = 100
+    maximum: float | None = 100
     choices: tuple[str, ...] = ()
     section: str = "General"
     depends_on: str | None = None
@@ -33,14 +33,19 @@ class Control:
         if self.kind == "choice":
             index = self.choices.index(str(value))
             return self.choices[(index + direction) % len(self.choices)]
-        changed = max(
-            self.minimum, min(self.maximum, float(value) + direction * self.step)
-        )
+        changed = self.clamp(float(value) + direction * self.step)
         if self.key == "font_size" and 0 < changed < 6:
             changed = 6 if direction > 0 else 0
         return int(changed) if self.kind == "int" else changed
 
+    def clamp(self, value: float) -> float:
+        if self.maximum is not None:
+            value = min(self.maximum, value)
+        return max(self.minimum, value)
+
     def display(self, value: object) -> str:
+        if self.key == "render":
+            return {"Irc": "IRC99", "Ansi": "ANSI256", "Ansi24": "ANSI24"}[str(value)]
         if self.kind == "bool":
             return "on" if value else "off"
         if self.kind == "float":
@@ -53,8 +58,10 @@ OCR_BASIC = {"ocr", "ocr_auto_width", "ocr_megapixels", "ocr_min_confidence", "o
 
 CONTROLS = (
     Control("width", "Width", "int", 4, 0, 4096),
-    Control("render", "Mode", "choice", choices=("Ansi24", "Ansi", "Irc")),
-    Control("braille", "Braille"),
+    Control("render", "Palette", "choice", choices=("Ansi24", "Ansi", "Irc")),
+    Control("render_mode", "Render Mode", "choice", choices=("Glyph", "Braille", "Dither")),
+    Control("dither_detail", "Dither Detail", "int", 1, 1, None),
+    Control("dither_palette_candidates", "Dither Palette Choices", "int", 1, 0, None),
     Control("perceptual_score", "Perceptual score (experimental)"),
     Control("glyph_search", "Repair edges"),
     Control("discontinuity_threshold", "Defect threshold (0=all)", "float", 0.1, 0, 100, depends_on="glyph_search"),
@@ -317,6 +324,9 @@ class PythonTui:
         *,
         width: int = 80,
         mode: str = "Ansi24",
+        render_mode: str = "Glyph",
+        dither_detail: int = 4,
+        dither_palette_candidates: int = 4,
         ocr: bool = False,
         output: Path | None = None,
         preview: Path | None = None,
@@ -326,13 +336,16 @@ class PythonTui:
     ) -> None:
         self.image = image
         self.font = font
-        self.options = Advanced.defaults()
-        self._defaults = self.options.copy()
+        self._defaults = Advanced.defaults()
+        self.options = Advanced(
+            render=mode, render_mode=render_mode, dither_detail=dither_detail,
+            dither_palette_candidates=dither_palette_candidates,
+        ).resolved_options
+        self._alternate_glyphs: list[str] | None = None
         self._slider_previous: dict[str, object] = {}
         self.options.update(
             {
                 "width": width,
-                "render": mode,
                 "ocr": ocr,
                 # This is a TUI-specific default; the normal Python/CLI default is off.
                 "ocr_auto_width": True,
@@ -341,11 +354,13 @@ class PythonTui:
         )
         if blocks is not None:
             self.options["glyphs"] = list(blocks)
+        elif self.options["render_mode"] == "Dither":
+            self.options["glyphs"] = ["dither"]
         if characters is not None:
             self.set_characters(characters)
         self._output_explicit = output is not None
         self._preview_explicit = preview is not None
-        self.output_path = output or _default_output_path(image, mode)
+        self.output_path = output or _default_output_path(image, self.options["render"])
         self.preview_path = preview or _default_preview_path(self.output_path)
         self._source_paths: set[Path] = set()
         self._source_identities: set[tuple[int, int]] = set()
@@ -369,6 +384,7 @@ class PythonTui:
             for control in CONTROLS
             if control.section == SECTIONS[self.section_index]
             and (control.section != "OCR" or self.show_ocr_advanced or control.key in OCR_BASIC)
+            and (not control.key.startswith("dither_") or self.options["render_mode"] == "Dither")
         )
 
     def next_section(self, direction: int = 1) -> None:
@@ -376,6 +392,13 @@ class PythonTui:
         self.selected = 0
 
     def disabled_reason(self, control: Control) -> str | None:
+        if self.options["render_mode"] == "Braille" and control.section == "Smoothing":
+            return "Smoothing is available in Glyph and Dither modes"
+        if self.options["render_mode"] != "Glyph" and (
+            control.depends_on == "glyph_search"
+            or control.key in {"perceptual_score", "glyph_search", "show_discontinuities"}
+        ):
+            return "This setting is available in Glyph mode"
         if control.section == "OCR":
             if not OCR_ENABLED:
                 return "OCR is not included in this wheel"
@@ -393,6 +416,16 @@ class PythonTui:
             return "Disable OCR auto width to use manual width"
         return None
 
+    def available_choices(self, control: Control) -> tuple[str, ...]:
+        choices = control.choices
+        if control.key == "render_mode" and (
+            self.options["render"] == "Ansi24" or self.options["foreground_only"]
+        ):
+            return tuple(choice for choice in choices if choice != "Dither")
+        if control.key == "render" and self.options["render_mode"] == "Dither":
+            return tuple(choice for choice in choices if choice != "Ansi24")
+        return choices
+
     def change_selected(self, direction: int) -> bool:
         control = self.controls[self.selected]
         if control.key == "show_ocr_advanced":
@@ -403,9 +436,23 @@ class PythonTui:
             self.status = reason
             return False
         old_value = self.options[control.key]
+        choices = self.available_choices(control)
+        if choices != control.choices:
+            control = replace(control, choices=choices)
         self.options[control.key] = control.change(old_value, direction)
         if old_value == self.options[control.key]:
             return False
+        if control.key == "render_mode":
+            self.options["braille"] = False
+            entering_dither = self.options["render_mode"] == "Dither"
+            if entering_dither != (old_value == "Dither"):
+                glyphs = self._alternate_glyphs
+                if glyphs is None:
+                    if self.options["include"] and not self.options["glyphs"]:
+                        glyphs = []
+                    else:
+                        glyphs = ["dither" if entering_dither else "default"]
+                self._alternate_glyphs, self.options["glyphs"] = self.options["glyphs"], glyphs
         if control.kind in ("int", "float") and old_value != max(0, control.minimum):
             self._slider_previous[control.key] = old_value
         if control.key == "render" and not self._output_explicit:
@@ -425,7 +472,7 @@ class PythonTui:
         if reason:
             self.status = reason
             return False
-        off = max(control.minimum, min(control.maximum, 0))
+        off = control.clamp(0)
         current = self.options[control.key]
         if current != off:
             self._slider_previous[control.key] = current
@@ -437,7 +484,7 @@ class PythonTui:
             if not isinstance(fallback, (int, float)) or fallback == off:
                 fallback = control.change(off, 1)
             value = self._slider_previous.get(control.key, fallback)
-        value = max(control.minimum, min(control.maximum, float(value)))
+        value = control.clamp(float(value))
         self.options[control.key] = int(value) if control.kind == "int" else value
         if current == self.options[control.key]:
             return False
@@ -701,7 +748,8 @@ def _draw(screen: curses.window, app: PythonTui, colour: bool) -> None:
         screen,
         height - 1,
         0,
-        "Tab section  ↑↓ select  ←→ change  Space off/restore  g sets  c chars  e custom  f font  o open  q quit",
+        "←→ change  Dither requires IRC99 or ANSI256" if controls[app.selected].key == "render_mode"
+        else "Tab section  ↑↓ select  ←→ change  Space off/restore  g sets  c chars  e custom  f font  o open  q quit",
         curses.A_DIM,
     )
     screen.refresh()
@@ -938,10 +986,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=80, help="initial output width")
     parser.add_argument(
         "--mode",
-        choices=("ansi24", "ansi", "irc"),
+        "--palette",
+        type=str.lower,
+        choices=("ansi24", "ansi256", "irc99", "ansi", "irc"),
         default="ansi24",
-        help="initial output format",
+        help="initial output palette",
     )
+    parser.add_argument(
+        "--render-mode",
+        type=str.lower,
+        choices=("glyph", "braille", "dither"),
+        default="glyph",
+        help="initial rendering method",
+    )
+    parser.add_argument("--dither-detail", type=int, default=4, help="coverage samples per cell side")
+    parser.add_argument("--dither-palette-candidates", type=int, default=4, help="palette choices per endpoint (0 tries all)")
     parser.add_argument("--ocr", action="store_true", help="start with OCR enabled")
     parser.add_argument(
         "--font", help="monospace font path (default: embedded Cascadia)"
@@ -963,14 +1022,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not 0 <= args.width <= 4096:
         raise SystemExit("--width must be between 0 (automatic) and 4096")
-    mode = {"ansi24": "Ansi24", "ansi": "Ansi", "irc": "Irc"}[args.mode]
+    if args.render_mode == "dither" and args.mode == "ansi24":
+        parser.error("--render-mode dither requires --palette irc99 or --palette ansi256")
+    if args.dither_detail < 1 or args.dither_palette_candidates < 0:
+        parser.error("--dither-detail must be positive and --dither-palette-candidates must be nonnegative")
     app = PythonTui(
         args.image,
         width=args.width,
-        mode=mode,
+        mode=args.mode,
+        render_mode=args.render_mode,
+        dither_detail=args.dither_detail,
+        dither_palette_candidates=args.dither_palette_candidates,
         ocr=args.ocr,
         output=args.output,
         preview=args.preview,

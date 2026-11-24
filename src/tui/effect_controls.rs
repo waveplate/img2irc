@@ -29,6 +29,7 @@ pub(crate) struct EffectControls {
     focused: Option<Control>,
     dragging: Option<usize>,
     editing: Option<(Control, String)>,
+    edit_cursor: TextCursor,
     sampling: Option<Control>,
     error: String,
     sample_image: Option<photon_rs::PhotonImage>,
@@ -224,7 +225,8 @@ fn row(
         .as_ref()
         .is_some_and(|(c, _)| *c == control)
     {
-        text.width().saturating_sub(rect.width as usize) as u16
+        let marked: String = text.spans.iter().map(|span| span.content.as_ref()).collect();
+        marked.split('▏').next().unwrap_or("").chars().count().saturating_add(1).saturating_sub(rect.width as usize) as u16
     } else {
         0
     };
@@ -340,7 +342,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
                         .editing
                         .as_ref()
                         .filter(|(control, _)| *control == Control::Number(index))
-                        .map(|(_, value)| format!(" {value}▏"))
+                        .map(|(_, value)| format!(" {}", app.effect_controls.edit_cursor.marked(value)))
                         .unwrap_or_else(|| {
                             if let Some(choices) = choices {
                                 format!(" {}", choices[parameter.value.round() as usize % choices.len()])
@@ -400,7 +402,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
                 .editing
                 .as_ref()
                 .filter(|(c, _)| *c == Control::Palette)
-                .map(|(_, s)| format!(" [p] Palette: {s}▏"))
+                .map(|(_, s)| format!(" [p] Palette: {}", app.effect_controls.edit_cursor.marked(s)))
                 .unwrap_or_else(|| {
                     if palette.is_empty() {
                         " [p] Palette: automatic (enter hex colours to choose)".into()
@@ -445,7 +447,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
                         .editing
                         .as_ref()
                         .filter(|(c, _)| *c == Control::Colour(index))
-                        .map(|(_, s)| format!("{s}▏ "))
+                        .map(|(_, s)| format!("{} ", app.effect_controls.edit_cursor.marked(s)))
                         .unwrap_or_else(|| format!("{} ", hex(*rgb)));
                     spans.push(Span::styled(
                         colour,
@@ -548,7 +550,7 @@ pub(crate) fn render_effect_controls(f: &mut ratatui::Frame, app: &mut App, area
                     .editing
                     .as_ref()
                     .filter(|(c, _)| *c == control)
-                    .map(|(_, s)| format!(" {label}: {s}▏"))
+                    .map(|(_, s)| format!(" {label}: {}", app.effect_controls.edit_cursor.marked(s)))
                     .unwrap_or_else(|| format!(" {label}: {}", hex(rgb)));
                 row(
                     f,
@@ -974,6 +976,7 @@ fn handle_crop_picker(app: &mut App, event: &Event) -> bool {
 }
 
 fn activate(app: &mut App, control: Control) {
+    app.effect_controls.edit_cursor.reset();
     let control = match control {
         Control::EditNumber(index) => Control::Number(index),
         other => other,
@@ -1185,6 +1188,7 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                 KeyCode::Char('u' | 'a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some((_, value)) = &mut app.effect_controls.editing {
                         value.clear();
+                        app.effect_controls.edit_cursor.reset();
                     }
                 }
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1192,7 +1196,7 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                         arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text())
                     {
                         if let Some((_, value)) = &mut app.effect_controls.editing {
-                            value.push_str(&text);
+                            app.effect_controls.edit_cursor.insert(value, &text);
                         }
                     }
                 }
@@ -1252,21 +1256,15 @@ pub(crate) fn handle_effect_controls(app: &mut App, event: &Event) -> bool {
                     Ok(_) => app.effect_controls.error = "Enter one #RRGGBB colour".into(),
                     Err(error) => app.effect_controls.error = error,
                 },
-                KeyCode::Backspace => {
+                _ => {
                     if let Some((_, value)) = &mut app.effect_controls.editing {
-                        value.pop();
+                        app.effect_controls.edit_cursor.key(value, *key, false);
                     }
                 }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some((_, value)) = &mut app.effect_controls.editing {
-                        value.push(c);
-                    }
-                }
-                _ => {}
             },
             Event::Paste(text) => {
                 if let Some((_, value)) = &mut app.effect_controls.editing {
-                    value.push_str(text);
+                    app.effect_controls.edit_cursor.insert(value, text);
                 }
             }
             _ => {}
@@ -1540,6 +1538,20 @@ mod tests {
 
     fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
         Event::Key(crossterm::event::KeyEvent::new(code, modifiers))
+    }
+
+    #[test]
+    fn palette_edits_insert_and_delete_at_the_cursor_and_keep_paste_in_place() {
+        let mut app = app(ImageEffect::QuantizePalette { colours: 16, threshold: 3.0, palette: vec![[255; 3], [0; 3]], source: false });
+        activate(&mut app, Control::Palette);
+        for code in [KeyCode::Home, KeyCode::Delete, KeyCode::Char('#'), KeyCode::Right, KeyCode::Right, KeyCode::Delete, KeyCode::Char('0')] {
+            assert!(handle_effect_controls(&mut app, &key(code, KeyModifiers::NONE)));
+        }
+        assert!(handle_effect_controls(&mut app, &key(KeyCode::Home, KeyModifiers::NONE)));
+        assert!(handle_effect_controls(&mut app, &Event::Paste("#ff0000 ".into())));
+        assert!(handle_effect_controls(&mut app, &key(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(matches!(&app.pipeline_nodes[0].effect, ImageEffect::QuantizePalette { palette, .. }
+            if palette == &vec![[255, 0, 0], [255, 15, 255], [0; 3]]));
     }
 
     #[test]

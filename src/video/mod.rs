@@ -139,8 +139,11 @@ pub(crate) struct Settings {
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true, value_parser = contrast)]
     contrast: f32,
     /// Allow blended resize/SVG colours instead of exact local source samples.
-    #[arg(long = "blend-colours", visible_alias = "blend-colors", default_value_t = false, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    #[arg(long = "blend-colours", visible_alias = "blend-colors", default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
     blend_colours: bool,
+    /// Use foreground colours only, leaving the terminal background unset.
+    #[arg(long)]
+    foreground_only: bool,
     /// Grow dark lines with positive values, light lines with negative values (-10 to 10).
     #[arg(long, default_value_t = 0.0, allow_hyphen_values = true, value_parser = args::parse_line_thickness)]
     line_thickness: f32,
@@ -295,6 +298,8 @@ pub(crate) struct Header {
     width: u16,
     height: u16,
     fps: f64,
+    #[serde(default)]
+    foreground_only: bool,
 }
 
 impl Header {
@@ -663,7 +668,7 @@ fn prepare_frame(
     let mut packet = Vec::with_capacity(frame.len());
     packet.write_all(b"\x1b[?2026h")?;
     if clear {
-        packet.write_all(b"\x1b[0m\x1b[40m\x1b[2J")?;
+        packet.write_all(clear_screen(header.foreground_only))?;
     }
     let layout = present::layout(header, viewport, fit);
     if layout.columns != header.width || layout.rows != header.height {
@@ -716,13 +721,22 @@ fn sample_cell(index: u16, output: u16, input: u16) -> u16 {
     }
 }
 
+fn clear_screen(foreground_only: bool) -> &'static [u8] {
+    if foreground_only {
+        b"\x1b[0m\x1b[2J"
+    } else {
+        b"\x1b[0m\x1b[40m\x1b[2J"
+    }
+}
+
 fn stream_video(mut stream: TcpStream, input: &Path, viewport: Option<(u16, u16)>) -> Result<()> {
     let (header, mut reader) = open_video(input)?;
     stream.set_nodelay(true)?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let result = (|| -> Result<()> {
         // Remote ANSI terminal setup; no local TTY or size negotiation needed.
-        stream.write_all(b"\x1b[?1049h\x1b[?6l\x1b[r\x1b[?25l\x1b[?7l\x1b[0m\x1b[40m\x1b[2J")?;
+        stream.write_all(b"\x1b[?1049h\x1b[?6l\x1b[r\x1b[?25l\x1b[?7l")?;
+        stream.write_all(clear_screen(header.foreground_only))?;
         let started = Instant::now();
         let mut index = 0u64;
         let mut presenter = present::Presenter::default();
@@ -773,7 +787,7 @@ fn serve(input: PathBuf, bind: SocketAddr, viewport: Option<(u16, u16)>) -> Resu
 
 struct Terminal;
 impl Terminal {
-    fn enter() -> io::Result<Self> {
+    fn enter(foreground_only: bool) -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         let guard = Self;
         execute!(
@@ -783,7 +797,8 @@ impl Terminal {
             DisableLineWrap,
             Clear(ClearType::All)
         )?;
-        io::stdout().write_all(b"\x1b[?6l\x1b[r\x1b[0m\x1b[40m\x1b[2J")?;
+        io::stdout().write_all(b"\x1b[?6l\x1b[r")?;
+        io::stdout().write_all(clear_screen(foreground_only))?;
         Ok(guard)
     }
 }
@@ -855,7 +870,7 @@ fn play(input: PathBuf, ignore_terminal_size: bool) -> Result<()> {
         return Err("video contains no frames".into());
     }
 
-    let terminal_guard = Terminal::enter()?;
+    let terminal_guard = Terminal::enter(header.foreground_only)?;
     let mut output = io::stdout().lock();
     let started = Instant::now();
     let mut index = 0u64;
@@ -940,6 +955,7 @@ mod tests {
             width,
             height,
             fps: 24.0,
+            foreground_only: false,
         }
     }
 

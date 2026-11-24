@@ -64,6 +64,7 @@ pub(super) fn reuse(
     states: &mut [Choice],
     grid_w: usize,
     grid_h: usize,
+    allow_inversion: bool,
 ) -> Option<Vec<bool>> {
     let tolerance = super::rank_cache::tolerance();
     HISTORY.with_borrow(|history| {
@@ -75,7 +76,8 @@ pub(super) fn reuse(
         for cell in 0..states.len() {
             let (fg, bg) = previous.colours[cell];
             let same = close(data[cell].fg, fg, tolerance) && close(data[cell].bg, bg, tolerance);
-            let swap = close(data[cell].fg, bg, tolerance) && close(data[cell].bg, fg, tolerance);
+            let swap = allow_inversion
+                && close(data[cell].fg, bg, tolerance) && close(data[cell].bg, fg, tolerance);
             swapped[cell] = !same && swap;
             changed[cell] = !(same || swap);
             let (x, y) = (cell % grid_w * CW, cell / grid_w * CH);
@@ -148,16 +150,16 @@ mod tests {
             .collect();
         remember(vec![1], &source, &data, &vec![(1, false); w * h]);
         let mut states = vec![(0, false); w * h];
-        let mask = reuse(&[1], &source, &data, &mut states, w, h).unwrap();
+        let mask = reuse(&[1], &source, &data, &mut states, w, h, true).unwrap();
         assert!(mask.iter().all(|&t| !t));
         assert!(states.iter().all(|&s| s == (1, false)));
         source[(4 * CH) * w * CW + 4 * CW] = [200; 3];
         states.fill((0, false));
-        let mask = reuse(&[1], &source, &data, &mut states, w, h).unwrap();
+        let mask = reuse(&[1], &source, &data, &mut states, w, h, true).unwrap();
         assert_eq!(mask.iter().filter(|&&t| t).count(), 25);
         assert_eq!(states[4 * w + 4], (0, false));
         assert_eq!(states[0], (1, false));
-        assert!(reuse(&[2], &source, &data, &mut states, w, h).is_none());
+        assert!(reuse(&[2], &source, &data, &mut states, w, h, true).is_none());
         configure(false);
     }
 }

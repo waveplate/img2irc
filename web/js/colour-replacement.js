@@ -1,24 +1,31 @@
 import { quantizeRgb } from "./output-palettes.js";
 import { effectControl } from "./effect-catalog.js";
+import { ArtworkColourPicker } from "./artwork-colour-picker.js";
 
 export class ColourReplacementPicker {
   #root;
-  #result;
+  #picker;
   #renderMode;
   #changed;
   #target = "from";
 
   constructor(root, result, renderMode, changed) {
     this.#root = root;
-    this.#result = result;
     this.#renderMode = renderMode;
     this.#changed = changed;
+    this.#picker = new ArtworkColourPicker(root, "replace", result, (colour) => {
+      this.#element(`replace-${this.#target}`).value = colour;
+      this.#normalizeControl(`replace-${this.#target}`);
+      this.#element("replace-enabled").checked = true;
+      this.#element("replace-enabled").dispatchEvent(new Event("change"));
+      this.#changed();
+    });
   }
 
   #element(id) { return effectControl(this.#root, id); }
 
   close() {
-    this.#element("replace-picker").hidden = true;
+    this.#picker.close();
   }
 
   start() {
@@ -37,32 +44,15 @@ export class ColourReplacementPicker {
       syncValidation();
     });
     syncValidation();
-    this.#element("replace-cancel").addEventListener("click", () => this.close());
-    this.#element("replace-pick").addEventListener("click", () => { void this.#open("from"); });
-    this.#element("replace-pick-to").addEventListener("click", () => { void this.#open("to"); });
+    this.#picker.start();
+    this.#element("replace-pick").addEventListener("click", () => this.#open("from"));
+    this.#element("replace-pick-to").addEventListener("click", () => this.#open("to"));
     for (const id of ["replace-from", "replace-to"]) {
       this.#element(id).addEventListener("change", () => {
         this.#normalizeControl(id);
         this.#changed();
       });
     }
-    this.#element("replace-canvas").addEventListener("click", (event) => {
-      const canvas = event.currentTarget;
-      const rect = canvas.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      const x = Math.max(0, Math.min(canvas.width - 1, Math.floor((event.clientX - rect.left) * canvas.width / rect.width)));
-      const y = Math.max(0, Math.min(canvas.height - 1, Math.floor((event.clientY - rect.top) * canvas.height / rect.height)));
-      const pixel = canvas.getContext("2d").getImageData(x, y, 1, 1).data;
-      if (pixel[3] === 0) {
-        this.#element("replace-picker-title").textContent = "That pixel is transparent; choose a visible colour";
-        return;
-      }
-      this.#element(`replace-${this.#target}`).value = `#${[...pixel.slice(0, 3)].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
-      this.#element("replace-enabled").checked = true;
-      syncValidation();
-      this.close();
-      this.#changed();
-    });
   }
 
   normalize() {
@@ -79,26 +69,9 @@ export class ColourReplacementPicker {
   }
 
   #open(target) {
-    const result = this.#result();
     this.#target = target;
-    const title = this.#element("replace-picker-title");
-    const picker = this.#element("replace-picker");
-    const canvas = this.#element("replace-canvas");
-    canvas.hidden = true;
     const mode = this.#renderMode();
-    picker.hidden = false;
-    if (result?.previewRgba?.length && result.previewWidth && result.previewHeight) {
-      // Keep the backing pixels intact. CSS fits the inline sampling image;
-      // sampling never sees interpolated colours introduced by a resize.
-      canvas.width = result.previewWidth;
-      canvas.height = result.previewHeight;
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      context.putImageData(new ImageData(new Uint8ClampedArray(result.previewRgba), canvas.width, canvas.height), 0, 0);
-      canvas.hidden = false;
-      const palette = mode === "irc" ? "IRC" : mode === "ansi" ? "ANSI 256" : "24-bit";
-      title.textContent = `Click a visible ${palette} colour for ${target === "from" ? "From" : "To"}`;
-    } else {
-      title.textContent = "Render the art first to sample its colours.";
-    }
+    const palette = mode === "irc" ? "IRC" : mode === "ansi" ? "ANSI 256" : "24-bit";
+    this.#picker.open(`Click a palette swatch or a visible ${palette} colour for ${target === "from" ? "From" : "To"}`);
   }
 }

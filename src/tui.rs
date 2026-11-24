@@ -11,6 +11,10 @@ mod optimization;
 mod render_cache;
 mod pane_focus;
 use pane_focus::Pane;
+mod text_cursor;
+use text_cursor::TextCursor;
+mod overlay_geometry;
+use overlay_geometry::{ResizeDrag, ResizeEdges, resize_edges};
 mod video;
 use optimization::{load_glyphs, optimization_score, OptimizationLog};
 pub(crate) use general::*;
@@ -42,7 +46,7 @@ use photon_rs::PhotonImage;
 use regex::Regex;
 
 use crate::{
-    args::{ColourSpace, Encoding, OcrModelTier, Render, RenderArgs, SamplingFilter},
+    args::{ColourSpace, Encoding, OcrModelTier, Render, RenderArgs, RenderMode, SamplingFilter},
     draw, font,
 };
 use explorer::FileExplorer;
@@ -116,7 +120,10 @@ struct ClipboardImageUrl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ControlId {
     Width,
+    Palette,
     RenderMode,
+    DitherDetail,
+    DitherPaletteCandidates,
     GraphicsPreview,
     Ocr,
     OcrLock,
@@ -175,6 +182,7 @@ enum ControlId {
     Font,
     Filter,
     BlendColours,
+    ForegroundOnly,
     Eyedropper,
     GrayTol,
     Brightness,
@@ -223,7 +231,10 @@ impl ControlId {
     fn layout_id(self) -> &'static str {
         match self {
             ControlId::Width => "width",
-            ControlId::RenderMode => "mode",
+            ControlId::Palette => "palette",
+            ControlId::RenderMode => "render-mode",
+            ControlId::DitherDetail => "dither-detail",
+            ControlId::DitherPaletteCandidates => "dither-palette-candidates",
             ControlId::GraphicsPreview => "graphics-preview",
             ControlId::Ocr => "ocr",
             ControlId::OcrLock => "ocr-lock",
@@ -281,6 +292,7 @@ impl ControlId {
             ControlId::Font => "font",
             ControlId::Filter => "sampling-filter",
             ControlId::BlendColours => "blend-colours",
+            ControlId::ForegroundOnly => "foreground-only",
             ControlId::Eyedropper => "eyedropper",
             ControlId::GrayTol => "grayscale-tolerance",
             ControlId::Brightness => "brightness",
@@ -377,7 +389,12 @@ impl ControlId {
 
     fn help(self) -> &'static str {
         match self {
+            Self::Palette => "Colour codes used for output. Dither is available with IRC99 or ANSI256.",
+            Self::RenderMode => "Glyph matches binary glyph shapes. Braille uses dot patterns. Dither mixes foreground and background using glyph coverage. Use IRC99 or ANSI256 and turn off Foreground Only for Dither.",
+            Self::DitherDetail => "Coverage grid samples per side. Higher values preserve more bitmap detail and take longer to match.",
+            Self::DitherPaletteCandidates => "Palette choices per foreground and background endpoint when fitting spatial glyphs. 0 tries every distinct palette colour.",
             Self::BlendColours => "Off: disable SVG antialiasing, use nearest sampling, and choose each glyph colour from source pixels under its foreground/background mask. On: allow interpolated colours and the legacy colour fit. Explicit colour effects and output palette limits still apply.",
+            Self::ForegroundOnly => "Infer transparent areas from common source colours and the image perimeter, then match glyph coverage without assuming a terminal background colour. Inverted glyph states and overlay backgrounds are disabled.",
             Self::Filter => "Resampling filter used with Blend colours on. With blending off, nearest sampling keeps colours from actual source pixels.",
             Self::Ocr => "Recognize text in the image, remove its original pixels and preserve it as editable text overlays.",
             Self::OcrAutoWidth => "Fit the output grid to recognized text. OCR input resolution is controlled separately by OCR Megapixels and remains editable.",
@@ -385,7 +402,7 @@ impl ControlId {
             Self::OcrMegapixels => "Recognition detail in millions of pixels. Higher values retain small text but take longer. Keeps aspect ratio; never enlarges the source.",
             Self::OcrMinConfidence => "Keep text detections scoring at least this percentage. Raise it to reject uncertain text; lower it to recover faint or difficult text.",
             Self::OcrFigletFill => "Choose the largest font that fits the permitted extra width and height, constrained by nearby text and the canvas. Does not increase output width.",
-            Self::OcrFiglet => "Render large detected text with decorative multi-row FIGlet fonts when they fit. Smaller text stays plain.",
+            Self::OcrFiglet => "Try decorative FIGlet fonts for every recognized label. Use FIGlet whenever its actual rendered text fits the permitted space; otherwise keep plain text.",
             Self::OcrAdvanced => "Show or hide model, performance, text filtering and large-text styling settings. Hiding them preserves their values.",
             Self::OcrModelTier => "Recognition model size: Tiny is fastest; larger models use more memory and may improve difficult text recognition.",
             Self::OcrThreads => "Number of CPU workers used for OCR inference. More workers can speed recognition but use more CPU.",
@@ -497,11 +514,19 @@ struct ControlDef {
 
 const GENERAL_CONTROLS: &[ControlDef] = &[
     ControlDef {
-        id: ControlId::RenderMode,
-        label: "Mode",
+        id: ControlId::Palette,
+        label: "Palette",
         kind: ControlKind::Enum {
-            options: &["IRC", "ANSI", "ANSI24"],
+            options: &["IRC99", "ANSI256", "ANSI24"],
             default: 1,
+        },
+    },
+    ControlDef {
+        id: ControlId::RenderMode,
+        label: "Render Mode",
+        kind: ControlKind::Enum {
+            options: &["Glyph", "Braille", "Dither"],
+            default: 0,
         },
     },
     ControlDef {
@@ -521,6 +546,16 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
             max: 10240,
             default: 0,
         },
+    },
+    ControlDef {
+        id: ControlId::DitherDetail,
+        label: "Dither Detail",
+        kind: ControlKind::Slider { min: 1, max: crate::effects::MAX_DITHER_DETAIL as i32, default: 4 },
+    },
+    ControlDef {
+        id: ControlId::DitherPaletteCandidates,
+        label: "Dither Palette Choices",
+        kind: ControlKind::Slider { min: 0, max: crate::palette::ANSI256.len() as i32, default: 4 },
     },
     ControlDef {
         id: ControlId::GraphicsPreview,
@@ -562,7 +597,7 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     },
     ControlDef {
         id: ControlId::OcrFiglet,
-        label: "Style Large Text",
+        label: "Style Text with FIGlet",
         kind: ControlKind::Toggle { default: true },
     },
     ControlDef {
@@ -876,6 +911,11 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
     ControlDef {
         id: ControlId::BlendColours,
         label: "Blend colours",
+        kind: ControlKind::Toggle { default: true },
+    },
+    ControlDef {
+        id: ControlId::ForegroundOnly,
+        label: "Foreground only",
         kind: ControlKind::Toggle { default: false },
     },
     ControlDef {
@@ -909,6 +949,9 @@ const GENERAL_CONTROLS: &[ControlDef] = &[
         kind: ControlKind::Action,
     },
 ];
+
+const PALETTES: [Render; 3] = [Render::Irc, Render::Ansi, Render::Ansi24];
+const RENDER_MODES: [RenderMode; 3] = [RenderMode::Glyph, RenderMode::Braille, RenderMode::Dither];
 
 fn render_width_from_tui(width: i32) -> Option<u32> {
     (width > 0).then_some(width as u32)
@@ -1374,6 +1417,7 @@ const PIPELINE_CATALOG: &[CatalogItem] = &[
 fn normalized_layout_id(id: &str) -> String {
     let normalized = id.trim().to_ascii_lowercase().replace('_', "-");
     match normalized.as_str() {
+        "mode" => "palette".to_string(),
         "ocr-width" | "ocr-max-side" => "ocr-megapixels".to_string(),
         _ => normalized,
     }
@@ -1415,6 +1459,17 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
         }
     }
 
+    if !layout.order.iter().any(|id| normalized_layout_id(id) == "render-mode") {
+        if let (Some(palette), Some(mode)) = (
+            arranged.iter().position(|control| control.id == ControlId::Palette),
+            arranged.iter().position(|control| control.id == ControlId::RenderMode),
+        ) {
+            let control = arranged.remove(mode);
+            let palette = if mode < palette { palette - 1 } else { palette };
+            arranged.insert(palette + 1, control);
+        }
+    }
+
     // Treat OCR as a group, including new controls absent from older layouts.
     // Preserve the parent's position and explicit hidden entries.
     if let Some(parent) = arranged.iter().position(|control| control.id == ControlId::Ocr) {
@@ -1432,14 +1487,14 @@ fn arrange_general_controls(layout: &crate::config::ItemLayout) -> Vec<ControlDe
     }
 
     // Several input handlers expect the General tab to retain a focusable
-    // control. Keep Mode as a safe anchor if a layout hides every item.
+    // control. Keep Palette as a safe anchor if a layout hides every item.
     if arranged.is_empty() {
-        log::warn!("General layout hid every control; keeping 'mode' visible");
+        log::warn!("General layout hid every control; keeping 'palette' visible");
         arranged.push(
             *GENERAL_CONTROLS
                 .iter()
-                .find(|control| control.id == ControlId::RenderMode)
-                .expect("General Mode control must exist"),
+                .find(|control| control.id == ControlId::Palette)
+                .expect("General Palette control must exist"),
         );
     }
 
@@ -1457,7 +1512,7 @@ fn visible_general_controls(
     controls
         .iter()
         .filter(|control| {
-            !matches!(control.id, ControlId::HighlightDisc | ControlId::DiscThreshold | ControlId::RegionGuidance | ControlId::SuperpixelWarp)
+            !matches!(control.id, ControlId::HighlightDisc | ControlId::DiscThreshold | ControlId::RegionGuidance | ControlId::SuperpixelWarp | ControlId::OcrFigletMinHeight | ControlId::OcrFigletMinHeightRatio)
         })
         .filter(|control| ocr_enabled || !control.id.requires_ocr())
         .filter(|control| figlet_enabled || !control.id.requires_figlet())
@@ -1570,6 +1625,44 @@ mod ui_layout_tests {
         let (tx, _rx) = watch::channel((args.clone(), flag.clone(), Instant::now(), None));
         let (_tx, rx) = mpsc::channel(1);
         App::new(args, tx, rx, flag)
+    }
+
+    #[test]
+    fn render_mode_controls_keep_the_selected_palette_and_skip_invalid_choices() {
+        let mut app = navigation_app();
+        app.set_value(ControlId::Palette, 2);
+        app.selected_control = app.tab_controls(0).iter()
+            .position(|control| control.id == ControlId::RenderMode)
+            .unwrap();
+        adjust_control(&mut app, -1);
+        assert_eq!(app.render_args.effective_render_mode(), RenderMode::Braille);
+        assert_eq!(app.render_args.render, Render::Ansi24);
+        adjust_control(&mut app, 1);
+        assert_eq!(app.render_args.effective_render_mode(), RenderMode::Glyph);
+
+        app.set_value(ControlId::Palette, 1);
+        app.set_value(ControlId::ForegroundOnly, 1);
+        app.set_value(ControlId::RenderMode, 2);
+        assert_eq!(app.render_args.effective_render_mode(), RenderMode::Glyph);
+        app.set_value(ControlId::ForegroundOnly, 0);
+        adjust_control(&mut app, -1);
+        assert_eq!(app.render_args.effective_render_mode(), RenderMode::Dither);
+        assert_eq!(app.render_args.render, Render::Ansi);
+        assert_eq!(app.render_args.blocks, ["dither"]);
+        assert!(app.control_disabled_reason(ControlId::Smooth).is_none());
+        app.set_value(ControlId::DitherDetail, 6);
+        app.set_value(ControlId::DitherPaletteCandidates, 2);
+
+        app.set_value(ControlId::ForegroundOnly, 1);
+        app.set_value(ControlId::Palette, 2);
+        assert!(!app.render_args.foreground_only);
+        assert_eq!(app.render_args.render, Render::Ansi);
+        app.step_enum(ControlId::Palette, PALETTES.len(), 1);
+        app.synchronize_render_args(false);
+        assert_eq!(app.render_args.render, Render::Irc);
+        assert_eq!(app.render_args.effective_render_mode(), RenderMode::Dither);
+        assert_eq!(app.render_args.dither_detail, 6);
+        assert_eq!(app.render_args.dither_palette_candidates, 2);
     }
 
     #[test]
@@ -1916,17 +2009,17 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn general_starts_with_mode_width_and_font_size() {
+    fn general_starts_with_palette_mode_width_and_font_size() {
         let controls = arrange_general_controls(&crate::config::ItemLayout::default());
         let leading_ids = controls
             .iter()
-            .take(3)
+            .take(4)
             .map(|control| control.id)
             .collect::<Vec<_>>();
 
         assert_eq!(
             leading_ids,
-            [ControlId::RenderMode, ControlId::Width, ControlId::FontSize]
+            [ControlId::Palette, ControlId::RenderMode, ControlId::Width, ControlId::FontSize]
         );
     }
 
@@ -2018,7 +2111,7 @@ mod ui_layout_tests {
 
     #[test]
     fn fit_to_text_tracks_explicit_lines_in_both_directions() {
-        let mut overlay = new_text_overlay(2, 4, 5, true);
+        let mut overlay = new_text_overlay(Render::Ansi24, 4, 5, true);
         overlay.text = "hello\nworld!".to_string();
         sync_text_overlay_auto_grow(&mut overlay);
         assert_eq!((overlay.w, overlay.h), (6, 2));
@@ -2029,31 +2122,204 @@ mod ui_layout_tests {
     }
 
     #[test]
-    fn lower_right_corner_can_resize_from_both_sides() {
-        let mut overlay = new_text_overlay(2, 10, 20, false);
+    fn only_the_outside_of_any_edge_or_corner_resizes() {
+        let mut overlay = new_text_overlay(Render::Ansi24, 10, 20, false);
         overlay.w = 8;
         overlay.h = 3;
 
-        assert!(text_overlay_resize_hotspot(&overlay, 17, 22));
+        assert!(!text_overlay_resize_hotspot(&overlay, 17, 22));
         assert!(text_overlay_resize_hotspot(&overlay, 18, 22));
         assert!(text_overlay_resize_hotspot(&overlay, 17, 23));
         assert!(!text_overlay_resize_hotspot(&overlay, 16, 22));
         assert!(!text_overlay_resize_hotspot(&overlay, 17, 21));
-        assert!(!text_overlay_resize_hotspot(&overlay, 18, 23));
+        assert!(text_overlay_resize_hotspot(&overlay, 18, 23));
+        assert!(text_overlay_resize_hotspot(&overlay, 9, 21));
+        assert!(text_overlay_resize_hotspot(&overlay, 12, 19));
+        assert!(text_overlay_resize_hotspot(&overlay, 8, 18));
     }
 
     #[test]
-    fn new_text_has_a_visible_foreground_for_every_render_mode() {
+    fn canvas_drag_uses_outside_edges_and_never_resizes_an_interior_click() {
+        let mut app = navigation_app();
+        let mut overlay = new_text_overlay(Render::Ansi24, 10, 20, false);
+        overlay.w = 8;
+        overlay.h = 4;
+        app.render_args.overlays.push(overlay.clone());
+        for point in [(10, 20), (17, 20), (10, 23), (17, 23)] {
+            app.render_args.overlays[0] = overlay.clone();
+            app.last_text_click = None;
+            begin_text_canvas_drag(&mut app, point.0, point.1);
+            assert!(app.text_drag_mode == TextDragMode::Moving);
+            continue_text_canvas_drag(&mut app, point.0 + 2, point.1 + 1);
+            let moved = &app.render_args.overlays[0];
+            assert_eq!((moved.x, moved.y, moved.w, moved.h), (12, 21, 8, 4));
+        }
+        app.render_args.overlays[0] = overlay;
+        app.last_text_click = None;
+        begin_text_canvas_drag(&mut app, 8, 18);
+        assert!(app.text_drag_mode == TextDragMode::Sizing);
+        continue_text_canvas_drag(&mut app, 6, 17);
+        let resized = &app.render_args.overlays[0];
+        assert_eq!((resized.x, resized.y, resized.w, resized.h), (8, 19, 10, 5));
+    }
+
+    #[test]
+    fn overlay_order_preserves_selection_and_tracks_ocr_after_crossing_manual_layers() {
+        let mut app = navigation_app();
+        app.render_args.overlays = ["rectangle", "OCR", "text"].into_iter().map(|text| {
+            let mut overlay = new_text_overlay(Render::Ansi24, 0, 0, false); overlay.text = text.into(); overlay
+        }).collect();
+        app.ocr_overlay_indices = vec![1];
+        app.text_selected = Some(1);
+        app.reorder_selected_text_overlay(OverlayOrder::Front);
+        assert_eq!(app.render_args.overlays.iter().map(|overlay| overlay.text.as_str()).collect::<Vec<_>>(), ["OCR", "text", "rectangle"]);
+        assert_eq!(app.text_selected, Some(3));
+        assert_eq!(app.ocr_overlay_indices, vec![0]);
+        assert!(app.ocr_lock);
+        app.reorder_selected_text_overlay(OverlayOrder::Lower);
+        assert_eq!(app.text_selected, Some(2));
+        app.reorder_selected_text_overlay(OverlayOrder::Back);
+        assert_eq!(app.ocr_overlay_indices, vec![1]);
+        assert_eq!(app.text_selected, Some(1));
+        app.remove_text_overlay_at(1);
+        assert!(app.ocr_overlay_indices.is_empty());
+        assert_eq!(app.render_args.overlays.iter().map(|overlay| overlay.text.as_str()).collect::<Vec<_>>(), ["rectangle", "text"]);
+        assert_eq!(app.text_selected, Some(1));
+        app.text_field_focus = TextFieldFocus::RaiseButton;
+        app.activate_text_field_focus();
+        assert_eq!(app.text_selected, Some(2));
+        app.text_field_focus = TextFieldFocus::BackButton;
+        app.activate_text_field_focus();
+        assert_eq!(app.text_selected, Some(1));
+    }
+
+    #[test]
+    fn text_stack_shortcuts_repeat_keep_identity_and_jump_to_either_end() {
+        let mut app = navigation_app();
+        app.current_tab = 3;
+        app.render_args.overlays = (0..200).map(|i| {
+            let mut overlay = new_text_overlay(Render::Ansi24, 0, 0, false); overlay.text = format!("layer{i}"); overlay
+        }).collect();
+        app.text_selected = Some(161);
+        let key = |code, modifiers, kind| {
+            let mut event = event::KeyEvent::new(code, modifiers); event.kind = kind; Event::Key(event)
+        };
+        let up = key(KeyCode::Up, KeyModifiers::SHIFT, KeyEventKind::Press);
+        let repeat = key(KeyCode::Up, KeyModifiers::SHIFT, KeyEventKind::Repeat);
+        assert!(handle_text_stack_event(&mut app, &up));
+        for _ in 0..100 { assert!(handle_text_stack_event(&mut app, &repeat)); }
+        assert_eq!(app.text_selected, Some(60));
+        assert_eq!(app.render_args.overlays[59].text, "layer160");
+        assert!(handle_text_stack_event(&mut app, &key(KeyCode::End, KeyModifiers::SHIFT, KeyEventKind::Press)));
+        assert_eq!(app.text_selected, Some(200));
+        assert!(handle_text_stack_event(&mut app, &key(KeyCode::Down, KeyModifiers::SHIFT, KeyEventKind::Repeat)));
+        assert_eq!(app.text_selected, Some(200));
+        assert!(handle_text_stack_event(&mut app, &key(KeyCode::Home, KeyModifiers::SHIFT, KeyEventKind::Press)));
+        assert_eq!(app.text_selected, Some(1));
+        assert_eq!(app.render_args.overlays[0].text, "layer160");
+        assert!(!handle_text_stack_event(&mut app, &key(KeyCode::Up, KeyModifiers::SHIFT, KeyEventKind::Release)));
+        assert!(!handle_text_stack_event(&mut app, &key(KeyCode::Up, KeyModifiers::NONE, KeyEventKind::Press)));
+        app.input_mode = InputMode::TextEdit;
+        assert!(!handle_text_stack_event(&mut app, &up));
+        app.input_mode = InputMode::Normal;
+        assert!(handle_text_stack_event(&mut app, &key(KeyCode::PageUp, KeyModifiers::CONTROL, KeyEventKind::Press)));
+        assert_eq!(app.text_selected, Some(2));
+        app.show_font_picker = true;
+        assert!(!handle_text_stack_event(&mut app, &up));
+    }
+
+    #[test]
+    fn text_stack_resizes_selected_boxes_even_when_their_handles_overlap_other_layers() {
+        for covered in [false, true] {
+            let mut app = navigation_app();
+            let mut background = new_text_overlay(Render::Ansi24, 0, 0, false);
+            background.w = 40; background.h = 30;
+            background.bg = Some(crate::args::ColorSpec::Rgb([100, 20, 30]));
+            let mut foreground = new_text_overlay(Render::Ansi24, 10, 10, false);
+            foreground.w = 6; foreground.h = 4; foreground.text = "Text".into();
+            app.render_args.overlays = if covered { vec![foreground, background.clone()] } else { vec![background.clone(), foreground] };
+            let selected = if covered { 0 } else { 1 };
+            let other = 1 - selected;
+            app.text_selected = Some(selected + 1);
+            assert_eq!(text_resize_target(&app, 8, 11), Some(selected));
+            begin_text_canvas_drag(&mut app, 8, 11);
+            assert!(app.text_drag_mode == TextDragMode::Sizing);
+            continue_text_canvas_drag(&mut app, 6, 11);
+            let resized = &app.render_args.overlays[selected];
+            assert_eq!((resized.x, resized.y, resized.w, resized.h), (8, 10, 8, 4));
+            assert_eq!(app.render_args.overlays[other], background);
+            if !covered {
+                app.last_text_click = None;
+                assert_eq!(text_resize_target(&app, 8, 11), None);
+                begin_text_canvas_drag(&mut app, 8, 11);
+                assert!(app.text_drag_mode == TextDragMode::Moving);
+                continue_text_canvas_drag(&mut app, 10, 12);
+                let moved = &app.render_args.overlays[selected];
+                assert_eq!((moved.x, moved.y, moved.w, moved.h), (10, 11, 8, 4));
+                assert_eq!(app.render_args.overlays[other], background);
+            }
+        }
+    }
+
+    #[test]
+    fn text_stack_wheel_browses_without_changing_selection_and_keyboard_restores_following() {
+        let mut app = navigation_app();
+        app.current_tab = 3;
+        app.render_args.overlays = (0..200).map(|i| {
+            let mut overlay = new_text_overlay(Render::Ansi24, 0, 0, false); overlay.text = format!("layer{i}"); overlay
+        }).collect();
+        app.text_selected = Some(1);
+        app.scroll = 7;
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(70, 50)).unwrap();
+        let paint = |terminal: &mut ratatui::Terminal<ratatui::backend::TestBackend>, app: &mut App| {
+            terminal.draw(|frame| text::render_text_tab(frame, app, frame.area())).unwrap();
+        };
+        paint(&mut terminal, &mut app);
+        let area = app.text_list_area;
+        let wheel = |kind, modifiers, column| Event::Mouse(event::MouseEvent {
+            kind, column, row: area.y + 1, modifiers,
+        });
+        let down = wheel(MouseEventKind::ScrollDown, KeyModifiers::NONE, area.x + 1);
+        assert!(handle_text_stack_event(&mut app, &down));
+        assert_eq!(app.text_list_state.offset(), 3);
+        paint(&mut terminal, &mut app);
+        assert_eq!(app.text_list_state.offset(), 3);
+        assert_eq!(app.text_selected, Some(1));
+        assert_eq!(app.text_list_state.selected(), Some(1));
+        assert_eq!(app.scroll, 7);
+        let visible = usize::from(area.height - 2);
+        assert!(handle_text_stack_event(&mut app, &wheel(MouseEventKind::ScrollDown, KeyModifiers::SHIFT, area.x + 1)));
+        assert_eq!(app.text_list_state.offset(), 3 + visible);
+        for _ in 0..100 { handle_text_stack_event(&mut app, &down); }
+        assert_eq!(app.text_list_state.offset(), 201 - visible);
+        paint(&mut terminal, &mut app);
+        assert_eq!(app.text_selected, Some(1));
+        assert_eq!(app.text_list_state.offset(), 201 - visible);
+        assert!(!handle_text_stack_event(&mut app, &wheel(MouseEventKind::ScrollDown, KeyModifiers::NONE, area.right() + 1)));
+        let bottom = Event::Key(event::KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT));
+        assert!(handle_text_stack_event(&mut app, &bottom));
+        paint(&mut terminal, &mut app);
+        assert_eq!(app.text_selected, Some(200));
+        assert!(app.text_list_state.offset() <= 200 && app.text_list_state.offset() + visible > 200);
+        let top = Event::Key(event::KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT));
+        assert!(handle_text_stack_event(&mut app, &top));
+        paint(&mut terminal, &mut app);
+        assert_eq!(app.text_selected, Some(1));
+        assert!(app.text_list_state.offset() <= 1);
+    }
+
+    #[test]
+    fn new_text_has_a_visible_foreground_for_every_palette() {
         assert_eq!(
-            new_text_overlay(0, 0, 0, true).fg,
+            new_text_overlay(Render::Irc, 0, 0, true).fg,
             Some(crate::args::ColorSpec::Index(0))
         );
         assert_eq!(
-            new_text_overlay(1, 0, 0, true).fg,
+            new_text_overlay(Render::Ansi, 0, 0, true).fg,
             Some(crate::args::ColorSpec::Index(15))
         );
         assert_eq!(
-            new_text_overlay(2, 0, 0, true).fg,
+            new_text_overlay(Render::Ansi24, 0, 0, true).fg,
             Some(crate::args::ColorSpec::Rgb([255, 255, 255]))
         );
     }
@@ -2106,7 +2372,14 @@ enum TextFieldFocus {
     ItalicButton,
     UnderlineButton,
     DeleteButton,
+    BackButton,
+    LowerButton,
+    RaiseButton,
+    FrontButton,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OverlayOrder { Back, Lower, Raise, Front }
 
 const TEXT_FOCUS_ORDER: &[TextFieldFocus] = &[
     TextFieldFocus::List,
@@ -2123,6 +2396,10 @@ const TEXT_FOCUS_ORDER: &[TextFieldFocus] = &[
     TextFieldFocus::ItalicButton,
     TextFieldFocus::UnderlineButton,
     TextFieldFocus::DeleteButton,
+    TextFieldFocus::BackButton,
+    TextFieldFocus::LowerButton,
+    TextFieldFocus::RaiseButton,
+    TextFieldFocus::FrontButton,
 ];
 
 // ── App State ────────────────────────────────────────────────────────────────
@@ -2521,7 +2798,7 @@ impl App {
             return;
         }
 
-        self.render_args.overlays.remove(selected - 1);
+        self.remove_text_overlay_at(selected - 1);
         let new_len = self.render_args.overlays.len();
         self.text_selected = Some(if new_len == 0 { 0 } else { selected.min(new_len) });
         self.text_list_state.select(self.text_selected);
@@ -2569,6 +2846,51 @@ impl App {
         self.reapply_overlays();
     }
 
+    fn remove_text_overlay_at(&mut self, index: usize) {
+        if index >= self.render_args.overlays.len() { return; }
+        self.render_args.overlays.remove(index);
+        self.ocr_overlay_indices.retain(|&i| i != index);
+        for i in &mut self.ocr_overlay_indices { if *i > index { *i -= 1; } }
+        if let Some(selected) = self.text_selected {
+            if selected > index + 1 { self.text_selected = Some(selected - 1); }
+            else if selected == index + 1 { self.text_selected = Some(selected.min(self.render_args.overlays.len())); }
+            self.text_list_state.select(self.text_selected);
+        }
+        self.text_hovered = None;
+        self.text_resize_hover = None;
+    }
+
+    fn reorder_selected_text_overlay(&mut self, order: OverlayOrder) {
+        let Some(mut index) = self.text_selected.and_then(|s| s.checked_sub(1)) else { return; };
+        let len = self.render_args.overlays.len();
+        if index >= len { return; }
+        self.text_list_manual_scroll = false;
+        let target = match order {
+            OverlayOrder::Back => 0,
+            OverlayOrder::Lower => index.saturating_sub(1),
+            OverlayOrder::Raise => (index + 1).min(len - 1),
+            OverlayOrder::Front => len - 1,
+        };
+        if index == target { return; }
+        if self.ocr_overlay_indices.iter().any(|&i| i >= index.min(target) && i <= index.max(target)) {
+            self.ocr_lock = true;
+            self.render_args.ocr_lock = true;
+        }
+        while index != target {
+            let next = if index < target { index + 1 } else { index - 1 };
+            self.render_args.overlays.swap(index, next);
+            for ocr in &mut self.ocr_overlay_indices {
+                if *ocr == index { *ocr = next; } else if *ocr == next { *ocr = index; }
+            }
+            index = next;
+        }
+        self.text_selected = Some(target + 1);
+        self.text_list_state.select(self.text_selected);
+        self.text_hovered = None;
+        self.text_resize_hover = None;
+        self.reapply_overlays();
+    }
+
     fn move_text_picker(&mut self, dx: i32, dy: i32, adjust_hue: bool) {
         let editing_fg = match self.text_field_focus {
             TextFieldFocus::FgButton | TextFieldFocus::ClearFgButton => true,
@@ -2595,7 +2917,7 @@ impl App {
         if self.text_field_focus == TextFieldFocus::List {
             if self.text_selected == Some(0) {
                 self.render_args.overlays.push(new_text_overlay(
-                    self.render_mode_idx,
+                    self.render_args.render,
                     0,
                     0,
                     true,
@@ -2604,6 +2926,7 @@ impl App {
                 self.text_list_state.select(self.text_selected);
                 self.text_field_focus = TextFieldFocus::TextInput;
                 self.value_edit_buffer.clear();
+                self.edit_cursor.reset();
                 self.input_mode = InputMode::TextEdit;
                 self.reapply_overlays();
             } else if self.has_selected_text_overlay() {
@@ -2612,6 +2935,7 @@ impl App {
                     self.render_args.overlays[self.text_selected.unwrap() - 1]
                         .editable_text()
                         .to_string();
+                self.edit_cursor.reset();
                 self.input_mode = InputMode::TextEdit;
             }
             return;
@@ -2627,6 +2951,7 @@ impl App {
                 self.value_edit_buffer = self.render_args.overlays[selected]
                     .editable_text()
                     .to_string();
+                self.edit_cursor.reset();
                 self.input_mode = InputMode::TextEdit;
             }
             TextFieldFocus::FgButton => {
@@ -2656,16 +2981,18 @@ impl App {
             }
             TextFieldFocus::WrapButton => {
                 let overlay = &mut self.render_args.overlays[selected];
-                if !overlay.figlet_enabled() {
-                    overlay.wrap = !overlay.wrap;
+                overlay.wrap = !overlay.wrap;
+                if overlay.figlet_enabled() {
+                    refresh_text_overlay_figlet(self, selected);
                 }
                 self.reapply_overlays();
             }
             TextFieldFocus::FitButton => {
                 let overlay = &mut self.render_args.overlays[selected];
-                if !overlay.figlet_enabled() {
-                    overlay.auto_grow = !overlay.auto_grow;
-                    sync_text_overlay_auto_grow(overlay);
+                overlay.auto_grow = !overlay.auto_grow;
+                sync_text_overlay_auto_grow(overlay);
+                if overlay.figlet_enabled() {
+                    refresh_text_overlay_figlet(self, selected);
                 }
                 self.reapply_overlays();
             }
@@ -2687,6 +3014,10 @@ impl App {
                 self.reapply_overlays();
             }
             TextFieldFocus::DeleteButton => self.delete_selected_text_overlay(),
+            TextFieldFocus::BackButton => self.reorder_selected_text_overlay(OverlayOrder::Back),
+            TextFieldFocus::LowerButton => self.reorder_selected_text_overlay(OverlayOrder::Lower),
+            TextFieldFocus::RaiseButton => self.reorder_selected_text_overlay(OverlayOrder::Raise),
+            TextFieldFocus::FrontButton => self.reorder_selected_text_overlay(OverlayOrder::Front),
             TextFieldFocus::List => {}
         }
     }
@@ -2727,7 +3058,9 @@ impl App {
                     }
                 }
             }
-            crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+            if self.render_args.effective_render_mode() != RenderMode::Dither {
+                crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+            }
             self.mark_args_dirty();
         }
     }
@@ -2796,7 +3129,9 @@ impl App {
                     .blocks
                     .retain(|block| !leaves.contains(block));
             }
-            crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+            if self.render_args.effective_render_mode() != RenderMode::Dither {
+                crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+            }
             self.mark_args_dirty();
             return;
         }
@@ -2864,6 +3199,7 @@ impl App {
             .map(|(name, _, _)| self.suggested_unicode_range_path(name))
             .unwrap_or_default();
         self.unicode_path_focused = false;
+        self.edit_cursor.reset();
         self.show_unicode_explorer = true;
     }
 
@@ -2892,6 +3228,7 @@ impl App {
             .and_then(|idx| UNICODE_BLOCKS.get(idx))
         {
             self.unicode_range_path = self.suggested_unicode_range_path(name);
+            self.edit_cursor.reset();
         }
     }
 
@@ -2949,7 +3286,9 @@ impl App {
         self.tree_state = TreeState::new(&self.available_blocks);
         self.glyph_list_state = ListState::default();
         self.last_glyph_list_key = None;
-        crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+        if self.render_args.effective_render_mode() != RenderMode::Dither {
+            crate::font::save_enabled_glyph_sets(&self.render_args.blocks);
+        }
         self.mark_args_dirty();
         log::info!("Removed Unicode range: {}", name);
     }
@@ -2970,6 +3309,7 @@ type SearchProgressUpdate = (
 
 pub(crate) struct App {
     render_args: RenderArgs,
+    alternate_glyph_blocks: Option<Vec<String>>,
     input_mode: InputMode,
     selected_control: usize,
     current_tab: usize, // Focused pane group: 0=general, 1=pipeline, 2=glyphs
@@ -3009,6 +3349,7 @@ pub(crate) struct App {
     render_tick: usize,
     dragged_control: Option<usize>,
     value_edit_buffer: String,
+    edit_cursor: TextCursor,
 
     pipeline_nodes: Vec<crate::pipeline::ImageEffectNode>,
     pipeline_catalog: Vec<CatalogItem>,
@@ -3049,11 +3390,10 @@ pub(crate) struct App {
 
     // Image path
     image_path: String,
-    ocr_overlay_count: usize,
+    ocr_overlay_indices: Vec<usize>,
 
     // Control values
     width: i32,
-    render_mode_idx: usize,
     ocr: bool,
     ocr_lock: bool,
     ocr_auto_width: bool,
@@ -3227,11 +3567,14 @@ pub(crate) struct App {
     text_pane_width: u16,
     text_area: Rect,
     text_list_state: ListState,
+    text_list_manual_scroll: bool,
+    text_list_last_selected: Option<usize>,
     text_list_area: Rect,
     color_picker_area: Rect,
     text_selected: Option<usize>,
     text_drag_mode: TextDragMode,
     text_drag_start: Option<(i32, i32)>,
+    text_resize_drag: Option<ResizeDrag>,
     last_text_click: Option<(std::time::Instant, i32, i32)>,
     text_cursor_anchor: Option<(i32, i32)>,
     text_hovered: Option<usize>,
@@ -3240,6 +3583,7 @@ pub(crate) struct App {
     text_field_focus: TextFieldFocus,
     text_field_areas: Vec<Rect>, // areas for each field row in the editor
     text_btn_areas: Vec<Rect>,   // wrap, fit, FIGlet, styles, delete, and colour actions
+    text_order_areas: Vec<(Rect, OverlayOrder)>,
     color_picker_state: Option<crate::colorpicker::ColorPickerState>,
 }
 
@@ -3622,7 +3966,7 @@ fn render_unicode_explorer(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     }
 
     let path_text = if app.unicode_path_focused {
-        format!("{}▌", app.unicode_range_path)
+        app.edit_cursor.marked(&app.unicode_range_path)
     } else {
         app.unicode_range_path.clone()
     };
@@ -3691,7 +4035,10 @@ impl App {
             .and_then(|item| item.effect.clone());
 
         let mut ra_final = render_args.clone();
-        if ra_final.blocks.is_empty() {
+        if ra_final.effective_render_mode() == RenderMode::Dither {
+            ra_final.blocks = ra_final.glyph_blocks().to_vec();
+        }
+        if ra_final.blocks.is_empty() && ra_final.effective_render_mode() != RenderMode::Dither {
             ra_final.blocks = available_blocks.clone();
         }
         let ui_font_size = if render_args.font_size == 0.0 {
@@ -3703,6 +4050,7 @@ impl App {
 
         App {
             render_args: ra_final,
+            alternate_glyph_blocks: None,
             input_mode: InputMode::Normal,
             selected_control: 0,
             current_tab: 0,
@@ -3733,6 +4081,7 @@ impl App {
             render_tick: 0,
             dragged_control: None,
             value_edit_buffer: String::new(),
+            edit_cursor: TextCursor::default(),
             arc_glyphs: None,
 
             image_preview_protocol: None,
@@ -3761,11 +4110,6 @@ impl App {
             clipboard_paste_rx: None,
             clipboard_paste_in_progress: false,
             clipboard_paste_status: None,
-            render_mode_idx: match render_args.render {
-                Render::Irc => 0,
-                Render::Ansi => 1,
-                Render::Ansi24 => 2,
-            },
             metadata_prompt_png_path: String::new(),
 
             tree_state,
@@ -3773,7 +4117,7 @@ impl App {
             last_glyph_list_key: None,
 
             image_path: render_args.image.clone().unwrap_or_default(),
-            ocr_overlay_count: 0,
+            ocr_overlay_indices: Vec::new(),
             width: render_args.width.unwrap_or(0) as i32,
             ocr: render_args.ocr,
             ocr_lock: render_args.ocr_lock,
@@ -3970,7 +4314,7 @@ impl App {
             saved_auto_optimize_inputs: Vec::new(),
             saved_auto_optimize_enabled_rows: [true; 8],
             saved_auto_optimize_shortest_longest_line: false,
-            saved_auto_optimize_randomize: false,
+            saved_auto_optimize_randomize: true,
             auto_optimize_cancel: None,
             general_pane_width: ui_layout
                 .panes
@@ -4008,11 +4352,14 @@ impl App {
                 .clamp(41, 240),
             text_area: Rect::default(),
             text_list_state: ratatui::widgets::ListState::default(),
+            text_list_manual_scroll: false,
+            text_list_last_selected: None,
             text_list_area: Rect::default(),
             color_picker_area: Rect::default(),
             text_selected: None,
             text_drag_mode: TextDragMode::None,
             text_drag_start: None,
+            text_resize_drag: None,
             last_text_click: None,
             text_cursor_anchor: None,
             text_hovered: None,
@@ -4021,12 +4368,15 @@ impl App {
             text_field_focus: TextFieldFocus::List,
             text_field_areas: Vec::new(),
             text_btn_areas: Vec::new(),
+            text_order_areas: Vec::new(),
             color_picker_state: None,
         }
     }
 
     fn apply_settings(&mut self, render_args: &RenderArgs) {
         self.render_args = render_args.clone();
+        self.alternate_glyph_blocks = None;
+        self.render_args.blocks = self.render_args.glyph_blocks().to_vec();
         let ui_font_size = if render_args.font_size == 0.0 {
             0.0
         } else {
@@ -4056,11 +4406,6 @@ impl App {
         self.ocr_max_text_height_ratio =
             (render_args.ocr_max_text_height_ratio * 100.0).round() as i32;
         self.ocr_threads = render_args.ocr_threads as i32;
-        self.render_mode_idx = match render_args.render {
-            Render::Irc => 0,
-            Render::Ansi => 1,
-            Render::Ansi24 => 2,
-        };
         self.dither = render_args.dither as i32;
         self.show_discontinuities = render_args.show_discontinuities;
         self.discontinuity_threshold = (render_args.discontinuity_threshold * 10.0).round() as i32;
@@ -4377,7 +4722,18 @@ impl App {
     fn get_value(&self, id: ControlId) -> i32 {
         match id {
             ControlId::Width => self.width,
-            ControlId::RenderMode => self.render_mode_idx as i32,
+            ControlId::Palette => match self.render_args.render {
+                Render::Irc => 0,
+                Render::Ansi => 1,
+                Render::Ansi24 => 2,
+            },
+            ControlId::RenderMode => match self.render_args.effective_render_mode() {
+                RenderMode::Glyph => 0,
+                RenderMode::Braille => 1,
+                RenderMode::Dither => 2,
+            },
+            ControlId::DitherDetail => self.render_args.dither_detail.min(i32::MAX as u32) as i32,
+            ControlId::DitherPaletteCandidates => self.render_args.dither_palette_candidates.min(crate::palette::ANSI256.len() as u32) as i32,
             ControlId::GraphicsPreview => self.graphics_preview as i32,
             ControlId::Ocr => self.ocr as i32,
             ControlId::OcrLock => self.ocr_lock as i32,
@@ -4412,6 +4768,7 @@ impl App {
             ControlId::Font => self.font_idx as i32,
             ControlId::Filter => self.filter_idx as i32,
             ControlId::BlendColours => self.render_args.blend_colours as i32,
+            ControlId::ForegroundOnly => self.render_args.foreground_only as i32,
             ControlId::GrayTol => self.grayscale_tolerance,
             ControlId::Brightness => self.brightness,
             ControlId::Contrast => self.contrast,
@@ -4499,7 +4856,35 @@ impl App {
                     }
                 }
             }
-            ControlId::RenderMode => self.render_mode_idx = val as usize,
+            ControlId::Palette => {
+                if let Some(&palette) = PALETTES.get(val as usize) {
+                    if self.enum_choice_available(id, val as usize) {
+                        self.render_args.render = palette;
+                    }
+                }
+            }
+            ControlId::RenderMode => {
+                if let Some(&mode) = RENDER_MODES.get(val as usize) {
+                    if self.enum_choice_available(id, val as usize) {
+                        let was_dither = self.render_args.effective_render_mode() == RenderMode::Dither;
+                        if was_dither != (mode == RenderMode::Dither) {
+                            let blocks = self.alternate_glyph_blocks.take().unwrap_or_else(|| {
+                                if mode == RenderMode::Dither {
+                                    vec!["dither".into()]
+                                } else {
+                                    vec!["default".into()]
+                                }
+                            });
+                            self.alternate_glyph_blocks =
+                                Some(std::mem::replace(&mut self.render_args.blocks, blocks));
+                        }
+                        self.render_args.render_mode = mode;
+                        self.render_args.braille = false;
+                    }
+                }
+            }
+            ControlId::DitherDetail => self.render_args.dither_detail = val.max(1) as u32,
+            ControlId::DitherPaletteCandidates => self.render_args.dither_palette_candidates = val.max(0) as u32,
             ControlId::GraphicsPreview => {
                 self.graphics_preview = val != 0;
                 self.output_preview_dirty = true;
@@ -4549,6 +4934,7 @@ impl App {
             ControlId::Font => self.font_idx = val as usize,
             ControlId::Filter => self.filter_idx = val as usize,
             ControlId::BlendColours => self.render_args.blend_colours = val != 0,
+            ControlId::ForegroundOnly => self.render_args.foreground_only = val != 0,
             ControlId::GrayTol => self.grayscale_tolerance = val,
             ControlId::Brightness => self.brightness = val,
             ControlId::Contrast => self.contrast = val,
@@ -4629,7 +5015,46 @@ impl App {
     }
 
     fn control_disabled_reason(&self, id: ControlId) -> Option<&'static str> {
+        let mode = self.render_args.effective_render_mode();
+        if mode == RenderMode::Dither && id == ControlId::ForegroundOnly {
+            return Some("Dither requires both foreground and background colours.");
+        }
+        if mode == RenderMode::Braille && (id.requires_smooth() || id == ControlId::Smooth) {
+            return Some("Smoothing is available in Glyph and Dither modes.");
+        }
+        if mode != RenderMode::Glyph
+            && matches!(id, ControlId::PerceptualScore | ControlId::GlyphSearch
+                    | ControlId::ShowGlyphDefects | ControlId::GlyphSearchThreshold
+                    | ControlId::GlyphSearchCandidates | ControlId::GlyphSearchPasses
+                    | ControlId::GlyphSearchFinalists | ControlId::AutoOptimize)
+        {
+            return Some("This setting is available in Glyph mode.");
+        }
         id.disabled_reason(self.ocr, self.ocr_auto_width, self.ocr_lock)
+    }
+
+    fn enum_choice_available(&self, id: ControlId, index: usize) -> bool {
+        let args = &self.render_args;
+        match id {
+            ControlId::Palette => PALETTES.get(index).is_some_and(|&palette| {
+                args.effective_render_mode().validate(palette, args.foreground_only).is_ok()
+            }),
+            ControlId::RenderMode => RENDER_MODES.get(index).is_some_and(|&mode| {
+                mode.validate(args.render, args.foreground_only).is_ok()
+            }),
+            _ => true,
+        }
+    }
+
+    fn step_enum(&mut self, id: ControlId, count: usize, direction: i32) {
+        let current = self.get_value(id);
+        let count = count as i32;
+        if let Some(value) = (1..count)
+            .map(|offset| (current + direction.signum() * offset).rem_euclid(count))
+            .find(|&value| self.enum_choice_available(id, value as usize))
+        {
+            self.set_value(id, value);
+        }
     }
 
     fn tab_controls(&self, tab: usize) -> Vec<ControlDef> {
@@ -4642,6 +5067,8 @@ impl App {
                 self.show_advanced,
                 self.show_ocr_advanced,
             ).into_iter().filter(|control| match control.id {
+                ControlId::DitherDetail | ControlId::DitherPaletteCandidates =>
+                    self.render_args.effective_render_mode() == RenderMode::Dither,
                 ControlId::GlyphSearchThreshold => self.glyph_search || self.render_args.show_glyph_defects,
                 ControlId::GlyphSearchCandidates | ControlId::GlyphSearchPasses | ControlId::GlyphSearchFinalists => self.glyph_search,
                 _ => true,
@@ -4708,11 +5135,7 @@ impl App {
         {
             // Show the new source adjustments as soon as the pre-search art is
             // ready, while the unchanged full search continues in the background.
-            let render = match self.render_mode_idx {
-                0 => Render::Irc,
-                1 => Render::Ansi,
-                _ => Render::Ansi24,
-            };
+            let render = self.render_args.render;
             let result = draw::encode_output_colours(
                 &preview.result, render, true, self.grayscale_tolerance as u8,
             );
@@ -4834,6 +5257,7 @@ impl App {
         }
         self.show_font_picker = true;
         self.font_search.clear();
+        self.edit_cursor.reset();
         self.sync_font_picker_selection();
     }
 
@@ -4876,30 +5300,28 @@ impl App {
     /// This is O(grid_cells) — safe to call on every keypress without triggering a re-render.
     fn reapply_overlays(&mut self) {
         if let Some(base) = &self.base_render_result {
-            let render = match self.render_mode_idx {
-                0 => Render::Irc,
-                1 => Render::Ansi,
-                _ => Render::Ansi24,
-            };
-            let overlayed = draw::apply_overlays_to_result(
-                base,
-                &self.render_args.overlays,
-                render,
-                true,
-                self.grayscale_tolerance as u8,
-            );
-            let overlayed = if let Some(glyphs) = &self.arc_glyphs {
-                crate::output_colours::apply(
-                    &overlayed, glyphs, &self.render_args.pipeline,
-                    render, true, self.grayscale_tolerance as u8,
-                )
-            } else {
-                overlayed
-            };
+            let overlayed = self.compose_preview(base, self.arc_glyphs.as_deref());
             self.cached_render = overlayed.content.clone();
             self.cached_result = Some(overlayed);
             self.output_preview_dirty = true;
             self.refresh_defect_preview();
+        }
+    }
+
+    fn compose_preview(&self, base: &draw::RenderResult, glyphs: Option<&font::GlyphStore>) -> draw::RenderResult {
+        let args = &self.render_args;
+        let tolerance = self.grayscale_tolerance as u8;
+        let overlayed = if args.effective_render_mode() == RenderMode::Dither
+            && !base.grid.is_empty() && !args.overlays.is_empty()
+        {
+            draw::encode_grid_with_overlays(base, &args.overlays, args.render, true, tolerance, true)
+        } else {
+            draw::apply_overlays_to_result(base, &args.overlays, args.render, true, tolerance)
+        };
+        if let Some(glyphs) = glyphs {
+            crate::output_colours::apply(&overlayed, glyphs, &args.pipeline, args.render, true, tolerance)
+        } else {
+            overlayed
         }
     }
 
@@ -4910,6 +5332,9 @@ impl App {
             if let Some(flag) = &self.auto_optimize_cancel {
                 flag.store(true, Ordering::Relaxed);
             }
+            return;
+        }
+        if self.control_disabled_reason(ControlId::AutoOptimize).is_some() {
             return;
         }
 
@@ -5414,11 +5839,6 @@ impl App {
         self.render_args.frosted_glass = self.frosted_glass;
         self.render_args.solarize = self.solarize;
         self.render_args.edge_detection = self.edge_detection;
-        self.render_args.render = match self.render_mode_idx {
-            0 => Render::Irc,
-            1 => Render::Ansi,
-            _ => Render::Ansi24,
-        };
         self.render_args.as_preview = true;
         self.render_args.fliph = self.fliph;
         self.render_args.flipv = self.flipv;
@@ -6725,7 +7145,9 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
 
     log::info!("Starting img2irc TUI...");
 
-    if render_args.render == Render::Irc { render_args.render = Render::Ansi; }
+    if render_args.render == Render::Irc && render_args.effective_render_mode() != RenderMode::Dither {
+        render_args.render = Render::Ansi;
+    }
     render_args.as_preview = true;
 
     let no_initial_image = render_args
@@ -6743,7 +7165,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
         }
     } else {
         font::glyph_store(
-            &render_args.blocks,
+            render_args.glyph_blocks(),
             &render_args.exclude_range,
             &render_args.exclude,
             &render_args.include_range,
@@ -6797,6 +7219,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
         let mut video_source = crate::video::editor::Source::default();
         let mut fast_glyphs_store: Option<Vec<draw::FastGlyph>> = None;
         let mut completed_renders = render_cache::CompletedRenderCache::default();
+        let mut glyph_score_cache = draw::GlyphSearchCache::default();
         let mut glyph_signature = 0;
         let mut arc_image = arc_image;
         let mut current_image_path = initial_image_path;
@@ -6812,7 +7235,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
         let mut arc_glyphs = arc_glyphs;
         let mut last_font = thread_render_args.font.clone();
         let mut last_font_size = thread_render_args.font_size;
-        let mut last_blocks = thread_render_args.blocks.clone();
+        let mut last_blocks = thread_render_args.glyph_blocks().to_vec();
         let mut last_exclude_range = thread_render_args.exclude_range.clone();
         let mut last_exclude = thread_render_args.exclude.clone();
         let mut last_include_range = thread_render_args.include_range.clone();
@@ -7001,7 +7424,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
 
             if effective_args.font != last_font
                 || (effective_args.font_size - last_font_size).abs() > ::std::f32::EPSILON
-                || effective_args.blocks != last_blocks
+                || effective_args.glyph_blocks() != last_blocks
                 || effective_args.exclude_range != last_exclude_range
                 || effective_args.exclude != last_exclude
                 || effective_args.include_range != last_include_range
@@ -7009,7 +7432,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
                 || !glyphs_loaded
             {
                 let new_store = font::glyph_store(
-                    &effective_args.blocks,
+                    effective_args.glyph_blocks(),
                     &effective_args.exclude_range,
                     &effective_args.exclude,
                     &effective_args.include_range,
@@ -7026,7 +7449,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
                 fast_glyphs_store = None;
                 last_font = effective_args.font.clone();
                 last_font_size = effective_args.font_size;
-                last_blocks = effective_args.blocks.clone();
+                last_blocks = effective_args.glyph_blocks().to_vec();
                 last_exclude_range = effective_args.exclude_range.clone();
                 last_exclude = effective_args.exclude.clone();
                 last_include_range = effective_args.include_range.clone();
@@ -7055,7 +7478,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
                     &effective_args, &arc_glyphs,
                     raw_image.get_width() as f32, raw_image.get_height() as f32,
                 );
-                let (gw, gh) = if effective_args.braille { (2, 4) } else { arc_glyphs.metrics };
+                let (gw, gh) = effective_args.cell_pixels(arc_glyphs.metrics);
                 last_ocr_grid = Some((pw / gw.max(1) as u32, ph / gh.max(1) as u32));
                 crate::ocr::detections_to_overlays(
                     &raw_image,
@@ -7083,7 +7506,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
             let result = if let Some(result) = cached {
                 log::info!("Reusing completed render from session cache; smoothing and glyph search skipped");
                 result
-            } else { draw::search_status::observe_glyph_search(
+            } else { glyph_score_cache.run(|| draw::search_status::observe_glyph_search(
                 move |progress| {
                     if !progress_cancel.load(Ordering::Relaxed) {
                         progress_tx.send_replace(Some((
@@ -7094,7 +7517,7 @@ async fn run_editor(mut render_args: RenderArgs, clip: Option<crate::video::edit
                 || crate::render_base_output(
                     effective_args, &arc_glyphs, base_image, glyphs, Some(cancel_flag.clone()),
                 ),
-            ) };
+            )) };
             if !cancel_flag.load(Ordering::Relaxed) {
                 if let Some(key) = cache_key { completed_renders.insert(key, &result); }
             }
@@ -7182,6 +7605,55 @@ fn finish_value_edit(app: &mut App) {
     app.value_edit_buffer.clear();
 }
 
+// Handle overlay shortcuts and list scrolling before other panes consume them.
+fn handle_text_stack_event(app: &mut App, event: &Event) -> bool {
+    if app.current_tab != 3 || app.show_font_picker || app.show_unicode_explorer
+        || app.figlet_picker.is_some() || app.explorer_dialog.is_some()
+        || !matches!(app.input_mode, InputMode::Normal | InputMode::TextEdit) {
+        return false;
+    }
+    if let Event::Mouse(mouse) = event {
+        if !app.text_list_area.contains((mouse.column, mouse.row).into()) { return false; }
+        let direction = match mouse.kind {
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::ScrollDown => 1,
+            _ => return false,
+        };
+        let visible = usize::from(app.text_list_area.height.saturating_sub(2)).max(1);
+        let max = (app.render_args.overlays.len() + 1).saturating_sub(visible);
+        let step = if mouse.modifiers.contains(KeyModifiers::SHIFT) { visible } else { 3 };
+        let offset = app.text_list_state.offset();
+        *app.text_list_state.offset_mut() = if direction < 0 { offset.saturating_sub(step) } else { offset.saturating_add(step) }.min(max);
+        app.text_list_manual_scroll = true;
+        app.text_list_last_selected = app.text_selected;
+        return true;
+    }
+    let Event::Key(key) = event else { return false; };
+    if app.input_mode != InputMode::Normal || key.kind == KeyEventKind::Release
+        || !app.has_selected_text_overlay() || key.modifiers.contains(KeyModifiers::ALT) {
+        return false;
+    }
+    let action = if key.modifiers == KeyModifiers::SHIFT {
+        match key.code {
+            KeyCode::Up => OverlayOrder::Lower,
+            KeyCode::Down => OverlayOrder::Raise,
+            KeyCode::Home => OverlayOrder::Back,
+            KeyCode::End => OverlayOrder::Front,
+            _ => return false,
+        }
+    } else if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match (key.code, key.modifiers.contains(KeyModifiers::SHIFT)) {
+            (KeyCode::PageUp, true) => OverlayOrder::Front,
+            (KeyCode::PageUp, false) => OverlayOrder::Raise,
+            (KeyCode::PageDown, true) => OverlayOrder::Back,
+            (KeyCode::PageDown, false) => OverlayOrder::Lower,
+            _ => return false,
+        }
+    } else { return false; };
+    app.reorder_selected_text_overlay(action);
+    true
+}
+
 // Handle pane traversal before editors can interpret Tab as input traversal.
 fn handle_pane_tab(app: &mut App, event: &Event) -> bool {
     let Event::Key(key) = event else { return false; };
@@ -7262,37 +7734,17 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 continue;
             }
             if !app.render_args.ocr_lock {
-                if app.ocr_overlay_count > 0 {
-                    let keep = app
-                        .render_args
-                        .overlays
-                        .len()
-                        .saturating_sub(app.ocr_overlay_count);
-                    app.render_args.overlays.truncate(keep);
-                    app.ocr_overlay_count = 0;
-                }
+                let mut old_ocr = std::mem::take(&mut app.ocr_overlay_indices);
+                old_ocr.sort_unstable();
+                for index in old_ocr.into_iter().rev() { app.remove_text_overlay_at(index); }
                 if !ocr_overlays.is_empty() {
-                    app.ocr_overlay_count = ocr_overlays.len();
+                    let start = app.render_args.overlays.len();
+                    app.ocr_overlay_indices = (start..start + ocr_overlays.len()).collect();
                     app.render_args.overlays.extend(ocr_overlays);
                 }
             }
             // Store the raw result (no overlays) and apply overlays as a fast post-process
-            let render = match app.render_mode_idx {
-                0 => Render::Irc,
-                1 => Render::Ansi,
-                _ => Render::Ansi24,
-            };
-            let overlayed = draw::apply_overlays_to_result(
-                &result,
-                &app.render_args.overlays,
-                render,
-                true, // as_preview
-                app.grayscale_tolerance as u8,
-            );
-            let overlayed = crate::output_colours::apply(
-                &overlayed, &glyphs, &app.render_args.pipeline,
-                render, true, app.grayscale_tolerance as u8,
-            );
+            let overlayed = app.compose_preview(&result, Some(&glyphs));
             app.cached_render = overlayed.content.clone();
             app.cached_result = Some(overlayed);
             app.base_render_result = Some(result);
@@ -7317,6 +7769,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                 return Ok(());
             }
             if handle_pane_tab(&mut app, &event) { continue; }
+            if handle_text_stack_event(&mut app, &event) { continue; }
             if video::handle_event(&mut app, &event) { continue; }
             if handle_effect_controls(&mut app, &event) { continue; }
             if app.figlet_picker.is_some() {
@@ -7333,33 +7786,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         KeyCode::Down => app.move_font_picker_selection(1),
                         KeyCode::PageUp => app.move_font_picker_selection(-10),
                         KeyCode::PageDown => app.move_font_picker_selection(10),
-                        KeyCode::Home => {
-                            app.font_list_state.select(
-                                (!app.matching_font_indices().is_empty()).then_some(0),
-                            );
+                        _ => {
+                            if app.edit_cursor.key(&mut app.font_search, *key, false) == Some(true) {
+                                app.sync_font_picker_selection();
+                            }
                         }
-                        KeyCode::End => {
-                            let count = app.matching_font_indices().len();
-                            app.font_list_state.select(count.checked_sub(1));
-                        }
-                        KeyCode::Backspace => {
-                            app.font_search.pop();
-                            app.sync_font_picker_selection();
-                        }
-                        KeyCode::Char('u')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
-                            app.font_search.clear();
-                            app.sync_font_picker_selection();
-                        }
-                        KeyCode::Char(c)
-                            if !key.modifiers.contains(KeyModifiers::CONTROL)
-                                && !key.modifiers.contains(KeyModifiers::ALT) =>
-                        {
-                            app.font_search.push(c);
-                            app.sync_font_picker_selection();
-                        }
-                        _ => {}
                     },
                     Event::Mouse(mouse) => match mouse.kind {
                         MouseEventKind::ScrollUp => app.move_font_picker_selection(-1),
@@ -7386,16 +7817,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             KeyCode::Tab | KeyCode::BackTab => {
                                 app.unicode_path_focused = !app.unicode_path_focused;
                             }
-                            KeyCode::Backspace if app.unicode_path_focused => {
-                                app.unicode_range_path.pop();
-                            }
-                            KeyCode::Char(c)
-                                if app.unicode_path_focused
-                                    && !key
-                                        .modifiers
-                                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                            {
-                                app.unicode_range_path.push(c);
+                            _ if app.unicode_path_focused && key.code != KeyCode::Enter => {
+                                app.edit_cursor.key(&mut app.unicode_range_path, key, false);
                             }
                             KeyCode::Up if !app.unicode_path_focused => {
                                 let curr = app.unicode_list_state.selected().unwrap_or(0);
@@ -7636,13 +8059,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 app.input_mode = InputMode::Normal;
                                 app.value_edit_buffer.clear();
                             }
-                            KeyCode::Backspace => {
-                                app.value_edit_buffer.pop();
-                            }
-                            KeyCode::Char(c) if c.is_ascii_digit() || c == '-' || c == '.' => {
-                                app.value_edit_buffer.push(c);
-                            }
-                            _ => {}
+                            KeyCode::Char(c) if !c.is_ascii_digit() && c != '-' && c != '.'
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) => {}
+                            _ => { app.edit_cursor.key(&mut app.value_edit_buffer, key, false); }
                         }
                     }
                 }
@@ -7659,18 +8078,13 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     // Ctrl+Enter finishes editing; plain Enter is a newline.
                                     finish_text_edit(&mut app);
                                 } else {
-                                    app.value_edit_buffer.push('\n');
+                                    app.edit_cursor.insert(&mut app.value_edit_buffer, "\n");
                                     apply_text_edit_buffer(&mut app);
                                 }
                             }
                             KeyCode::Esc => {
                                 // Keep the live edit and leave the text box.
                                 finish_text_edit(&mut app);
-                            }
-                            KeyCode::Backspace => {
-                                app.value_edit_buffer.pop();
-                                // Update overlay text and reapply cheaply (no full re-render)
-                                apply_text_edit_buffer(&mut app);
                             }
                             KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 if let Some(sel) = app.text_selected {
@@ -7699,12 +8113,11 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     }
                                 }
                             }
-                            KeyCode::Char(c) => {
-                                app.value_edit_buffer.push(c);
-                                // Update overlay text and reapply cheaply (no full re-render)
-                                apply_text_edit_buffer(&mut app);
+                            _ => {
+                                if app.edit_cursor.key(&mut app.value_edit_buffer, key, true) == Some(true) {
+                                    apply_text_edit_buffer(&mut app);
+                                }
                             }
-                            _ => {}
                         }
                     }
                     continue;
@@ -7785,6 +8198,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             state.focused_idx = 26;
                                         }
                                     }
+                                }
+                                KeyCode::Left | KeyCode::Right if state.focused_idx < 24 => {
+                                    state.inputs[state.focused_idx].input(key);
                                 }
                                 KeyCode::Left => {
                                     if state.focused_idx == 26 {
@@ -8185,7 +8601,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Moved => {
                             let hovered_cell = (app.current_tab == 3)
-                                .then(|| output_grid_position(&app, mouse.column, mouse.row))
+                                .then(|| text_canvas_position(&app, mouse.column, mouse.row))
                                 .flatten();
                             app.text_hovered = hovered_cell.and_then(|(cell_x, cell_y)| {
                                 app.render_args
@@ -8198,17 +8614,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     })
                                     .map(|(idx, _)| idx)
                             });
-                            app.text_resize_hover = hovered_cell.and_then(|(cell_x, cell_y)| {
-                                app.render_args
-                                    .overlays
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .find(|(_, overlay)| {
-                                        text_overlay_resize_hotspot(overlay, cell_x, cell_y)
-                                    })
-                                    .map(|(idx, _)| idx)
-                            });
+                            app.text_resize_hover = hovered_cell.and_then(|(x, y)| text_resize_target(&app, x, y));
+                            if app.text_resize_hover.is_some() { app.text_hovered = app.text_resize_hover; }
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             app.dragged_control = None;
@@ -8235,155 +8642,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 && mouse.row < app.output_area.y + app.output_area.height
                             {
                                 if app.current_tab == 3 {
-                                    let inner_height = app.output_area.height.saturating_sub(2);
-                                    let line_count = app.cached_render.lines().count() as u16;
-                                    let pad_y = if line_count < inner_height {
-                                        inner_height.saturating_sub(line_count).saturating_div(2)
-                                    } else {
-                                        0
-                                    };
-                                    if mouse.row >= app.output_area.y + 1 + pad_y {
-                                        let content_y =
-                                            (mouse.row - (app.output_area.y + 1 + pad_y)) as usize
-                                                + app.scroll as usize;
-                                        if let Some(res) = &app.cached_result {
-                                            if content_y < res.grid.len() {
-                                                let row = &res.grid[content_y];
-                                                let inner_width =
-                                                    app.output_area.width.saturating_sub(2);
-                                                let row_len = row.len() as u16;
-                                                let pad_x = if inner_width > row_len {
-                                                    (inner_width - row_len) / 2
-                                                } else {
-                                                    0
-                                                };
-                                                let start_x = app.output_area.x + 1 + pad_x;
-                                                if mouse.column >= start_x
-                                                    && mouse.column < start_x + row_len
-                                                {
-                                                    let content_x =
-                                                        (mouse.column - start_x) as usize;
-                                                    let cell_x = content_x as i32;
-                                                    let cell_y = content_y as i32;
-
-                                                    let resize_found = app
-                                                        .render_args
-                                                        .overlays
-                                                        .iter()
-                                                        .enumerate()
-                                                        .rev()
-                                                        .find(|(_, overlay)| {
-                                                            text_overlay_resize_hotspot(
-                                                                overlay, cell_x, cell_y,
-                                                            )
-                                                        })
-                                                        .map(|(idx, _)| idx);
-                                                    let found = resize_found.or_else(|| {
-                                                        app.render_args
-                                                            .overlays
-                                                            .iter()
-                                                            .enumerate()
-                                                            .rev()
-                                                            .find(|(_, overlay)| {
-                                                                text_overlay_contains(
-                                                                    overlay, cell_x, cell_y,
-                                                                )
-                                                            })
-                                                            .map(|(idx, _)| idx)
-                                                    });
-
-                                                    let now = std::time::Instant::now();
-                                                    let is_double = app.last_text_click.map_or(
-                                                        false,
-                                                        |(t, lx, ly)| {
-                                                            now.duration_since(t).as_millis() < 500
-                                                                && lx == cell_x
-                                                                && ly == cell_y
-                                                        },
-                                                    );
-
-                                                    if let Some(idx) = found {
-                                                        let (overlay_x, overlay_y) = {
-                                                            let overlay =
-                                                                &app.render_args.overlays[idx];
-                                                            (overlay.x, overlay.y)
-                                                        };
-                                                        let is_resize_area =
-                                                            resize_found == Some(idx);
-                                                        app.text_cursor_anchor = None;
-                                                        app.text_hovered = Some(idx);
-
-                                                        if is_resize_area {
-                                                            if app.input_mode == InputMode::TextEdit {
-                                                                finish_text_edit(&mut app);
-                                                            }
-                                                            app.text_selected = Some(idx + 1);
-                                                            app.text_drag_mode =
-                                                                TextDragMode::Sizing;
-                                                            app.text_drag_start =
-                                                                Some((overlay_x, overlay_y));
-                                                            app.render_args.overlays[idx]
-                                                                .auto_grow = false;
-                                                            app.text_resize_hover = Some(idx);
-                                                            app.last_text_click =
-                                                                Some((now, cell_x, cell_y));
-                                                        } else if is_double {
-                                                            app.text_selected = Some(idx + 1);
-                                                            app.value_edit_buffer =
-                                                                app.render_args.overlays[idx]
-                                                                    .text
-                                                                    .clone();
-                                                            app.input_mode = InputMode::TextEdit;
-                                                            app.text_drag_mode = TextDragMode::None;
-                                                            app.last_text_click = None;
-                                                        } else {
-                                                            if app.input_mode == InputMode::TextEdit {
-                                                                finish_text_edit(&mut app);
-                                                            }
-                                                            app.text_selected = Some(idx + 1);
-                                                            app.text_drag_mode =
-                                                                TextDragMode::Moving;
-                                                            app.text_drag_start = Some((
-                                                                cell_x - overlay_x,
-                                                                cell_y - overlay_y,
-                                                            ));
-                                                            app.last_text_click =
-                                                                Some((now, cell_x, cell_y));
-                                                        }
-                                                    } else {
-                                                        // Require double-click to create new overlay
-                                                        if is_double {
-                                                            app.render_args.overlays.push(
-                                                                new_text_overlay(
-                                                                    app.render_mode_idx,
-                                                                    cell_x,
-                                                                    cell_y,
-                                                                    false,
-                                                                ),
-                                                            );
-                                                            app.text_selected = Some(
-                                                                app.render_args.overlays.len(),
-                                                            );
-                                                            app.reapply_overlays();
-                                                            app.text_drag_mode =
-                                                                TextDragMode::Sizing;
-                                                            app.text_drag_start =
-                                                                Some((cell_x, cell_y));
-                                                            app.text_cursor_anchor = None;
-                                                            app.last_text_click = None;
-                                                        } else {
-                                                            app.last_text_click =
-                                                                Some((now, cell_x, cell_y));
-                                                            app.text_selected = None;
-                                                            app.text_cursor_anchor =
-                                                                Some((cell_x, cell_y));
-                                                            app.text_field_focus =
-                                                                TextFieldFocus::TextInput;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    if let Some((x, y)) = text_canvas_position(&app, mouse.column, mouse.row) {
+                                        begin_text_canvas_drag(&mut app, x, y);
                                     }
                                     continue;
                                 } else if app.get_current_control_id() == ControlId::Eyedropper {
@@ -8602,12 +8862,14 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         if ctrl_id == ControlId::Font {
                                             app.open_font_picker();
                                             app.font_list_state.select(Some(i));
-                                        } else {
-                                            app.mark_args_dirty();
+                                        } else if app.enum_choice_available(ctrl_id, i) {
+                                            app.set_value(ctrl_id, i as i32);
+                                            mark_control_changed(&mut app, ctrl_id);
                                         }
-                                        continue;
+                                        break;
                                     }
                                 }
+                                continue;
                             }
 
                             // Check tab clicks
@@ -8824,6 +9086,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                             app.render_args.overlays[sel - 1]
                                                 .editable_text()
                                                 .to_string();
+                                        app.edit_cursor.reset();
                                         app.text_field_focus = TextFieldFocus::TextInput;
                                         app.input_mode = InputMode::TextEdit;
                                     }
@@ -8855,7 +9118,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if selected_idx <= total_len {
                                     if selected_idx == 0 {
                                         app.render_args.overlays.push(new_text_overlay(
-                                            app.render_mode_idx,
+                                            app.render_args.render,
                                             0,
                                             0,
                                             true,
@@ -8864,6 +9127,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                         app.text_list_state.select(app.text_selected);
                                         app.text_field_focus = TextFieldFocus::TextInput;
                                         app.value_edit_buffer.clear();
+                                        app.edit_cursor.reset();
                                         app.input_mode = InputMode::TextEdit;
                                         app.reapply_overlays();
                                     } else {
@@ -8878,6 +9142,19 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 x: mouse.column,
                                 y: mouse.row,
                             };
+
+                            if app.current_tab == 3 {
+                                if let Some((_, action)) = app.text_order_areas.iter().find(|(area, _)| area.contains(pos)).copied() {
+                                    app.text_field_focus = match action {
+                                        OverlayOrder::Back => TextFieldFocus::BackButton,
+                                        OverlayOrder::Lower => TextFieldFocus::LowerButton,
+                                        OverlayOrder::Raise => TextFieldFocus::RaiseButton,
+                                        OverlayOrder::Front => TextFieldFocus::FrontButton,
+                                    };
+                                    app.reorder_selected_text_overlay(action);
+                                    continue;
+                                }
+                            }
 
                             if app.current_tab == 3 && app.text_btn_areas.len() >= 11 {
                                 if app
@@ -8936,8 +9213,9 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             let overlay = &mut app.render_args.overlays[sel - 1];
-                                            if !overlay.figlet_enabled() {
-                                                overlay.wrap = !overlay.wrap;
+                                            overlay.wrap = !overlay.wrap;
+                                            if overlay.figlet_enabled() {
+                                                refresh_text_overlay_figlet(&mut app, sel - 1);
                                             }
                                             app.reapply_overlays();
                                         }
@@ -8948,9 +9226,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     if let Some(sel) = app.text_selected {
                                         if sel > 0 && sel <= app.render_args.overlays.len() {
                                             let overlay = &mut app.render_args.overlays[sel - 1];
-                                            if !overlay.figlet_enabled() {
-                                                overlay.auto_grow = !overlay.auto_grow;
-                                                sync_text_overlay_auto_grow(overlay);
+                                            overlay.auto_grow = !overlay.auto_grow;
+                                            sync_text_overlay_auto_grow(overlay);
+                                            if overlay.figlet_enabled() {
+                                                refresh_text_overlay_figlet(&mut app, sel - 1);
                                             }
                                             app.reapply_overlays();
                                         }
@@ -8998,84 +9277,8 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if app.current_tab == 3 && app.text_drag_mode != TextDragMode::None {
-                                if let Some(res) = &app.cached_result {
-                                    let inner_height = app.output_area.height.saturating_sub(2);
-                                    let line_count = app.cached_render.lines().count() as u16;
-                                    let pad_y = if line_count < inner_height {
-                                        inner_height.saturating_sub(line_count) / 2
-                                    } else {
-                                        0
-                                    };
-                                    if mouse.row >= app.output_area.y + 1 + pad_y {
-                                        let content_y =
-                                            (mouse.row - (app.output_area.y + 1 + pad_y)) as usize
-                                                + app.scroll as usize;
-                                        if content_y < res.grid.len() {
-                                            let row = &res.grid[content_y];
-                                            let inner_width =
-                                                app.output_area.width.saturating_sub(2);
-                                            let row_len = row.len() as u16;
-                                            let pad_x = if inner_width > row_len {
-                                                (inner_width - row_len) / 2
-                                            } else {
-                                                0
-                                            };
-                                            let start_x = app.output_area.x + 1 + pad_x;
-
-                                            if mouse.column >= start_x {
-                                                let c_x = (mouse.column - start_x) as i32;
-                                                let c_y = content_y as i32;
-
-                                                if let Some(sel) = app.text_selected {
-                                                    if sel > 0
-                                                        && sel <= app.render_args.overlays.len()
-                                                    {
-                                                        let index = sel - 1;
-                                                        let cell_x = c_x;
-                                                        let cell_y = c_y;
-                                                        if app.text_drag_mode
-                                                            == TextDragMode::Moving
-                                                        {
-                                                            // Move
-                                                            if let Some((sx, sy)) =
-                                                                app.text_drag_start
-                                                            {
-                                                                let ov = &mut app.render_args
-                                                                    .overlays[index];
-                                                                ov.x = cell_x - sx;
-                                                                ov.y = cell_y - sy;
-                                                                app.reapply_overlays();
-                                                            }
-                                                        } else if app.text_drag_mode
-                                                            == TextDragMode::Sizing
-                                                        {
-                                                            // Resize
-                                                            if let Some((ox, oy)) =
-                                                                app.text_drag_start
-                                                            {
-                                                                let figlet = {
-                                                                    let ov = &mut app.render_args
-                                                                        .overlays[index];
-                                                                    ov.auto_grow = false;
-                                                                    ov.w =
-                                                                        (cell_x - ox + 1).max(1);
-                                                                    ov.h =
-                                                                        (cell_y - oy + 1).max(1);
-                                                                    ov.figlet_enabled()
-                                                                };
-                                                                if figlet {
-                                                                    refresh_text_overlay_figlet(
-                                                                        &mut app, index,
-                                                                    );
-                                                                }
-                                                                app.reapply_overlays();
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                if let Some((x, y)) = text_canvas_position(&app, mouse.column, mouse.row) {
+                                    continue_text_canvas_drag(&mut app, x, y);
                                 }
                             } else if let Some(splitter) = app.dragging_splitter {
                                 let root = Layout::vertical([
@@ -9282,6 +9485,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             }
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
+                            app.text_resize_drag = None;
                             app.pipeline_dragging = None;
                             app.dragged_control = None;
                             app.dragging_splitter = None;
@@ -9384,55 +9588,21 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                             if let Some(sel) = app.text_selected {
                                 if sel > 0 && sel <= app.render_args.overlays.len() {
                                     let index = sel - 1;
-                                    let figlet = app.render_args.overlays[index].figlet_enabled();
-                                    let mut handled = true;
-                                    {
-                                        let ov = &mut app.render_args.overlays[index];
-                                        let text = ov.source_text.as_mut().unwrap_or(&mut ov.text);
-                                        match key.code {
-                                            KeyCode::Backspace
-                                                if app.text_field_focus
-                                                    == TextFieldFocus::TextInput =>
-                                            {
-                                                text.pop();
-                                            }
-                                            KeyCode::Enter
-                                                if app.text_field_focus
-                                                    == TextFieldFocus::TextInput =>
-                                            {
-                                                text.push('\n');
-                                            }
-                                            KeyCode::Char(c)
-                                                if (app.text_field_focus
-                                                    == TextFieldFocus::TextInput
-                                                    || (app.text_field_focus
-                                                        == TextFieldFocus::List
-                                                        && c != ' '))
-                                                    && !key.modifiers.intersects(
-                                                        KeyModifiers::CONTROL | KeyModifiers::ALT,
-                                                    ) =>
-                                            {
-                                                app.text_field_focus = TextFieldFocus::TextInput;
-                                                text.push(c);
-                                            }
-                                            KeyCode::Esc => {
-                                                app.text_selected = None;
-                                            }
-                                            _ => {
-                                                handled = false;
-                                            }
-                                        }
-                                    }
-                                    if handled {
-                                        if figlet {
-                                            refresh_text_overlay_figlet(&mut app, index);
-                                        } else {
-                                            sync_text_overlay_auto_grow(
-                                                &mut app.render_args.overlays[index],
-                                            );
-                                        }
-                                        app.reapply_overlays();
+                                    if key.code == KeyCode::Esc {
+                                        app.text_selected = None;
                                         continue;
+                                    }
+                                    let typing = matches!(key.code, KeyCode::Char(c) if c != ' ')
+                                        && app.text_field_focus == TextFieldFocus::List;
+                                    if app.text_field_focus == TextFieldFocus::TextInput || typing {
+                                        app.value_edit_buffer = app.render_args.overlays[index].editable_text().to_string();
+                                        app.edit_cursor.reset();
+                                        if let Some(changed) = app.edit_cursor.key(&mut app.value_edit_buffer, key, true) {
+                                            app.text_field_focus = TextFieldFocus::TextInput;
+                                            app.input_mode = InputMode::TextEdit;
+                                            if changed { apply_text_edit_buffer(&mut app); }
+                                            continue;
+                                        }
                                     }
                                 }
                             }
@@ -9475,7 +9645,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.current_tab == 3 && app.text_selected.unwrap_or(0) > 0 =>
                             {
                                 let sel = app.text_selected.unwrap();
-                                app.render_args.overlays.remove(sel - 1);
+                                app.remove_text_overlay_at(sel - 1);
                                 let new_len = app.render_args.overlays.len();
                                 if new_len == 0 {
                                     app.text_selected = Some(0);
@@ -9495,11 +9665,10 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                     && (c == 'c' || c == 'C') =>
                             {
                                 // Start Color Picker
-                                let mode = match app.render_mode_idx {
-                                    0 => crate::colorpicker::PaletteMode::Irc,
-                                    1 => crate::colorpicker::PaletteMode::Ansi,
-                                    2 => crate::colorpicker::PaletteMode::Ansi24,
-                                    _ => crate::colorpicker::PaletteMode::Irc,
+                                let mode = match app.render_args.render {
+                                    Render::Irc => crate::colorpicker::PaletteMode::Irc,
+                                    Render::Ansi => crate::colorpicker::PaletteMode::Ansi,
+                                    Render::Ansi24 => crate::colorpicker::PaletteMode::Ansi24,
                                 };
                                 let editing_bg = app.text_field_focus == TextFieldFocus::BgButton;
                                 let mut cp = crate::colorpicker::ColorPickerState::new(mode, true);
@@ -9514,6 +9683,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                 if app.control_disabled_reason(ctrl_id).is_some() { continue; }
                                 if let ControlKind::Slider { .. } = def.kind {
                                     app.value_edit_buffer = c.to_string();
+                                    app.edit_cursor.reset();
                                     app.input_mode = InputMode::ValueEdit;
                                     continue;
                                 }
@@ -9985,6 +10155,7 @@ async fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Re
                                                 } else {
                                                     current_val.to_string()
                                                 };
+                                            app.edit_cursor.reset();
                                             app.input_mode = InputMode::ValueEdit;
                                             continue;
                                         }
@@ -10051,16 +10222,10 @@ fn adjust_control(app: &mut App, delta: i32) {
     match def.kind {
         ControlKind::Slider { min, max, .. } => {
             let val = app.get_value(id);
-            app.set_value(id, (val + delta).clamp(min, max));
+            app.set_value(id, val.saturating_add(delta).clamp(min, max));
         }
         ControlKind::Enum { options, .. } => {
-            let val = app.get_value(id);
-            let count = options.len() as i32;
-            if delta > 0 {
-                app.set_value(id, (val + 1) % count);
-            } else {
-                app.set_value(id, (val + count - 1) % count);
-            }
+            app.step_enum(id, options.len(), delta);
         }
         ControlKind::FontSelector => {
             app.open_font_picker();
@@ -10151,8 +10316,7 @@ fn toggle_control(app: &mut App) {
             }
         }
         ControlKind::Enum { options, .. } => {
-            let val = app.get_value(id);
-            app.set_value(id, (val + 1) % options.len() as i32);
+            app.step_enum(id, options.len(), 1);
         }
         ControlKind::FontSelector => {
             app.open_font_picker();
@@ -10308,7 +10472,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
         } else {
             format!(
                 " Font: {} (Enter to apply, Esc to cancel) ",
-                app.font_search
+                app.edit_cursor.marked(&app.font_search)
             )
         };
 
@@ -10442,26 +10606,6 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
             }
         }
 
-        // Hovering either side of the lower-right corner reveals the diagonal
-        // resize affordance one cell down and right from the box corner.
-        if app.text_drag_mode != TextDragMode::Sizing {
-            if let Some(idx) = app.text_resize_hover {
-                if let Some(ov) = app.render_args.overlays.get(idx) {
-                    let (box_w, box_h) = text_overlay_box_dimensions(ov);
-                    set_output_preview_cell(
-                        f,
-                        app,
-                        ov.x + box_w + 1,
-                        ov.y + box_h + 1,
-                        '🢆',
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    );
-                }
-            }
-        }
-
         if (app.render_tick / 8).is_multiple_of(2) {
             if let Some((cursor_x, cursor_y)) = app.text_cursor_anchor {
                 set_output_preview_cell(
@@ -10482,7 +10626,7 @@ fn ui(f: &mut ratatui::Frame, app: &mut App) {
                         .and_then(|idx| app.render_args.overlays.get(idx))
                     {
                         let (cursor_x, cursor_y) =
-                            text_cursor_grid_position(ov, &app.value_edit_buffer);
+                            text_cursor_grid_position(ov, &app.value_edit_buffer[..app.edit_cursor.position(&app.value_edit_buffer)]);
                         set_output_preview_cell(
                             f,
                             app,
@@ -10971,16 +11115,16 @@ fn text_content_dimensions(text: &str, wrap_width: Option<usize>) -> (i32, i32) 
     (width, lines.len().max(1) as i32)
 }
 
-fn default_text_foreground(render_mode_idx: usize) -> crate::args::ColorSpec {
-    match render_mode_idx {
-        0 => crate::args::ColorSpec::Index(0),  // IRC white
-        1 => crate::args::ColorSpec::Index(15), // ANSI bright white
-        _ => crate::args::ColorSpec::Rgb([255, 255, 255]),
+fn default_text_foreground(palette: Render) -> crate::args::ColorSpec {
+    match palette {
+        Render::Irc => crate::args::ColorSpec::Index(0),
+        Render::Ansi => crate::args::ColorSpec::Index(15),
+        Render::Ansi24 => crate::args::ColorSpec::Rgb([255, 255, 255]),
     }
 }
 
 fn new_text_overlay(
-    render_mode_idx: usize,
+    palette: Render,
     x: i32,
     y: i32,
     auto_grow: bool,
@@ -10993,7 +11137,7 @@ fn new_text_overlay(
         y,
         w: 1,
         h: 1,
-        fg: Some(default_text_foreground(render_mode_idx)),
+        fg: Some(default_text_foreground(palette)),
         bg: None,
         wrap: true,
         auto_grow,
@@ -11009,7 +11153,7 @@ fn begin_auto_growing_text_at_anchor(app: &mut App, initial_text: String) {
         return;
     };
     app.last_text_click = None;
-    let mut overlay = new_text_overlay(app.render_mode_idx, x, y, true);
+    let mut overlay = new_text_overlay(app.render_args.render, x, y, true);
     overlay.text = initial_text.clone();
     sync_text_overlay_auto_grow(&mut overlay);
     app.render_args.overlays.push(overlay);
@@ -11017,6 +11161,7 @@ fn begin_auto_growing_text_at_anchor(app: &mut App, initial_text: String) {
     app.text_list_state.select(app.text_selected);
     app.text_field_focus = TextFieldFocus::TextInput;
     app.value_edit_buffer = initial_text;
+    app.edit_cursor.reset();
     app.input_mode = InputMode::TextEdit;
     app.reapply_overlays();
 }
@@ -11079,8 +11224,6 @@ fn toggle_text_overlay_figlet(app: &mut App, index: usize) {
     } else {
         overlay.source_text = Some(overlay.text.clone());
         overlay.figlet_font = default_font;
-        overlay.auto_grow = false;
-        overlay.wrap = false;
         overlay.transparent_spaces = true;
         if was_auto_grow {
             let (grid_w, grid_h) = available.unwrap_or((40, 8));
@@ -11119,7 +11262,7 @@ fn cycle_text_overlay_figlet_font(app: &mut App, index: usize, delta: i32) {
 fn sync_text_overlay_auto_grow(overlay: &mut crate::args::TextOverlay) {
     if overlay.auto_grow {
         let (width, height) = text_content_dimensions(&overlay.text, None);
-        overlay.w = width.max(1);
+        if !(overlay.figlet_enabled() && overlay.wrap) { overlay.w = width.max(1); }
         overlay.h = height.max(1);
     }
 }
@@ -11153,7 +11296,7 @@ fn finish_text_edit(app: &mut App) {
 }
 
 fn text_overlay_box_dimensions(overlay: &crate::args::TextOverlay) -> (i32, i32) {
-    let wrap_width = (overlay.wrap && overlay.w > 0).then_some(overlay.w as usize);
+    let wrap_width = (overlay.wrap && !overlay.figlet_enabled() && overlay.w > 0).then_some(overlay.w as usize);
     let (text_width, text_height) = text_content_dimensions(&overlay.text, wrap_width);
     (
         if overlay.w > 0 {
@@ -11182,11 +11325,7 @@ fn text_overlay_hover_contains(
     cell_x: i32,
     cell_y: i32,
 ) -> bool {
-    let (width, height) = text_overlay_box_dimensions(overlay);
-    cell_x >= overlay.x - 1
-        && cell_x <= overlay.x + width
-        && cell_y >= overlay.y - 1
-        && cell_y <= overlay.y + height
+    text_overlay_contains(overlay, cell_x, cell_y) || text_overlay_resize_hotspot(overlay, cell_x, cell_y)
 }
 
 fn text_overlay_resize_hotspot(
@@ -11195,10 +11334,93 @@ fn text_overlay_resize_hotspot(
     cell_y: i32,
 ) -> bool {
     let (width, height) = text_overlay_box_dimensions(overlay);
-    let inner_corner = cell_x == overlay.x + width - 1 && cell_y == overlay.y + height - 1;
-    let right_of_corner = cell_x == overlay.x + width && cell_y == overlay.y + height - 1;
-    let below_corner = cell_x == overlay.x + width - 1 && cell_y == overlay.y + height;
-    inner_corner || right_of_corner || below_corner
+    resize_edges([overlay.x, overlay.y, width, height], [cell_x, cell_y], 2).is_some()
+}
+
+fn text_canvas_position(app: &App, screen_x: u16, screen_y: u16) -> Option<(i32, i32)> {
+    if !app.output_area.contains((screen_x, screen_y).into()) { return None; }
+    let result = app.cached_result.as_ref()?;
+    let width = result.grid.first()?.len() as i32;
+    let height = result.grid.len() as i32;
+    let pad_x = (i32::from(app.output_area.width.saturating_sub(2)) - width).max(0) / 2;
+    let pad_y = (i32::from(app.output_area.height.saturating_sub(2)) - height).max(0) / 2;
+    Some((i32::from(screen_x) - i32::from(app.output_area.x) - 1 - pad_x,
+        i32::from(screen_y) - i32::from(app.output_area.y) - 1 - pad_y + i32::from(app.scroll)))
+}
+
+fn text_resize_target(app: &App, x: i32, y: i32) -> Option<usize> {
+    if let Some(index) = app.text_selected.and_then(|selected| selected.checked_sub(1)) {
+        if app.render_args.overlays.get(index).is_some_and(|overlay| text_overlay_resize_hotspot(overlay, x, y)) {
+            return Some(index);
+        }
+    }
+    if app.render_args.overlays.iter().any(|overlay| text_overlay_contains(overlay, x, y)) { return None; }
+    app.render_args.overlays.iter().enumerate().rev()
+        .find(|(_, overlay)| text_overlay_resize_hotspot(overlay, x, y)).map(|(i, _)| i)
+}
+
+fn begin_text_canvas_drag(app: &mut App, cell_x: i32, cell_y: i32) {
+    let inside = app.render_args.overlays.iter().enumerate().rev()
+        .find(|(_, overlay)| text_overlay_contains(overlay, cell_x, cell_y)).map(|(i, _)| i);
+    let ring = text_resize_target(app, cell_x, cell_y);
+    let now = Instant::now();
+    let double = app.last_text_click.is_some_and(|(time, x, y)| now.duration_since(time).as_millis() < 500 && x == cell_x && y == cell_y);
+    if app.input_mode == InputMode::TextEdit { finish_text_edit(app); }
+    app.text_resize_drag = None;
+    if let Some(index) = ring.or(inside) {
+        app.text_selected = Some(index + 1);
+        app.text_cursor_anchor = None;
+        app.text_hovered = Some(index);
+        let overlay = &mut app.render_args.overlays[index];
+        let (width, height) = text_overlay_box_dimensions(overlay);
+        if ring.is_some() {
+            let rect = [overlay.x, overlay.y, width, height];
+            app.text_resize_drag = Some(ResizeDrag { rect, start: [cell_x, cell_y], edges: resize_edges(rect, [cell_x, cell_y], 2).unwrap() });
+            app.text_drag_mode = TextDragMode::Sizing;
+            overlay.auto_grow = false;
+            app.text_resize_hover = Some(index);
+        } else if double {
+            app.value_edit_buffer = overlay.editable_text().to_string();
+            app.edit_cursor.reset();
+            app.input_mode = InputMode::TextEdit;
+            app.text_drag_mode = TextDragMode::None;
+        } else {
+            app.text_drag_mode = TextDragMode::Moving;
+            app.text_drag_start = Some((cell_x - overlay.x, cell_y - overlay.y));
+        }
+        app.last_text_click = Some((now, cell_x, cell_y));
+    } else if let Some(result) = &app.cached_result {
+        if cell_x < 0 || cell_y < 0 || cell_y as usize >= result.grid.len() || cell_x as usize >= result.grid[0].len() { return; }
+        if double {
+            app.render_args.overlays.push(new_text_overlay(app.render_args.render, cell_x, cell_y, false));
+            app.text_selected = Some(app.render_args.overlays.len());
+            app.text_resize_drag = Some(ResizeDrag { rect: [cell_x, cell_y, 1, 1], start: [cell_x, cell_y], edges: ResizeEdges { right: true, bottom: true, ..ResizeEdges::default() } });
+            app.text_drag_mode = TextDragMode::Sizing;
+            app.text_cursor_anchor = None;
+            app.last_text_click = None;
+            app.reapply_overlays();
+        } else {
+            app.last_text_click = Some((now, cell_x, cell_y));
+            app.text_selected = None;
+            app.text_cursor_anchor = Some((cell_x, cell_y));
+            app.text_field_focus = TextFieldFocus::TextInput;
+        }
+    }
+}
+
+fn continue_text_canvas_drag(app: &mut App, x: i32, y: i32) {
+    let Some(index) = app.text_selected.and_then(|selected| selected.checked_sub(1)) else { return; };
+    let Some(overlay) = app.render_args.overlays.get_mut(index) else { return; };
+    match app.text_drag_mode {
+        TextDragMode::Moving => if let Some((dx, dy)) = app.text_drag_start { overlay.x = x - dx; overlay.y = y - dy; },
+        TextDragMode::Sizing => if let Some(drag) = app.text_resize_drag {
+            [overlay.x, overlay.y, overlay.w, overlay.h] = drag.rect_at([x, y]);
+            overlay.auto_grow = false;
+            if overlay.figlet_enabled() { refresh_text_overlay_figlet(app, index); }
+        },
+        TextDragMode::None => return,
+    }
+    app.reapply_overlays();
 }
 
 fn output_grid_position(app: &App, screen_x: u16, screen_y: u16) -> Option<(i32, i32)> {

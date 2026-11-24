@@ -41,6 +41,9 @@ impl App {
             self.optimization_progress = "Cancelling...".to_string();
             return;
         }
+        if self.render_args.effective_render_mode() != RenderMode::Glyph {
+            return;
+        }
         let Some(path) = self.render_args.image.clone().filter(|path| !path.is_empty()) else {
             return;
         };

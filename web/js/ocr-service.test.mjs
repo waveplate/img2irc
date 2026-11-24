@@ -272,11 +272,11 @@ test("plain merged text spans the source ink height even when each source line i
   assert.equal(mapped.overlays[0].y, 1);
 });
 
-test("small evenly sized body lines do not become FIGlet headings merely by grouping", async () => {
+test("enabled OCR styling tries FIGlet for ordinary lines regardless of legacy size thresholds", async () => {
   const prepared = { result: { image: { width: 100, height: 100 } }, items: [0, 15, 30].map((y) => ({ text: "BODY", bounds: bounds(0, y, 50, y + 10) })) };
   await ocrItemsToOverlays(prepared, 40, 20, { enabled: true, minHeight: 2, minHeightRatio: 1.25 }, async (requests) => {
     assert.equal(requests.length, 1);
-    assert.equal(requests[0].useFiglet, false);
+    assert.equal(requests[0].useFiglet, true);
     return { arts: [] };
   });
 });

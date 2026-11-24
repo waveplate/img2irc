@@ -21,6 +21,50 @@ from img2irc.tui import (
 
 
 class TuiTests(unittest.TestCase):
+    def test_dither_mode_preserves_palette_and_saves_both_formats(self):
+        from test_api import ApiTests
+
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "picture.png"
+            image.write_bytes(ApiTests.PNG)
+            app = PythonTui(str(image), width=4)
+            self.select(app, "render_mode")
+            self.assertTrue(app.change_selected(-1))
+            self.assertEqual(app.options["render_mode"], "Braille")
+            self.assertEqual(app.options["render"], "Ansi24")
+            self.assertTrue(app.change_selected(1))
+
+            self.select(app, "render")
+            self.assertTrue(app.change_selected(1))
+            self.select(app, "render_mode")
+            self.assertTrue(app.change_selected(-1))
+            self.assertEqual(app.options["render_mode"], "Dither")
+            self.assertEqual(app.options["render"], "Ansi")
+            self.assertEqual(app.options["glyphs"], ["dither"])
+            self.select(app, "dither_detail")
+            self.assertTrue(app.change_selected(1))
+            self.select(app, "dither_palette_candidates")
+            self.assertTrue(app.change_selected(-1))
+            self.select(app, "smooth")
+            self.assertTrue(app.change_selected(1))
+            ansi = app.render()
+            self.assertTrue(ansi.content.startswith("\x1b["))
+            self.assertEqual(ansi.options["dither_detail"], 5)
+            self.assertEqual(ansi.options["dither_palette_candidates"], 3)
+            app.save_output()
+            self.assertEqual(app.output_path.suffix, ".ans")
+            self.assertEqual(app.output_path.read_bytes(), ansi.encoded)
+
+            self.select(app, "render")
+            self.assertTrue(app.change_selected(-1))
+            self.assertEqual(app.options["render"], "Irc")
+            self.assertEqual(app.options["render_mode"], "Dither")
+            irc = app.render()
+            self.assertTrue(irc.content.startswith("\x03"))
+            app.save_output()
+            self.assertEqual(app.output_path.suffix, ".txt")
+            self.assertEqual(app.output_path.read_bytes(), irc.encoded)
+
     def test_tui_defaults_and_controls(self):
         app = PythonTui("picture.png", width=72)
         self.assertEqual(app.options["width"], 72)

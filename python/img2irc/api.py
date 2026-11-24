@@ -25,8 +25,18 @@ class _StringEnum(str, Enum):
 
 
 class RenderMode(_StringEnum):
+    GLYPH = "glyph"
+    BRAILLE = "braille"
+    DITHER = "dither"
+    # Existing callers use these members with the render or mode option.
     IRC = "irc"
     ANSI = "ansi"
+    ANSI24 = "ansi24"
+
+
+class Palette(_StringEnum):
+    IRC99 = "irc99"
+    ANSI256 = "ansi256"
     ANSI24 = "ansi24"
 
 
@@ -60,7 +70,10 @@ class OcrModelTier(_StringEnum):
 
 
 _ENUM_VALUES = {
-    "render": {"irc": "Irc", "ansi": "Ansi", "ansi24": "Ansi24"},
+    "render": {
+        "irc": "Irc", "irc99": "Irc", "ansi": "Ansi", "ansi256": "Ansi", "ansi24": "Ansi24",
+    },
+    "render_mode": {"glyph": "Glyph", "braille": "Braille", "dither": "Dither"},
     "filter": {
         "nearest": "Nearest",
         "triangle": "Triangle",
@@ -849,6 +862,8 @@ class Simple:
         *,
         height: int | None = None,
         mode: str = "ansi24",
+        palette: str | None = None,
+        render_mode: str = "glyph",
         font_size: float = 0,
         braille: bool = False,
         glyphs: str | list[str] | tuple[str, ...] | None = None,
@@ -865,7 +880,8 @@ class Simple:
         options: dict[str, Any] = {
             "width": width,
             "height": height,
-            "render": mode,
+            "render": mode if palette is None else palette,
+            "render_mode": render_mode,
             "font_size": font_size,
             "braille": braille,
             "smooth": smooth,
