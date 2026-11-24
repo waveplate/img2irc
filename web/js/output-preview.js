@@ -1,4 +1,5 @@
 import { OutputPreview as TextPreview, displayStyle, rgbToString } from "../vendor/irc2html.js";
+import { resizeDitherRaster } from "./dither-preview.js";
 
 function paintRaster(canvas, result, fontFamily) {
   canvas.width = result.previewWidth;
@@ -45,15 +46,18 @@ function paintRaster(canvas, result, fontFamily) {
 }
 
 export class OutputPreview extends TextPreview {
+  #stage;
   #canvas;
   #text;
   #raster;
+  #source;
   #rasterResult;
   #mode;
   #fontSize = 16;
 
   constructor(stage, canvas, text, placeholder) {
     super(stage, canvas, text, placeholder);
+    this.#stage = stage;
     this.#canvas = canvas;
     this.#text = text;
     this.#mode = super.getMode();
@@ -63,9 +67,13 @@ export class OutputPreview extends TextPreview {
     this.#raster.setAttribute("role", "img");
     this.#raster.setAttribute("aria-label", "Rendered Dither artwork");
     text.before(this.#raster);
+    this.#source = document.createElement("canvas");
+    const sizeObserver = new ResizeObserver(() => this.#syncRasterSize());
+    sizeObserver.observe(stage, { box: "device-pixel-content-box" });
+    window.addEventListener("resize", () => this.#syncRasterSize());
   }
 
-  get canvas() { return this.#rasterResult ? this.#raster : this.#canvas; }
+  get canvas() { return this.#rasterResult ? this.#source : this.#canvas; }
 
   getMode() { return this.#mode; }
 
@@ -79,6 +87,7 @@ export class OutputPreview extends TextPreview {
     const size = Number(value);
     if (size > 0 && Number.isFinite(size)) this.#fontSize = size;
     super.setOutputFontSize(value);
+    this.#syncRasterSize();
   }
 
   draw(result, options) {
@@ -87,8 +96,11 @@ export class OutputPreview extends TextPreview {
       // Keep the raster and selectable grid aligned at the bitmap's cell size.
       // Fractional font advances can resample a one-pixel stipple into bands.
       super.draw({ ...result, cellAdvance: result.cellWidth, lineHeight: result.cellHeight }, options);
-      if (this.#rasterResult !== result) paintRaster(this.#raster, result, this.#text.style.fontFamily);
-      this.#rasterResult = result;
+      if (this.#rasterResult !== result) {
+        paintRaster(this.#source, result, this.#text.style.fontFamily);
+        this.#rasterResult = result;
+        this.#syncRasterSize(true);
+      }
     } else {
       this.#clearRaster();
       super.draw(result, options);
@@ -106,24 +118,38 @@ export class OutputPreview extends TextPreview {
 
   toPngBlob(result = this.#rasterResult) {
     if (!result?.previewRgba?.length) return super.toPngBlob(result);
-    const source = result === this.#rasterResult ? this.#raster : document.createElement("canvas");
-    if (source !== this.#raster) paintRaster(source, result, this.#text.style.fontFamily);
-    const scale = this.#fontSize / result.fontSize * Math.max(1, globalThis.devicePixelRatio || 1);
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(source.width * scale));
-    canvas.height = Math.max(1, Math.round(source.height * scale));
-    const ctx = canvas.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    let canvas = this.#raster;
+    if (result === this.#rasterResult) {
+      this.#syncRasterSize();
+    } else {
+      const source = document.createElement("canvas");
+      paintRaster(source, result, this.#text.style.fontFamily);
+      const scale = this.#fontSize / result.fontSize * (globalThis.devicePixelRatio || 1);
+      canvas = document.createElement("canvas");
+      resizeDitherRaster(canvas, source, result, Math.max(1, Math.round(source.width * scale)),
+        Math.max(1, Math.round(source.height * scale)));
+    }
     return new Promise((resolve, reject) => canvas.toBlob(
       (blob) => blob ? resolve(blob) : reject(new Error("Could not create PNG")), "image/png",
     ));
+  }
+
+  #syncRasterSize(force = false) {
+    if (!this.#rasterResult) return;
+    const ratio = globalThis.devicePixelRatio || 1;
+    const bounds = this.#stage.getBoundingClientRect();
+    const width = Math.max(1, Math.round(bounds.right * ratio) - Math.round(bounds.left * ratio));
+    const height = Math.max(1, Math.round(bounds.bottom * ratio) - Math.round(bounds.top * ratio));
+    if (force || width !== this.#raster.width || height !== this.#raster.height) {
+      resizeDitherRaster(this.#raster, this.#source, this.#rasterResult, width, height);
+    }
   }
 
   #clearRaster() {
     if (!this.#rasterResult) return;
     this.#rasterResult = undefined;
     this.#raster.width = this.#raster.height = 0;
+    this.#source.width = this.#source.height = 0;
   }
 
   #updateRasterVisibility() {

@@ -168,7 +168,7 @@ export class EditorApp {
     const output = restored.result;
     const matchesSource = output && !removedEffects && output.sourceRevision === this.#state.sourceRevision && this.#state.hasImage;
     const needsDitherPreview = matchesSource && output.revision === this.#documentRevision
-      && output.options?.renderMode === "dither" && !output.result.previewRgba?.length;
+      && output.options?.renderMode === "dither" && !output.result.previewStipples;
     if (matchesSource) {
       this.#lockedOcr = output.lockedOcr;
       this.#lockedOcrGrid = output.lockedOcrGrid;

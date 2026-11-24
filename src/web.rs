@@ -204,6 +204,8 @@ export interface Img2IrcRenderResult {
     previewRgba?: Uint8Array;
     /** Row-major indices of Dither preview cells drawn as browser text overlays. */
     previewTextCells?: number[];
+    /** Repeating pixel periods for the preview's procedural shades. */
+    previewStipples?: [string, number][];
 }
 
 export interface Img2IrcRenderTimings {
@@ -874,6 +876,8 @@ struct WebRenderResult {
     preview_height: u32,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     preview_text_cells: Vec<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_stipples: Option<Vec<(char, u8)>>,
     font_size: f32,
     cell_width: usize,
     cell_height: usize,
@@ -1705,6 +1709,13 @@ impl WebRenderer {
         let (preview_width, preview_height) = preview
             .as_ref()
             .map_or((0, 0), |(width, height, _)| (*width, *height));
+        let preview_stipples = (preview.is_some() && args.effective_render_mode() == RenderMode::Dither)
+            .then(|| {
+                cache.store.glyphs.iter().filter_map(|(ch, _, origin)| {
+                    if origin != "Procedural terminal geometry" { return None; }
+                    font::shade_pattern_period(*ch).map(|period| (*ch, period))
+                }).collect()
+            });
         let rows = result.grid.len();
         let columns = result.grid.first().map_or(0, Vec::len);
         let cells = options.include_cells.then(|| {
@@ -1742,6 +1753,7 @@ impl WebRenderer {
             preview_width,
             preview_height,
             preview_text_cells,
+            preview_stipples,
             font_size: options.font_size,
             cell_width: cache.store.metrics.0,
             cell_height: cache.store.metrics.1,

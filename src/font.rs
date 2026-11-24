@@ -1243,6 +1243,18 @@ const PARTIAL_SHADES: [(Region, char, Option<char>); 8] = [
     (Region::LowerLeft, '🮟', None),
 ];
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn shade_pattern_period(ch: char) -> Option<u8> {
+    match ch {
+        '░' | '▓' => Some(4),
+        '▒' | '🮐' => Some(2),
+        _ => PARTIAL_SHADES
+            .iter()
+            .any(|&(_, normal, inverse)| ch == normal || Some(ch) == inverse)
+            .then_some(2),
+    }
+}
+
 impl Region {
     fn contains(self, x: f32, y: f32) -> bool {
         let side = match self {
